@@ -157,7 +157,12 @@ export async function compensacoesDoAcerto(
       select c.id, 'recebida'::text
         from movimentos_estoque o
         join movimentos_estoque c on c.compensa_movimento_id = o.id and c.tipo_movimento = 'ACERTO_COMPENSACAO'
-       where o.documento_tipo = 'acerto' and o.documento_id = ${acertoId}::uuid and o.estorno_de_id is null
+       where o.documento_tipo = 'acerto' and o.documento_id = ${acertoId}::uuid
+         -- Fora os estornos dos movimentos do próprio acerto (o ESTORNO_ACERTO e o par invertido da mudança de tipo);
+         -- a saída da perda da transferência (F2-B24) estorna o retorno da transferência, não um movimento do acerto.
+         and (o.estorno_de_id is null
+              or not exists (select 1 from movimentos_estoque x
+                              where x.id = o.estorno_de_id and x.documento_tipo = 'acerto' and x.documento_id = o.documento_id))
     ),
     escolhidas as (
       select l.id, l.sentido, count(*) over ()::int as total

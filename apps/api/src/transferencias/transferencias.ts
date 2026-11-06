@@ -4,7 +4,8 @@
  * **enviar** (`TRANSF_SAIDA` na origem ao custo médio vigente, com o saldo conferido) e **cancelar** (do rascunho, sem
  * efeito; do trânsito, o `TRANSF_RETORNO` integral de cada saída, ao custo dela, T20). O schema e os contratos são do
  * F2-B22 (migração `0025_transferencias`, `transferencias.ts` do shared; decisão 170); receber, tratar a divergência e o
- * modo de uma etapa são do F2-B24, que chama `enviarTransferencia` na mesma transação.
+ * modo de uma etapa (que chama `enviarTransferencia` e o recebimento na mesma transação) ficam em `recebimento.ts`
+ * (F2-B24; decisão 172).
  *
  * Os movimentos seguem o motor (`lancarDocumento`): as linhas de saldo travadas uma vez cada, em `ordenarChaves`, a
  * divisão FEFO da saída sem lote (F2-B6) e a compensação contra o "Definir" com a contagem à frente (F2-B4). Quem chama
@@ -278,7 +279,8 @@ async function exigirEstoquesAtivosNoEnvio(tx: DbEmpresa, t: TransferenciaATrata
  * informado ou, sem ele, dividido em FEFO pelo motor (um movimento por lote, `documento_item_id` = o item); passa os
  * movimentos pela `compensarDefinir` (a saída lançada antes de um "Definir" com a contagem um pouco à frente); grava o
  * custo unitário em cada item **antes** de a situação sair do rascunho (o trigger só deixa mexer nos itens nele) e
- * passa a `em_transito` com quem e quando enviou. O destino não recebe nada até o F2-B24.
+ * passa a `em_transito` com quem e quando enviou. O destino não recebe nada aqui: a entrada é do recebimento
+ * (`receberTransferencia`, F2-B24), que repete cada parte da saída.
  */
 export async function enviarTransferencia(
   tx: DbEmpresa,
@@ -378,7 +380,7 @@ export async function enviarTransferencia(
   const r = await lancarDocumento(tx, linhas, { inicioDocumento: inicio });
   const compensacoes = await compensarDefinir(tx, r.movimentos, `transferência ${t.codigo}`);
   // O custo do item é o custo médio da linha na saída: todas as partes da divisão FEFO saem pelo mesmo (o primeiro
-  // movimento do item basta). A entrada no destino (F2-B24) usa o custo gravado em cada movimento.
+  // movimento do item basta). A entrada no destino (`receberTransferencia`) usa o custo gravado em cada movimento.
   const custos = new Map<string, string>();
   for (const m of r.movimentos)
     if (m.linha.documentoItemId && !custos.has(m.linha.documentoItemId))

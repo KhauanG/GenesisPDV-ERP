@@ -177,6 +177,30 @@ export function estornoDeMudancaTipo(m: { tipoMovimento: string; estornoDeId?: s
 }
 
 /**
+ * A saída da perda da transferência (Fase 2, F2-B24; F2-Q10 = D51; README da API › decisão 172): o `ACERTO_SAIDA` do
+ * acerto `perda_transferencia` com `estorno_de_id` = o `TRANSF_RETORNO` da diferença que ele baixa (o único
+ * `ACERTO_SAIDA` com estorno: o estorno do acerto é `ESTORNO_ACERTO`). Ela desfaz na origem o que o retorno acabou de
+ * creditar: sai na linha e no lote dele, sem a divisão FEFO (estorno não se divide), e ao custo dele (`saidaAoCusto`,
+ * a conta inversa da média ponderada). O par retorno + perda não muda o saldo, o saldo do lote nem o custo médio da
+ * origem, e a perda fica registrada ao custo do envio.
+ */
+export function saidaDaPerdaTransferencia(m: {
+  tipoMovimento: string;
+  estornoDeId?: string | null;
+}): boolean {
+  return m.tipoMovimento === 'ACERTO_SAIDA' && Boolean(m.estornoDeId);
+}
+
+/**
+ * A saída ao custo informado (`MovimentoNoSaldo.saidaAoCusto`): a perna do destino no estorno da mudança de tipo
+ * (`estornoDeMudancaTipo`) e a saída da perda da transferência (`saidaDaPerdaTransferencia`). O motor online e o
+ * replay do razão decidem por esta função, pelo tipo de movimento e pelo `estorno_de_id` gravados.
+ */
+export function saidaAoCustoInformado(m: { tipoMovimento: string; estornoDeId?: string | null }): boolean {
+  return estornoDeMudancaTipo(m) || saidaDaPerdaTransferencia(m);
+}
+
+/**
  * MD 3.1.8 e 3.7.2 (F2-B2, README da API › decisão 146): a cadeia do razão de uma linha de saldo não fecha na ordem de
  * lançamento (o `saldo_anterior` de um movimento não é o `saldo_posterior` do anterior). Aberto pelo preenchimento da
  * `seq_lancamento` dos movimentos antigos, aviso, um aberto por linha (`razao_cadeia:<hash da linha>`), no produto
@@ -211,8 +235,9 @@ export interface MovimentoNoSaldo {
   estorno?: boolean;
   /**
    * Saída ao `custoUnitario` informado (obrigatório), com o custo médio refeito pela conta inversa da média ponderada
-   * (`custoMedioAposSaidaAoCustoTexto`): só a perna do destino no estorno da mudança de tipo (`estornoDeMudancaTipo`,
-   * F2-B8). Sem saldo que sobre ou com o médio que ficaria ≤ 0, é a saída comum (custo médio vigente).
+   * (`custoMedioAposSaidaAoCustoTexto`): a perna do destino no estorno da mudança de tipo (`estornoDeMudancaTipo`,
+   * F2-B8) e a saída da perda da transferência (`saidaDaPerdaTransferencia`, F2-B24), por `saidaAoCustoInformado`. Sem
+   * saldo que sobre ou com o médio que ficaria ≤ 0, é a saída comum (custo médio vigente).
    */
   saidaAoCusto?: boolean;
 }
@@ -264,7 +289,8 @@ export function aplicarMovimentoNoSaldo(
   } else {
     let inverso: string | null = null;
     if (mov.saidaAoCusto) {
-      // Estorno da perna de entrada da mudança de tipo (F2-B8): tira o valor que ela pôs na linha.
+      // Estorno da perna de entrada da mudança de tipo (F2-B8) ou perda da transferência (F2-B24): tira o valor que a
+      // entrada desfeita pôs na linha.
       if (mov.custoUnitario === null || mov.custoUnitario === undefined) {
         throw new Error('Saída ao custo informado sem o custo');
       }
@@ -303,7 +329,7 @@ export function movimentoGravadoNoSaldo(m: {
     custoUnitario: m.custoUnitario,
     custoReferencia: m.custoUnitario,
     estorno: m.estornoDeId !== null,
-    saidaAoCusto: estornoDeMudancaTipo(m),
+    saidaAoCusto: saidaAoCustoInformado(m),
   };
 }
 

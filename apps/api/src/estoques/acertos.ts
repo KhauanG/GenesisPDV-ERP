@@ -5,6 +5,7 @@
  * planilha), que criam um acerto já efetivado com a `origem` própria.
  */
 import {
+  MOTIVO_PERDA_TRANSFERENCIA,
   TIPO_MOVIMENTO_MUDANCA_TIPO,
   avaliarConferencia,
   type AjusteEstoqueProduto,
@@ -479,6 +480,109 @@ export async function ajustarEstoqueDoCadastro(
   };
 }
 
+/**
+ * "Baixar como perda" da divergência da transferência (ERP 13.7; F2-Q10 = D51, padrão até a confirmação do dono; Fase 2,
+ * F2-B24; README da API › decisão 172): cria e efetiva, na transação de quem trata a diferença (com `travaVersao`), uma
+ * **Saída** no estoque de origem com a origem `perda_transferencia`, `origem_id` = a transferência e o motivo
+ * `MOTIVO_PERDA_TRANSFERENCIA`. Quem chama já lançou o `TRANSF_RETORNO` da diferença (um por parte da saída) e passa,
+ * por item, os retornos que ele baixa: cada um vira um `ACERTO_SAIDA` com `estorno_de_id` = o retorno, na linha e no
+ * lote dele e ao custo dele (`saidaDaPerdaTransferencia`: sem a divisão FEFO, que tirava a perda da parte sem lote de
+ * um lote que nem saiu, e com a conta inversa da média ponderada, que devolve o custo médio da origem ao de antes do
+ * retorno). O par retorno + perda tem efeito líquido zero no saldo, no saldo do lote e no custo médio da origem, e a
+ * perda fica registrada ao custo do envio (o valor que de fato se perdeu no caminho). Por isso a saída não passa pela
+ * regra do saldo negativo (é a baixa obrigatória do que acabou de voltar, não uma saída pedida). Um item por produto ×
+ * lote (`uq_itens_acerto_estoque_produto`): quem chama junta os retornos do mesmo lote. O responsável é quem tratou; o
+ * acerto aparece na tela de acertos com a origem "Perda na transferência" e não se estorna por lá (faz parte do
+ * documento da transferência, `exigirAcertoEstornavel`).
+ */
+export async function lancarPerdaTransferencia(
+  tx: DbEmpresa,
+  dados: {
+    estoqueId: string;
+    tipoEstoqueId: string;
+    transferenciaId: string;
+    codigoTransferencia: number;
+    itens: ReadonlyArray<{
+      produtoId: string;
+      variacaoId: string | null;
+      loteId: string | null;
+      /** Os `TRANSF_RETORNO` do produto × lote que a perda baixa (a quantidade do item é a soma). */
+      retornos: readonly RetornoDaPerda[];
+    }>;
+  },
+  usuarioId: string,
+): Promise<{ acertoId: string; codigo: number; resultado: ResultadoEfetivacao }> {
+  const id = uuidv7();
+  const dataContagem = new Date();
+  const [a] = await tx
+    .insert(acertosEstoque)
+    .values({
+      id,
+      estoqueId: dados.estoqueId,
+      tipoEstoqueId: dados.tipoEstoqueId,
+      tipoAjuste: 'saida',
+      dataContagem,
+      motivo: MOTIVO_PERDA_TRANSFERENCIA,
+      responsavelId: usuarioId,
+      observacoes: `Transferência Nº ${dados.codigoTransferencia}: diferença recebida a menor baixada como perda`,
+      origem: 'perda_transferencia',
+      origemId: dados.transferenciaId,
+      criadoPorId: usuarioId,
+      atualizadoPorId: usuarioId,
+    })
+    .returning({ codigo: acertosEstoque.codigo });
+  let sequencia = 0;
+  const retornosDaPerda = new Map<string, readonly RetornoDaPerda[]>();
+  for (const it of dados.itens) {
+    sequencia += 1;
+    const itemId = uuidv7();
+    retornosDaPerda.set(itemId, it.retornos);
+    const quantidade = decTexto(
+      it.retornos.reduce((s, r) => s.plus(r.quantidade), dec(0)),
+      3,
+    );
+    // Os totais e o custo do item são gravados pela efetivação (o custo dos retornos).
+    await tx.execute(sql`
+      insert into itens_acerto_estoque (id, acerto_id, sequencia, produto_id, variacao_id, lote_id, quantidade_informada)
+      values (${itemId}, ${id}, ${sequencia}, ${it.produtoId}, ${it.variacaoId}, ${it.loteId},
+              ${quantidade}::numeric)`);
+  }
+  const resultado = await efetivarAcerto(
+    tx,
+    {
+      id,
+      estoqueId: dados.estoqueId,
+      tipoEstoqueId: dados.tipoEstoqueId,
+      tipoAjuste: 'saida',
+      origem: 'perda_transferencia',
+      dataContagem,
+    },
+    { usuarioId, permiteNegativo: true },
+    { retornosDaPerda },
+  );
+  return { acertoId: id, codigo: a!.codigo, resultado };
+}
+
+/**
+ * O acerto lançado por outro documento como parte dele não se estorna pela tela de acertos: a perda da transferência
+ * (`perda_transferencia`, F2-B24) — estorná-la deixaria o retorno da diferença valendo na origem com a transferência
+ * dizendo "Baixar como perda".
+ */
+export function exigirAcertoEstornavel(a: { origem: string }): void {
+  if (a.origem === 'perda_transferencia')
+    throw new ErroApi(
+      'REGRA_NEGOCIO',
+      'Este acerto é a perda de uma transferência (diferença recebida a menor) e faz parte dela: não se estorna. Para devolver a mercadoria, faça uma Entrada no estoque.',
+    );
+}
+
+/** Um `TRANSF_RETORNO` que a perda da transferência baixa: o movimento, a quantidade (positiva) e o custo gravado. */
+export interface RetornoDaPerda {
+  movimentoId: string;
+  quantidade: string;
+  custoUnitario: string;
+}
+
 export interface ResultadoEfetivacao {
   movimentos: number;
   itens: number;
@@ -532,6 +636,14 @@ export async function efetivarAcerto(
     dataContagem: Date;
   },
   quem: { usuarioId: string; permiteNegativo: boolean },
+  opcoes: {
+    /**
+     * Só na perda da transferência (`lancarPerdaTransferencia`): por item do acerto, os `TRANSF_RETORNO` que ele baixa.
+     * O item sai em um `ACERTO_SAIDA` por retorno, com `estorno_de_id` = o retorno, no lote do item e ao custo do
+     * retorno (`saidaDaPerdaTransferencia`), em vez da Saída comum.
+     */
+    retornosDaPerda?: ReadonlyMap<string, readonly RetornoDaPerda[]>;
+  } = {},
 ): Promise<ResultadoEfetivacao> {
   // Início do documento (regra de data): a folga é medida contra ele, e um acerto grande não estoura no fim do laço.
   const inicio = new Date();
@@ -658,11 +770,29 @@ export async function efetivarAcerto(
         unidadeDocumento: p.sigla.slice(0, 6),
         loteId: it.lote_id,
       };
-      // A Saída sem lote de produto com lote sai em um movimento por lote (FEFO), todos ao custo médio da linha.
-      const ms = await lancarMovimento(tx, saldo, linha, {
-        retroativoPermitido: definir,
-        inicioDocumento: inicio,
-      });
+      const retornos = opcoes.retornosDaPerda?.get(it.id);
+      if (retornos && !dec(q).eq(retornos.reduce((s, r) => s.minus(r.quantidade), dec(0))))
+        throw new Error('A perda da transferência não bate com os retornos do item');
+      // A Saída sem lote de produto com lote sai em um movimento por lote (FEFO), todos ao custo médio da linha. A da
+      // perda da transferência sai uma por retorno, como estorno dele: no lote do retorno e ao custo dele.
+      const ms = retornos
+        ? (
+            await lancarDocumento(
+              tx,
+              retornos.map((r) => ({
+                ...linha,
+                quantidade: decTexto(dec(r.quantidade).neg(), 3),
+                custoUnitario: r.custoUnitario,
+                custoReferencia: r.custoUnitario,
+                estornoDeId: r.movimentoId,
+              })),
+              { inicioDocumento: inicio },
+            )
+          ).movimentos
+        : await lancarMovimento(tx, saldo, linha, {
+            retroativoPermitido: definir,
+            inicioDocumento: inicio,
+          });
       lancados.push(...ms);
       if (destinoId) {
         // A perna de entrada: cada parte da saída (um lote da divisão FEFO, ou a linha inteira) entra no destino com o

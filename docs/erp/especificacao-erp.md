@@ -3319,6 +3319,20 @@ cancela. O estoque com transferência em trânsito (ou com divergência a tratar
 transferência não se exclui; o tipo de estoque com transferência em rascunho, em trânsito ou com divergência não se
 inativa (README da API › decisão 171). Receber e tratar a divergência são do F2-B24; as telas, do F2-B27.
 
+Fase 2, F2-B24 (API): **Receber** (`POST /transferencias/:id/receber`, quem tem o destino e `transferencias.receber`:
+a quantidade conferida de **todos** os itens ou "Receber tudo como enviado"; recebida acima da enviada é recusada;
+`TRANSF_ENTRADA` no destino com o custo da saída, repetindo cada lote da divisão FEFO, e a quantidade que chegou enche
+primeiro o lote que vence primeiro) e **tratar a diferença** (`POST /transferencias/:id/tratar-divergencia`, por item,
+uma vez, por quem tem a origem ou o destino: "Retornar à origem" = `TRANSF_RETORNO` da diferença ao custo da saída;
+"Baixar como perda" = o mesmo retorno mais um acerto de Saída automático no estoque de origem, origem "Perda na
+transferência", motivo "Perda em transferência", que fica na tela de acertos e não se estorna; o saldo da origem não
+muda e a perda fica registrada a custo — F2-Q10/D51, padrão até a confirmação do dono). O lote preso ao estoque de
+origem entra no lote do mesmo código e validade do destino (criado preso ao destino quando não existe; com outra
+validade no destino, o recebimento é recusado no item — D61, padrão até a confirmação do dono). **Uma etapa**: com
+`estoque.transferencia_recebimento_automatico` ligada (chave da empresa, Configurações › Geral: vale para toda
+transferência da empresa, não só entre estoques do mesmo endereço), o Enviar já recebe tudo na mesma operação, com
+quem enviou como quem recebeu (README da API › decisão 172).
+
 Grade: **Produto**, **Variação**, **Lote** **(Novo)**, **Saldo na origem** **(Novo)**, **Quant** (enviada), **Qtd.
 recebida** **(Novo, etapa 2)**, **Diferença** **(Novo)**. Botão **Sugerir reposição (Novo)**: preenche a grade com
 os produtos do destino abaixo do estoque mínimo, na quantidade `máximo − saldo` (ou `mínimo × 2 − saldo` sem máximo),
@@ -3344,7 +3358,7 @@ stateDiagram-v2
 | Etapa 2 – Receber | Usuário com acesso ao destino e `transferencias.receber` informa a quantidade conferida por item (botão "Receber tudo como enviado"). Gera `TRANSF_ENTRADA` com o custo da saída |
 | Divergência | Se recebida < enviada, a diferença precisa de decisão: **Retornar à origem** (`TRANSF_RETORNO`) ou **Baixar como perda** (acerto de saída automático no estoque de origem com motivo "Perda em transferência"). Recebida > enviada é recusada (fazer nova transferência) |
 | Cancelamento | Rascunho: sem efeito. Em trânsito: `TRANSF_RETORNO` integral na origem, com motivo |
-| Uma etapa | Opção `estoque.transferencia_recebimento_automatico` (Configurações › Geral, padrão Não) faz o envio já gerar a entrada (para estoques do mesmo endereço) |
+| Uma etapa | Opção `estoque.transferencia_recebimento_automatico` (Configurações › Geral, padrão Não) faz o envio já gerar a entrada (pensada para estoques do mesmo endereço; é da empresa, não por loja: ligada, vale para toda transferência) |
 | Fiscal [P6] | Se origem e destino pertencem a lojas com **CNPJs diferentes**, a transferência exige NF-e de transferência (CFOP 5152/5409 ou 6152/6409) emitida pela nuvem ao Enviar; a entrada no destino referencia a chave. Mesmo CNPJ: sem nota |
 | PDV | Saldos alterados descem aos PDVs da loja destino/origem na próxima sincronização |
 

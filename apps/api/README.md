@@ -108,7 +108,8 @@ ERP (prefixo `/api`, token `Authorization: Bearer`): `POST /auth/login`, `POST /
 `GET|PUT|DELETE /grupos-preco-quantidade/:id`, `GET|POST /restricoes-horario-venda`,
 `GET|PUT|DELETE /restricoes-horario-venda/:id`, `GET|POST /acertos`, `GET|PUT|DELETE /acertos/:id`,
 `POST /acertos/:id/efetivar`, `POST /acertos/:id/estornar`, `GET|POST /transferencias`,
-`GET|PUT|DELETE /transferencias/:id`, `POST /transferencias/:id/enviar|cancelar`, `PUT /transferencias/:id/nfe-externa`,
+`GET|PUT|DELETE /transferencias/:id`, `POST /transferencias/:id/enviar|receber|tratar-divergencia|cancelar`,
+`PUT /transferencias/:id/nfe-externa`,
 `GET /saldos-estoque`, `GET /saldos-estoque/itens`,
 `GET|POST /tipos-estoque`, `GET|PUT|DELETE /tipos-estoque/:id`, `GET /importacoes/produtos|clientes/modelo`, `POST /importacoes/produtos|clientes/previa`
 (multipart), `POST /importacoes/produtos|clientes/confirmar`, `GET /dashboard`, `GET /implantacao/prontidao`, `GET /ncms`, `GET /ncms/:codigo`,
@@ -4167,7 +4168,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        transferência viva é 422 ("inative em vez de excluir"), como o tipo usado em recebimento. **Inativar tipo de
        estoque** com transferência em rascunho, em trânsito ou com divergência no tipo é 422 (como o acerto e o
        recebimento em rascunho), e **excluir** o tipo usado em qualquer transferência também.
-     - **Para o F2-B24** (não implementado aqui): `enviarTransferencia` é exportada para o modo de uma etapa chamá-la na
+     - **Para o F2-B24** (feito; decisão 172): `enviarTransferencia` é exportada para o modo de uma etapa chamá-la na
        mesma transação; a entrada no destino deve repetir cada movimento da saída (lote e custo de cada parte FEFO, como
        a perna de entrada da mudança de tipo). O lote preso ao estoque de origem (`produtos_lotes.estoque_id` = a origem)
        não pode entrar no destino (MD 3.6.9; `ErroLoteInvalido`): o F2-B24 decide entre entrar sem lote ou no lote do
@@ -4189,6 +4190,114 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      push pegam a 7300001 como primeira trava e rodam em série, então o teste não confere a ordem das travas de linha
      (`ordenarChaves`), só que os dois convivem; os itens do rascunho vão fora da ordem crescente e a venda na inversa —;
      e o `conferirRazaoDoBanco` no fim).
+172. **Transferência entre estoques: receber, tratar a divergência e o modo de uma etapa** (Fase 2, F2-B24; ERP 13.7
+     "Divergência" e "Uma etapa"; MD 3.7.6, 3.6.9; T20; F2-Q10 = D51 e D61 do roadmap; `src/transferencias/recebimento.ts`
+     (novo), as rotas em `transferencias.controller.ts`, `lancarPerdaTransferencia`/`exigirAcertoEstornavel` em
+     `src/estoques/acertos.ts`). **Sem migração**: as colunas do recebimento e do tratamento, os triggers de etapa e os
+     contratos (`receberTransferenciaSchema`, `tratarDivergenciaTransferenciaSchema`, `situacaoAposRecebimento`) são do
+     F2-B22 (decisão 170), e o seed já tinha `TRANSF_ENTRADA` (+1) e a origem de acerto `perda_transferencia`. Fecha o
+     segundo item da Definição de pronto da Fase 2. Rotas novas: `POST /transferencias/:id/receber` e
+     `POST /transferencias/:id/tratar-divergencia`.
+     - **As partes da saída.** O envio (decisão 171) lança um `TRANSF_SAIDA` por item ou, no item sem lote de produto
+       com saldo de lote, um por lote da divisão FEFO, todos com o `documento_item_id` do item e o mesmo custo médio. A
+       entrada no destino **repete cada parte** (o lote e o custo dela, como a perna de entrada da mudança de tipo,
+       decisão 153), e a quantidade recebida do item enche as partes **na ordem do lançamento** (`repartirRecebida`,
+       função pura com teste unitário): o lote que vence primeiro chega primeiro, e o que faltou fica nas últimas
+       partes. O tratamento da diferença refaz a mesma conta a partir das saídas e da recebida gravada (sem coluna
+       nova) e devolve de cada parte o que faltou dela.
+     - **Receber** (`POST :id/receber`, `transferencias.receber`; `travaVersao`): exige o **destino** entre os estoques
+       permitidos para movimentar (403; quem só tem a origem não recebe pela loja, e quem não vê nenhum dos dois tem
+       404). A quantidade conferida de **todos** os itens (o item que falta é 422 com o nome dos produtos: o esquecido
+       não vira "recebido como enviado" sem ninguém conferir), ou "Receber tudo como enviado" (`receberTudo`); a
+       recebida acima da enviada é 422 no item ("faça outra transferência"), e o item de outra transferência também.
+       A recebida é gravada nos itens **antes** de a situação sair do trânsito (o trigger só a libera nele); um
+       `TRANSF_ENTRADA` por parte com quantidade recebida, em `now()` (F2-B4), **ao custo unitário da parte** (o custo
+       da saída: o custo médio do destino é refeito pela média ponderada), com a loja do estoque de destino (nula no
+       CD) e a unidade da saída, passado pela `compensarDefinir` (o "Definir" do destino com a contagem um pouco à
+       frente); a situação passa a `recebida` ou, com algum item a menor, `recebida_divergencia`
+       (`situacaoAposRecebimento`), com quem e quando recebeu. A entrada não deixa saldo negativo: sem regra de
+       negativo. **Idempotente** como o envio: a já recebida (com ou sem divergência) devolve o detalhe sem lançar nem
+       conferir a versão; o rascunho ("ainda não foi enviada") e a cancelada são 422. Auditoria `movimentar` na loja
+       do destino ("Transferência Nº … recebida [com divergência]: itens, movimentos, itens a menor, lotes criados e
+       anulados por "Definir"").
+     - **Lote preso ao estoque de origem** (padrão até a confirmação do dono, D61): o lote com
+       `produtos_lotes.estoque_id` = a origem não vale no destino (MD 3.6.9; `ErroLoteInvalido`). A entrada vai ao lote
+       do **mesmo código** do produto no destino (o vivo antes do excluído; entre os vivos, o preso ao destino e
+       depois o sem estoque, a ordem em que o recebimento acha o lote digitado, e o ativo antes do inativo), com a
+       validade e a fabricação que faltarem completadas e reativado se estava inativo ou excluído (o excluído só sem
+       nenhum vivo do mesmo código: o cadastro deixa excluir o lote sem histórico e digitar o código de novo, e
+       reativá-lo ao lado do vivo daria duas linhas vivas com a mesma chave, 23505); sem ele, um lote novo **preso ao destino** com o código, a validade, a fabricação e o
+       fornecedor do de origem (`loteNoDestino`). O do mesmo código já cadastrado no destino com **outra validade (ou
+       fabricação)** recusa o recebimento no item (422 em `itens.N.loteId`, N = a posição no documento, "corrija o
+       cadastro do lote antes de receber"): juntar duas validades num lote só inventaria um lote errado, e entrar sem
+       lote perderia a validade. O lote sem estoque (o que o recebimento e a NF-e criam) entra como está. Alternativas
+       que o dono pode escolher: entrar sem lote no destino, ou sempre criar o lote no destino sem estoque.
+     - **Tratar a divergência** (`POST :id/tratar-divergencia`, `transferencias.receber`; `travaVersao`, versão
+       conferida quando informada): só na `recebida_divergencia` (422 nas outras: "não tem diferença a tratar"); por
+       item, uma vez cada (o item recebido como enviado, o já tratado e o de outra transferência são 422 em
+       `itens.N.itemId`; o trigger repete a regra). Exige a **origem ou o destino** entre os permitidos para movimentar
+       (padrão até a confirmação do dono, D61: quem recebeu e conferiu ou quem enviou decide; os movimentos são todos
+       na origem, e no "perda" o saldo dela não muda). Para cada item, um **`TRANSF_RETORNO`** na origem por parte com
+       diferença, com `estorno_de_id` = a parte, no lote dela e **ao custo dela** (o estorno de saída do T20, como o
+       cancelamento), em `now()`, passado pela `compensarDefinir`. **"Baixar como perda"** (F2-Q10 = D51, padrão até a
+       confirmação do dono): depois dos retornos, **um** acerto de **Saída** na origem para a chamada
+       (`lancarPerdaTransferencia`: origem `perda_transferencia`, `origem_id` = a transferência, motivo
+       `MOTIVO_PERDA_TRANSFERENCIA` "Perda em transferência", responsável = quem tratou, observação com o Nº), com
+       um item por produto × lote somando as partes (`uq_itens_acerto_estoque_produto`), efetivado na hora pelo
+       `efetivarAcerto`. Cada retorno é baixado por um `ACERTO_SAIDA` que o **estorna** (`estorno_de_id` = o
+       `TRANSF_RETORNO`; `saidaDaPerdaTransferencia` no shared, o único `ACERTO_SAIDA` com estorno): na linha e **no
+       lote** do retorno, sem a divisão FEFO (estorno não se divide), e **ao custo dele**, com a conta inversa da média
+       ponderada (`saidaAoCusto`, a mesma do estorno da mudança de tipo, decisão 153; o motor e o replay do razão
+       decidem por `saidaAoCustoInformado`). Antes, a perda da parte que saiu sem lote ia ao motor como Saída sem lote
+       e era dividida em FEFO pelos lotes com saldo na hora do tratamento (o lote B que entrou pela NF-e depois do envio
+       perdia unidades que nunca saíram, e a sobra sem lote ganhava as que não existem), e saía ao custo médio já
+       misturado com o retorno (com uma compra entre o envio e o tratamento, o custo médio e o valor do CD mudavam num
+       documento só interno). Assim o par retorno + perda tem efeito líquido **zero** no saldo, no saldo de cada lote e
+       no custo médio da origem, e a perda fica registrada **ao custo do envio** (o valor que de fato se perdeu no
+       caminho). Sem saldo que sobre ou com o médio que ficaria ≤ 0, a conta inversa não vale e a saída é a comum, ao
+       custo médio vigente (o retorno também não tinha mexido no médio, T20). A saída da perda não passa pela regra do
+       saldo negativo (é a baixa obrigatória do que acabou de voltar, não uma saída pedida). A lista de compensações do
+       acerto (`compensacoesDoAcerto`) inclui as que um "Definir" lançou contra essas saídas (o `estorno_de_id` delas
+       não é o estorno de um movimento do próprio acerto). O tratamento e a hora vão nos itens e, sem diferença pendente, a
+       transferência passa a `recebida`. Auditoria `movimentar` na loja da origem ("Diferença da transferência Nº …
+       tratada: …, acerto Nº …") e, para o acerto, `criar` e `efetivar` em `acertos_estoque`, como o "Ajustar" do
+       produto (decisão 157).
+     - **O acerto da perda não se estorna** pela tela de acertos (`exigirAcertoEstornavel`, 422): faz parte do
+       documento da transferência, e estorná-lo deixaria o retorno valendo na origem com o item dizendo "Baixar como
+       perda" (para devolver a mercadoria, uma Entrada). Ele aparece na listagem de acertos com a origem "Perda na
+       transferência".
+     - **Um estorno por movimento.** O retorno da diferença é o estorno (parcial) da parte que saiu, então a parte
+       devolvida em parte já não se estorna de novo (`uq_movimentos_estoque_estorno`, migração 0013): a recebida não se
+       cancela (decisão 171), e nem um cancelamento forçado lançaria um segundo retorno da mesma saída.
+     - **Modo de uma etapa** (`estoque.transferencia_recebimento_automatico`, padrão Não, chave **da empresa**:
+       Configurações › Geral; o catálogo não a aceita por loja, MD 3.1.2 e ERP 9.0, então ligada vale para toda
+       transferência da empresa, inclusive CD → loja distante; quem quiser o modo só entre estoques do mesmo endereço
+       pede a chave por loja, que é uma mudança de catálogo): o `POST :id/enviar` chama o
+       `receberTransferencia` logo depois do `enviarTransferencia`, **na mesma transação**, com "Receber tudo como
+       enviado" e quem enviou como quem recebeu (a situação passa pelo trânsito, como o trigger exige). A chave é a
+       autorização (ERP 13.7: "para estoques do mesmo endereço"): quem envia **não precisa** do destino permitido nem
+       de `transferencias.receber`. Um lote que não pode entrar no destino recusa o envio inteiro (nada é lançado).
+       Auditoria do envio e, à parte, a do recebimento ("recebida no envio (recebimento automático)").
+     - **PDV:** nada muda no protocolo nem no `Esquema.g.cs`; os saldos novos das duas pontas descem pelo fluxo
+       `estoque` (o PDV de cada loja recebe só o saldo vendável do estoque da sua loja).
+     Testes: `recebimento.spec.ts` (a repartição: uma parte, a divisão FEFO, 3 casas) e `transferencias.test.ts`
+     (integração: o critério de pronto — CD → Loja 2 com 10 enviados a R$ 5,00 e 8 recebidos, tratado como retorno (o
+     CD volta a 22, a Loja 2 fica com (4 × 6 + 8 × 5) / 12 = R$ 5,3333, o retorno com `estorno_de_id` = a saída) e
+     como perda (o CD fica igual, o acerto de Saída de R$ 10,00 com a origem `perda_transferencia`, que estorna o
+     retorno e não se estorna), quem recebe e quem trata, o recebimento repetido, as auditorias e o saldo novo no pull
+     do PDV da Loja 2 —; a versão velha (409, sem lançar nada) no receber e no tratar, e o tratamento parcial (um item
+     tratado deixa a `recebida_divergencia` com "ainda há diferença a tratar", o mesmo item de novo é 422 "já foi
+     tratada", o outro conclui); a perda da sobra sem lote da divisão FEFO com um lote novo entrando no CD antes do
+     tratamento (o saldo de cada lote do CD não muda) e com uma compra a outro custo no meio (o custo médio do CD volta
+     ao de antes, e a perda fica ao custo do envio); a conferência de todos os itens, a recebida acima da enviada, o
+     item de fora, o rascunho, o item com nada recebido e o "Receber tudo como enviado"; a divisão FEFO repartida em
+     ordem e o retorno parcial que impede o cancelamento, com o segundo estorno da mesma saída recusado pelo banco; o
+     casco vazio (Vasilhame vazio) da Loja 1 para o CD; o lote preso à origem no recebimento em duas etapas (o sem
+     estoque do mesmo código usado, o preso ao destino inativo e sem validade reativado e completado, o vivo escolhido
+     com um excluído do mesmo código ao lado, e o de outra fabricação recusado com a transferência ainda em trânsito e
+     a recebida sem gravar); o modo de uma etapa Loja 1 → Loja 2 com a chave da empresa (recusada por loja), o lote
+     preso à origem (o lote novo preso ao destino, o reaproveitado na segunda vez e o de outra validade recusado sem
+     lançar nada) e o saldo novo nos PDVs das duas lojas; e o `conferirRazaoDoBanco` no fim).
 
 ### Operação – tarefas em segundo plano (API)
 

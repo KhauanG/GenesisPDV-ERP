@@ -8,8 +8,18 @@
  * e quem grava (só a origem); as conferências do rascunho; o cancelamento do rascunho e as situações finais; a NF-e de
  * fora; o seletor de destino (todo estoque ativo, fora dos permitidos); as travas de inativar e excluir o estoque e o
  * tipo de estoque com transferência pendente; o envio disparado junto da venda do PDV na origem, 20 vezes (os dois em
- * série pela trava 7300001), com o saldo novo descendo ao PDV. No fim o razão refaz as projeções idênticas
- * (`conferirRazaoDoBanco`, o núcleo do `db:recalcular-saldos`).
+ * série pela trava 7300001), com o saldo novo descendo ao PDV.
+ *
+ * Receber, tratar a divergência e o modo de uma etapa (F2-B24; ERP 13.7; F2-Q10 = D51 e D61; README da API › decisão
+ * 172): o critério de pronto — CD → Loja 2 com 10 enviados e 8 recebidos, tratado como retorno e como perda (saldos,
+ * movimentos e custo médio nos dois estoques, o acerto da perda que não se estorna e o saldo novo no PDV da Loja 2);
+ * a conferência de todos os itens e as recusas; a versão velha (409) no receber e no tratar e o tratamento parcial (o
+ * item já tratado recusado); a perda da sobra sem lote da divisão FEFO com um lote novo e uma compra no CD antes do
+ * tratamento (o saldo de cada lote e o custo médio do CD não mudam); a divisão FEFO repartida em ordem e o retorno
+ * parcial que impede o cancelamento (um estorno por movimento); o casco vazio da loja para o CD; o lote preso à origem
+ * no recebimento em duas etapas (o sem estoque do mesmo código, o inativo, o excluído ao lado do vivo e a outra
+ * fabricação); o modo de uma etapa (a chave da empresa) com o lote preso à origem e os saldos nos PDVs das duas lojas. No fim o razão refaz as projeções idênticas (`conferirRazaoDoBanco`, o
+ * núcleo do `db:recalcular-saldos`).
  */
 import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -41,6 +51,7 @@ let tokenLoja2: string;
 let tokenSemEstoque: string;
 let un: string;
 let loja1: string;
+let loja2: string;
 let estoqueLoja1: string;
 let estoqueLoja2: string;
 let cd: string;
@@ -128,6 +139,19 @@ const cancelar = (id: string, motivo: string, token = tokenAdmin, extra: Record<
     .post(`/api/transferencias/${id}/cancelar`)
     .set(bearer(token))
     .send({ motivo, ...extra });
+const receber = (id: string, corpo: Record<string, unknown>, token = tokenAdmin) =>
+  amb.http().post(`/api/transferencias/${id}/receber`).set(bearer(token)).send(corpo);
+const tratar = (
+  id: string,
+  itens: Array<{ itemId: string; tratamento: 'retorno_origem' | 'perda' }>,
+  token = tokenAdmin,
+  extra: Record<string, unknown> = {},
+) =>
+  amb
+    .http()
+    .post(`/api/transferencias/${id}/tratar-divergencia`)
+    .set(bearer(token))
+    .send({ itens, ...extra });
 const obter = (id: string, token = tokenAdmin) =>
   amb.http().get(`/api/transferencias/${id}`).set(bearer(token));
 
@@ -339,7 +363,42 @@ function venda(p: Ponto, itens: Array<[string, string]>) {
   };
 }
 
-async function puxar(p: Ponto, fluxo: 'catalogo' | 'estoque', desde: number) {
+/** Caixas criados por loja (o número do caixa é único na loja). */
+const caixasPorLoja = new Map<string, number>();
+
+/** Um PDV ativado na loja, só para o pull (sem sessão de caixa). */
+async function terminalDaLoja(loja: string): Promise<{ token: string; terminal: string }> {
+  // O caixa 1 da Loja 1 é o do `novoPonto`.
+  const numero = (caixasPorLoja.get(loja) ?? (loja === loja1 ? 1 : 0)) + 1;
+  caixasPorLoja.set(loja, numero);
+  const [{ id: caixa }] = (await consultar<{ id: string }>(
+    emp.nomeBanco,
+    'insert into caixas (loja_id, numero, descricao) values ($1, $2, $3) returning id',
+    [loja, numero, `Caixa ${String(numero).padStart(2, '0')}`],
+  )) as [{ id: string }];
+  const g = await amb
+    .http()
+    .post('/api/terminais/ativacoes')
+    .set(bearer())
+    .send({ lojaId: loja, caixaId: caixa, descricao: 'PC da loja', validadeHoras: 24 });
+  expect(g.status, JSON.stringify(g.body)).toBe(201);
+  const r = await amb
+    .http()
+    .post('/sync/ativar')
+    .set(cabecalhos())
+    .send({
+      ...ATIVAR,
+      codigo_empresa: emp.codigo,
+      codigo_ativacao: g.body.codigo,
+      requisicao_ativacao_id: uuidv7(),
+      chave_backup_publica: spki(generateKeyPairSync('x25519').publicKey),
+      chave_publica_terminal: { algoritmo: 'x25519', chave: spki(generateKeyPairSync('x25519').publicKey) },
+    });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return { token: r.body.token, terminal: r.body.terminal_id };
+}
+
+async function puxar(p: { token: string }, fluxo: 'catalogo' | 'estoque', desde: number) {
   const alteracoes: Array<{ tabela: string; linha: Record<string, unknown> }> = [];
   let cursor = desde;
   for (let i = 0; i < 50; i++) {
@@ -360,7 +419,7 @@ beforeAll(async () => {
   amb = await criarAmbiente();
   emp = await amb.criarEmpresa();
   loja1 = await criarLoja(emp.nomeBanco, 1, 'Loja 1 - Centro');
-  const loja2 = await criarLoja(emp.nomeBanco, 2, 'Loja 2 - Bairro');
+  loja2 = await criarLoja(emp.nomeBanco, 2, 'Loja 2 - Bairro');
   const estoqueDa = async (loja: string) =>
     (
       await consultar<{ estoque_id: string }>(emp.nomeBanco, 'select estoque_id from lojas where id = $1', [
@@ -751,19 +810,10 @@ describe('enviar e cancelar a transferência (F2-B23; ERP 13.7)', () => {
     // A cancelada não se exclui (só o rascunho).
     expect((await amb.http().delete(`/api/transferencias/${r.id}`).set(bearer())).status).toBe(422);
 
-    // A recebida (o recebimento é do F2-B24; aqui direto no banco, pelas etapas do trigger) não se cancela.
+    // A recebida não se cancela.
     const s = await rascunho([{ produtoId: p, quantidade: '3' }]);
     expect((await enviar(s.id)).status).toBe(200);
-    await consultar(
-      emp.nomeBanco,
-      'update itens_transferencia set quantidade_recebida = 3 where transferencia_id = $1',
-      [s.id],
-    );
-    await consultar(
-      emp.nomeBanco,
-      "update transferencias_estoque set status = 'recebida', recebida_em = now() where id = $1",
-      [s.id],
-    );
+    expect((await receber(s.id, { receberTudo: true })).status).toBe(200);
     const nao = await cancelar(s.id, 'Tarde demais');
     expect(nao.status).toBe(422);
     expect(nao.body.mensagem).toContain('transferência no sentido inverso');
@@ -1070,6 +1120,724 @@ describe('rascunho, acesso e conferências (F2-B23)', () => {
     expect((await cancelar(r.id, 'Evento adiado')).status).toBe(200);
     expect((await inativarEstoque(destino)).status).toBe(200);
     expect((await saldo(origem, p, tipo)).quantidade).toBe('10.000');
+  });
+});
+
+describe('receber, tratar a divergência e o modo de uma etapa (F2-B24; ERP 13.7; F2-Q10)', () => {
+  type Alteracao = { tabela: string; linha: Record<string, unknown> };
+  const ultimoSaldoNoPdv = (alteracoes: Alteracao[], produtoId: string) =>
+    Number(
+      alteracoes.filter((a) => a.tabela === 'saldos_estoque' && a.linha.produto_id === produtoId).at(-1)
+        ?.linha.quantidade,
+    );
+
+  it('CD → Loja 2 com 10 enviados e 8 recebidos, tratado como retorno e como perda; o PDV da Loja 2 recebe o saldo (critério de pronto)', async () => {
+    const p = await produto('Cerveja puro malte lata 473ml');
+    await entrada(cd, [{ produtoId: p, quantidade: '30', custoUnitario: '5' }]);
+    await entrada(estoqueLoja2, [{ produtoId: p, quantidade: '4', custoUnitario: '6' }]);
+    const pdvLoja2 = await terminalDaLoja(loja2);
+    const inicio = await puxar(pdvLoja2, 'estoque', 0);
+
+    // Retornar à origem.
+    const a = await rascunho([{ produtoId: p, quantidade: '10' }], {}, tokenExpedicao);
+    const ea = await enviar(a.id, {}, tokenExpedicao);
+    expect(ea.status, JSON.stringify(ea.body)).toBe(200);
+    // Quem só tem a origem não recebe pela loja; quem não vê nenhum dos dois não acha a transferência.
+    expect((await receber(a.id, { receberTudo: true }, tokenExpedicao)).status).toBe(403);
+    expect((await receber(a.id, { receberTudo: true }, tokenSemEstoque)).status).toBe(404);
+    const ra = await receber(
+      a.id,
+      { versao: ea.body.versao, itens: [{ itemId: a.itens[0]!.id, quantidadeRecebida: '8' }] },
+      tokenLoja2,
+    );
+    expect(ra.status, JSON.stringify(ra.body)).toBe(200);
+    expect(ra.body).toMatchObject({
+      status: 'recebida_divergencia',
+      recebidaPorNome: 'LOJA2',
+      recebidaEm: expect.any(String),
+    });
+    expect(ra.body.itens[0]).toMatchObject({
+      quantidadeEnviada: '10.000',
+      quantidadeRecebida: '8.000',
+      diferenca: '2.000',
+      tratamentoDivergencia: null,
+    });
+    // O CD fica com 20 a R$ 5,00; a Loja 2 recebe ao custo da saída: (4 × 6 + 8 × 5) / 12 = R$ 5,3333.
+    expect(await saldo(cd, p)).toEqual({ quantidade: '20.000', custo_medio: '5.0000' });
+    expect(await saldo(estoqueLoja2, p)).toEqual({ quantidade: '12.000', custo_medio: '5.3333' });
+    const [saidaA, entradaA] = await movimentos(a.id);
+    expect(entradaA).toMatchObject({
+      tipo_movimento: 'TRANSF_ENTRADA',
+      estoque_id: estoqueLoja2,
+      quantidade: '8.000',
+      custo_unitario: '5.0000',
+      custo_total: '40.00',
+      lote_id: null,
+      estorno_de_id: null,
+      documento_item_id: a.itens[0]!.id,
+      loja_id: loja2,
+    });
+    // Recebida (com divergência) não se cancela; receber de novo não lança outra entrada.
+    expect((await cancelar(a.id, 'Tarde demais', tokenExpedicao)).status).toBe(422);
+    const outra = await receber(a.id, { receberTudo: true }, tokenLoja2);
+    expect(outra.status).toBe(200);
+    expect(outra.body.itens[0].quantidadeRecebida).toBe('8.000');
+    expect(await movimentos(a.id)).toHaveLength(2);
+
+    const ta = await tratar(a.id, [{ itemId: a.itens[0]!.id, tratamento: 'retorno_origem' }], tokenLoja2, {
+      versao: ra.body.versao,
+    });
+    expect(ta.status, JSON.stringify(ta.body)).toBe(200);
+    expect(ta.body.status).toBe('recebida');
+    expect(ta.body.itens[0]).toMatchObject({
+      tratamentoDivergencia: 'retorno_origem',
+      divergenciaTratadaEm: expect.any(String),
+    });
+    // A diferença volta ao CD ao custo da saída (T20), como estorno da saída; a Loja 2 fica com o que recebeu.
+    expect(await saldo(cd, p)).toEqual({ quantidade: '22.000', custo_medio: '5.0000' });
+    expect((await saldo(estoqueLoja2, p)).quantidade).toBe('12.000');
+    expect((await movimentos(a.id)).at(-1)).toMatchObject({
+      tipo_movimento: 'TRANSF_RETORNO',
+      estoque_id: cd,
+      quantidade: '2.000',
+      custo_unitario: '5.0000',
+      estorno_de_id: saidaA!.id,
+      loja_id: null,
+    });
+    // Já `recebida`: não há o que tratar (a recusa do item já tratado, com outra diferença pendente, é conferida no
+    // teste do tratamento parcial).
+    const deNovo = await tratar(a.id, [{ itemId: a.itens[0]!.id, tratamento: 'perda' }], tokenLoja2);
+    expect(deNovo.status).toBe(422);
+    expect(deNovo.body.mensagem).toContain('não tem diferença a tratar');
+
+    // Baixar como perda (F2-Q10 = D51): o retorno da diferença mais o acerto de Saída no CD.
+    const b = await rascunho([{ produtoId: p, quantidade: '10' }], {}, tokenExpedicao);
+    expect((await enviar(b.id, {}, tokenExpedicao)).status).toBe(200);
+    const rb = await receber(
+      b.id,
+      { itens: [{ itemId: b.itens[0]!.id, quantidadeRecebida: '8' }] },
+      tokenLoja2,
+    );
+    expect(rb.status, JSON.stringify(rb.body)).toBe(200);
+    expect((await saldo(cd, p)).quantidade).toBe('12.000');
+    // Quem tem a origem também trata a diferença (o expedidor do CD).
+    const tb = await tratar(b.id, [{ itemId: b.itens[0]!.id, tratamento: 'perda' }], tokenExpedicao);
+    expect(tb.status, JSON.stringify(tb.body)).toBe(200);
+    expect(tb.body.status).toBe('recebida');
+    expect(tb.body.itens[0].tratamentoDivergencia).toBe('perda');
+    // O saldo do CD não muda (o retorno e a perda se anulam) e a perda fica registrada a custo.
+    expect(await saldo(cd, p)).toEqual({ quantidade: '12.000', custo_medio: '5.0000' });
+    expect(await saldo(estoqueLoja2, p)).toEqual({ quantidade: '20.000', custo_medio: '5.2000' });
+    expect((await movimentos(b.id)).map((m) => [m.tipo_movimento, m.estoque_id, m.quantidade])).toEqual([
+      ['TRANSF_SAIDA', cd, '-10.000'],
+      ['TRANSF_ENTRADA', estoqueLoja2, '8.000'],
+      ['TRANSF_RETORNO', cd, '2.000'],
+    ]);
+    const [perda] = await consultar<{
+      id: string;
+      codigo: number;
+      tipo_ajuste: string;
+      status: string;
+      motivo: string;
+      estoque_id: string;
+      total_custo: string;
+    }>(
+      emp.nomeBanco,
+      `select id, codigo, tipo_ajuste, status, motivo, estoque_id, total_custo::text from acertos_estoque
+        where origem = 'perda_transferencia' and origem_id = $1`,
+      [b.id],
+    );
+    expect(perda).toMatchObject({
+      tipo_ajuste: 'saida',
+      status: 'efetivado',
+      motivo: 'Perda em transferência',
+      estoque_id: cd,
+      total_custo: '10.00',
+    });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select tipo_movimento, quantidade::text, custo_unitario::text, custo_total::text from movimentos_estoque
+          where documento_tipo = 'acerto' and documento_id = $1`,
+        [perda!.id],
+      ),
+    ).toEqual([
+      {
+        tipo_movimento: 'ACERTO_SAIDA',
+        quantidade: '-2.000',
+        custo_unitario: '5.0000',
+        custo_total: '10.00',
+      },
+    ]);
+    // O acerto da perda faz parte da transferência: não se estorna pela tela de acertos.
+    const ac = (await amb.http().get(`/api/acertos/${perda!.id}`).set(bearer())).body;
+    expect(ac.origem).toBe('perda_transferencia');
+    const est = await amb
+      .http()
+      .post(`/api/acertos/${perda!.id}/estornar`)
+      .set(bearer())
+      .send({ versao: ac.versao, motivo: 'Teste' });
+    expect(est.status, JSON.stringify(est.body)).toBe(422);
+    expect(est.body.mensagem).toContain('perda de uma transferência');
+    const auditoria = await consultar<{ descricao: string }>(
+      emp.nomeBanco,
+      `select descricao from auditoria where entidade = 'transferencias_estoque' and registro_id = $1 and acao = 'movimentar'
+        order by criado_em`,
+      [b.id],
+    );
+    expect(auditoria.map((x) => x.descricao)).toEqual([
+      `Transferência Nº ${b.codigo} enviada: 1 item(ns), 1 movimento(s)`,
+      `Transferência Nº ${b.codigo} recebida com divergência: 1 item(ns), 1 movimento(s), 1 item(ns) recebido(s) a menor`,
+      `Diferença da transferência Nº ${b.codigo} tratada: 1 item(ns) baixado(s) como perda (acerto Nº ${perda!.codigo}), 1 retorno(s); diferenças tratadas`,
+    ]);
+
+    // O fluxo `estoque` desce o saldo novo ao PDV da Loja 2 (o CD não tem PDV).
+    const desceu = await puxar(pdvLoja2, 'estoque', inicio.cursor);
+    expect(ultimoSaldoNoPdv(desceu.alteracoes, p)).toBe(20);
+  });
+
+  it('recebe todos os itens conferidos, recusa a recebida acima da enviada, o item de fora e o rascunho', async () => {
+    const p = await produto('Refrigerante cola 2L');
+    const q = await produto('Refrigerante guaraná 2L');
+    await entrada(cd, [
+      { produtoId: p, quantidade: '20', custoUnitario: '6' },
+      { produtoId: q, quantidade: '20', custoUnitario: '5' },
+    ]);
+    const r = await rascunho([
+      { produtoId: p, quantidade: '5' },
+      { produtoId: q, quantidade: '3' },
+    ]);
+    const cedo = await receber(r.id, { receberTudo: true }, tokenLoja2);
+    expect(cedo.status).toBe(422);
+    expect(cedo.body.mensagem).toContain('ainda não foi enviada');
+    expect((await enviar(r.id)).status).toBe(200);
+    const [ip, iq] = [r.itens[0]!, r.itens[1]!];
+    const falta = await receber(r.id, { itens: [{ itemId: ip.id, quantidadeRecebida: '5' }] }, tokenLoja2);
+    expect(falta.status).toBe(422);
+    expect(falta.body.mensagem).toContain('Falta(m): Refrigerante guaraná 2L');
+    const acima = await receber(
+      r.id,
+      {
+        itens: [
+          { itemId: ip.id, quantidadeRecebida: '5.001' },
+          { itemId: iq.id, quantidadeRecebida: '3' },
+        ],
+      },
+      tokenLoja2,
+    );
+    expect(acima.status).toBe(422);
+    expect(acima.body.campos['itens.0.quantidadeRecebida'][0]).toContain('Acima da enviada (5 UN)');
+    const deFora = await receber(
+      r.id,
+      { itens: [{ itemId: uuidv7(), quantidadeRecebida: '1' }] },
+      tokenLoja2,
+    );
+    expect(deFora.status).toBe(422);
+    expect(deFora.body.campos['itens.0.itemId'][0]).toBe('O item não é desta transferência');
+    expect(await movimentos(r.id)).toHaveLength(2);
+    expect((await obter(r.id)).body.status).toBe('em_transito');
+
+    // Nada chegou de um item e o outro veio inteiro: só o que chegou entra, e só o item a menor tem o que tratar.
+    const ok = await receber(
+      r.id,
+      {
+        itens: [
+          { itemId: iq.id, quantidadeRecebida: '3' },
+          { itemId: ip.id, quantidadeRecebida: '0' },
+        ],
+      },
+      tokenLoja2,
+    );
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.status).toBe('recebida_divergencia');
+    expect((await movimentos(r.id)).filter((m) => m.tipo_movimento === 'TRANSF_ENTRADA')).toEqual([
+      expect.objectContaining({ documento_item_id: iq.id, quantidade: '3.000', custo_unitario: '5.0000' }),
+    ]);
+    const semDiferenca = await tratar(r.id, [{ itemId: iq.id, tratamento: 'retorno_origem' }], tokenLoja2);
+    expect(semDiferenca.status).toBe(422);
+    expect(semDiferenca.body.campos['itens.0.itemId'][0]).toContain('recebido como enviado');
+    // Quem não tem nem a origem nem o destino não trata (aqui o 404: nem vê a transferência).
+    expect(
+      (await tratar(r.id, [{ itemId: ip.id, tratamento: 'retorno_origem' }], tokenSemEstoque)).status,
+    ).toBe(404);
+    expect((await tratar(r.id, [{ itemId: ip.id, tratamento: 'retorno_origem' }], tokenLoja2)).status).toBe(
+      200,
+    );
+    expect(await saldo(cd, p)).toEqual({ quantidade: '20.000', custo_medio: '6.0000' });
+    expect((await saldo(estoqueLoja2, p)).quantidade).toBe('0.000');
+
+    // "Receber tudo como enviado".
+    const s = await rascunho([{ produtoId: q, quantidade: '2' }]);
+    expect((await enviar(s.id)).status).toBe(200);
+    const tudo = await receber(s.id, { receberTudo: true }, tokenLoja2);
+    expect(tudo.status, JSON.stringify(tudo.body)).toBe(200);
+    expect(tudo.body).toMatchObject({ status: 'recebida' });
+    expect(tudo.body.itens[0]).toMatchObject({ quantidadeRecebida: '2.000', diferenca: '0.000' });
+    expect((await saldo(estoqueLoja2, q)).quantidade).toBe('5.000');
+    const semNada = await tratar(s.id, [{ itemId: tudo.body.itens[0].id, tratamento: 'perda' }], tokenLoja2);
+    expect(semNada.status).toBe(422);
+  });
+
+  it('FEFO: a recebida enche as partes da saída em ordem; o retorno parcial impede o cancelamento (um estorno por movimento)', async () => {
+    const p = await produto('Iogurte natural 170g');
+    const a = await lote(p, 'IN-A', '2026-12-10', null);
+    const b = await lote(p, 'IN-B', '2027-02-10', null);
+    await entrada(cd, [
+      { produtoId: p, loteId: a, quantidade: '6', custoUnitario: '2' },
+      { produtoId: p, loteId: b, quantidade: '6', custoUnitario: '2' },
+    ]);
+    const r = await rascunho([{ produtoId: p, quantidade: '10' }]);
+    expect((await enviar(r.id)).status).toBe(200);
+    const saidas = await movimentos(r.id);
+    expect(saidas.map((m) => [m.lote_id, m.quantidade])).toEqual([
+      [a, '-6.000'],
+      [b, '-4.000'],
+    ]);
+    // 7 chegaram: o lote que vence primeiro chega inteiro e o que faltou fica no último.
+    expect(
+      (await receber(r.id, { itens: [{ itemId: r.itens[0]!.id, quantidadeRecebida: '7' }] }, tokenLoja2))
+        .status,
+    ).toBe(200);
+    expect(await saldosLote(estoqueLoja2, p)).toEqual({ [a]: '6.000', [b]: '1.000' });
+    expect((await tratar(r.id, [{ itemId: r.itens[0]!.id, tratamento: 'retorno_origem' }])).status).toBe(200);
+    expect(await saldosLote(cd, p)).toEqual({ [a]: '0.000', [b]: '5.000' });
+    const retorno = (await movimentos(r.id)).filter((m) => m.tipo_movimento === 'TRANSF_RETORNO');
+    expect(retorno).toEqual([
+      expect.objectContaining({ lote_id: b, quantidade: '3.000', estorno_de_id: saidas[1]!.id }),
+    ]);
+    // A parte devolvida em parte já tem o seu estorno: o cancelamento é recusado, e o banco recusa um segundo
+    // estorno da mesma saída (`uq_movimentos_estoque_estorno`).
+    const c = await cancelar(r.id, 'Quero desfazer');
+    expect(c.status).toBe(422);
+    expect(c.body.mensagem).toContain('transferência no sentido inverso');
+    await expect(
+      consultar(
+        emp.nomeBanco,
+        `insert into movimentos_estoque
+         select * from jsonb_populate_record(null::movimentos_estoque,
+           (select to_jsonb(m) || jsonb_build_object('id', fn_uuid_v7(), 'seq_lancamento', nextval('seq_movimentos_estoque'),
+                                                     'documento_item_id', null)
+              from movimentos_estoque m where m.id = $1))`,
+        [retorno[0]!.id],
+      ),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'uq_movimentos_estoque_estorno' });
+  });
+
+  it('a versão velha é 409 no receber e no tratar; o tratamento parcial deixa a divergência, e o item já tratado é recusado', async () => {
+    const p = await produto('Suco de uva integral 1L');
+    const q = await produto('Suco de laranja integral 1L');
+    await entrada(cd, [
+      { produtoId: p, quantidade: '10', custoUnitario: '7' },
+      { produtoId: q, quantidade: '10', custoUnitario: '6' },
+    ]);
+    const r = await rascunho([
+      { produtoId: p, quantidade: '5' },
+      { produtoId: q, quantidade: '5' },
+    ]);
+    const e = await enviar(r.id, { versao: r.versao });
+    expect(e.status, JSON.stringify(e.body)).toBe(200);
+    const [ip, iq] = [r.itens[0]!, r.itens[1]!];
+    const conferencia = {
+      itens: [
+        { itemId: ip.id, quantidadeRecebida: '4' },
+        { itemId: iq.id, quantidadeRecebida: '3' },
+      ],
+    };
+    // A versão de antes do envio: 409, nada recebido.
+    const velhaReceber = await receber(r.id, { versao: r.versao, ...conferencia }, tokenLoja2);
+    expect(velhaReceber.status, JSON.stringify(velhaReceber.body)).toBe(409);
+    expect(await movimentos(r.id)).toHaveLength(2);
+    expect((await obter(r.id)).body).toMatchObject({
+      status: 'em_transito',
+      itens: [{ quantidadeRecebida: null }, { quantidadeRecebida: null }],
+    });
+    const rec = await receber(r.id, { versao: e.body.versao, ...conferencia }, tokenLoja2);
+    expect(rec.status, JSON.stringify(rec.body)).toBe(200);
+    expect(rec.body.status).toBe('recebida_divergencia');
+    // A versão de antes do recebimento: 409, nada tratado.
+    const velhaTratar = await tratar(r.id, [{ itemId: ip.id, tratamento: 'retorno_origem' }], tokenLoja2, {
+      versao: e.body.versao,
+    });
+    expect(velhaTratar.status, JSON.stringify(velhaTratar.body)).toBe(409);
+    expect(await movimentos(r.id)).toHaveLength(4);
+    expect(
+      (await obter(r.id)).body.itens.map(
+        (i: { tratamentoDivergencia: string | null }) => i.tratamentoDivergencia,
+      ),
+    ).toEqual([null, null]);
+
+    // Um item tratado: a outra diferença continua pendente, e a transferência fica em `recebida_divergencia`.
+    const um = await tratar(r.id, [{ itemId: ip.id, tratamento: 'retorno_origem' }], tokenLoja2, {
+      versao: rec.body.versao,
+    });
+    expect(um.status, JSON.stringify(um.body)).toBe(200);
+    expect(um.body.status).toBe('recebida_divergencia');
+    expect(
+      um.body.itens.map((i: { tratamentoDivergencia: string | null }) => i.tratamentoDivergencia),
+    ).toEqual(['retorno_origem', null]);
+    expect(await saldo(cd, p)).toEqual({ quantidade: '6.000', custo_medio: '7.0000' });
+    // O mesmo item de novo: "já foi tratada", sem lançar nada.
+    const repetido = await tratar(r.id, [{ itemId: ip.id, tratamento: 'perda' }], tokenLoja2);
+    expect(repetido.status, JSON.stringify(repetido.body)).toBe(422);
+    expect(repetido.body.campos['itens.0.itemId'][0]).toBe(
+      'A diferença de Suco de uva integral 1L já foi tratada (retornada à origem)',
+    );
+    expect(await movimentos(r.id)).toHaveLength(5);
+    // O outro item conclui.
+    const outro = await tratar(r.id, [{ itemId: iq.id, tratamento: 'perda' }], tokenLoja2);
+    expect(outro.status, JSON.stringify(outro.body)).toBe(200);
+    expect(outro.body.status).toBe('recebida');
+    expect(await saldo(cd, q)).toEqual({ quantidade: '5.000', custo_medio: '6.0000' });
+    const auditoria = await consultar<{ descricao: string }>(
+      emp.nomeBanco,
+      `select descricao from auditoria where entidade = 'transferencias_estoque' and registro_id = $1 and acao = 'movimentar'
+        and descricao like 'Diferença%' order by criado_em`,
+      [r.id],
+    );
+    expect(auditoria.map((x) => x.descricao)).toEqual([
+      `Diferença da transferência Nº ${r.codigo} tratada: 1 item(ns) retornado(s) à origem, 1 retorno(s); ainda há diferença a tratar`,
+      expect.stringMatching(
+        /1 item\(ns\) baixado\(s\) como perda \(acerto Nº \d+\), 1 retorno\(s\); diferenças tratadas$/,
+      ),
+    ]);
+  });
+
+  it('perda da sobra sem lote da divisão FEFO, com um lote novo e uma compra a outro custo no CD antes do tratamento: o saldo de cada lote e o custo médio do CD não mudam', async () => {
+    const p = await produto('Leite fermentado 80g');
+    const a = await lote(p, 'LF-A', '2026-12-05', null);
+    await entrada(cd, [
+      { produtoId: p, loteId: a, quantidade: '6', custoUnitario: '5' },
+      { produtoId: p, quantidade: '10', custoUnitario: '5' },
+    ]);
+    const r = await rascunho([{ produtoId: p, quantidade: '10' }]);
+    expect((await enviar(r.id)).status).toBe(200);
+    const saidas = await movimentos(r.id);
+    // A FEFO: o lote A inteiro e a sobra sem lote.
+    expect(saidas.map((m) => [m.lote_id, m.quantidade])).toEqual([
+      [a, '-6.000'],
+      [null, '-4.000'],
+    ]);
+    // 8 chegaram: a diferença de 2 fica na parte sem lote (a última).
+    expect(
+      (await receber(r.id, { itens: [{ itemId: r.itens[0]!.id, quantidadeRecebida: '8' }] }, tokenLoja2))
+        .status,
+    ).toBe(200);
+    // Antes do tratamento entra no CD o lote B, a R$ 6,00: (6 × 5 + 24 × 6) / 30 = R$ 5,80.
+    const b = await lote(p, 'LF-B', '2027-01-05', null);
+    await entrada(cd, [{ produtoId: p, loteId: b, quantidade: '24', custoUnitario: '6' }]);
+    expect(await saldo(cd, p)).toEqual({ quantidade: '30.000', custo_medio: '5.8000' });
+    const lotesAntes = await saldosLote(cd, p);
+    expect(lotesAntes).toEqual({ [a]: '0.000', [b]: '24.000' });
+
+    const t = await tratar(r.id, [{ itemId: r.itens[0]!.id, tratamento: 'perda' }]);
+    expect(t.status, JSON.stringify(t.body)).toBe(200);
+    // O retorno entra na parte sem lote, a perda sai dela (não do lote B), e o custo médio volta ao de antes: o retorno
+    // a R$ 5,00 leva o CD a 32 a R$ 5,75, e a perda, ao custo do retorno, a 30 a R$ 5,80.
+    expect(await saldo(cd, p)).toEqual({ quantidade: '30.000', custo_medio: '5.8000' });
+    expect(await saldosLote(cd, p)).toEqual(lotesAntes);
+    const retorno = (await movimentos(r.id)).filter((m) => m.tipo_movimento === 'TRANSF_RETORNO');
+    expect(retorno).toEqual([
+      expect.objectContaining({ lote_id: null, quantidade: '2.000', estorno_de_id: saidas[1]!.id }),
+    ]);
+    const [perda] = await consultar<{ id: string; total_custo: string }>(
+      emp.nomeBanco,
+      `select id, total_custo::text from acertos_estoque where origem = 'perda_transferencia' and origem_id = $1`,
+      [r.id],
+    );
+    // A perda fica ao custo do envio (o valor que saiu em trânsito), estornando o retorno.
+    expect(perda!.total_custo).toBe('10.00');
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select tipo_movimento, lote_id, quantidade::text, custo_unitario::text, custo_total::text, estorno_de_id,
+                custo_medio_posterior::text
+           from movimentos_estoque where documento_tipo = 'acerto' and documento_id = $1`,
+        [perda!.id],
+      ),
+    ).toEqual([
+      {
+        tipo_movimento: 'ACERTO_SAIDA',
+        lote_id: null,
+        quantidade: '-2.000',
+        custo_unitario: '5.0000',
+        custo_total: '10.00',
+        estorno_de_id: retorno[0]!.id,
+        custo_medio_posterior: '5.8000',
+      },
+    ]);
+    const [item] = await consultar<{ custo_unitario: string; total_custo: string; diferenca: string }>(
+      emp.nomeBanco,
+      `select custo_unitario::text, total_custo::text, diferenca::text from itens_acerto_estoque where acerto_id = $1`,
+      [perda!.id],
+    );
+    expect(item).toEqual({ custo_unitario: '5.0000', total_custo: '10.00', diferenca: '-2.000' });
+  });
+
+  it('lote preso à origem no recebimento em duas etapas: o sem estoque do mesmo código, o inativo completado, o vivo ao lado do excluído; outra fabricação recusa e a transferência continua em trânsito', async () => {
+    const p = await produto('Queijo minas frescal 500g');
+    const novoLote = async (
+      codigo: string,
+      estoque: string | null,
+      extra: {
+        validade?: string | null;
+        fabricacao?: string | null;
+        ativo?: boolean;
+        excluido?: boolean;
+      } = {},
+    ) => {
+      const [{ id }] = (await consultar<{ id: string }>(
+        emp.nomeBanco,
+        `insert into produtos_lotes (produto_id, estoque_id, lote, validade, fabricacao, ativo, excluido_em)
+         values ($1, $2, $3, $4, $5, $6, case when $7 then now() end) returning id`,
+        [
+          p,
+          estoque,
+          codigo,
+          extra.validade ?? null,
+          extra.fabricacao ?? null,
+          extra.ativo ?? true,
+          extra.excluido ?? false,
+        ],
+      )) as [{ id: string }];
+      return id;
+    };
+    // QM-01: o do destino é o sem estoque do mesmo código.
+    const presoA = await novoLote('QM-01', estoqueLoja1, { validade: '2026-12-01' });
+    const soltoA = await novoLote('QM-01', null, { validade: '2026-12-01' });
+    // QM-02: o do destino está inativo e sem validade nem fabricação.
+    const presoB = await novoLote('QM-02', estoqueLoja1, {
+      validade: '2027-01-01',
+      fabricacao: '2026-10-01',
+    });
+    const inativoB = await novoLote('QM-02', estoqueLoja2, { ativo: false });
+    // QM-03: no destino, um excluído (com outra validade) e o vivo recadastrado com o mesmo código.
+    const presoC = await novoLote('QM-03', estoqueLoja1, { validade: '2027-02-01' });
+    const excluidoC = await novoLote('QM-03', estoqueLoja2, { validade: '2027-03-01', excluido: true });
+    const vivoC = await novoLote('QM-03', estoqueLoja2, { validade: '2027-02-01' });
+    // QM-04: no destino, com outra fabricação.
+    const presoD = await novoLote('QM-04', estoqueLoja1, {
+      validade: '2027-04-01',
+      fabricacao: '2026-10-01',
+    });
+    await novoLote('QM-04', estoqueLoja2, { validade: '2027-04-01', fabricacao: '2026-10-02' });
+    await entrada(
+      estoqueLoja1,
+      [presoA, presoB, presoC, presoD].map((loteId) => ({
+        produtoId: p,
+        loteId,
+        quantidade: '2',
+        custoUnitario: '9',
+      })),
+    );
+    const lotesNoDestino = () =>
+      consultar<{
+        id: string;
+        ativo: boolean;
+        excluido: boolean;
+        validade: string | null;
+        fabricacao: string | null;
+      }>(
+        emp.nomeBanco,
+        `select id, ativo, excluido_em is not null as excluido, validade::text, fabricacao::text from produtos_lotes
+          where produto_id = $1 and estoque_id = $2 order by id`,
+        [p, estoqueLoja2],
+      );
+    const antes = await lotesNoDestino();
+
+    const r = await rascunho(
+      [presoA, presoB, presoC].map((loteId) => ({ produtoId: p, loteId, quantidade: '2' })),
+      { estoqueOrigemId: estoqueLoja1 },
+      tokenExpedicao,
+    );
+    expect((await enviar(r.id, {}, tokenExpedicao)).status).toBe(200);
+    const rec = await receber(r.id, { receberTudo: true }, tokenLoja2);
+    expect(rec.status, JSON.stringify(rec.body)).toBe(200);
+    expect(rec.body.status).toBe('recebida');
+    // Nenhum lote criado; cada um entrou no do mesmo código do destino.
+    expect(await saldosLote(estoqueLoja2, p)).toEqual({
+      [soltoA]: '2.000',
+      [inativoB]: '2.000',
+      [vivoC]: '2.000',
+    });
+    const depois = await lotesNoDestino();
+    expect(depois.map((l) => l.id)).toEqual(antes.map((l) => l.id));
+    // O inativo foi reativado com a validade e a fabricação da origem; o excluído continua excluído.
+    expect(depois.find((l) => l.id === inativoB)).toMatchObject({
+      ativo: true,
+      excluido: false,
+      validade: '2027-01-01',
+      fabricacao: '2026-10-01',
+    });
+    expect(depois.find((l) => l.id === excluidoC)).toMatchObject({ excluido: true, validade: '2027-03-01' });
+
+    // Outra fabricação no destino: o recebimento é recusado no item, e a transferência continua em trânsito.
+    const r2 = await rascunho(
+      [{ produtoId: p, loteId: presoD, quantidade: '2' }],
+      { estoqueOrigemId: estoqueLoja1 },
+      tokenExpedicao,
+    );
+    expect((await enviar(r2.id, {}, tokenExpedicao)).status).toBe(200);
+    const recusado = await receber(r2.id, { receberTudo: true }, tokenLoja2);
+    expect(recusado.status, JSON.stringify(recusado.body)).toBe(422);
+    expect(recusado.body.campos['itens.0.loteId'][0]).toContain(
+      'já está cadastrado no destino com a fabricação 02/10/2026 (na origem, 01/10/2026)',
+    );
+    expect((await obter(r2.id)).body).toMatchObject({
+      status: 'em_transito',
+      itens: [{ quantidadeRecebida: null }],
+    });
+    expect(await movimentos(r2.id)).toHaveLength(1);
+    expect((await cancelar(r2.id, 'Cadastro do lote a corrigir', tokenExpedicao)).status).toBe(200);
+  });
+
+  it('casco vazio (Vasilhame vazio) volta da loja para o CD', async () => {
+    const casco = await produto('Casco 600ml retornável', {
+      tipo: 'vasilhame',
+      precoVenda: '1.5',
+      precoCusto: '1',
+    });
+    await entrada(estoqueLoja1, [{ produtoId: casco, quantidade: '48', custoUnitario: '1' }], {
+      tipoEstoqueId: tipoVasilhame,
+    });
+    const r = await rascunho(
+      [{ produtoId: casco, quantidade: '48' }],
+      {
+        estoqueOrigemId: estoqueLoja1,
+        estoqueDestinoId: cd,
+        tipoEstoqueId: tipoVasilhame,
+        motivo: 'Cascos vazios para o CD',
+      },
+      tokenExpedicao,
+    );
+    expect(r).toMatchObject({ tipoEstoqueId: tipoVasilhame });
+    expect((await enviar(r.id, {}, tokenExpedicao)).status).toBe(200);
+    // O expedidor tem o CD entre os permitidos: recebe os cascos.
+    const rec = await receber(r.id, { receberTudo: true }, tokenExpedicao);
+    expect(rec.status, JSON.stringify(rec.body)).toBe(200);
+    expect(rec.body.status).toBe('recebida');
+    expect((await saldo(estoqueLoja1, casco, tipoVasilhame)).quantidade).toBe('0.000');
+    expect(await saldo(cd, casco, tipoVasilhame)).toEqual({ quantidade: '48.000', custo_medio: '1.0000' });
+    // Nada no Disponível: o tipo é o mesmo nas duas pontas.
+    expect((await saldo(cd, casco)).quantidade).toBe('0.000');
+    expect(
+      (await movimentos(r.id)).map((m) => [m.tipo_movimento, m.estoque_id, m.quantidade, m.loja_id]),
+    ).toEqual([
+      ['TRANSF_SAIDA', estoqueLoja1, '-48.000', loja1],
+      ['TRANSF_ENTRADA', cd, '48.000', null],
+    ]);
+  });
+
+  it('modo de uma etapa: o envio já recebe tudo; o lote preso à origem entra no lote do mesmo código do destino; o saldo desce ao PDV das duas lojas', async () => {
+    const p = await produto('Requeijão cremoso 200g');
+    const preso = await lote(p, 'RQ-01', '2026-12-20', estoqueLoja1);
+    const solto = await lote(p, 'RQ-02', '2027-01-20', null);
+    await entrada(estoqueLoja1, [
+      { produtoId: p, loteId: preso, quantidade: '6', custoUnitario: '3' },
+      { produtoId: p, loteId: solto, quantidade: '10', custoUnitario: '3' },
+    ]);
+    const pdvLoja1 = await terminalDaLoja(loja1);
+    const pdvLoja2 = await terminalDaLoja(loja2);
+    const c1 = await puxar(pdvLoja1, 'estoque', 0);
+    const c2 = await puxar(pdvLoja2, 'estoque', 0);
+    // A chave é da empresa (Configurações › Geral): por loja é recusada.
+    const porLoja = await amb
+      .http()
+      .put('/api/configuracoes')
+      .set(bearer())
+      .send({ lojaId: loja1, valores: { 'estoque.transferencia_recebimento_automatico': true } });
+    expect(porLoja.status).toBe(422);
+    expect(porLoja.body.campos['estoque.transferencia_recebimento_automatico'][0]).toBe(
+      'Esta configuração não aceita valor por loja',
+    );
+    const ligada = await amb
+      .http()
+      .put('/api/configuracoes')
+      .set(bearer())
+      .send({ valores: { 'estoque.transferencia_recebimento_automatico': true } });
+    expect(ligada.status, JSON.stringify(ligada.body)).toBe(200);
+    try {
+      const r = await rascunho(
+        [{ produtoId: p, quantidade: '8' }],
+        { estoqueOrigemId: estoqueLoja1 },
+        tokenExpedicao,
+      );
+      // O expedidor não tem a Loja 2: no modo de uma etapa não precisa (a chave é a autorização).
+      const e = await enviar(r.id, { versao: r.versao }, tokenExpedicao);
+      expect(e.status, JSON.stringify(e.body)).toBe(200);
+      expect(e.body).toMatchObject({
+        status: 'recebida',
+        enviadaPorNome: 'EXPEDICAO',
+        recebidaPorNome: 'EXPEDICAO',
+      });
+      expect(e.body.itens[0]).toMatchObject({ quantidadeRecebida: '8.000', diferenca: '0.000' });
+      expect((await saldo(estoqueLoja1, p)).quantidade).toBe('8.000');
+      expect(await saldo(estoqueLoja2, p)).toEqual({ quantidade: '8.000', custo_medio: '3.0000' });
+      // A FEFO tirou 6 do RQ-01 (preso à Loja 1) e 2 do RQ-02 (sem estoque): o RQ-01 entra num lote novo preso à Loja 2,
+      // com o mesmo código e a mesma validade; o RQ-02 entra como está.
+      const novos = await consultar<{ id: string; lote: string; validade: string }>(
+        emp.nomeBanco,
+        `select id, lote, validade::text from produtos_lotes where produto_id = $1 and estoque_id = $2`,
+        [p, estoqueLoja2],
+      );
+      expect(novos).toEqual([{ id: expect.any(String), lote: 'RQ-01', validade: '2026-12-20' }]);
+      const novo = novos[0]!.id;
+      expect(await saldosLote(estoqueLoja2, p)).toEqual({ [novo]: '6.000', [solto]: '2.000' });
+      expect((await movimentos(r.id)).map((m) => [m.tipo_movimento, m.lote_id, m.quantidade])).toEqual([
+        ['TRANSF_SAIDA', preso, '-6.000'],
+        ['TRANSF_SAIDA', solto, '-2.000'],
+        ['TRANSF_ENTRADA', novo, '6.000'],
+        ['TRANSF_ENTRADA', solto, '2.000'],
+      ]);
+      const aud = await consultar<{ descricao: string }>(
+        emp.nomeBanco,
+        `select descricao from auditoria where entidade = 'transferencias_estoque' and registro_id = $1 and acao = 'movimentar'
+          order by criado_em`,
+        [r.id],
+      );
+      // As duas na mesma transação (o mesmo `criado_em`): sem depender da ordem.
+      expect(aud.map((x) => x.descricao).sort()).toEqual([
+        `Transferência Nº ${r.codigo} enviada: 1 item(ns), 2 movimento(s)`,
+        `Transferência Nº ${r.codigo} recebida no envio (recebimento automático): 1 item(ns), 2 movimento(s), 1 lote(s) criado(s) no destino`,
+      ]);
+
+      // O lote do mesmo código já está no destino: é reaproveitado.
+      await entrada(estoqueLoja1, [{ produtoId: p, loteId: preso, quantidade: '3', custoUnitario: '3' }]);
+      const r2 = await rascunho(
+        [{ produtoId: p, loteId: preso, quantidade: '3' }],
+        { estoqueOrigemId: estoqueLoja1 },
+        tokenExpedicao,
+      );
+      expect((await enviar(r2.id, {}, tokenExpedicao)).status).toBe(200);
+      expect(await saldosLote(estoqueLoja2, p)).toEqual({ [novo]: '9.000', [solto]: '2.000' });
+
+      // O mesmo código com outra validade no destino: o recebimento (aqui, o envio inteiro) é recusado no item.
+      const conflito = await lote(p, 'RQ-03', '2027-03-01', estoqueLoja1);
+      await lote(p, 'RQ-03', '2027-04-01', estoqueLoja2);
+      await entrada(estoqueLoja1, [{ produtoId: p, loteId: conflito, quantidade: '2', custoUnitario: '3' }]);
+      const r3 = await rascunho(
+        [{ produtoId: p, loteId: conflito, quantidade: '2' }],
+        { estoqueOrigemId: estoqueLoja1 },
+        tokenExpedicao,
+      );
+      const e3 = await enviar(r3.id, {}, tokenExpedicao);
+      expect(e3.status, JSON.stringify(e3.body)).toBe(422);
+      expect(e3.body.campos['itens.0.loteId'][0]).toContain(
+        'já está cadastrado no destino com a validade 01/04/2027',
+      );
+      expect(await movimentos(r3.id)).toEqual([]);
+      expect((await obter(r3.id)).body.status).toBe('rascunho');
+      expect(
+        (await amb.http().delete(`/api/transferencias/${r3.id}`).set(bearer(tokenExpedicao))).status,
+      ).toBe(204);
+    } finally {
+      await consultar(
+        emp.nomeBanco,
+        `delete from configuracoes where chave = 'estoque.transferencia_recebimento_automatico'`,
+      );
+    }
+    // O fluxo `estoque` desce os saldos novos aos PDVs das duas lojas: 6 + 10 + 3 + 2 − 8 − 3 = 10 na Loja 1 e 11 na 2.
+    expect(ultimoSaldoNoPdv((await puxar(pdvLoja1, 'estoque', c1.cursor)).alteracoes, p)).toBe(10);
+    expect(ultimoSaldoNoPdv((await puxar(pdvLoja2, 'estoque', c2.cursor)).alteracoes, p)).toBe(11);
   });
 });
 

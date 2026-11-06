@@ -10,9 +10,11 @@ import {
   limiteDeslocamento,
   nfeExternaTransferenciaSchema,
   type Pagina,
+  receberTransferenciaSchema,
   type StatusTransferencia,
   type TransferenciaDetalhe,
   type TransferenciaResumo,
+  tratarDivergenciaTransferenciaSchema,
 } from '@genesis/shared';
 import { sql, type SQL } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
@@ -27,10 +29,16 @@ import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
 import { transferenciasEstoque } from '../database/empresa/schema/index.js';
-import { lojaDoEstoque } from '../estoques/acertos.js';
+import { lojaDoEstoque, resumoEfetivacao } from '../estoques/acertos.js';
 import { estoquePermitido, estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import {
+  receberTransferencia,
+  resumoRecebimento,
+  resumoTratamento,
+  tratarDivergenciaTransferencia,
+} from './recebimento.js';
 import {
   cancelarTransferencia,
   conferirCabecalhoTransferencia,
@@ -72,13 +80,15 @@ function filtroVisivel(sessao: SessaoErp): SQL | undefined {
 }
 
 /**
- * Transferência entre estoques (ERP 13.7; MD 3.7.6; Fase 2, F2-B23; README da API › decisão 171): listagem, detalhe,
- * o rascunho (criar, alterar, excluir), **enviar** (1ª etapa: `TRANSF_SAIDA` na origem) e **cancelar** (do rascunho,
- * sem efeito; do trânsito, `TRANSF_RETORNO` integral), e a anotação da NF-e emitida por fora (D6). Vê quem tem a
- * origem ou o destino entre os estoques visíveis; gravar, enviar, cancelar e anotar a NF-e exigem a **origem**
- * permitida para movimentar (403), e o destino não precisa estar permitido (quem recebe é o F2-B24; o seletor dele lê
- * `GET /transferencias/destinos`, sem o filtro dos permitidos). Enviar e cancelar rodam com `travaVersao`: o movimento
- * e o saldo descem ao PDV pelo fluxo `estoque`.
+ * Transferência entre estoques (ERP 13.7; MD 3.7.6; Fase 2, F2-B23 e F2-B24; README da API › decisões 171 e 172):
+ * listagem, detalhe, o rascunho (criar, alterar, excluir), **enviar** (1ª etapa: `TRANSF_SAIDA` na origem; no modo de
+ * uma etapa, já recebe tudo), **receber** (2ª etapa: `TRANSF_ENTRADA` no destino), **tratar a divergência** (retorno à
+ * origem ou perda) e **cancelar** (do rascunho, sem efeito; do trânsito, `TRANSF_RETORNO` integral), e a anotação da
+ * NF-e emitida por fora (D6). Vê quem tem a origem ou o destino entre os estoques visíveis; gravar, enviar, cancelar e
+ * anotar a NF-e exigem a **origem** permitida para movimentar (403), e o destino não precisa estar permitido (o
+ * seletor lê `GET /transferencias/destinos`, sem o filtro dos permitidos); receber exige o **destino** permitido, e
+ * tratar a diferença, a origem ou o destino. As etapas que movimentam rodam com `travaVersao`: o movimento e o saldo
+ * descem ao PDV pelo fluxo `estoque`.
  */
 @Controller('transferencias')
 export class TransferenciasController {
@@ -305,7 +315,11 @@ export class TransferenciasController {
    * deixa negativo, salvo Master ou `estoque.permite_negativo_erp` da loja da origem). **Idempotente**: a transferência
    * já enviada (em trânsito ou recebida) devolve o detalhe sem lançar nada nem conferir a versão (o clique repetido, a
    * resposta perdida e duas chamadas juntas — a trava do cabeçalho serializa, e a segunda relê a situação — não dobram
-   * a saída); a cancelada é 422.
+   * a saída); a cancelada é 422. **Modo de uma etapa** (`estoque.transferencia_recebimento_automatico`, chave da
+   * empresa: o catálogo não a aceita por loja, então ligada vale para toda transferência; ERP 13.7 "Uma etapa"; lida
+   * com a loja da origem, como as demais, para valer por loja se o catálogo um dia aceitar): na mesma transação, o envio
+   * já recebe tudo como enviado (`TRANSF_ENTRADA` no destino), com quem enviou como quem recebeu — a chave é a
+   * autorização, e quem envia não precisa do destino permitido nem de `transferencias.receber`.
    */
   @Permissao('transferencias.enviar')
   @Post(':id/enviar')
@@ -337,6 +351,144 @@ export class TransferenciasController {
           localizacao: LOCALIZACAO,
           lojaId,
           descricao: `Transferência Nº ${antes.codigo} enviada: ${resumoEnvio(r)}`,
+        });
+        if (await lerConfiguracao<boolean>(tx, 'estoque.transferencia_recebimento_automatico', lojaId)) {
+          const rec = await receberTransferencia(
+            tx,
+            { ...antes, status: 'em_transito' },
+            { usuarioId: sessao.usuarioId },
+            { receberTudo: true, itens: [] },
+          );
+          await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+            acao: 'movimentar',
+            entidade: 'transferencias_estoque',
+            registroId: id,
+            localizacao: LOCALIZACAO,
+            lojaId: await lojaDoEstoque(tx, antes.estoqueDestinoId),
+            descricao: `Transferência Nº ${antes.codigo} recebida no envio (recebimento automático): ${resumoRecebimento(rec)}`,
+          });
+        }
+      },
+      { travaVersao: true },
+    );
+    return (await this.s.tenancy.cx().consulta((db) => this.detalhe(db, id, sessao)))!;
+  }
+
+  /**
+   * Receber (ERP 13.7, 2ª etapa): a quantidade conferida de cada item, ou "Receber tudo como enviado" (`receberTudo`);
+   * `TRANSF_ENTRADA` no destino com o custo da saída, e a situação passa a `recebida` ou, com item a menor,
+   * `recebida_divergencia`. Exige `transferencias.receber` e o **destino** entre os estoques permitidos para movimentar
+   * (403; quem só tem a origem não recebe pela loja). **Idempotente** como o envio: a já recebida (com ou sem
+   * divergência) devolve o detalhe sem lançar nem conferir a versão (o clique repetido, a resposta perdida); o rascunho
+   * e a cancelada são 422.
+   */
+  @Permissao('transferencias.receber')
+  @Post(':id/receber')
+  @HttpCode(200)
+  async receber(
+    @Param('id') idBruto: string,
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<TransferenciaDetalhe> {
+    const id = validar(z.uuid(), idBruto);
+    const { versao, receberTudo, itens } = validar(receberTransferenciaSchema, corpo ?? {});
+    await this.s.tenancy.cx().transacao(
+      async (tx) => {
+        const antes = await this.travar(tx, id, sessao);
+        exigirDestinoPermitido(sessao, antes);
+        if (antes.status === 'rascunho')
+          throw new ErroApi('REGRA_NEGOCIO', 'A transferência ainda não foi enviada: não há o que receber.');
+        if (antes.status === 'cancelada')
+          throw new ErroApi('REGRA_NEGOCIO', 'Transferência cancelada não pode ser recebida.');
+        if (antes.status !== 'em_transito') return;
+        if (versao !== undefined && antes.versao !== versao) await conflitoVersao(tx, antes);
+        const r = await receberTransferencia(
+          tx,
+          antes,
+          { usuarioId: sessao.usuarioId },
+          { receberTudo, itens },
+        );
+        await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+          acao: 'movimentar',
+          entidade: 'transferencias_estoque',
+          registroId: id,
+          localizacao: LOCALIZACAO,
+          lojaId: await lojaDoEstoque(tx, antes.estoqueDestinoId),
+          descricao: `Transferência Nº ${antes.codigo} recebida${r.status === 'recebida_divergencia' ? ' com divergência' : ''}: ${resumoRecebimento(r)}`,
+        });
+      },
+      { travaVersao: true },
+    );
+    return (await this.s.tenancy.cx().consulta((db) => this.detalhe(db, id, sessao)))!;
+  }
+
+  /**
+   * Tratar a diferença recebida a menor (ERP 13.7 "Divergência"), por item, uma vez cada: "Retornar à origem"
+   * (`TRANSF_RETORNO` da diferença) ou "Baixar como perda" (F2-Q10 = D51, padrão até a confirmação do dono: o retorno
+   * mais o acerto de Saída na origem com a origem `perda_transferencia`). Sem diferença pendente, a transferência passa
+   * a `recebida`. Exige `transferencias.receber` e a origem **ou** o destino permitidos para movimentar (padrão até a
+   * confirmação do dono, D61: quem recebeu e quem enviou decidem; os movimentos são todos na origem). Só na
+   * `recebida_divergencia` (422 nas outras), com a versão conferida quando informada.
+   */
+  @Permissao('transferencias.receber')
+  @Post(':id/tratar-divergencia')
+  @HttpCode(200)
+  async tratarDivergencia(
+    @Param('id') idBruto: string,
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<TransferenciaDetalhe> {
+    const id = validar(z.uuid(), idBruto);
+    const { versao, itens } = validar(tratarDivergenciaTransferenciaSchema, corpo ?? {});
+    await this.s.tenancy.cx().transacao(
+      async (tx) => {
+        const antes = await this.travar(tx, id, sessao, versao);
+        if (
+          !estoquePermitido(sessao, antes.estoqueOrigemId, 'movimentar') &&
+          !estoquePermitido(sessao, antes.estoqueDestinoId, 'movimentar')
+        )
+          throw new ErroApi(
+            'SEM_PERMISSAO',
+            'A origem e o destino da transferência estão fora dos seus estoques permitidos: só quem tem um deles trata a diferença.',
+          );
+        if (antes.status !== 'recebida_divergencia')
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            antes.status === 'recebida'
+              ? 'A transferência não tem diferença a tratar.'
+              : 'Só a transferência recebida com divergência tem diferença a tratar.',
+          );
+        const r = await tratarDivergenciaTransferencia(tx, antes, { usuarioId: sessao.usuarioId }, itens);
+        const origem = origemDaRequisicao(req);
+        const lojaOrigem = await lojaDoEstoque(tx, antes.estoqueOrigemId);
+        if (r.acerto) {
+          // O acerto da perda é um documento próprio (aparece na tela de acertos): criado e efetivado, como o "Ajustar".
+          await this.s.auditoria.registrar(tx, origem, {
+            acao: 'criar',
+            entidade: 'acertos_estoque',
+            registroId: r.acerto.id,
+            localizacao: LOCALIZACAO,
+            lojaId: lojaOrigem,
+            descricao: `Perda da transferência Nº ${antes.codigo} (acerto Nº ${r.acerto.codigo})`,
+          });
+          await this.s.auditoria.registrar(tx, origem, {
+            acao: 'efetivar',
+            entidade: 'acertos_estoque',
+            registroId: r.acerto.id,
+            localizacao: LOCALIZACAO,
+            lojaId: lojaOrigem,
+            descricao: `Acerto efetivado: ${resumoEfetivacao(r.acerto)}`,
+          });
+        }
+        await this.s.auditoria.registrar(tx, origem, {
+          acao: 'movimentar',
+          entidade: 'transferencias_estoque',
+          registroId: id,
+          localizacao: LOCALIZACAO,
+          lojaId: lojaOrigem,
+          descricao: `Diferença da transferência Nº ${antes.codigo} tratada: ${resumoTratamento(r)}`,
         });
       },
       { travaVersao: true },
@@ -484,6 +636,15 @@ function exigirOrigemPermitida(sessao: SessaoErp, t: { estoqueOrigemId: string }
     throw new ErroApi(
       'SEM_PERMISSAO',
       'A transferência sai de um estoque fora dos seus estoques permitidos: só quem tem a origem altera, envia ou cancela.',
+    );
+}
+
+/** O **destino** entre os estoques permitidos para movimentar: quem recebe é a loja (ou o CD) que confere a carga. */
+function exigirDestinoPermitido(sessao: SessaoErp, t: { estoqueDestinoId: string }): void {
+  if (!estoquePermitido(sessao, t.estoqueDestinoId, 'movimentar'))
+    throw new ErroApi(
+      'SEM_PERMISSAO',
+      'A transferência vai para um estoque fora dos seus estoques permitidos: só quem tem o destino recebe.',
     );
 }
 
