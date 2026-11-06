@@ -511,6 +511,8 @@ describe('Saldos de estoque (ERP 8.2.11 / 16.4)', () => {
                   codigoInterno: 'BRAHMA350',
                   unidadeSigla: 'UN',
                   quantidade: '120.000',
+                  emTransito: '60.000',
+                  divergenciaATratar: '0.000',
                   estoqueMinimo: '24.000',
                   custoMedio: null,
                   custoTotal: null,
@@ -533,6 +535,12 @@ describe('Saldos de estoque (ERP 8.2.11 / 16.4)', () => {
     expect(screen.getByTestId('totais-saldos')).toHaveTextContent('Venda total: R$ 418,80');
     expect(screen.getByTestId('totais-saldos')).not.toHaveTextContent('Custo total');
     expect(screen.queryByText('Custo médio')).not.toBeInTheDocument();
+    // F2-B26: o em trânsito na linha; sem divergência, "—".
+    const linhaBrahma = screen.getByRole('link', { name: '11 - CERV BRAHMA LT 350ML' }).closest('tr')!;
+    expect(within(linhaBrahma).getByText('60')).toBeInTheDocument();
+    expect(within(linhaBrahma).getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getByRole('columnheader', { name: /Em trânsito/ })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Divergência a tratar/ })).toBeInTheDocument();
     const consulta = chamadas.find((c) => c.url.pathname === '/api/saldos-estoque')!.url.searchParams;
     expect(consulta.get('situacao')).toBe('ativos');
     expect(consulta.get('situacaoSaldo')).toBe('todos');

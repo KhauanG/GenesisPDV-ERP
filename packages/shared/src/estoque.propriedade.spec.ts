@@ -4,7 +4,8 @@
  * `db:recalcular-saldos` do F2-B3 faz na ordem de `seq_lancamento`) chegam ao mesmo saldo e ao mesmo custo médio, em
  * decimal, movimento a movimento. Sequências aleatórias com semente fixa (o gerador de `gerador.teste.ts`, sem dependência nova):
  * entradas com e sem custo, saídas além do saldo (zero e negativo), estornos de saída ao custo original (T20) e de
- * entrada, o estorno da perna de entrada da mudança de tipo ao custo gravado (F2-B8), compensações do "Definir" (T23)
+ * entrada, o estorno da perna de entrada da mudança de tipo ao custo gravado (F2-B8; a perda da transferência, F2-B24,
+ * usa a mesma conta), compensações do "Definir" (T23)
  * e o próprio "Definir", com o custo de referência do cadastro mudando no meio.
  */
 import { describe, expect, it } from 'vitest';
@@ -15,6 +16,8 @@ import {
   diferencaDefinirTexto,
   TIPO_MOVIMENTO_MUDANCA_TIPO,
   movimentoGravadoNoSaldo,
+  saidaAoCustoInformado,
+  saidaDaPerdaTransferencia,
   type MovimentoNoSaldo,
   type SaldoAposMovimento,
 } from './estoque.js';
@@ -237,6 +240,36 @@ describe('conta do razão: online × replay (F2-B2; ADR-05; T20, T23)', () => {
       saidaAoCusto: true,
     });
     expect([em.custoUnitario, em.custoTotal, em.custoMedioPosterior]).toEqual(['2.5000', '12.50', '4.0000']);
+    // A perda da transferência (F2-B24): o CD com 100 a 5,50 recebe o retorno de 2 a 5,00 (102 a 5,4902) e a perda,
+    // o ACERTO_SAIDA que estorna o retorno, sai a 5,00: o CD volta a 100 a 5,50, e a perda fica em R$ 10,00.
+    const retorno = aplicarMovimentoNoSaldo('100', '5.5', {
+      quantidade: '2',
+      custoUnitario: '5',
+      custoReferencia: '5',
+      estorno: true,
+    });
+    expect([retorno.saldoPosterior, retorno.custoMedioPosterior]).toEqual(['102.000', '5.4902']);
+    const perdaGravada = movimentoGravadoNoSaldo({
+      quantidade: '-2',
+      custoUnitario: '5',
+      estornoDeId: 'retorno',
+      tipoMovimento: 'ACERTO_SAIDA',
+    });
+    expect(perdaGravada.saidaAoCusto).toBe(true);
+    const perda = aplicarMovimentoNoSaldo(retorno.saldoPosterior, retorno.custoMedioPosterior, perdaGravada);
+    expect([perda.saldoPosterior, perda.custoUnitario, perda.custoTotal, perda.custoMedioPosterior]).toEqual([
+      '100.000',
+      '5.0000',
+      '10.00',
+      '5.5000',
+    ]);
+    // O ACERTO_SAIDA comum (sem estorno) e o ESTORNO_ACERTO saem ao custo médio vigente.
+    expect(saidaAoCustoInformado({ tipoMovimento: 'ACERTO_SAIDA', estornoDeId: null })).toBe(false);
+    expect(saidaAoCustoInformado({ tipoMovimento: 'ESTORNO_ACERTO', estornoDeId: 'x' })).toBe(false);
+    expect(saidaDaPerdaTransferencia({ tipoMovimento: 'ACERTO_SAIDA', estornoDeId: 'x' })).toBe(true);
+    expect(saidaAoCustoInformado({ tipoMovimento: TIPO_MOVIMENTO_MUDANCA_TIPO, estornoDeId: 'x' })).toBe(
+      true,
+    );
     // Sem nada que sobre, ou com o médio que ficaria ≤ 0, é a saída comum ao custo médio vigente.
     const zera = aplicarMovimentoNoSaldo('5', '3.25', {
       quantidade: '-5',

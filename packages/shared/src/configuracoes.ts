@@ -23,6 +23,7 @@ import {
   MODOS_LOTE_BAIXA_SEM_INFORMAR,
 } from './estoque.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
+import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 export interface DefinicaoConfiguracao {
   chave: string;
@@ -86,6 +87,12 @@ const LINHAS: Linha[] = [
   // Estoque
   ['estoque.permite_negativo_erp', bool, false],
   ['estoque.transferencia_recebimento_automatico', bool, false],
+  // F2-B25 (F2-Q11 = D52, decidida pelo dono em 06/11/2026): a sugestão de reposição da transferência sobe ao fardo ou
+  // à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; desligada, sai em unidades.
+  ['estoque.reposicao_arredonda_embalagem', bool, true],
+  // F2-B26 (padrão aplicado sem pergunta, plano da Fase 2): a transferência em trânsito ou com divergência sem tratar há
+  // mais destes dias gera o alerta `TRANSFERENCIA_PARADA`.
+  [CHAVE_TRANSFERENCIA_ALERTA_DIAS, inteiro(1, 365), TRANSFERENCIA_ALERTA_DIAS_PADRAO],
   ['estoque.custo_inclui_st', bool, true],
   ['estoque.custo_inclui_ipi', bool, true],
   ['estoque.custo_inclui_frete', bool, true],

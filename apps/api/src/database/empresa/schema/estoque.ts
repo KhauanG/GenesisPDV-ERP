@@ -1,7 +1,8 @@
 /**
  * MD 3.7 – estoque: razão append-only (`movimentos_estoque`), projeções de saldo (`saldos_estoque`, `saldos_lote`),
- * acertos (Entrada / Saída / Definir) e, do MD 3.5.6, os cascos em comodato por pessoa (projeção que depende de
- * `produtos`). `tipos_movimento_estoque` (R) fica em `referencias.ts`.
+ * acertos (Entrada / Saída / Definir), a transferência entre estoques em duas etapas (`transferencias_estoque`,
+ * `itens_transferencia`, MD 3.7.6; Fase 2, F2-B22) e, do MD 3.5.6, os cascos em comodato por pessoa (projeção que
+ * depende de `produtos`). `tipos_movimento_estoque` (R) fica em `referencias.ts`.
  *
  * Imutabilidade (`fn_protege_imutavel`), coluna de filtro imutável dos saldos e índices únicos com
  * `nulls not distinct` ficam na migração customizada.
@@ -10,6 +11,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -441,5 +443,203 @@ export const saldosVasilhamePessoas = pgTable(
     uniqueIndex('uq_saldos_vasilhame_pessoas').on(t.pessoaId, t.produtoVasilhameId),
     index('ix_saldos_vasilhame_pessoas_produto_vasilhame_id').on(t.produtoVasilhameId),
     check('ck_saldos_vasilhame_pessoas_quantidade', sql`quantidade >= 0`),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Transferência entre estoques em duas etapas (MD 3.7.6; ERP 13.7; Fase 2, F2-B22; README da API › decisão 170).
+// Não desce ao PDV (`fn_versao_local`): o que ela muda nos saldos desce pelo fluxo `estoque`. A sequência do
+// `codigo`, os triggers de versão, de imutabilidade e de etapa, as FKs de autoria e o índice único do produto
+// (`nulls not distinct`) ficam na migração customizada `0025_transferencias`.
+
+/**
+ * Situação da transferência (ERP 13.7): rascunho → em trânsito (1ª etapa, `TRANSF_SAIDA` na origem) → recebida ou
+ * recebida com divergência (2ª etapa, `TRANSF_ENTRADA` no destino) → recebida (diferença tratada); rascunho ou em
+ * trânsito → cancelada (no trânsito, `TRANSF_RETORNO` integral). Recebida e cancelada são o fim.
+ */
+export const STATUS_TRANSFERENCIA = [
+  'rascunho',
+  'em_transito',
+  'recebida',
+  'recebida_divergencia',
+  'cancelada',
+] as const;
+/**
+ * Tratamento da diferença recebida a menor (ERP 13.7; F2-Q10 = D51): `retorno_origem` (`TRANSF_RETORNO` da
+ * diferença) ou `perda` (o retorno mais um acerto de saída na origem com a origem `perda_transferencia`).
+ */
+export const TRATAMENTOS_DIVERGENCIA_TRANSFERENCIA = ['retorno_origem', 'perda'] as const;
+
+/**
+ * D: transferência de mercadoria entre dois estoques da empresa (CD ⇄ loja, loja ⇄ loja), num só tipo de estoque
+ * (`tipo_estoque_id`: padrão = o tipo padrão, aplicado pela API; o Vasilhame vazio leva os cascos de volta ao CD).
+ * A `data` é a data do documento (o razão lança no momento de cada etapa, F2-B4). Imutável fora do rascunho, salvo
+ * as colunas de cada etapa (`tg_transferencias_estoque_etapa`). `documento_fiscal_id` (a NF-e de transferência que
+ * o Genesis emitirá na fase fiscal) fica nulo e sem FK até `documentos_fiscais` existir; até lá, a NF-e emitida por
+ * fora (Nuvem3/contador, entre CNPJs diferentes) é só anotada em `nfe_externa_chave`/`nfe_externa_numero` (D6).
+ */
+export const transferenciasEstoque = pgTable(
+  'transferencias_estoque',
+  {
+    ...colunasPadrao(),
+    ...colunasAutoria(),
+    codigo: integer('codigo')
+      .notNull()
+      .default(sql`nextval('seq_codigo_transferencias_estoque')`),
+    estoqueOrigemId: uuid('estoque_origem_id').notNull(),
+    estoqueDestinoId: uuid('estoque_destino_id').notNull(),
+    /** Tipo de estoque que sai da origem e entra no destino (o mesmo nas duas pontas). */
+    tipoEstoqueId: uuid('tipo_estoque_id').notNull(),
+    /** "Data" do documento (criação informada); o razão lança no envio e no recebimento. */
+    data: date('data')
+      .notNull()
+      .default(sql`current_date`),
+    motivo: varchar('motivo', { length: 120 }).notNull(),
+    observacoes: text('observacoes'),
+    status: varchar('status', { length: 22 }).notNull().default('rascunho'),
+    /** "Data transferência" (1ª etapa). */
+    enviadaEm: timestamptz('enviada_em'),
+    enviadaPorId: uuid('enviada_por_id'),
+    /** 2ª etapa (a conferência na chegada). */
+    recebidaEm: timestamptz('recebida_em'),
+    recebidaPorId: uuid('recebida_por_id'),
+    canceladaEm: timestamptz('cancelada_em'),
+    canceladaPorId: uuid('cancelada_por_id'),
+    motivoCancelamento: varchar('motivo_cancelamento', { length: 255 }),
+    /** NF-e de transferência emitida pelo Genesis (fase fiscal); sem FK, sempre nula na Fase 2. */
+    documentoFiscalId: uuid('documento_fiscal_id'),
+    /** Chave de acesso da NF-e de transferência emitida por fora (opcional; D6). */
+    nfeExternaChave: varchar('nfe_externa_chave', { length: 44 }),
+    /** Número (e série) da NF-e emitida por fora, quando não se tem a chave (opcional; D6). */
+    nfeExternaNumero: varchar('nfe_externa_numero', { length: 20 }),
+    qtdItens: integer('qtd_itens').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_transferencias_estoque', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_estoque_origem_id',
+      columns: [t.estoqueOrigemId],
+      foreignColumns: [estoques.id],
+    }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_estoque_destino_id',
+      columns: [t.estoqueDestinoId],
+      foreignColumns: [estoques.id],
+    }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_tipo_estoque_id',
+      columns: [t.tipoEstoqueId],
+      foreignColumns: [tiposEstoque.id],
+    }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_enviada_por_id',
+      columns: [t.enviadaPorId],
+      foreignColumns: [usuarios.id],
+    }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_recebida_por_id',
+      columns: [t.recebidaPorId],
+      foreignColumns: [usuarios.id],
+    }),
+    foreignKey({
+      name: 'fk_transferencias_estoque_cancelada_por_id',
+      columns: [t.canceladaPorId],
+      foreignColumns: [usuarios.id],
+    }),
+    uniqueIndex('uq_transferencias_estoque_codigo').on(t.codigo),
+    // A listagem por origem/destino e situação, o "em trânsito" do destino e o alerta de parada (F2-B26).
+    index('ix_transferencias_estoque_origem_status').on(t.estoqueOrigemId, t.status),
+    index('ix_transferencias_estoque_destino_status').on(t.estoqueDestinoId, t.status),
+    index('ix_transferencias_estoque_tipo_estoque_id').on(t.tipoEstoqueId),
+    index('ix_transferencias_estoque_enviada_por_id').on(t.enviadaPorId),
+    index('ix_transferencias_estoque_recebida_por_id').on(t.recebidaPorId),
+    index('ix_transferencias_estoque_cancelada_por_id').on(t.canceladaPorId),
+    check('ck_transferencias_estoque_estoques', sql`estoque_origem_id <> estoque_destino_id`),
+    check('ck_transferencias_estoque_status', sql`status in (${listaSql(STATUS_TRANSFERENCIA)})`),
+    // Situação × datas de cada etapa: o rascunho não tem etapa nenhuma; o envio existe em trânsito e depois; o
+    // recebimento só nas duas recebidas; o cancelamento só na cancelada, com o motivo (a cancelada do rascunho não
+    // tem envio; a do trânsito, sim).
+    check(
+      'ck_transferencias_estoque_etapas',
+      sql`(status <> 'rascunho' or (enviada_em is null and recebida_em is null and cancelada_em is null)) and (status not in ('em_transito','recebida','recebida_divergencia') or enviada_em is not null) and (status in ('recebida','recebida_divergencia')) = (recebida_em is not null) and (status = 'cancelada') = (cancelada_em is not null) and (status <> 'cancelada' or motivo_cancelamento is not null)`,
+    ),
+    check(
+      'ck_transferencias_estoque_nfe_externa',
+      sql`nfe_externa_chave is null or nfe_externa_chave ~ '^[0-9]{6}[0-9A-Z]{12}[0-9]{26}$'`,
+    ),
+  ],
+);
+
+/**
+ * Itens da transferência; inseridos só no rascunho e, depois dele, só as colunas da etapa mudam
+ * (`tg_itens_transferencia_etapa`): o custo no envio (gravado antes de o status sair do rascunho), a quantidade
+ * recebida no trânsito e o tratamento da diferença na recebida com divergência. Quantidades na unidade do produto,
+ * a 3 casas (ADR-05). Sem lote, o envio baixa em FEFO (F2-B6) e o lote de cada parte fica nos movimentos
+ * (`documento_item_id` = o item).
+ */
+export const itensTransferencia = pgTable(
+  'itens_transferencia',
+  {
+    ...colunasPadrao(),
+    transferenciaId: uuid('transferencia_id').notNull(),
+    sequencia: integer('sequencia').notNull(),
+    produtoId: uuid('produto_id').notNull(),
+    /** Sempre nula enquanto as variações estão travadas (D43); a coluna fica pronta para o F2-B49. */
+    variacaoId: uuid('variacao_id'),
+    /** Lote escolhido (do produto e do estoque de origem, ou sem estoque); nulo = FEFO no envio. */
+    loteId: uuid('lote_id'),
+    quantidadeEnviada: quantidade('quantidade_enviada').notNull(),
+    /** Conferida no destino (2ª etapa); nula até o recebimento. */
+    quantidadeRecebida: quantidade('quantidade_recebida'),
+    /** Enviada − recebida (0 até o recebimento): o que falta tratar ou já foi tratado. */
+    diferenca: quantidade('diferenca')
+      .notNull()
+      .generatedAlwaysAs(sql`quantidade_enviada - coalesce(quantidade_recebida, quantidade_enviada)`),
+    tratamentoDivergencia: varchar('tratamento_divergencia', { length: 14 }),
+    divergenciaTratadaEm: timestamptz('divergencia_tratada_em'),
+    /** Custo médio da origem gravado no envio (`TRANSF_SAIDA`); a entrada no destino usa o mesmo. */
+    custoUnitario: preco('custo_unitario'),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_itens_transferencia', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_itens_transferencia_transferencia_id',
+      columns: [t.transferenciaId],
+      foreignColumns: [transferenciasEstoque.id],
+    }),
+    foreignKey({
+      name: 'fk_itens_transferencia_produto_id',
+      columns: [t.produtoId],
+      foreignColumns: [produtos.id],
+    }),
+    foreignKey({
+      name: 'fk_itens_transferencia_variacao_id',
+      columns: [t.variacaoId],
+      foreignColumns: [produtosVariacoes.id],
+    }),
+    foreignKey({
+      name: 'fk_itens_transferencia_lote_id',
+      columns: [t.loteId],
+      foreignColumns: [produtosLotes.id],
+    }),
+    uniqueIndex('uq_itens_transferencia_sequencia').on(t.transferenciaId, t.sequencia),
+    // uq_itens_transferencia_produto (nulls not distinct) fica na migração customizada.
+    index('ix_itens_transferencia_produto_id').on(t.produtoId),
+    index('ix_itens_transferencia_variacao_id').on(t.variacaoId),
+    index('ix_itens_transferencia_lote_id').on(t.loteId),
+    check(
+      'ck_itens_transferencia_quantidades',
+      sql`quantidade_enviada > 0 and (quantidade_recebida is null or quantidade_recebida between 0 and quantidade_enviada)`,
+    ),
+    check('ck_itens_transferencia_custo', sql`custo_unitario is null or custo_unitario >= 0`),
+    check(
+      'ck_itens_transferencia_tratamento',
+      sql`tratamento_divergencia is null or tratamento_divergencia in (${listaSql(TRATAMENTOS_DIVERGENCIA_TRANSFERENCIA)})`,
+    ),
+    // Só se trata a diferença que existe (recebida a menor), e o tratamento tem a hora.
+    check(
+      'ck_itens_transferencia_divergencia',
+      sql`(tratamento_divergencia is null) = (divergencia_tratada_em is null) and (tratamento_divergencia is null or (quantidade_recebida is not null and quantidade_recebida < quantidade_enviada))`,
+    ),
   ],
 );

@@ -220,6 +220,7 @@ export const MENU: GrupoMenu[] = [
         rota: '/estoque/transferencias',
         permissao: 'transferencias.ver',
         fase: 'Fase 2',
+        pronto: true,
       },
     ],
   },

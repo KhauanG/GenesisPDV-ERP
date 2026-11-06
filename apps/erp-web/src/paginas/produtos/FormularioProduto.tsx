@@ -1725,7 +1725,9 @@ function BlocoLojas({ form }: { form: Form }) {
 
 /**
  * Estoque (ERP 8.2.11): saldo por estoque × tipo, com o "Ajustar" (F2-B12; `estoque_acertos.criar`) para quem tem
- * saldo próprio; no combo, os combos montáveis por estoque (8.2.17).
+ * saldo próprio; no combo, os combos montáveis por estoque (8.2.17). F2-B26: o "Em trânsito" (enviado para o estoque e
+ * ainda não recebido) e, só quando houver, a "Divergência a tratar" (a diferença recebida a menor que voltará à origem
+ * ou será baixada como perda), dos estoques permitidos e no tipo de cada linha (a API já filtra).
  */
 function BlocoEstoque({
   produtoId,
@@ -1813,6 +1815,8 @@ function BlocoEstoque({
         </Text>
       </Stack>
     );
+  const comDivergencia = r.data.saldos.some((s) => Number(s.divergenciaATratar) !== 0);
+  const pendencia = (v: string) => (Number(v) === 0 ? '—' : decimalParaTela(v, 3));
   return (
     <Stack gap="xs">
       {acoes}
@@ -1822,6 +1826,17 @@ function BlocoEstoque({
             <Table.Th>Estoque</Table.Th>
             <Table.Th>Tipo</Table.Th>
             <Table.Th ta="right">Quantidade</Table.Th>
+            <Table.Th ta="right" title="Enviado para este estoque e ainda não recebido">
+              Em trânsito
+            </Table.Th>
+            {comDivergencia && (
+              <Table.Th
+                ta="right"
+                title="Recebido a menor numa transferência que saiu deste estoque, ainda sem tratamento (não está no saldo)"
+              >
+                Divergência a tratar
+              </Table.Th>
+            )}
             {verCusto && <Table.Th ta="right">Custo médio</Table.Th>}
             <Table.Th>Última entrada</Table.Th>
             <Table.Th>Última saída</Table.Th>
@@ -1840,6 +1855,14 @@ function BlocoEstoque({
                 )}
               </Table.Td>
               <Table.Td ta="right">{decimalParaTela(s.quantidade, 3)}</Table.Td>
+              <Table.Td ta="right" data-testid="em-transito">
+                {pendencia(s.emTransito)}
+              </Table.Td>
+              {comDivergencia && (
+                <Table.Td ta="right" c={Number(s.divergenciaATratar) !== 0 ? 'orange' : undefined}>
+                  {pendencia(s.divergenciaATratar)}
+                </Table.Td>
+              )}
               {verCusto && <Table.Td ta="right">{reais(Number(s.custoMedio))}</Table.Td>}
               <Table.Td>{formatarDataHora(s.ultimaEntradaEm)}</Table.Td>
               <Table.Td>{formatarDataHora(s.ultimaSaidaEm)}</Table.Td>

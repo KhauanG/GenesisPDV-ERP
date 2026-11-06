@@ -1076,6 +1076,12 @@ recebidas), custo médio por estoque, data da última entrada e da última venda
 ajuste rápido (estoque, tipo de estoque, nova quantidade, motivo) que gera um `acertos_estoque` com
 `origem = 'cadastro_produto'` e o movimento `AJUSTE_CADASTRO` ("Atualização pelo cadastro de produtos").
 
+Em trânsito e divergência (Fase 2, F2-B26; README da API › decisão 174): cada linha estoque × tipo mostra o **Em
+trânsito** (enviado para o estoque pelas transferências em trânsito e ainda não recebido; a linha aparece mesmo sem
+saldo lançado, com saldo zero) e, quando houver, a **Divergência a tratar** (a diferença recebida a menor, ainda sem
+tratamento, das transferências que **saíram** do estoque: o retorno ou a perda são lançados na origem). As duas ficam
+fora do saldo; só dos estoques permitidos e no tipo de estoque de cada transferência.
+
 Regras do Ajustar (Fase 2, F2-B12; `POST /produtos/:id/ajustar-estoque`; README da API › decisão 157): é um
 **"Definir" de um item**, criado e efetivado na hora (13.1.5): o modal mostra o saldo atual do estoque × tipo e pede
 a **nova quantidade** (≥ 0) e a **hora da contagem** (padrão: agora, renovado a cada abertura; sem alterar, vale o
@@ -1587,6 +1593,8 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Permitir acesso do suporte Genesis **(Novo)** | `geral.permite_acesso_suporte` | booleano | Sim | N | N | habilita "Acessar como suporte" no painel da plataforma (19.6; modelo 3.1.2) |
 | Permitir saldo negativo em documentos do ERP **(Novo)** | `estoque.permite_negativo_erp` | booleano | Não | N | N | 13.1.1 (vendas do PDV sempre são aceitas) |
 | Transferência com recebimento automático **(Novo)** | `estoque.transferencia_recebimento_automatico` | booleano | Não | N | N | 13.7 (envio já gera a entrada no destino) |
+| Sugestão de reposição arredonda para a embalagem de compra **(Novo)** | `estoque.reposicao_arredonda_embalagem` | booleano | Sim (D52, decidida pelo dono em 06/11/2026) | N | N | 13.7 "Sugerir reposição": a quantidade sobe ao fardo ou à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; Não = em unidades |
+| Alerta de transferência parada (dias) **(Novo)** | `estoque.transferencia_alerta_dias` | inteiro 1–365 | 3 | N | N | 13.7 (Fase 2, F2-B26): a transferência em trânsito (desde o envio) ou com divergência sem tratar (desde o recebimento) há mais destes dias gera o alerta `TRANSFERENCIA_PARADA` |
 | Custo da NF-e inclui ICMS ST / IPI / frete e despesas **(Novo)** | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | booleano | Sim | N | N | composição do custo na importação de NF-e (13.4.1) |
 | Abater créditos de ICMS/PIS/COFINS do custo **(Novo)** | `estoque.custo_abate_creditos` | booleano | Não | N | N | só para regime normal (13.4.1; modelo 3.1.2) |
 | Compra atualiza o preço de custo do produto **(Novo)** | `estoque.compra_atualiza_preco_custo` | enum `sempre` / `perguntar` (ao movimentar) / `nunca` | `perguntar` (D49) | N | N | Fase 2, F2-B15; roadmap D49: o recebimento e a NF-e sempre atualizam o custo médio e o último custo; o preço de custo cadastrado à mão só muda conforme a chave (13.3) |
@@ -3301,13 +3309,75 @@ Colunas: **Nº** **(Novo)** (link), **Estoque Origem**, **Estoque Destino**, **D
 | `estoque_origem_id` | Estoque Origem | →`estoques` permitidos | S | |
 | `estoque_destino_id` | Destino | →`estoques` | S | ≠ origem; o destino não precisa ser permitido para quem envia |
 | `data` | Data | data | S | hoje |
+| `tipo_estoque_id` | Tipo de estoque **(Novo)** | →`tipos_estoque` ativos | S | padrão = o tipo padrão (Disponível); o mesmo na origem e no destino (ex.: Vasilhame vazio para os cascos voltarem ao CD) |
 | `motivo` | Motivo | texto(120) | S | ex.: "Reposição semanal" |
 | `observacoes` | Observações | texto | N | |
+| `nfe_externa_chave` / `nfe_externa_numero` | NF-e de transferência (emitida por fora) **(Novo)** | chave (44, com DV) / número e série | N | só anotação até a fase fiscal (D6): entre CNPJs diferentes a NF-e sai pelo Nuvem3/contador; anotável também depois do envio, menos na cancelada |
+
+Fase 2, F2-B22: schema (MD 3.7.6, migração `0025_transferencias`) e contratos (`packages/shared/src/transferencias.ts`);
+os endpoints e as telas entram nos F2-B23..B27 (README da API › decisão 170).
+
+Fase 2, F2-B23 (API): rascunho (`GET|POST|PUT|DELETE /transferencias`), **Enviar** (`TRANSF_SAIDA` na origem ao custo
+médio vigente, com o saldo conferido — o ERP não deixa negativo, salvo Master ou "Permite saldo negativo no ERP" — e,
+sem lote, dividido em FEFO; o custo fica no item; enviar de novo não lança outra saída) e **Cancelar** com motivo (do
+rascunho, sem efeito; do trânsito, `TRANSF_RETORNO` integral ao custo da saída; a recebida não se cancela: faz-se a
+transferência inversa), e a anotação da NF-e de fora depois do envio (`PUT /transferencias/:id/nfe-externa`). Vê a
+transferência quem tem a origem **ou** o destino entre os estoques permitidos; só quem tem a origem altera, envia ou
+cancela. O estoque com transferência em trânsito (ou com divergência a tratar) não se inativa, e o usado numa
+transferência não se exclui; o tipo de estoque com transferência em rascunho, em trânsito ou com divergência não se
+inativa (README da API › decisão 171). Receber e tratar a divergência são do F2-B24; as telas, do F2-B27.
+
+Fase 2, F2-B24 (API): **Receber** (`POST /transferencias/:id/receber`, quem tem o destino e `transferencias.receber`:
+a quantidade conferida de **todos** os itens ou "Receber tudo como enviado"; recebida acima da enviada é recusada;
+`TRANSF_ENTRADA` no destino com o custo da saída, repetindo cada lote da divisão FEFO, e a quantidade que chegou enche
+primeiro o lote que vence primeiro) e **tratar a diferença** (`POST /transferencias/:id/tratar-divergencia`, por item,
+uma vez, por quem tem a origem ou o destino: "Retornar à origem" = `TRANSF_RETORNO` da diferença ao custo da saída;
+"Baixar como perda" = o mesmo retorno mais um acerto de Saída automático no estoque de origem, origem "Perda na
+transferência", motivo "Perda em transferência", que fica na tela de acertos e não se estorna; o saldo da origem não
+muda e a perda fica registrada a custo — F2-Q10/D51, decidida pelo dono em 06/11/2026). O lote preso ao estoque de
+origem entra no lote do mesmo código e validade do destino (criado preso ao destino quando não existe; com outra
+validade no destino, o recebimento é recusado no item — D61, decidida pelo dono em 06/11/2026). **Uma etapa**: com
+`estoque.transferencia_recebimento_automatico` ligada (chave da empresa, Configurações › Geral: vale para toda
+transferência da empresa, não só entre estoques do mesmo endereço), o Enviar já recebe tudo na mesma operação, com
+quem enviou como quem recebeu (README da API › decisão 172).
 
 Grade: **Produto**, **Variação**, **Lote** **(Novo)**, **Saldo na origem** **(Novo)**, **Quant** (enviada), **Qtd.
 recebida** **(Novo, etapa 2)**, **Diferença** **(Novo)**. Botão **Sugerir reposição (Novo)**: preenche a grade com
 os produtos do destino abaixo do estoque mínimo, na quantidade `máximo − saldo` (ou `mínimo × 2 − saldo` sem máximo),
 limitada ao saldo da origem.
+
+Fase 2, F2-B25 (API): **Sugerir reposição** (`GET /transferencias/sugestao-reposicao?origem&destino[&tipoEstoqueId]`,
+quem cria o rascunho: `transferencias.criar` e a origem entre os estoques permitidos; o destino ativo e também entre os
+estoques permitidos, porque a sugestão mostra o saldo dele — o expedidor do CD tem as lojas que abastece; erros nos
+campos do rascunho). Entram os produtos da loja do estoque de destino com estoque mínimo (cadastro do produto › Lojas), ativos na
+loja e com saldo próprio (sem combo, serviço, produzido nem "Com variações"), **abaixo do mínimo contando o que já está
+em trânsito para o destino** (enviado e não recebido): `saldo + em trânsito < mínimo`. A quantidade é `máximo − (saldo
++ em trânsito)`, ou `mínimo × 2 − (saldo + em trânsito)` sem máximo; com `estoque.reposicao_arredonda_embalagem`
+(padrão Sim; F2-Q11 = D52, decidida pelo dono em 06/11/2026) sobe ao fardo ou à caixa fechada (a embalagem de compra de
+maior fator) e, por fim, **nunca passa do saldo da origem**. Ex.: mínimo 24, máximo 72, saldo 10 e 12 em trânsito → 50,
+ou 60 com o fardo de 12. Saldos e em trânsito no tipo de estoque escolhido. O produto sem saldo na origem fica de fora,
+com aviso; o destino sem loja (o CD) não tem mínimo: sugestão vazia, com aviso (README da API › decisão 173).
+
+Fase 2, F2-B26 (API e ERP): **Em trânsito** (a enviada das transferências em trânsito, no destino) e **Divergência a
+tratar** (a diferença recebida a menor ainda sem tratamento, na origem; pendência separada, não conta como em trânsito)
+no bloco Estoque do produto (8.2.11) e nos Saldos de estoque (16.4). **Alerta** `TRANSFERENCIA_PARADA` (aviso) para a
+transferência em trânsito há mais de `estoque.transferencia_alerta_dias` (padrão 3) desde o envio, ou com divergência
+sem tratar há mais desses dias desde o recebimento: um por transferência e situação, na loja do destino (trânsito) ou
+da origem (divergência), verificado a cada hora e fechado sozinho no recebimento, no tratamento e no cancelamento
+(README da API › decisão 174).
+
+Fase 2, F2-B27 (ERP): as telas. **Listagem** com os filtros e as colunas acima (o filtro de destino inclui os estoques
+fora dos permitidos). **Formulário**: origem entre os estoques permitidos, destino de todo estoque ativo menos a origem,
+tipo de estoque, data, motivo, observações e a NF-e de fora; a grade com produto, lote (vazio = FEFO), saldo na origem,
+quantidade, a quantidade **em embalagens** ("5 FD + 3 UN", pela embalagem de compra de maior fator) e, depois do envio,
+recebida, diferença e tratamento (a coluna de variação só com o PR-12). **Botões por situação e permissão**: Sugerir
+reposição (preenche a grade; com o destino fora dos estoques permitidos, a tela explica que a sugestão precisa ver o
+saldo do destino), Salvar e enviar, Receber (a conferência item a item, já com a enviada, e "Receber tudo como
+enviado"), Tratar diferença (por item, "Retornar à origem" ou "Baixar como perda"), Cancelar (o rascunho) ou Cancelar
+envio (em trânsito), a NF-e de fora depois do envio e o **Romaneio**. O alerta de transferência parada aberto aparece no
+topo. **Romaneio** pela impressão do navegador: o cabeçalho da empresa, a origem e o destino (estoque, loja com CNPJ e
+endereço), os itens com o lote, a embalagem e a quantidade, a coluna "Conferido" em branco e as assinaturas de quem
+expediu, transportou e recebeu (README da API › decisão 175; README do ERP › decisão 64).
 
 ```mermaid
 stateDiagram-v2
@@ -3329,13 +3399,17 @@ stateDiagram-v2
 | Etapa 2 – Receber | Usuário com acesso ao destino e `transferencias.receber` informa a quantidade conferida por item (botão "Receber tudo como enviado"). Gera `TRANSF_ENTRADA` com o custo da saída |
 | Divergência | Se recebida < enviada, a diferença precisa de decisão: **Retornar à origem** (`TRANSF_RETORNO`) ou **Baixar como perda** (acerto de saída automático no estoque de origem com motivo "Perda em transferência"). Recebida > enviada é recusada (fazer nova transferência) |
 | Cancelamento | Rascunho: sem efeito. Em trânsito: `TRANSF_RETORNO` integral na origem, com motivo |
-| Uma etapa | Opção `estoque.transferencia_recebimento_automatico` (Configurações › Geral, padrão Não) faz o envio já gerar a entrada (para estoques do mesmo endereço) |
+| Uma etapa | Opção `estoque.transferencia_recebimento_automatico` (Configurações › Geral, padrão Não) faz o envio já gerar a entrada (pensada para estoques do mesmo endereço; é da empresa, não por loja: ligada, vale para toda transferência) |
 | Fiscal [P6] | Se origem e destino pertencem a lojas com **CNPJs diferentes**, a transferência exige NF-e de transferência (CFOP 5152/5409 ou 6152/6409) emitida pela nuvem ao Enviar; a entrada no destino referencia a chave. Mesmo CNPJ: sem nota |
 | PDV | Saldos alterados descem aos PDVs da loja destino/origem na próxima sincronização |
 
 **Entidades**: `transferencias_estoque`, `itens_transferencia`, `movimentos_estoque`, `saldos_estoque`,
 `documentos_fiscais` (P6). **API**: `/api/transferencias`, `POST /api/transferencias/:id/enviar`,
-`POST /api/transferencias/:id/receber`, `POST /api/transferencias/:id/cancelar`, `GET /api/transferencias/sugestao-reposicao`.
+`POST /api/transferencias/:id/receber`, `POST /api/transferencias/:id/tratar-divergencia`,
+`POST /api/transferencias/:id/cancelar`, `PUT /api/transferencias/:id/nfe-externa`, `GET /api/transferencias/destinos`,
+`GET /api/transferencias/origens` (os estoques permitidos, só com `transferencias.ver`: as telas não exigem `estoques.ver`),
+`GET /api/transferencias/sugestao-reposicao`, `GET /api/transferencias/dados-produtos`,
+`GET /api/transferencias/:id/romaneio`.
 
 ---
 

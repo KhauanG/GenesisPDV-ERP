@@ -5,7 +5,8 @@
  */
 import { sql, type SQL } from 'drizzle-orm';
 
-const fusoDaEmpresa = sql`coalesce((select e.fuso_horario from empresa e limit 1), 'America/Sao_Paulo')`;
+/** O fuso da empresa (`empresa.fuso_horario`; sem a linha, o de Brasília), para o `at time zone` de quem formata. */
+export const fusoDaEmpresa: SQL = sql`coalesce((select e.fuso_horario from empresa e limit 1), 'America/Sao_Paulo')`;
 
 /** Hoje (`date`) no fuso da empresa. */
 export const hojeNaEmpresa: SQL = sql`(now() at time zone ${fusoDaEmpresa})::date`;

@@ -38,6 +38,7 @@ import { SyncController } from './sync/sync.controller.js';
 import { TarefasController } from './tarefas/tarefas.controller.js';
 import { EventosRecebidosController } from './terminais/eventos-recebidos.controller.js';
 import { TerminaisController } from './terminais/terminais.controller.js';
+import { TransferenciasController } from './transferencias/transferencias.controller.js';
 import type { Servicos } from './servicos.js';
 import { ContextoEmpresaInterceptor } from './tenancy/contexto.interceptor.js';
 import { UsuariosController } from './usuarios/usuarios.controller.js';
@@ -91,6 +92,7 @@ export class AppModule {
         AcertosController,
         RecebimentosController,
         NotasEntradaController,
+        TransferenciasController,
         SaldosEstoqueController,
         TiposEstoqueController,
         UsuariosController,

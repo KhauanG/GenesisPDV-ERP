@@ -56,6 +56,7 @@ import {
   detalheAcerto,
   efetivarAcerto,
   estornarAcerto,
+  exigirAcertoEstornavel,
   exigirTipoEstoqueAtivo,
   gravarItensRascunho,
   lojaDoEstoque,
@@ -506,6 +507,7 @@ export class AcertosController {
         const a = await this.travar(tx, id, sessao, versao);
         if (a.status !== 'efetivado')
           throw new ErroApi('REGRA_NEGOCIO', 'Só um acerto efetivado pode ser estornado.');
+        exigirAcertoEstornavel(a);
         await exigirTipoEstoqueAtivo(tx, a.tipoEstoqueId, 'estornar');
         if (a.tipoEstoqueDestinoId)
           await exigirTipoEstoqueAtivo(tx, a.tipoEstoqueDestinoId, 'estornar', 'tipoEstoqueDestinoId');

@@ -36,8 +36,8 @@ import {
   dec,
   decTexto,
   dividirSaidaFefo,
-  estornoDeMudancaTipo,
   movimentoDeCompra,
+  saidaAoCustoInformado,
   type LoteDisponivel,
   type ModoLoteBaixaSemInformar,
   type Valor,
@@ -79,8 +79,9 @@ export interface NovoMovimento extends ChaveSaldo {
   quantidade: Valor;
   /**
    * Entrada: custo do documento (padrão = custo médio, ou `custoReferencia` sem saldo). Estorno de saída
-   * (`estornoDeId` com quantidade positiva): obrigatório, o custo da saída original (T20). Saída: ignorado, salvo no
-   * estorno da perna de entrada da mudança de tipo (`estornoDeMudancaTipo`, F2-B8): obrigatório, o custo da entrada.
+   * (`estornoDeId` com quantidade positiva): obrigatório, o custo da saída original (T20). Saída: ignorado, salvo na
+   * saída ao custo informado (`saidaAoCustoInformado`: o estorno da perna de entrada da mudança de tipo, F2-B8, e a
+   * saída da perda da transferência, F2-B24): obrigatório, o custo da entrada que ela desfaz.
    */
   custoUnitario?: Valor | null;
   /** Custo usado quando a linha de saldo ainda não tem custo médio (ex.: `produtos.preco_custo`). */
@@ -303,7 +304,7 @@ function calcularMovimento(saldo: SaldoTravado, m: NovoMovimento): MovimentoCalc
     custoUnitario: m.custoUnitario,
     custoReferencia: m.custoReferencia,
     estorno: Boolean(m.estornoDeId),
-    saidaAoCusto: estornoDeMudancaTipo(m),
+    saidaAoCusto: saidaAoCustoInformado(m),
   });
   saldo.quantidade = r.saldoPosterior;
   saldo.custoMedio = r.custoMedioPosterior;

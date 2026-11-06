@@ -131,3 +131,27 @@ Todas as decisões abaixo saem de "padrão até a confirmação do dono" e passa
   scanning, gerou a chave SSH nova da implantação e revogou a antiga; o PDV 0.10.0 e a `main` foram implantados pelo
   repositório novo. Sem certificado de assinatura do PDV (o dono nunca teve; padrão do README do PDV). A chave PIX
   `pix@icebeer.com.br` dos testes é só de teste (confirmado pelo dono). Falta: proteger o SSH da VPS.
+
+## Transferência CD ⇄ loja — PR-6 (06/11/2026)
+
+O dono concordou com todas as recomendações ("Concordei com tudo!", 06/11/2026). Todas já eram o padrão aplicado
+nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a confirmação do dono".
+
+- **F2-Q10 (D51) — RESPONDIDA: (b).** A diferença recebida a menor que é perda volta ao CD (`TRANSF_RETORNO`) e
+  sai de lá na hora como perda (acerto de Saída de origem `perda_transferencia`): o saldo do CD não muda e a perda
+  fica registrada ao custo do envio. README da API › decisões 170 e 172.
+- **F2-Q11 (D52) — RESPONDIDA: (a).** A sugestão de reposição arredonda para cima até o fardo ou a caixa fechada (a
+  embalagem de compra de maior fator), sem passar do saldo do CD (`estoque.reposicao_arredonda_embalagem` = true,
+  configurável). README da API › decisão 173.
+- **D61 — RESPONDIDA: as recomendações.** (1) Trata a diferença quem tem a origem **ou** o destino entre os estoques
+  permitidos, com `transferencias.receber`. (2) No modo de uma etapa, quem envia não precisa ter o destino: a chave é
+  a autorização e o recebimento fica em nome de quem enviou. (3) O lote preso ao estoque de origem entra no lote de
+  mesmo código e validade no destino (criado com os mesmos dados se não existir); com o mesmo código e outra validade
+  no destino, o item é recusado. README da API › decisão 172.
+- **D62 — RESPONDIDA: as recomendações.** (1) A Ice Beer usa a transferência em **duas etapas** (o CD envia e a
+  loja confere e recebe; `estoque.transferencia_recebimento_automatico` fica desligada). (2) A sugestão de reposição
+  exige o estoque da loja de destino entre os permitidos de quem pede, porque mostra o saldo, o mínimo e o máximo
+  dela: quem monta as cargas no CD precisa ter liberados o CD e as lojas que abastece (Usuários › Estoques
+  permitidos); criar e enviar à mão continua sem exigir o destino. (3) A "Divergência a tratar" aparece no estoque de
+  **origem**, onde a diferença se trata. (4) O alerta de transferência parada sai depois de **3 dias**
+  (`estoque.transferencia_alerta_dias`, configurável). README da API › decisões 173 e 174.

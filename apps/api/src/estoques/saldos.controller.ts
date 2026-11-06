@@ -17,6 +17,7 @@ import { Sessao } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import type { Servicos } from '../servicos.js';
+import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
 import { estoqueVisivel } from './permitidos.js';
 
 const verCusto = (s: SessaoErp) => s.permissoes.has('produtos.ver_custo');
@@ -32,8 +33,9 @@ const colunasOrdenacao: Record<string, SQL> = {
 };
 
 /**
- * Consulta simples de saldos por estoque (ERP 8.2.11; 16.4 sem o ajuste no clique, o "Em trânsito" e a data-base,
- * que chegam com as transferências e o relatório completo da Fase 2) e o saldo dos itens da grade do acerto.
+ * Consulta simples de saldos por estoque (ERP 8.2.11; 16.4 sem o ajuste no clique e a data-base, que chegam com o
+ * relatório completo da Fase 2), com o "Em trânsito" e a "Divergência a tratar" das transferências (F2-B26; README da
+ * API › decisão 174), e o saldo dos itens da grade do acerto.
  */
 @Controller('saldos-estoque')
 export class SaldosEstoqueController {
@@ -67,11 +69,14 @@ export class SaldosEstoqueController {
       condicoes.push(sql`(p.busca like lower(fn_unaccent(${`%${escaparLike(nome)}%`})) or lower(p.codigo_interno) = lower(${nome})
         or exists (select 1 from produtos_codigos_barras cb where cb.produto_id = p.id and cb.excluido_em is null and cb.codigo = ${nome}))`);
     // Com "sem movimento", cada produto que controla estoque aparece em cada estoque escolhido mesmo sem linha de saldo.
+    // F2-B26 (decisão 174): as linhas de saldo mais as chaves só com pendência de transferência (`sqlSaldosComPendencias`,
+    // com a CTE `pd`): o produto a caminho de uma loja que nunca o recebeu aparece nela com saldo zero.
+    const saldos = sql`(${sqlSaldosComPendencias()})`;
     const origem = q.incluirSemMovimento
       ? sql`estoques e cross join produtos p
-            left join saldos_estoque s on s.estoque_id = e.id and s.produto_id = p.id and s.variacao_id is null
+            left join ${saldos} s on s.estoque_id = e.id and s.produto_id = p.id and s.variacao_id is null
                                        ${q.tipoEstoqueId ? sql`and s.tipo_estoque_id = ${q.tipoEstoqueId}` : sql``}`
-      : sql`saldos_estoque s join estoques e on e.id = s.estoque_id join produtos p on p.id = s.produto_id`;
+      : sql`${saldos} s join estoques e on e.id = s.estoque_id join produtos p on p.id = s.produto_id`;
     if (q.incluirSemMovimento) condicoes.push(sql`p.controla_estoque`);
     else if (q.tipoEstoqueId) condicoes.push(sql`s.tipo_estoque_id = ${q.tipoEstoqueId}`);
     const onde = sql.join(condicoes, sql` and `);
@@ -86,13 +91,18 @@ export class SaldosEstoqueController {
               ? sql`x.estoque_minimo is not null and x.quantidade < x.estoque_minimo`
               : sql`true`;
     const base = sql`
-      with x as (
+      with pd as (${sqlPendenciasTransferencia()}),
+      x as (
         select e.id as estoque_id, e.nome as estoque_nome, s.tipo_estoque_id, t.nome as tipo_estoque_nome,
                p.id as produto_id, p.codigo as produto_codigo, p.nome as produto_nome, p.codigo_interno, u.sigla,
                coalesce(s.quantidade, 0) as quantidade, coalesce(s.custo_medio, 0) as custo_medio,
                coalesce(pl.preco_venda, p.preco_venda) as preco_venda, pl.estoque_minimo,
-               s.ultima_entrada_em, s.ultima_saida_em
+               s.ultima_entrada_em, s.ultima_saida_em,
+               coalesce(pdl.em_transito, 0) as em_transito, coalesce(pdl.divergencia, 0) as divergencia
           from ${origem}
+          left join pd pdl on pdl.estoque_id = e.id and pdl.produto_id = p.id
+                          and pdl.tipo_estoque_id = s.tipo_estoque_id
+                          and pdl.variacao_id is not distinct from s.variacao_id
           join unidades_medida u on u.id = p.unidade_id
           left join tipos_estoque t on t.id = s.tipo_estoque_id
           left join lateral (select l.id from lojas l where l.estoque_id = e.id and l.excluido_em is null
@@ -103,7 +113,8 @@ export class SaldosEstoqueController {
       const { rows } = await db.execute<Record<string, unknown>>(sql`
         ${base}
         select x.*, x.quantidade::text as qtd, x.custo_medio::text as cm, x.preco_venda::text as pv,
-               x.estoque_minimo::text as minimo,
+               x.estoque_minimo::text as minimo, x.em_transito::numeric(15,3)::text as transito,
+               x.divergencia::numeric(15,3)::text as divergencia_texto,
                round(x.quantidade * x.custo_medio, 2)::text as custo_total,
                round(x.quantidade * x.preco_venda, 2)::text as venda_total
           from x where ${situacaoSaldo}
@@ -129,6 +140,8 @@ export class SaldosEstoqueController {
           codigoInterno: (r.codigo_interno as string | null) ?? null,
           unidadeSigla: r.sigla as string,
           quantidade: r.qtd as string,
+          emTransito: r.transito as string,
+          divergenciaATratar: r.divergencia_texto as string,
           estoqueMinimo: (r.minimo as string | null) ?? null,
           custoMedio: custo ? (r.cm as string) : null,
           custoTotal: custo ? (r.custo_total as string) : null,

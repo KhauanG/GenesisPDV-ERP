@@ -25,6 +25,7 @@ export * from './recebimentos.js';
 export * from './sync/contratos.js';
 export * from './sync/eventos.js';
 export * from './terminais.js';
+export * from './transferencias.js';
 export * from './validadores.js';
 export * from './zod-pt.js';
 export * from './usuarios.js';

@@ -15,6 +15,7 @@ import {
 } from './estoque.js';
 import { CHAVE_ASSINATURA_INVALIDA, MODOS_ASSINATURA_INVALIDA } from './notas-entrada.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
+import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 describe('catálogo de configurações (MD 3.1.2)', () => {
   it('chaves únicas, no formato <grupo>.<nome> e cabendo em configuracoes.chave', () => {
@@ -90,5 +91,15 @@ describe('catálogo de configurações (MD 3.1.2)', () => {
     for (const modo of MODOS_ASSINATURA_INVALIDA) expect(def.tipo.safeParse(modo).success, modo).toBe(true);
     expect(def.tipo.safeParse('ignorar').success).toBe(false);
     expect(GRUPOS_CONFIGURACAO).toContain(grupoDaChave(CHAVE_ASSINATURA_INVALIDA));
+  });
+
+  it('estoque.transferencia_alerta_dias: inteiro de 1 a 365, padrão 3, da empresa e fora do PDV (F2-B26)', () => {
+    const def = CONFIGURACOES_POR_CHAVE.get(CHAVE_TRANSFERENCIA_ALERTA_DIAS)!;
+    expect(TRANSFERENCIA_ALERTA_DIAS_PADRAO).toBe(3);
+    expect(def.padrao).toBe(3);
+    expect(def.loja).toBe(false);
+    expect(def.pdv).toBe(false);
+    for (const v of [1, 3, 365]) expect(def.tipo.safeParse(v).success, String(v)).toBe(true);
+    for (const v of [0, 366, 2.5, '3']) expect(def.tipo.safeParse(v).success, String(v)).toBe(false);
   });
 });
