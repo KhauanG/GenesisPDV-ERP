@@ -1,0 +1,38 @@
+{
+  "agora_servidor": "2026-11-03T14:00:00.118Z",
+  "eventos": [
+    {
+      "evento_id": "01a18771-4e5f-7061-8273-8d9e0f1a2b3c",
+      "status": "aplicado",
+      "versao_nuvem": 1882301,
+      "versao_nuvem_fim": 1882305,
+      "resultado": {}
+    },
+    {
+      "evento_id": "01a18772-5f60-7172-9384-9e0f1a2b3c4d",
+      "status": "descartado",
+      "resultado": {
+        "descartado": true,
+        "justificativa": "Venda de teste lançada por engano"
+      }
+    },
+    {
+      "evento_id": "01a18773-6071-7283-a495-af1a2b3c4d5e",
+      "status": "erro",
+      "resultado": null,
+      "erro": {
+        "codigo": "REFERENCIA_INEXISTENTE",
+        "mensagem": "Produto 01a18700-0000-7000-8000-000000000001 não existe na nuvem."
+      }
+    },
+    {
+      "evento_id": "01a18774-7182-7394-b5a6-b02b3c4d5e6f",
+      "status": "retido",
+      "resultado": null,
+      "erro": {
+        "codigo": "DEPENDENCIA_PENDENTE",
+        "mensagem": "Aguardando o evento 01a18773-6071-7283-a495-af1a2b3c4d5e."
+      }
+    }
+  ]
+}

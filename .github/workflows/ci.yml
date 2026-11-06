@@ -1,0 +1,416 @@
+# CI do monorepo (roadmap, Fase 0): verde na `main` antes de qualquer implantação (CONTRIBUTING.md).
+#
+# Desde 05/11/2026 (decisão do dono, cota do Pro): o CI roda no push da `main` e à mão, não em cada PR. Antes do PR,
+# os checks rodam localmente (CLAUDE.md › Checks); para conferir um branch no GitHub, dispare à mão com o escopo
+# `mudancas`, que compara com o merge-base da `main`, como um PR.
+#
+# Economia de minutos (04/11/2026, cota do GitHub Free esgotada; CONTRIBUTING.md › CI): o job "mudancas" olha os
+# arquivos alterados (.github/scripts/mudancas.sh) e cada job pesado só roda se algo que ele confere mudou. PR: contra
+# a base do PR. Push na main: contra o commit anterior (ou o último commit da main com CI verde, se o do anterior não
+# ficou verde; só runs de push contam como verdes). Disparo manual: tudo, a não ser que se escolha outro escopo. Só documentação (*.md, docs/) não roda
+# nenhum job pesado. Job pulado conta como sucesso: o CI fica verde e a implantação automática (workflow_run) segue.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      escopo:
+        description: 'O que rodar: tudo (padrão); mudancas (só os jobs do que mudou desde o merge-base com a main, como num PR; na própria main roda tudo); ou um job só: ts (TypeScript e integração no PostgreSQL 18), pdv (Windows e a formatação do C#), imagens, e2e'
+        type: choice
+        options: [tudo, mudancas, ts, pdv, imagens, e2e]
+        default: tudo
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Só PRs cancelam a execução anterior; a main sempre roda até o fim.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Detecção das mudanças: alguns segundos de runner (1 minuto cobrado). Na dúvida o script roda tudo (base que não se
+  # resolve, erro do git ou da API, arquivo fora dos lugares conhecidos). Se o próprio job falhar, os jobs abaixo rodam
+  # (`needs.mudancas.result != 'success'`), nunca são pulados por falta de detecção.
+  mudancas:
+    name: Mudanças (o que roda)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # runs verdes do CI na main (base do push)
+    outputs:
+      ts: ${{ steps.detectar.outputs.ts }}
+      pdv: ${{ steps.detectar.outputs.pdv }}
+      imagens: ${{ steps.detectar.outputs.imagens }}
+      e2e: ${{ steps.detectar.outputs.e2e }}
+    steps:
+      # Histórico inteiro (o repositório é pequeno): a base do push pode ser um commit antigo da main e o
+      # merge-base precisa dos ancestrais.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Arquivos alterados → jobs
+        id: detectar
+        env:
+          EVENTO: ${{ github.event_name }}
+          ANTES: ${{ github.event.before }}
+          BASE_PR: ${{ github.event.pull_request.base.sha }}
+          ESCOPO: ${{ inputs.escopo }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/mudancas.sh
+
+  ts:
+    name: TypeScript (API, ERP web, shared)
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.ts == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Sem PostgreSQL desde 05/11/2026 (economia de minutos; escolha técnica, não pedida pelo dono, padrão até a
+    # confirmação dele: roadmap §16, D59): a integração da API roda só no job "Integração da API (PostgreSQL 18)", a
+    # versão da produção; aqui ficam os testes unitários, que não usam banco.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # versão do pnpm: a do campo "packageManager" do package.json
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # O postinstall da raiz compila o @genesis/shared (dist/ pronto para os comandos por pacote).
+      - name: Dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Formatação
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Tipos
+        run: pnpm typecheck
+
+      - name: Schemas Drizzle × migrações versionadas
+        run: |
+          pnpm --filter api db:gerar:controle
+          pnpm --filter api db:gerar:empresa
+          if [ -n "$(git status --porcelain apps/api/drizzle)" ]; then
+            git status --porcelain apps/api/drizzle
+            echo "::error::Schema Drizzle alterado sem migração: rode db:gerar:controle/db:gerar:empresa e versione o SQL"
+            exit 1
+          fi
+
+      # O PDV confere o modelo EF contra o Esquema.g.cs (EsquemaNuvemTests); aqui, que o arquivo saiu do schema atual.
+      - name: Esquema do PDV (Esquema.g.cs) × schema Drizzle e registro de fluxos
+        run: pnpm --filter api verificar:esquema-pdv
+
+      # O `pnpm test` da raiz roda o `test` de cada pacote, e o da API é `test:unit` + `test:integracao`: aqui só os
+      # unitários de cada pacote (o shared já foi compilado pelo postinstall).
+      - name: Testes unitários (shared, API e ERP web)
+        run: |
+          pnpm --filter @genesis/shared test
+          pnpm --filter api test:unit
+          pnpm --filter erp-web test
+
+      - name: Build (API e ERP web)
+        run: pnpm build
+
+  # Implantação do piloto (I1): o banco de produção é o Cloud SQL PostgreSQL 18. Desde 05/11/2026 (economia de minutos;
+  # escolha técnica, padrão até a confirmação do dono: roadmap §16, D59) a suíte de integração da API roda só aqui, em
+  # paralelo ao job acima; antes rodava também no 16 do job TypeScript. O 16 continua sendo o do ambiente local
+  # (infra/docker-compose.yml) e o do e2e abaixo. A imagem oficial já traz ICU e as extensões contrib (pg_trgm,
+  # unaccent, btree_gist) usadas pelas migrações.
+  integracao-pg18:
+    name: Integração da API (PostgreSQL 18)
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.ts == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: genesis
+          POSTGRES_PASSWORD: genesis_dev
+          POSTGRES_DB: genesis_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genesis -d genesis_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://genesis:genesis_dev@localhost:5432/genesis_control
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Testes de integração da API (PostgreSQL 18)
+        run: pnpm --filter api test:integracao
+        env:
+          # Runner compartilhado (dois arquivos de integração no mesmo PostgreSQL): o teste do teto da 7300001 confere
+          # o p95 com folga, e a meta de 50 ms da SYNC 8.3 fica no log (`console.info`) e no teste local. A carga de 4
+          # terminais (carga-terminais) disputa o banco com os outros arquivos: teto próprio, mais largo.
+          TETO_TRAVA_VERSAO_MS: '100'
+          TETO_TRAVA_CARGA_MS: '250'
+
+  # Implantação do piloto (I1 e I1b): as imagens de produção (apps/api/Dockerfile, apps/erp-web/Dockerfile e
+  # infra/producao/backup/Dockerfile) buildam em todo PR que mexe nelas (ou no que entra no contexto do build, ou em
+  # infra/producao), com o mesmo cache do workflow de implantação. Nada é publicado.
+  imagens:
+    name: Imagens Docker (API, ERP e backup)
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.imagens == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Imagem da API
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: genesis-api:ci
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=genesis-api
+
+      - name: Imagem do ERP
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/erp-web/Dockerfile
+          tags: genesis-web:ci
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=genesis-web
+
+      - name: Imagem do backup
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: infra/producao/backup
+          file: infra/producao/backup/Dockerfile
+          tags: genesis-backup:ci
+          push: false
+          provenance: false
+          cache-from: type=gha,scope=genesis-backup
+
+      # Scripts da VPS, do container de backup e do teste local (o ubuntu-latest já traz o shellcheck; -x segue o
+      # `source` do teste de unidade do backup). -S warning: reprova avisos e erros; as notas "info" ficam de fora
+      # (o shellcheck do runner marca como info o `teste && teste || falha` que os scripts usam de propósito, e a
+      # versão mais nova já não marca).
+      - name: Scripts de produção (shellcheck)
+        run: shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/teste/*.sh
+
+      # Sem Docker nem bucket: senha do DATABASE_URL, estado ausente × bucket indisponível, manifesto antes do
+      # estado.json e retenção num bucket versionado (dublês do s3 e do pg_dump).
+      - name: Script do backup (testes de unidade)
+        run: bash infra/producao/backup/testar-genesis-backup.sh
+
+      # Sem Docker (um `docker` dublê): os logs da API guardados pelo implantar.sh antes de recriar o container (o
+      # trecho em volta do último reinício, o implantar, o voltar, a volta automática e o token-monitor), a retenção e o
+      # `implantar.sh logs` (decisão 166 do README da API).
+      - name: Logs do implantar.sh (testes de unidade)
+        run: bash infra/producao/teste/testar-implantar-logs.sh
+
+      - name: Compose de produção válido (e dentro dos 2,5 GB somados, com o backup e o container de tarefa)
+        run: |
+          cd infra/producao
+          export GENESIS_VERSAO=ci CLOUDSQL_INSTANCIA=projeto:regiao:instancia ERP_DOMINIO=erp.exemplo.invalid \
+            API_DOMINIO=api.exemplo.invalid DOWNLOAD_DOMINIO=download.exemplo.invalid GENESIS_SEGREDOS=/tmp/segredos
+          # O Compose do runner exige que os env_file existam mesmo com --no-env-resolution: arquivos vazios de
+          # mentira (a VPS tem os de verdade em /opt/genesis/segredos e /opt/genesis/genesis.env).
+          mkdir -p /tmp/segredos
+          touch /tmp/segredos/genesis-google.env /tmp/segredos/genesis-app.env /tmp/segredos/gcp-conta-servico.json
+          [ -e genesis.env ] || cp genesis.env.exemplo genesis.env
+          docker compose --project-directory . -f docker-compose.yml config -q --no-env-resolution --no-path-resolution
+          # Decisão do dono (03/11/2026): 2,5 GB de RAM no limite somado dos containers; a tarefa roda com a API no ar.
+          soma=$(docker compose --project-directory . -f docker-compose.yml --profile tarefa config --format json \
+            --no-env-resolution --no-path-resolution | jq '[.services[].mem_limit | tonumber] | add / 1048576')
+          echo "Soma dos limites de memória (API + ERP + proxy + backup + tarefa): $soma MiB"
+          [ "$soma" -le 2560 ] || { echo "::error::limites de memória somam $soma MiB (teto: 2560)"; exit 1; }
+
+  # Desde 05/11/2026 (decisão do dono, economia de minutos; README do PDV › decisão 80): o PDV na CI roda só no
+  # Windows, o sistema dos caixas das lojas (D21). O Linux do PDV era só de testes: sem .deb e sem build/teste do PDV
+  # no ubuntu (o código continua compilando e os testes rodam no Linux do ambiente de desenvolvimento). O Windows cobra
+  # 2× os minutos: o job roda só quando o PDV ou o que ele lê de fora mudou. A formatação do C# fica no job leve
+  # "PDV (.NET 10) – formatação", no Linux.
+  pdv:
+    name: PDV (.NET 10) – windows-latest
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.pdv == 'true') }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        # O global.json (SDK e Microsoft.Testing.Platform) fica em apps/pdv.
+        working-directory: apps/pdv
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      # Teto das consultas com volume sintético (120 mil vendas): 300 ms no caixa e no teste local; o runner oscila.
+      GENESISPDV_TETO_CONSULTA_MS: '800'
+      # URL padrão da API gravada no executável do instalador (I3; README do PDV › decisão 62): a do piloto, trocável
+      # pela variável do repositório PDV_URL_API_PADRAO sem mexer no código.
+      PDV_URL_API: ${{ vars.PDV_URL_API_PADRAO || 'https://api.grupoicebeer.com.br' }}
+      # I4: a impressora de teste do spooler é obrigatória (o preparo falha e o SpoolerWindowsTests não pula);
+      # PDV_SPOOLER_OPCIONAL=1 nas variáveis do repositório tolera, de propósito, um runner sem spooler.
+      GENESISPDV_SPOOLER_OPCIONAL: ${{ vars.PDV_SPOOLER_OPCIONAL || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: apps/pdv/global.json
+
+      - name: Restore
+        run: dotnet restore GenesisPDV.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build GenesisPDV.slnx --no-restore -c Release
+
+      # I4 (README do PDV › decisão 63): a impressora "Generic / Text Only" numa porta de arquivo, para o SpoolerWindowsTests
+      # mandar o documento pelo spooler com envio RAW e conferir os bytes no arquivo. Falhou o preparo, o job falha.
+      - name: Impressora de teste do spooler
+        shell: pwsh
+        run: ./instalador/windows/preparar-impressora-teste.ps1
+
+      - name: Testes
+        run: dotnet test --solution GenesisPDV.slnx --no-build -c Release
+
+      # I3: o instalador do Windows (Inno Setup 6, instalado pelo Chocolatey se faltar) com o executável publicado e
+      # conferido, sem assinatura (ela é do workflow pdv-release). O teste de fumaça roda de verdade no runner: instala em
+      # silêncio (exe, pastas de ProgramData com MODIFICAR para Usuários, atalhos, "Iniciar com o Windows"), abre o PDV
+      # instalado com os caminhos da loja até "Banco local pronto" (pdv.db em ProgramData), recusa por cima com o PDV
+      # aberto e quando é mais antigo que o instalado, reinstala e desinstala sem perder o banco. É também a definição de
+      # pronto da Fase 0 ("o PDV abre, cria o pdv.db e aplica as migrações locais"), que antes rodava no Linux com Xvfb.
+      - name: Instalador do Windows (publica e compila o GenesisPDV.iss)
+        id: instalador
+        shell: pwsh
+        run: ./instalador/windows/gerar-instalador.ps1 -UrlApi $env:PDV_URL_API
+
+      - name: Teste do instalador do Windows (instala, abre, reinstala e desinstala)
+        shell: pwsh
+        env:
+          INSTALADOR: ${{ steps.instalador.outputs.instalador }}
+          VERSAO: ${{ steps.instalador.outputs.versao }}
+        run: ./instalador/windows/testar-instalador.ps1 -Instalador $env:INSTALADOR -Versao $env:VERSAO -UrlApi $env:PDV_URL_API
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: GenesisPDV-Setup
+          path: apps/pdv/publish/instalador
+          if-no-files-found: error
+          retention-days: 14
+
+  # A conferência de formatação do C# (antes um passo do PDV no Linux, onde sempre rodou). Fica num runner Linux, leve e
+  # cobrado a 1×, sem depender do Windows: o resultado é o mesmo da conferência local (CLAUDE.md › Checks), sem a
+  # dependência das quebras de linha do checkout no Windows (o .gitattributes pede LF, mas um runner com outra
+  # configuração do git faria o `dotnet format` apontar todos os arquivos), e a falha aparece em poucos minutos. Só
+  # restore e format, sem build nem teste (esses são do job do Windows); mesma condição de mudanças do PDV.
+  pdv-formatacao:
+    name: PDV (.NET 10) – formatação
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.pdv == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/pdv
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: apps/pdv/global.json
+
+      - name: Restore
+        run: dotnet restore GenesisPDV.slnx --locked-mode
+
+      - name: Formatação (dotnet format)
+        run: dotnet format GenesisPDV.slnx --verify-no-changes --no-restore
+
+  # E2E PDV ↔ API (Fase 1B, bloco B5): a API de apps/api/test/e2e-pdv/servidor.ts com o PostgreSQL 16 e o PDV de verdade
+  # sem tela (Avalonia headless) — ativação pelo ERP, carga, login offline, preço em até 1 min, heartbeat e comandos,
+  # revogação nos dois modos. Fase 1C (C13): o caixa de ponta a ponta (abertura, fardo, combo e casco, sangria,
+  # cancelamento da venda paga, fechamento offline e reconexão, conferido pelo ERP) e o PDV 30.7 com as 200 vendas em
+  # seguida; o pdv-30-7.json vai no artefato (condição de merge do PR 1C-1; as 4 h reais ficam no workflow aceite-pdv).
+  # Tudo espera por polling com tempo limite (nunca sleep fixo).
+  e2e-sync:
+    name: E2E PDV ↔ API (sincronização, caixa e PDV 30.7)
+    needs: mudancas
+    if: ${{ !cancelled() && (needs.mudancas.result != 'success' || needs.mudancas.outputs.e2e == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: genesis
+          POSTGRES_PASSWORD: genesis_dev
+          POSTGRES_DB: genesis_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genesis -d genesis_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://genesis:genesis_dev@localhost:5432/genesis_control
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: apps/pdv/global.json
+
+      - name: Dependências
+        run: pnpm install --frozen-lockfile
+
+      # O global.json (SDK e Microsoft.Testing.Platform) fica em apps/pdv.
+      - name: Restore e build do e2e do PDV
+        working-directory: apps/pdv
+        run: |
+          dotnet restore GenesisPDV.slnx --locked-mode
+          dotnet build tests/GenesisPDV.E2E.Tests --no-restore -c Release
+
+      - name: E2E (API local + PDV headless)
+        env:
+          E2E_LOG_API: ${{ runner.temp }}/e2e-api.log
+          GENESISPDV_CAPTURAS: ${{ runner.temp }}/capturas
+          GENESIS_E2E_RELATORIOS: ${{ runner.temp }}/relatorios
+        run: apps/api/test/e2e-pdv/rodar.sh -c Release --no-build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: e2e-sync
+          path: |
+            ${{ runner.temp }}/e2e-api.log
+            ${{ runner.temp }}/capturas
+            ${{ runner.temp }}/relatorios
+          if-no-files-found: ignore
+          retention-days: 7

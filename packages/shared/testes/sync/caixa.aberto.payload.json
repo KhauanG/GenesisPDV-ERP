@@ -1,0 +1,48 @@
+{
+  "sessoes_caixa": {
+    "id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "numero_caixa": 2,
+    "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+    "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "status": "aberta",
+    "dia_operacional": "2026-10-29",
+    "aberta_em": "2026-10-29T11:01:15.000Z",
+    "abertura_automatica": false,
+    "fundo_troco": "150.00",
+    "sessao_anterior_id": null,
+    "valor_recebido_anterior": null,
+    "diferenca_recebimento": null,
+    "fechada_em": null
+  },
+  "movimentos_caixa": [
+    {
+      "id": "01a18756-2b84-7c24-81a9-e71fde8a774b",
+      "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+      "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+      "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+      "numero_caixa": 2,
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "tipo": "abertura",
+      "forma_pagamento_id": null,
+      "valor": "150.00",
+      "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "quem_retira_usuario_id": null,
+      "quem_retira_nome": null,
+      "observacao": null,
+      "inf_adicionais": null,
+      "ocorrido_em": "2026-10-29T11:01:15.000Z",
+      "autorizado_por_id": null,
+      "troca_id": null,
+      "cancelado": false
+    }
+  ],
+  "contagem_cedulas": {
+    "100.00": 1,
+    "20.00": 2,
+    "5.00": 1,
+    "1.00": 3,
+    "0.50": 4
+  }
+}

@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             x:Class="GenesisPDV.App.Views.Central.AbaSobreView"
+             x:DataType="vm:AbaSobreViewModel"
+             Focusable="True">
+  <!-- Aba 9 da Central do PDV, Sobre o terminal (bloco G4; README › decisão 69): só leitura, sem PIN (PC-7); o código
+       do terminal se copia para o suporte (o botão, ou Enter e Ctrl+C com o foco na aba: os botões do caixa não recebem o
+       foco, decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="Ctrl+C" Command="{Binding CopiarCommand}" />
+    <KeyBinding Gesture="Enter" Command="{Binding CopiarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8">
+    <StackPanel Grid.Row="0" Spacing="6">
+      <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+      <StackPanel Orientation="Horizontal" Spacing="12">
+        <TextBlock Text="Código do terminal para o suporte:" VerticalAlignment="Center" FontSize="16" />
+        <TextBlock x:Name="TextoCodigoTerminalSobre" Text="{Binding CodigoTerminal}" FontSize="22" FontWeight="Bold"
+                   Foreground="{DynamicResource PincelDestaque}" VerticalAlignment="Center" />
+      </StackPanel>
+      <TextBlock x:Name="TextoMensagemSobre" Text="{Binding Mensagem}" TextWrapping="Wrap" FontWeight="SemiBold"
+                 IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    </StackPanel>
+    <ScrollViewer Grid.Row="1" Margin="0,8,0,8">
+      <Border Classes="painel" Padding="16">
+        <ItemsControl x:Name="ListaSobre" ItemsSource="{Binding Linhas}" AutomationProperties.Name="Dados do terminal">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:LinhaSobre">
+              <Grid ColumnDefinitions="230,*" Margin="0,3">
+                <TextBlock Grid.Column="0" Text="{Binding Rotulo}" Classes="secundario" />
+                <SelectableTextBlock Grid.Column="1" Text="{Binding Valor}" TextWrapping="Wrap" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+    </ScrollViewer>
+    <StackPanel Grid.Row="2" Spacing="6">
+      <WrapPanel Classes="botoes">
+        <Button Classes="acao accent" x:Name="BotaoCopiarCodigoSobre" Content="Enter  Copiar o código para o suporte"
+                Command="{Binding CopiarCommand}" />
+        <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+        <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+    </StackPanel>
+  </Grid>
+</UserControl>

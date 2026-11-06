@@ -1,0 +1,108 @@
+{
+  "registros": [
+    {
+      "id": "01a18777-3a01-7d3e-8f40-5a6b7c8d9e01",
+      "ocorrido_em": "2026-10-29T13:58:00.000Z",
+      "usuario_id": null,
+      "acao": "terminal_ativado",
+      "entidade": "terminal",
+      "registro_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "localizacao": "pdv.ativacao",
+      "descricao": "Terminal ativado na Loja 1 – Centro, caixa 2"
+    },
+    {
+      "id": "01a18777-3a01-7d3e-8f40-5a6b7c8d9e02",
+      "ocorrido_em": "2026-10-29T14:00:10.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "acao": "login_negado",
+      "entidade": "pdv",
+      "localizacao": "pdv.login",
+      "descricao": "Login negado para 'joão'"
+    },
+    {
+      "id": "01a18777-3a01-7d3e-8f40-5a6b7c8d9e03",
+      "ocorrido_em": "2026-10-29T14:00:20.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "acao": "hash_fora_dos_limites",
+      "entidade": "usuarios",
+      "registro_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "localizacao": "pdv.login",
+      "descricao": "PIN com parâmetros argon2 fora dos limites aceitos pelo PDV"
+    },
+    {
+      "id": "01a18777-3a01-7d3e-8f40-5a6b7c8d9e04",
+      "ocorrido_em": "2026-10-29T14:01:00.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "acao": "login",
+      "entidade": "pdv",
+      "localizacao": "pdv.login",
+      "descricao": "Login de João da Silva"
+    }
+  ],
+  "logins": [
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f00",
+      "ocorrido_em": "2026-10-29T14:00:10.000Z",
+      "usuario_id": null,
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "senha_invalida"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f01",
+      "ocorrido_em": "2026-10-29T14:00:11.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "bloqueado"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f02",
+      "ocorrido_em": "2026-10-29T14:00:12.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "usuario_inativo"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f03",
+      "ocorrido_em": "2026-10-29T14:00:13.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "loja_nao_permitida"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f04",
+      "ocorrido_em": "2026-10-29T14:00:14.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "sem_acesso_pdv"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f05",
+      "ocorrido_em": "2026-10-29T14:00:15.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "totem"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f06",
+      "ocorrido_em": "2026-10-29T14:00:16.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": false,
+      "motivo_falha": "hash_fora_dos_limites"
+    },
+    {
+      "id": "01a18777-3b02-7e4f-9051-6b7c8d9e0f99",
+      "ocorrido_em": "2026-10-29T14:01:00.000Z",
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "login_informado": "joão",
+      "sucesso": true,
+      "motivo_falha": null
+    }
+  ]
+}

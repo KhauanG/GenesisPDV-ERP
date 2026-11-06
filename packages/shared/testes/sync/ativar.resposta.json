@@ -1,0 +1,57 @@
+{
+  "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+  "token": "01a18751-a521-7238-b924-56de3eb13b90.VN38FONSUmuSm0moDIxrlTO2spCVFtWFP539UNXoSO8",
+  "token_emitido_em": "2026-10-29T11:00:41.512Z",
+  "renovar_token_apos_dias": 30,
+  "empresa": {
+    "codigo": 100001,
+    "razao_social": "ICE BEER COMÉRCIO DE BEBIDAS LTDA"
+  },
+  "loja": {
+    "id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "codigo": 1,
+    "nome": "Loja 1 - Ice Beer Hermes",
+    "cnpj": "00000000000100",
+    "fuso_horario": "America/Sao_Paulo",
+    "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+    "tipo_emissao": "nfce"
+  },
+  "caixa": {
+    "id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "numero": 2,
+    "nfce_serie": 2
+  },
+  "numeracoes": {
+    "venda": {
+      "ultimo_numero": 1126
+    },
+    "nfce": [
+      {
+        "serie": 2,
+        "ambiente": 2,
+        "ultimo_numero": 0
+      },
+      {
+        "serie": 2,
+        "ambiente": 1,
+        "ultimo_numero": 4515
+      }
+    ],
+    "vale": {
+      "ultimo_numero": 1008
+    }
+  },
+  "sequencia_terminal": {
+    "ultima_recebida": 0
+  },
+  "fluxos": ["configuracao", "acesso", "referencia", "catalogo", "estoque", "pessoas", "operacao"],
+  "chave_backup_cifrada": "o2FQ8xJ1tq0dV2m7cE3k5bNw9yR4uL6zH0sA1fG8jK2pX5vC7nM3qT9eW1rY4iU=",
+  "intervalos": {
+    "heartbeat_s": 30,
+    "pull_s": 30,
+    "pull_com_sse_s": 300,
+    "push_pendente_s": 15
+  },
+  "versao_protocolo": 1,
+  "agora_servidor": "2026-10-29T11:00:41.540Z"
+}

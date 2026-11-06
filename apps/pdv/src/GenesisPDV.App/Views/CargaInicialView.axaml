@@ -1,0 +1,47 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             x:Class="GenesisPDV.App.Views.CargaInicialView"
+             x:DataType="vm:CargaInicialViewModel"
+             Classes="tela"
+             Focusable="True">
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding AvancarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Classes="barra" Padding="20,10">
+      <TextBlock Text="GenesisPDV · Carga inicial" FontWeight="SemiBold" FontSize="16" />
+    </Border>
+    <Border Grid.Row="1" Classes="painel" Width="620" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Baixando os cadastros" Classes="titulo" x:Name="TituloCarga" />
+        <TextBlock Classes="secundario" TextWrapping="Wrap"
+                   Text="Passo 5 de 6 · O caixa recebe da nuvem as configurações, os usuários, as tabelas fiscais, os produtos e o estoque da loja. Se a conexão cair, a carga continua de onde parou." />
+        <ItemsControl ItemsSource="{Binding Fluxos}" x:Name="ListaFluxos" Margin="0,6,0,0">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ItemFluxoCarga">
+              <Grid ColumnDefinitions="190,*,200" Margin="0,4">
+                <TextBlock Text="{Binding Nome}" VerticalAlignment="Center" />
+                <ProgressBar Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Percentual}" Height="10" MinWidth="0" Margin="8,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{Binding Situacao}" Classes="secundario" VerticalAlignment="Center" Margin="12,0,0,0" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Border Background="{DynamicResource PincelInfoFundo}" CornerRadius="4" Padding="12,8" Margin="0,8,0,0"
+                IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock x:Name="TextoErroCarga" Text="{Binding Erro}" TextWrapping="Wrap" AutomationProperties.Name="Erro da carga" />
+        </Border>
+        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,12,0,0">
+          <Button Content="[Enter] Entrar no caixa" Command="{Binding AvancarCommand}" Classes="accent" Focusable="False"
+                  x:Name="BotaoEntrar" IsVisible="{Binding LoginLiberado}" />
+          <Button Content="[Enter] Tentar de novo" Command="{Binding AvancarCommand}" Focusable="False"
+                  x:Name="BotaoTentarDeNovo" IsVisible="{Binding !LoginLiberado}" IsEnabled="{Binding !Executando}" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="2" Classes="barra" Padding="20,8">
+      <TextBlock x:Name="TextoRodapeCarga" Classes="secundario" Text="{Binding Rodape}" />
+    </Border>
+  </Grid>
+</UserControl>

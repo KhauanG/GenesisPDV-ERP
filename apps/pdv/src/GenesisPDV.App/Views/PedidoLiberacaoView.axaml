@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.PedidoLiberacaoView"
+             x:DataType="vm:PedidoLiberacaoViewModel">
+  <!-- Liberação do supervisor (PDV 31.3): só pelo PIN, offline; vale só para esta ação. -->
+  <Border Classes="dialogo" Width="520" x:Name="DialogoLiberacao">
+    <Border.KeyBindings>
+      <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+      <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+    </Border.KeyBindings>
+    <StackPanel Spacing="10">
+      <TextBlock Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+      <TextBlock Text="Supervisor (login ou código)" Classes="rotulo" />
+      <TextBox x:Name="CampoSupervisor" Text="{Binding Usuario}" c:Foco.Inicial="True" AutomationProperties.Name="Supervisor" />
+      <TextBlock Text="PIN do supervisor" Classes="rotulo" />
+      <TextBox x:Name="CampoPinSupervisor" Text="{Binding Pin}" PasswordChar="●" AutomationProperties.Name="PIN do supervisor" />
+      <TextBlock Text="Motivo" Classes="rotulo" />
+      <TextBox x:Name="CampoMotivoLiberacao" Text="{Binding Motivo}" MaxLength="255" AutomationProperties.Name="Motivo da liberação" />
+      <TextBlock x:Name="TextoErroLiberacao" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                 IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+        <Button Classes="acao" x:Name="BotaoLiberar" Content="Liberar [Enter]" Command="{Binding ConfirmarCommand}" />
+        <Button Classes="acao" Content="Desistir [Esc]" Command="{Binding CancelarCommand}" />
+      </WrapPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

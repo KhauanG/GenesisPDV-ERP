@@ -1,0 +1,43 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,slnx,props,targets}]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false
+
+# Inno Setup e PowerShell (instalador do PDV): UTF-8 com BOM, para o compilador do Inno e o Windows PowerShell 5.1
+# nunca lerem os acentos como ANSI.
+[*.{iss,ps1}]
+charset = utf-8-bom
+
+# C# (PDV): convenções verificadas no CI por `dotnet format --verify-no-changes`. Os valores de formatação são os
+# padrões do .NET explicitados; as preferências de estilo ficam como sugestão (aparecem na IDE, não quebram o build).
+[*.cs]
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_preserve_single_line_statements = true
+csharp_preserve_single_line_blocks = true
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_using_directive_placement = outside_namespace:suggestion
+csharp_prefer_braces = when_multiline:suggestion
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion

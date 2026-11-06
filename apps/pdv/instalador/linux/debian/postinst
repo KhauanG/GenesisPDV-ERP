@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pós-instalação do pacote genesispdv (implantação I3; PDV 5.1; README do PDV › decisão 62): o grupo genesispdv e as
+# pastas de dados e de log com dono root:genesispdv e 2770 (o setgid mantém o grupo nos arquivos novos; a escrita do
+# grupo vem do PDV: umask 007 e g+rw no pdv.db, PermissoesGrupo.cs). A conta que opera o caixa entra no grupo:
+# sudo usermod -aG genesispdv <conta> (e entra de novo na sessão). Sem o grupo, o PDV usa ~/.local/share/genesispdv
+# (CaminhosPdv.cs). A chave local do token fica por usuário (~/.config/genesispdv, D21), como a DPAPI CurrentUser do
+# Windows: o pacote não gera /etc/genesispdv/chave_terminal, e o caixa usa sempre a mesma conta.
+set -e
+
+if [ "$1" = "configure" ]; then
+    if ! getent group genesispdv >/dev/null; then
+        groupadd --system genesispdv
+    fi
+    for pasta in /var/lib/genesispdv /var/lib/genesispdv/backup /var/lib/genesispdv/impressao /var/log/genesispdv; do
+        install -d -o root -g genesispdv -m 2770 "$pasta"
+    done
+fi
+
+exit 0

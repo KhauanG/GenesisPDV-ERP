@@ -1,0 +1,100 @@
+{
+  "lote_id": "01a18792-72fa-7fc9-8d86-168902dcef86",
+  "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+  "enviado_em": "2026-10-30T09:12:44.318Z",
+  "eventos_pendentes_total": 2,
+  "eventos": [
+    {
+      "evento_id": "01a18777-7aaa-7203-840d-b9b4885f6e66",
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "sequencia": 1048,
+      "tipo": "auditoria.registros",
+      "versao_schema": 1,
+      "agregado_tipo": "auditoria",
+      "agregado_id": "01a18777-0a1b-7c2d-8e3f-4a5b6c7d8e9f",
+      "dependencias": [],
+      "ocorrido_em": "2026-10-29T10:02:31.220Z",
+      "ocorrido_em_local": "2026-10-29T10:02:29.981Z",
+      "desvio_relogio_ms": 1239,
+      "relogio_confiavel": true,
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "contexto": {
+        "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+        "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+        "numero_caixa": 2,
+        "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+        "sessao_caixa_id": null,
+        "versao_app": "1.4.2",
+        "versao_schema_local": 12
+      },
+      "payload": {
+        "registros": [
+          {
+            "id": "01a18777-1b2c-7d3e-8f40-5a6b7c8d9e0f",
+            "ocorrido_em": "2026-10-29T10:02:31.220Z",
+            "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+            "acao": "gaveta_aberta",
+            "entidade": "pdv",
+            "localizacao": "PDV › Gaveta",
+            "descricao": "Gaveta aberta sem venda: \"troco\" para o caixa 2 – ação do operador"
+          }
+        ],
+        "logins": [
+          {
+            "id": "01a18777-2c3d-7e4f-9051-6b7c8d9e0f1a",
+            "ocorrido_em": "2026-10-29T10:01:02.000Z",
+            "usuario_id": null,
+            "login_informado": "joão",
+            "sucesso": false,
+            "motivo_falha": "senha_invalida"
+          }
+        ]
+      },
+      "payload_sha256": "5f60be6bb4001a8a45baa357580ed93c49a0e24736d083de4a23ba35811ecf79"
+    },
+    {
+      "evento_id": "01a18778-08ab-7f25-b9ac-1b1ea8e56e0c",
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "sequencia": 1049,
+      "tipo": "auditoria.registros",
+      "versao_schema": 1,
+      "agregado_tipo": "auditoria",
+      "agregado_id": "01a18778-1c2d-7e3f-8a4b-5c6d7e8f9a0b",
+      "dependencias": [],
+      "ocorrido_em": "2026-10-29T10:07:12.540Z",
+      "ocorrido_em_local": "2026-10-29T10:07:11.301Z",
+      "desvio_relogio_ms": 1239,
+      "relogio_confiavel": true,
+      "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "contexto": {
+        "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+        "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+        "numero_caixa": 2,
+        "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+        "sessao_caixa_id": null,
+        "versao_app": "1.4.2",
+        "versao_schema_local": 12
+      },
+      "payload": {
+        "registros": [
+          {
+            "id": "01a18778-2d3e-7f40-9b5c-6d7e8f9a0b1c",
+            "ocorrido_em": "2026-10-29T10:07:12.540Z",
+            "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+            "acao": "logout",
+            "entidade": "pdv",
+            "localizacao": "PDV › Login",
+            "descricao": "Saída do operador do caixa 2"
+          }
+        ],
+        "logins": []
+      },
+      "payload_sha256": "b7266bd7cf6fa58f4766620a1b78677a2313984480c446a0f6ec76cbfa26478d"
+    }
+  ],
+  "recuperar_lacuna": {
+    "de": 1048,
+    "ate": 1049,
+    "autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c"
+  }
+}

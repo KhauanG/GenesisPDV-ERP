@@ -1,0 +1,28 @@
+{
+  "lote_id": "01a18790-50e8-7da7-ab5c-f46780bacd64",
+  "recebido_em": "2026-10-29T17:36:07.902Z",
+  "agora_servidor": "2026-10-29T17:36:08.311Z",
+  "proxima_sequencia_esperada": 1044,
+  "resultados": [
+    {
+      "evento_id": "01a18777-7aaa-7203-840d-b9b4885f6e66",
+      "sequencia": 1042,
+      "status": "duplicado",
+      "versao_nuvem": 1881990,
+      "versao_nuvem_fim": 1881993,
+      "resultado": {
+        "registros": 1,
+        "logins": 1
+      }
+    },
+    {
+      "evento_id": "01a18778-08ab-7f25-b9ac-1b1ea8e56e0c",
+      "sequencia": 1043,
+      "status": "aplicado",
+      "versao_nuvem": 1882244,
+      "versao_nuvem_fim": 1882246,
+      "resultado": {}
+    }
+  ],
+  "comandos": []
+}

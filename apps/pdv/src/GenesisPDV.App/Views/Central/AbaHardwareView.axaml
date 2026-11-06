@@ -1,0 +1,122 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             x:Class="GenesisPDV.App.Views.Central.AbaHardwareView"
+             x:DataType="vm:AbaHardwareViewModel"
+             Focusable="True">
+  <!-- Aba 3 da Central do PDV (bloco G3): a antiga configuração do terminal (PDV 6; implantação I4) — impressora, gaveta, a
+       tela do caixa (0.9.1), a fila de impressão e, só pela Central do login, o "Restaurar backup" (C17). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding AvancarCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="F2" Command="{Binding SalvarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding TestarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding TestarGavetaCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding ImprimirPendentesCommand}" />
+    <KeyBinding Gesture="F8" Command="{Binding DescartarPendentesCommand}" />
+    <KeyBinding Gesture="F9" Command="{Binding RestaurarBackupCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="*,Auto">
+    <ScrollViewer Grid.Row="0">
+      <Border Classes="painel" MaxWidth="900" Padding="24" Margin="16" HorizontalAlignment="Stretch" VerticalAlignment="Top">
+        <StackPanel Spacing="10">
+          <StackPanel Spacing="8" IsVisible="{Binding Liberando}">
+            <TextBlock Text="3 Impressora e gaveta" Classes="titulo" />
+            <TextBlock Text="Liberação: usuário e PIN de quem tem a permissão de configurar o terminal" Classes="rotulo" />
+            <TextBox x:Name="CampoUsuarioConfig" Text="{Binding Usuario}" AutomationProperties.Name="Usuário que libera" />
+            <TextBox x:Name="CampoPinConfig" Text="{Binding Pin}" PasswordChar="●" AutomationProperties.Name="PIN de quem libera" />
+            <WrapPanel Classes="botoes">
+              <Button Classes="acao accent" x:Name="BotaoLiberarConfig" Content="Enter  Liberar" Command="{Binding AvancarCommand}" />
+              <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+            </WrapPanel>
+          </StackPanel>
+          <Grid ColumnDefinitions="*,24,*" IsVisible="{Binding Editando}">
+            <StackPanel Grid.Column="0" Spacing="6">
+              <TextBlock Text="Impressora" Classes="titulo" />
+              <TextBlock Text="Modelo" Classes="rotulo" />
+              <ComboBox x:Name="ListaModelo" ItemsSource="{x:Static vm:AbaHardwareViewModel.Modelos}" SelectedIndex="{Binding ModeloIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="Modelo da impressora" />
+              <TextBlock Text="Conexão" Classes="rotulo" />
+              <ComboBox x:Name="ListaConexao" ItemsSource="{x:Static vm:AbaHardwareViewModel.Conexoes}" SelectedIndex="{Binding ConexaoIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="Conexão da impressora" />
+              <StackPanel Spacing="6" IsVisible="{Binding ConexaoSpooler}">
+                <TextBlock Text="Impressora do Windows (instale antes o driver da Epson/Bematech)" Classes="rotulo" TextWrapping="Wrap" />
+                <ComboBox x:Name="ListaImpressorasWindows" ItemsSource="{Binding ImpressorasWindows}" SelectedItem="{Binding ImpressoraEscolhida}"
+                          HorizontalAlignment="Stretch" AutomationProperties.Name="Impressoras instaladas no Windows" />
+                <TextBox x:Name="CampoNomeSpooler" Text="{Binding NomeSpooler}" AutomationProperties.Name="Nome da impressora no Windows" />
+              </StackPanel>
+              <StackPanel Spacing="6" IsVisible="{Binding ConexaoRede}">
+                <TextBlock Text="IP e porta da impressora de rede" Classes="rotulo" />
+                <TextBox x:Name="CampoIpImpressora" Text="{Binding Endereco}" AutomationProperties.Name="IP da impressora" />
+                <TextBox x:Name="CampoPortaRede" Text="{Binding PortaRede}" AutomationProperties.Name="Porta TCP da impressora" />
+              </StackPanel>
+              <StackPanel Spacing="6" IsVisible="{Binding ConexaoSerial}">
+                <TextBlock Text="Porta serial (COM3, /dev/ttyUSB0) e velocidade" Classes="rotulo" />
+                <TextBox x:Name="CampoPortaSerial" Text="{Binding Porta}" AutomationProperties.Name="Porta serial" />
+                <TextBox x:Name="CampoBaud" Text="{Binding Baud}" AutomationProperties.Name="Velocidade da serial" />
+                <TextBlock Text="{Binding PortasSeriais}" Classes="secundario" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="6" IsVisible="{Binding ConexaoDispositivo}">
+                <TextBlock Text="Dispositivo (Linux)" Classes="rotulo" />
+                <TextBox x:Name="CampoDispositivo" Text="{Binding Porta}" AutomationProperties.Name="Dispositivo da impressora" />
+              </StackPanel>
+              <TextBlock Text="Papel" Classes="rotulo" />
+              <ComboBox x:Name="ListaPapel" ItemsSource="{x:Static vm:AbaHardwareViewModel.Papeis}" SelectedIndex="{Binding PapelIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="Largura do papel" />
+              <TextBlock x:Name="TextoColunasPapel" Text="{Binding ColunasTexto}" Classes="secundario" TextWrapping="Wrap" />
+              <TextBlock Text="Guilhotina e linhas de avanço antes do corte (0 a 10)" Classes="rotulo" />
+              <ComboBox x:Name="ListaCorte" ItemsSource="{x:Static vm:AbaHardwareViewModel.Cortes}" SelectedIndex="{Binding CorteIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="Guilhotina" />
+              <TextBox x:Name="CampoLinhasAvanco" Text="{Binding LinhasAvanco}" AutomationProperties.Name="Linhas de avanço antes do corte" />
+              <TextBlock Text="Página de código (acentos) e QR Code" Classes="rotulo" />
+              <ComboBox x:Name="ListaPagina" ItemsSource="{x:Static vm:AbaHardwareViewModel.Paginas}" SelectedIndex="{Binding PaginaIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="Página de código" />
+              <ComboBox x:Name="ListaQr" ItemsSource="{x:Static vm:AbaHardwareViewModel.ModosQr}" SelectedIndex="{Binding QrIndice}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="QR Code" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="6">
+              <TextBlock Text="Gaveta" Classes="titulo" />
+              <CheckBox x:Name="CaixaGavetaLigada" IsChecked="{Binding GavetaLigada}" Content="Gaveta ligada na impressora (padrão: desligada)" />
+              <ComboBox x:Name="ListaPino" ItemsSource="{x:Static vm:AbaHardwareViewModel.Pinos}" SelectedIndex="{Binding PinoIndice}"
+                        IsEnabled="{Binding GavetaLigada}" HorizontalAlignment="Stretch" AutomationProperties.Name="Pino da gaveta" />
+              <TextBlock Text="Pulso (ms, 50 a 500)" Classes="rotulo" />
+              <TextBox x:Name="CampoPulsoGaveta" Text="{Binding PulsoMs}" IsEnabled="{Binding GavetaLigada}" AutomationProperties.Name="Pulso da gaveta em milissegundos" />
+              <CheckBox x:Name="CaixaGavetaMovimentos" IsChecked="{Binding GavetaNosMovimentos}" IsEnabled="{Binding GavetaLigada}"
+                        Content="Abrir também na abertura, sangria, reforço, fechamento e devolução" />
+              <TextBlock Classes="secundario" TextWrapping="Wrap"
+                         Text="Ligada, a gaveta abre na venda com forma &quot;Abrir gaveta&quot; e pelo F11 › 9 (com permissão). Desligada, nenhum comando de gaveta é enviado." />
+              <TextBlock Text="Tela do caixa" Classes="titulo" Margin="0,12,0,0" />
+              <TextBlock Text="Barra de funções da venda" Classes="rotulo" />
+              <ComboBox x:Name="ListaBarraFuncoes" ItemsSource="{x:Static vm:AbaHardwareViewModel.BarrasFuncoes}"
+                        SelectedIndex="{Binding BarraFuncoesIndice}" HorizontalAlignment="Stretch" AutomationProperties.Name="Barra de funções" />
+              <CheckBox x:Name="CaixaPesquisaSoNumeros" IsChecked="{Binding PesquisaSoNumeros}" AutomationProperties.Name="Pesquisa só por números">
+                <TextBlock Text="Pesquisa de produto só por números (código interno, EAN e códigos adicionais)" TextWrapping="Wrap" />
+              </CheckBox>
+              <TextBlock Classes="secundario" TextWrapping="Wrap"
+                         Text="Botões: o caixa só com teclado numérico usa o mouse nas funções. Só números: a pesquisa (F2) recusa letras." />
+              <TextBlock Text="Fila de impressão" Classes="titulo" Margin="0,12,0,0" />
+              <TextBlock x:Name="TextoPendentesImpressao" Text="{Binding PendentesTexto}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+          <TextBlock x:Name="TextoMensagemConfig" Text="{Binding Mensagem}" TextWrapping="Wrap" FontSize="15"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroConfig" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+      </Border>
+    </ScrollViewer>
+    <!-- As teclas também como botões (decisão 65: o caixa usa o mouse e o teclado numérico); o botão não tira o foco do campo. -->
+    <Border Grid.Row="1" Classes="barra" Padding="12,4" IsVisible="{Binding Editando}">
+      <WrapPanel Classes="botoes">
+        <Button Classes="acao accent" x:Name="BotaoSalvarConfig" Content="F2  Salvar" Command="{Binding SalvarCommand}" />
+        <Button Classes="acao" x:Name="BotaoTesteImpressora" Content="F5  Imprimir teste" Command="{Binding TestarCommand}" />
+        <Button Classes="acao" x:Name="BotaoTesteGaveta" Content="F6  Abrir gaveta (teste)" Command="{Binding TestarGavetaCommand}" />
+        <Button Classes="acao" x:Name="BotaoImprimirPendentes" Content="F7  Imprimir pendentes" Command="{Binding ImprimirPendentesCommand}" />
+        <Button Classes="acao" x:Name="BotaoDescartarPendentes" Content="F8  Descartar pendentes" Command="{Binding DescartarPendentesCommand}" />
+        <Button Classes="acao" x:Name="BotaoRestaurarBackup" Content="F9  Restaurar backup" Command="{Binding RestaurarBackupCommand}"
+                IsVisible="{Binding MostraRestaurar}" />
+        <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+    </Border>
+  </Grid>
+</UserControl>

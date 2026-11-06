@@ -1,0 +1,69 @@
+{
+  "terminal": {
+    "id": "01a18751-a521-7238-b924-56de3eb13b90",
+    "status": "ativo",
+    "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "numero_caixa": 2,
+    "carencia_ate": null,
+    "id_hardware_confere": true
+  },
+  "empresa_status": "ativa",
+  "loja": {
+    "ativa": true,
+    "usa_pdv": true,
+    "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+    "tipo_emissao": "nfce"
+  },
+  "sequencia_terminal": {
+    "ultima_recebida": 1043,
+    "ultimo_evento_id": "01a18778-08ab-7f25-b9ac-1b1ea8e56e0c",
+    "ultima_recebida_em": "2026-10-29T17:36:07.902Z"
+  },
+  "numeracoes": {
+    "venda": {
+      "ultimo_numero": 126
+    },
+    "nfce": [
+      {
+        "serie": 2,
+        "ambiente": 1,
+        "ultimo_numero": 4515
+      }
+    ],
+    "vale": {
+      "ultimo_numero": 8
+    }
+  },
+  "informado_pelo_terminal": {
+    "ultimo_heartbeat_em": "2026-10-29T17:45:00.402Z",
+    "ultima_sequencia_gerada": 1046,
+    "eventos_pendentes": 3,
+    "nfce_contingencia_pendentes": 1
+  },
+  "sessao_caixa_aberta": {
+    "id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "aberta_em": "2026-10-29T11:01:15.000Z"
+  },
+  "eventos": {
+    "com_erro": 0,
+    "retidos": 0
+  },
+  "protocolo": {
+    "atual": 1,
+    "minimo": 1
+  },
+  "versoes_schema": {
+    "auditoria.registros": [1],
+    "terminal.configuracao_alterada": [1]
+  },
+  "app": {
+    "versao_minima": "1.3.0",
+    "versao_disponivel": "1.4.3",
+    "url_pacote": "https://downloads.genesispdv.com.br/pdv/windows_x64/1.4.3/GenesisPDV.exe",
+    "sha256": "a3f5c1d2e4b6a7988796a5b4c3d2e1f00f1e2d3c4b5a69783f1c9a2e8b7d4c6f",
+    "atualizar_ate": null
+  },
+  "agora_servidor": "2026-10-29T17:40:00.015Z"
+}

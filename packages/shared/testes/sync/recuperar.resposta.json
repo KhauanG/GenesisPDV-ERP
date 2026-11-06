@@ -1,0 +1,235 @@
+{
+  "agora_servidor": "2026-11-04T13:10:00.204Z",
+  "desde_sequencia": 1020,
+  "ultima_recebida": 1046,
+  "tem_mais": true,
+  "eventos": [
+    {
+      "envelope": {
+        "evento_id": "01a18779-1a2b-7c3d-8e4f-5a6b7c8d9e01",
+        "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+        "sequencia": 1021,
+        "tipo": "caixa.aberto",
+        "versao_schema": 1,
+        "agregado_tipo": "sessao_caixa",
+        "agregado_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+        "dependencias": [],
+        "ocorrido_em": "2026-10-29T11:01:15.000Z",
+        "ocorrido_em_local": "2026-10-29T11:01:13.761Z",
+        "desvio_relogio_ms": 1239,
+        "relogio_confiavel": true,
+        "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+        "contexto": {
+          "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+          "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+          "numero_caixa": 2,
+          "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+          "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+          "versao_app": "1.4.2",
+          "versao_schema_local": 22
+        },
+        "payload": {
+          "sessoes_caixa": {
+            "id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+            "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+            "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+            "numero_caixa": 2,
+            "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+            "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+            "status": "aberta",
+            "dia_operacional": "2026-10-29",
+            "aberta_em": "2026-10-29T11:01:15.000Z",
+            "abertura_automatica": false,
+            "fundo_troco": "150.00",
+            "sessao_anterior_id": null,
+            "valor_recebido_anterior": null,
+            "diferenca_recebimento": null,
+            "fechada_em": null
+          },
+          "movimentos_caixa": [
+            {
+              "id": "01a18756-2b84-7c24-81a9-e71fde8a774b",
+              "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+              "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+              "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+              "numero_caixa": 2,
+              "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+              "tipo": "abertura",
+              "forma_pagamento_id": null,
+              "valor": "150.00",
+              "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+              "quem_retira_usuario_id": null,
+              "quem_retira_nome": null,
+              "observacao": null,
+              "inf_adicionais": null,
+              "ocorrido_em": "2026-10-29T11:01:15.000Z",
+              "autorizado_por_id": null,
+              "troca_id": null,
+              "cancelado": false
+            }
+          ],
+          "contagem_cedulas": {
+            "100.00": 1,
+            "20.00": 2,
+            "5.00": 1,
+            "1.00": 3,
+            "0.50": 4
+          }
+        },
+        "payload_sha256": "9b58e73afa152f0d97c34b6b66886605e925f30a446199318eb68710eb430eb9"
+      },
+      "status": "aplicado",
+      "versao_nuvem": 1882301,
+      "versao_nuvem_fim": 1882303,
+      "resultado": {},
+      "lacuna": false
+    },
+    {
+      "envelope": {
+        "evento_id": "01a18779-2b3c-7d4e-8f50-6b7c8d9e0f12",
+        "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+        "sequencia": 1022,
+        "tipo": "caixa.sangria",
+        "versao_schema": 1,
+        "agregado_tipo": "movimento_caixa",
+        "agregado_id": "01a18766-8a42-743c-a493-3b83757750a9",
+        "dependencias": [
+          {
+            "agregado_tipo": "sessao_caixa",
+            "agregado_id": "01a18755-98a1-7472-96da-1dac72ff5d2a"
+          }
+        ],
+        "ocorrido_em": "2026-10-29T15:20:00.000Z",
+        "ocorrido_em_local": "2026-10-29T15:19:58.761Z",
+        "desvio_relogio_ms": 1239,
+        "relogio_confiavel": true,
+        "relogio_regrediu": false,
+        "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+        "contexto": {
+          "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+          "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+          "numero_caixa": 2,
+          "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+          "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+          "versao_app": "1.4.2",
+          "versao_schema_local": 22
+        },
+        "payload": {
+          "movimentos_caixa": {
+            "id": "01a18766-8a42-743c-a493-3b83757750a9",
+            "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+            "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+            "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+            "numero_caixa": 2,
+            "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+            "tipo": "sangria",
+            "forma_pagamento_id": null,
+            "valor": "1000.00",
+            "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+            "quem_retira_usuario_id": "01a18755-09d1-76b6-8b81-48f6b38a088c",
+            "quem_retira_nome": "CARLOS",
+            "observacao": "Depósito banco",
+            "inf_adicionais": "Malote 4471",
+            "ocorrido_em": "2026-10-29T15:20:44.310Z",
+            "autorizado_por_id": null,
+            "troca_id": null,
+            "cancelado": false
+          },
+          "dinheiro_estimado_antes": "1284.50",
+          "contagem_cedulas": {
+            "100.00": 8,
+            "50.00": 4
+          }
+        },
+        "payload_sha256": "c489e3fb667ccd23e95d7b6da08ca5fd30865690b1d65a2e8e02f7c850d9a8d0"
+      },
+      "status": "erro",
+      "versao_nuvem": null,
+      "versao_nuvem_fim": null,
+      "resultado": null,
+      "erro": {
+        "codigo": "ERRO_INTERNO",
+        "mensagem": "Falha ao aplicar o evento depois de 3 tentativas."
+      },
+      "lacuna": false
+    },
+    {
+      "envelope": {
+        "evento_id": "01a18779-3c4d-7e5f-8061-7c8d9e0f1a23",
+        "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+        "sequencia": 1023,
+        "tipo": "caixa.reforco",
+        "versao_schema": 1,
+        "agregado_tipo": "movimento_caixa",
+        "agregado_id": "01a18765-1c42-7d3a-9e51-2b6c7d8e9f01",
+        "dependencias": [
+          {
+            "agregado_tipo": "sessao_caixa",
+            "agregado_id": "01a18755-98a1-7472-96da-1dac72ff5d2a"
+          }
+        ],
+        "ocorrido_em": "2026-10-29T15:40:00.000Z",
+        "usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+        "contexto": {
+          "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+          "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+          "numero_caixa": 2,
+          "estoque_id": "01a18753-5750-717c-87a0-ca6e0822e8f3",
+          "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+          "versao_app": "1.4.2",
+          "versao_schema_local": 22
+        },
+        "payload": null,
+        "payload_sha256": "6b2b782f2d995409128aa5b5501b13a5fdf80051d4356c144597f5e466fa75a4"
+      },
+      "status": "descartado",
+      "versao_nuvem": null,
+      "versao_nuvem_fim": null,
+      "resultado": {
+        "descartado": true,
+        "justificativa": "Reforço lançado em duplicidade pelo operador"
+      },
+      "lacuna": false
+    },
+    {
+      "envelope": {
+        "evento_id": "01a18779-4d5e-7f60-8172-8d9e0f1a2b34",
+        "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+        "sequencia": 1024,
+        "tipo": "terminal.lacuna",
+        "versao_schema": 1,
+        "agregado_tipo": "terminal",
+        "agregado_id": "01a18751-a521-7238-b924-56de3eb13b90",
+        "dependencias": [],
+        "ocorrido_em": "2026-10-29T16:00:00.000Z",
+        "usuario_id": null,
+        "contexto": {
+          "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+          "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+          "numero_caixa": 2
+        },
+        "payload": {
+          "lacuna": {
+            "de": 1024,
+            "ate": 1024
+          },
+          "motivo": "banco_local_perdido",
+          "observacao": null,
+          "autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c"
+        },
+        "payload_sha256": "6b68780076ab5de26d0c986fdb387693ffc2becc01a1a197f92279cfca57c1f9"
+      },
+      "status": "descartado",
+      "versao_nuvem": null,
+      "versao_nuvem_fim": null,
+      "resultado": {
+        "descartado": true,
+        "lacuna": {
+          "de": 1024,
+          "ate": 1024
+        }
+      },
+      "lacuna": true
+    }
+  ]
+}

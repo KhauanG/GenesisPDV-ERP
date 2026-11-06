@@ -1,0 +1,24 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GenesisPDV.Core/GenesisPDV.Core.csproj" />
+    <Project Path="src/GenesisPDV.Data/GenesisPDV.Data.csproj" />
+    <Project Path="src/GenesisPDV.Sync/GenesisPDV.Sync.csproj" />
+    <Project Path="src/GenesisPDV.Hardware/GenesisPDV.Hardware.csproj" />
+    <Project Path="src/GenesisPDV.Fiscal/GenesisPDV.Fiscal.csproj" />
+    <Project Path="src/GenesisPDV.App/GenesisPDV.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GenesisPDV.Core.Tests/GenesisPDV.Core.Tests.csproj" />
+    <Project Path="tests/GenesisPDV.Data.Tests/GenesisPDV.Data.Tests.csproj" />
+    <Project Path="tests/GenesisPDV.Fiscal.Tests/GenesisPDV.Fiscal.Tests.csproj" />
+    <Project Path="tests/GenesisPDV.Sync.Tests/GenesisPDV.Sync.Tests.csproj" />
+    <Project Path="tests/GenesisPDV.App.Tests/GenesisPDV.App.Tests.csproj" />
+    <Project Path="tests/GenesisPDV.E2E.Tests/GenesisPDV.E2E.Tests.csproj" />
+  </Folder>
+  <Folder Name="/itens/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="README.md" />
+  </Folder>
+</Solution>

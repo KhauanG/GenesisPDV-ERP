@@ -1,0 +1,218 @@
+# Genesis em produção na VPS da Hostinger (Implantação do piloto, I1; README desta pasta).
+# Projeto Compose próprio (`genesis`), separado do `icebeer`: nunca publica porta no host. O Traefik que já roda na VPS
+# (dono das portas 80/443) acha os containers pela rede externa `proxy` e pelos labels abaixo (mesmo padrão do n8n).
+# O banco é o Cloud SQL (PostgreSQL 18), alcançado só pelo Cloud SQL Auth Proxy nesta rede interna.
+#
+# Uso (o implantar.sh faz isso; à mão, sempre de /opt/genesis):
+#   docker compose up -d --wait                  # proxy do banco, API, ERP e backup
+#   docker compose run --rm genesis-tarefa ...   # migrações e comandos da API (perfil "tarefa")
+# Variáveis de interpolação (domínios, versão, instância do Cloud SQL) vêm do /opt/genesis/.env (compose.env.exemplo);
+# as da aplicação, de genesis.env (não secretas) e de segredos/*.env (root, 600; nunca no repositório).
+#
+# Memória (decisão do dono, 03/11/2026): 2,5 GB somados — API 2 GB (heap do Node 1,5 GB), ERP 128 MB, proxy 192 MB,
+# backup 64 MB e o container de tarefa (128 MB, só enquanto roda; ele roda com a API no ar). Soma dos limites, com a
+# tarefa: 2048 + 128 + 192 + 64 + 128 = 2560 MiB (o CI e o teste local conferem). O proxy era 256 MB no I1 e cedeu
+# 64 MB ao backup (I1b; README › Decisões técnicas). Sem swap além do limite (memswap = mem): estourar reinicia o
+# container (ou derruba só a tarefa) em vez de deixar a VPS lenta.
+name: genesis
+
+x-logs: &logs
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-env-api: &env-api
+  - path: ${GENESIS_SEGREDOS:-/opt/genesis/segredos}/genesis-google.env
+  - path: ${GENESIS_SEGREDOS:-/opt/genesis/segredos}/genesis-app.env
+  - path: ./genesis.env
+
+services:
+  genesis-cloudsql-proxy:
+    # Variante alpine: tem `wget` para o healthcheck (a distroless não tem shell). Usuário nonroot (uid/gid 65532).
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.21.0-alpine
+    container_name: genesis-cloudsql-proxy
+    command:
+      - --address=0.0.0.0
+      - --port=5432
+      - --credentials-file=/segredos/gcp-conta-servico.json
+      - --health-check
+      - --http-address=127.0.0.1
+      - --http-port=9090
+      - --structured-logs
+      - --max-sigterm-delay=20s
+      - --exit-zero-on-sigterm
+    environment:
+      CSQL_PROXY_INSTANCE_CONNECTION_NAME: ${CLOUDSQL_INSTANCIA:?defina CLOUDSQL_INSTANCIA no /opt/genesis/.env}
+    volumes:
+      # root:65532 e 640 (instalar.sh): só o root e o usuário do proxy leem a chave da conta de serviço.
+      - ${GENESIS_SEGREDOS:-/opt/genesis/segredos}/gcp-conta-servico.json:/segredos/gcp-conta-servico.json:ro
+    networks: [interna]
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:9090/readiness']
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    # 192 MB (I1b): o proxy é um processo Go que só repassa conexões; 64 MB dos 256 do I1 foram para o backup.
+    mem_limit: 192m
+    memswap_limit: 192m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logs
+    labels:
+      traefik.enable: 'false'
+
+  genesis-api:
+    image: genesis-api:${GENESIS_VERSAO:?defina GENESIS_VERSAO (o implantar.sh define)}
+    container_name: genesis-api
+    init: true
+    env_file: *env-api
+    environment:
+      NODE_OPTIONS: --max-old-space-size=1536
+      PORTA: '3000'
+    depends_on:
+      genesis-cloudsql-proxy:
+        condition: service_healthy
+    networks: [interna, proxy]
+    mem_limit: 2g
+    memswap_limit: 2g
+    read_only: true
+    tmpfs: ['/tmp:size=64m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logs
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: ${REDE_PROXY:-proxy}
+      # api.<domínio>: tudo (PDV em /sync/*, /saude, /api/*).
+      traefik.http.routers.genesis-api.rule: Host(`${API_DOMINIO:?defina API_DOMINIO no /opt/genesis/.env}`)
+      traefik.http.routers.genesis-api.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.genesis-api.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.routers.genesis-api.service: genesis-api
+      traefik.http.routers.genesis-api.middlewares: genesis-api-cabecalhos
+      # erp.<domínio>/api/* e /saude: a mesma API na origem do ERP (cookie de refresh SameSite=Strict em /api/auth,
+      # sem CORS). Prioridade acima do router do ERP, que pega o resto do domínio.
+      traefik.http.routers.genesis-erp-api.rule: Host(`${ERP_DOMINIO:?defina ERP_DOMINIO no /opt/genesis/.env}`) && (PathPrefix(`/api/`) || Path(`/saude`))
+      traefik.http.routers.genesis-erp-api.priority: '100'
+      traefik.http.routers.genesis-erp-api.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.genesis-erp-api.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.routers.genesis-erp-api.service: genesis-api
+      traefik.http.routers.genesis-erp-api.middlewares: genesis-api-cabecalhos
+      traefik.http.services.genesis-api.loadbalancer.server.port: '3000'
+      traefik.http.middlewares.genesis-api-cabecalhos.headers.stsSeconds: '31536000'
+      traefik.http.middlewares.genesis-api-cabecalhos.headers.contentTypeNosniff: 'true'
+      traefik.http.middlewares.genesis-api-cabecalhos.headers.frameDeny: 'true'
+      traefik.http.middlewares.genesis-api-cabecalhos.headers.referrerPolicy: no-referrer
+
+  genesis-web:
+    image: genesis-web:${GENESIS_VERSAO:?defina GENESIS_VERSAO (o implantar.sh define)}
+    container_name: genesis-web
+    # Instalador do PDV da página de download (README › Página de download do PDV): pasta do host, só leitura,
+    # relativa ao /opt/genesis (o --project-directory do implantar.sh). root:101 750/640 (instalar.sh): o nginx (uid
+    # 101) só lê; quem grava é o `implantar.sh pdv publicar`, como root, fora do container.
+    volumes:
+      - ./download/pdv:/srv/download/pdv:ro
+    networks: [proxy]
+    mem_limit: 128m
+    memswap_limit: 128m
+    read_only: true
+    tmpfs: ['/tmp:size=16m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    logging: *logs
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: ${REDE_PROXY:-proxy}
+      traefik.http.routers.genesis-erp.rule: Host(`${ERP_DOMINIO:?defina ERP_DOMINIO no /opt/genesis/.env}`)
+      traefik.http.routers.genesis-erp.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.genesis-erp.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.routers.genesis-erp.service: genesis-web
+      # download.<domínio>: o mesmo nginx (server próprio): a página e o instalador do PDV em /pdv/.
+      traefik.http.routers.genesis-download.rule: Host(`${DOWNLOAD_DOMINIO:?defina DOWNLOAD_DOMINIO no /opt/genesis/.env}`)
+      traefik.http.routers.genesis-download.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.genesis-download.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.routers.genesis-download.service: genesis-web
+      traefik.http.services.genesis-web.loadbalancer.server.port: '8080'
+
+  # Backup lógico diário (I1b; README › Backup): pg_dump do genesis_control e de cada genesis_emp_* pelo proxy, todo
+  # dia às BACKUP_HORARIO (Brasília), para o bucket do GCS em backups/AAAA-MM-DD/ (14 dias no bucket, com as versões
+  # apagadas; mais o soft delete do GCS). Só os segredos do Google
+  # (banco e bucket); nenhum segredo da aplicação. Os dumps passam por /trabalho (volume em disco, não tmpfs: o tmpfs
+  # contaria no limite de memória) e são apagados depois do envio.
+  genesis-backup:
+    image: genesis-backup:${GENESIS_VERSAO:?defina GENESIS_VERSAO (o implantar.sh define)}
+    container_name: genesis-backup
+    init: true
+    env_file:
+      - path: ${GENESIS_SEGREDOS:-/opt/genesis/segredos}/genesis-google.env
+    environment:
+      BACKUP_HORARIO: ${BACKUP_HORARIO:-04:30}
+      BACKUP_RETENCAO_DIAS: ${BACKUP_RETENCAO_DIAS:-14}
+      TZ: America/Sao_Paulo
+    depends_on:
+      genesis-cloudsql-proxy:
+        condition: service_healthy
+    volumes:
+      - backup-trabalho:/trabalho
+    networks: [interna]
+    mem_limit: 64m
+    memswap_limit: 64m
+    read_only: true
+    tmpfs: ['/tmp:size=8m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logs
+    labels:
+      traefik.enable: 'false'
+
+  # Container de tarefa (perfil "tarefa": nunca sobe com o `up`): migrações na implantação e os comandos da API
+  # (admin-criar, empresa-criar, particoes...) com a imagem da versão atual. Roda ao lado da API (na implantação, a
+  # versão anterior continua no ar durante as migrações), então entra no teto de 2,5 GB: 128 MB, a folga da decisão
+  # do dono. Pico medido no teste local: 82 MiB (README › Decisões técnicas).
+  genesis-tarefa:
+    image: genesis-api:${GENESIS_VERSAO:?defina GENESIS_VERSAO (o implantar.sh define)}
+    profiles: [tarefa]
+    init: true
+    env_file: *env-api
+    environment:
+      NODE_OPTIONS: --max-old-space-size=96
+      # Aparece como `cli:implantacao` em executado_por (migracoes_empresas, auditoria_plataforma).
+      USER: implantacao
+    command: ['node', 'dist/cli/migrar-controle.js']
+    depends_on:
+      genesis-cloudsql-proxy:
+        condition: service_healthy
+    networks: [interna]
+    mem_limit: 128m
+    memswap_limit: 128m
+    read_only: true
+    tmpfs: ['/tmp:size=16m']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    restart: 'no'
+    logging: *logs
+    labels:
+      traefik.enable: 'false'
+
+volumes:
+  # Pasta de trabalho do backup (dumps só até o envio ao bucket).
+  backup-trabalho:
+    name: genesis-backup-trabalho
+
+networks:
+  # Rede só do Genesis (sem porta publicada). Não é `internal`: o proxy precisa sair para o Google e a API para o
+  # armazenamento (GCS), a consulta de CEP e o SMTP.
+  interna:
+    name: genesis-interna
+  proxy:
+    external: true
+    name: ${REDE_PROXY:-proxy}

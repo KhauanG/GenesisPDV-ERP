@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GenesisPDV.Core\GenesisPDV.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Vetor da apuração do caixa que a API também confere (consultas-vendas-caixa.test.ts). -->
+    <None Include="..\..\..\..\packages\shared\testes\sync\caixa.apuracao.vetores.json" Link="fixtures\sync\caixa.apuracao.vetores.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,8 @@
+# Tudo pede a revisão do dono (D60, repositório público). As pastas críticas são `.claude/` (instruções e hooks das
+# sessões do Claude Code), `.github/` (workflows, que rodam com os segredos de produção), `CLAUDE.md` (as regras que
+# toda sessão segue) e `infra/` (a produção na VPS): um PR que mexa nelas precisa de atenção redobrada na revisão.
+# Aqui o CODEOWNERS só pede a revisão do dono automaticamente: não ligue "Require review from Code Owners" (nem
+# aprovações obrigatórias) na proteção da `main`. Todo PR é aberto pela conta do dono (as sessões usam o token dele) e
+# o GitHub não deixa o autor aprovar o próprio PR: com a regra ligada, nenhum merge passaria. A proteção recomendada é
+# "Require a pull request before merging" com 0 aprovações (Settings › Rules; CONTRIBUTING.md › Branches).
+* @KhauanG

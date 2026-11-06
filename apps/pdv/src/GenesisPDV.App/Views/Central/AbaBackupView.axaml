@@ -1,0 +1,67 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             x:Class="GenesisPDV.App.Views.Central.AbaBackupView"
+             x:DataType="vm:AbaBackupViewModel"
+             Focusable="True">
+  <!-- Aba 8 da Central do PDV, Backup (bloco G11; README › decisão 75): os backups deste caixa e o "Fazer backup agora".
+       Toda tecla também é botão (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="F5" Command="{Binding FazerAgoraCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F9" Command="{Binding RestaurarCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <TextBlock x:Name="TextoUltimoBackup" Text="{Binding UltimoSucessoTexto}" TextWrapping="Wrap" FontWeight="SemiBold" />
+        <TextBlock x:Name="TextoFalhaBackup" Text="{Binding UltimaFalhaTexto}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding UltimaFalhaTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoPastaBackup" Text="{Binding PastaTexto}" Classes="secundario" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding PermissaoTexto}" Classes="secundario" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoAndamentoBackup" Text="{Binding Andamento}" Classes="secundario" TextWrapping="Wrap"
+                   IsVisible="{Binding Andamento, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoMensagemBackup" Text="{Binding Mensagem}" TextWrapping="Wrap" FontWeight="SemiBold"
+                   IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroBackup" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+      <Border Grid.Row="1" Classes="painel" Padding="12" Margin="0,8,0,8">
+        <Grid RowDefinitions="Auto,*">
+          <Grid Grid.Row="0" ColumnDefinitions="170,*,200,110" Margin="4,0,4,4">
+            <TextBlock Grid.Column="0" Text="Quando" Classes="secundario" />
+            <TextBlock Grid.Column="1" Text="Por quê" Classes="secundario" />
+            <TextBlock Grid.Column="2" Text="Onde" Classes="secundario" />
+            <TextBlock Grid.Column="3" Text="Tamanho" Classes="secundario" HorizontalAlignment="Right" />
+          </Grid>
+          <ListBox Grid.Row="1" x:Name="ListaBackups" ItemsSource="{Binding Backups}" AutomationProperties.Name="Backups deste caixa">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaBackup">
+                <Grid ColumnDefinitions="170,*,200,110">
+                  <TextBlock Grid.Column="0" Text="{Binding Quando}" />
+                  <TextBlock Grid.Column="1" Text="{Binding Motivo}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Onde}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="3" Text="{Binding Tamanho}" HorizontalAlignment="Right" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+      <WrapPanel Grid.Row="2" Classes="botoes">
+        <Button Classes="acao accent" x:Name="BotaoFazerBackupAgora" Content="F5  Fazer backup agora" Command="{Binding FazerAgoraCommand}" />
+        <Button Classes="acao" x:Name="BotaoAtualizarBackups" Content="F6  Atualizar" Command="{Binding AtualizarCommand}" />
+        <Button Classes="acao" x:Name="BotaoRestaurarBackupAba8" Content="F9  Restaurar backup" Command="{Binding RestaurarCommand}"
+                IsVisible="{Binding MostraRestaurar}" />
+        <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+    </Grid>
+
+    <!-- Fazer backup agora sem a permissão: o supervisor libera na hora (31.3), sobre a aba. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

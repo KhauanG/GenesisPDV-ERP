@@ -1,0 +1,13 @@
+#!/bin/sh
+# Remoção do pacote genesispdv (implantação I3; README do PDV › decisão 62): nem "remove" nem "purge" apagam
+# /var/lib/genesispdv e /var/log/genesispdv — o banco pode ter vendas ainda não enviadas à nuvem. Só avisa onde ficaram.
+set -e
+
+case "$1" in
+    remove | purge)
+        echo "genesispdv: os dados do caixa ficaram em /var/lib/genesispdv e os logs em /var/log/genesispdv." >&2
+        echo "genesispdv: reinstalando, o PDV continua de onde parou; para apagar, confira antes no ERP que não há vendas pendentes." >&2
+        ;;
+esac
+
+exit 0

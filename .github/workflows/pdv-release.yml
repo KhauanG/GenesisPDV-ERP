@@ -1,0 +1,214 @@
+# Release do PDV (implantação I3; README do PDV › "Instalar na loja" e decisões 62 e 80): numa tag pdv-vX.Y.Z (ou à
+# mão) gera o instalador do Windows com essa versão, testa como o CI e publica o GitHub Release com o .exe e o
+# .exe.sha256. Só Windows desde 05/11/2026 (decisão do dono; README › decisão 80): as lojas usam só Windows e o .deb
+# saiu. Sem segredos obrigatórios: com PDV_CERT_PFX_BASE64 e PDV_CERT_SENHA o instalador e o executável saem
+# assinados; sem eles, o Windows mostra o aviso do SmartScreen (o README explica o que fazer).
+#
+# Proteções (README › decisão 62): os dois segredos ficam no ambiente "release-pdv", com regra de implantação só para a
+# main e as tags pdv-v* (protegidas por ruleset), e só o job do Windows de uma publicação usa esse ambiente; publicar
+# exige o commit na main (à mão, só rodando na main) e a tag pdv-vX.Y.Z, se já existe, apontando para este commit; um
+# release que já tem arquivos nunca é sobrescrito sem "substituir" marcado (e aí só com o mesmo commit da tag).
+name: PDV release
+
+on:
+  push:
+    tags: ['pdv-v*']
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: 'Versão X.Y.Z (vazio = a do apps/pdv/Directory.Build.props)'
+        required: false
+        default: ''
+      publicar:
+        description: 'Criar o GitHub Release pdv-vX.Y.Z (e a tag) neste commit; só na main (desmarcado: só os artefatos)'
+        type: boolean
+        default: false
+      substituir:
+        description: 'Trocar os arquivos de um release que já existe (só com a tag neste mesmo commit; nunca de outro)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: pdv-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  PDV_URL_API: ${{ vars.PDV_URL_API_PADRAO || 'https://api.grupoicebeer.com.br' }}
+
+jobs:
+  versao:
+    name: Versão do release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      versao: ${{ steps.versao.outputs.versao }}
+      publicar: ${{ steps.versao.outputs.publicar }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # A tag manda (pdv-v1.2.3 → 1.2.3); à mão, a informada ou a do Directory.Build.props (a fonte única).
+      - name: Resolve a versão
+        id: versao
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          INFORMADA: ${{ inputs.versao }}
+          PUBLICAR: ${{ github.ref_type == 'tag' || inputs.publicar }}
+        run: |
+          props=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' apps/pdv/Directory.Build.props)
+          if [ -n "$TAG" ]; then
+            versao=${TAG#pdv-v}
+          elif [ -n "$INFORMADA" ]; then
+            versao=$INFORMADA
+          else
+            versao=$props
+          fi
+          if ! [[ $versao =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::versão inválida '$versao' (tag pdv-vX.Y.Z)"
+            exit 1
+          fi
+          if [ "$versao" != "$props" ]; then
+            echo "::warning::versão $versao diferente da <Version> $props do apps/pdv/Directory.Build.props (a do release vale)"
+          fi
+          # Publicar só código que está na main: à mão, rodando na própria main; numa tag, o commit dela já na main (uma
+          # tag pdv-v* posta num commit de branch não vira release oficial).
+          if [ "$PUBLICAR" = "true" ]; then
+            if [ -z "$TAG" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::publicar só rodando na main (esta execução é de $GITHUB_REF); sem publicar, os artefatos saem normalmente"
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::o commit $GITHUB_SHA não está na main: o release oficial sai só de commit da main"
+              exit 1
+            fi
+          fi
+          {
+            echo "versao=$versao"
+            echo "publicar=$PUBLICAR"
+          } >>"$GITHUB_OUTPUT"
+
+  windows:
+    name: Instalador do Windows
+    needs: versao
+    runs-on: windows-latest
+    timeout-minutes: 40
+    # Só a publicação entra no ambiente com os segredos do certificado (regra de implantação: main e tags pdv-v*); a
+    # execução sem publicar gera o instalador sem assinatura, como o CI.
+    environment: ${{ needs.versao.outputs.publicar == 'true' && 'release-pdv' || '' }}
+    defaults:
+      run:
+        working-directory: apps/pdv
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: apps/pdv/global.json
+
+      - name: Restore
+        run: dotnet restore GenesisPDV.slnx --locked-mode
+
+      # Num passo sem os segredos: o Chocolatey (versão fixa no script) nunca roda com o certificado no ambiente.
+      - name: Inno Setup
+        run: ./instalador/windows/gerar-instalador.ps1 -PrepararInnoSetup
+
+      # Os segredos só neste passo; o script os tira do ambiente antes de qualquer processo filho.
+      - name: Instalador (publica, assina se houver certificado e compila o GenesisPDV.iss)
+        id: instalador
+        env:
+          VERSAO: ${{ needs.versao.outputs.versao }}
+          PDV_CERT_PFX_BASE64: ${{ secrets.PDV_CERT_PFX_BASE64 }}
+          PDV_CERT_SENHA: ${{ secrets.PDV_CERT_SENHA }}
+        run: ./instalador/windows/gerar-instalador.ps1 -Versao $env:VERSAO -UrlApi $env:PDV_URL_API
+
+      - name: Teste do instalador (instala, abre, reinstala e desinstala)
+        env:
+          INSTALADOR: ${{ steps.instalador.outputs.instalador }}
+          VERSAO: ${{ needs.versao.outputs.versao }}
+        run: ./instalador/windows/testar-instalador.ps1 -Instalador $env:INSTALADOR -Versao $env:VERSAO -UrlApi $env:PDV_URL_API
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: GenesisPDV-Setup
+          path: apps/pdv/publish/instalador
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: GitHub Release
+    needs: [versao, windows]
+    if: needs.versao.outputs.publicar == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # Os artefatos desta execução pela API (gh), sem depender de outra action.
+      - name: Baixa o instalador
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name GenesisPDV-Setup --dir dist
+          (cd dist && sha256sum -c ./*.sha256)
+          ls -la dist
+
+      # Nunca troca os binários de uma tag por outro commit: a tag que já existe tem de apontar para este; um release que
+      # já tem arquivos só é refeito com "substituir" marcado (re-execução do mesmo commit); senão, cria tag e release aqui.
+      - name: Cria o release (ou completa o deste commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSAO: ${{ needs.versao.outputs.versao }}
+          SUBSTITUIR: ${{ inputs.substituir || false }}
+        run: |
+          tag="pdv-v$VERSAO"
+          notas="GenesisPDV $VERSAO para Windows: GenesisPDV-Setup-$VERSAO.exe (instale por cima da versão anterior: banco, backups e ativação ficam). Confira o .exe.sha256 antes de instalar (README do PDV › Instalar na loja)."
+          # Commit da tag (a anotada aponta para um objeto tag, que aponta para o commit); vazio se não existe.
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha' 2>/dev/null || true)
+          case $ref in
+            "commit "*) commit_tag=${ref#commit } ;;
+            "tag "*) commit_tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${ref#tag }" --jq .object.sha) ;;
+            *) commit_tag= ;;
+          esac
+          if [ -n "$commit_tag" ] && [ "$commit_tag" != "$GITHUB_SHA" ]; then
+            echo "::error::a tag $tag já existe no commit $commit_tag, e esta execução é do $GITHUB_SHA: suba a versão (nova tag), nunca troque os binários de uma tag"
+            exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            arquivos=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
+            if [ "$arquivos" -gt 0 ] && [ "$SUBSTITUIR" != "true" ]; then
+              echo "::error::o release $tag já tem $arquivos arquivo(s): para refazê-los com este mesmo commit, rode à mão com \"substituir\" marcado"
+              exit 1
+            fi
+            if [ "$arquivos" -gt 0 ]; then
+              echo "::warning::substituindo os $arquivos arquivo(s) do release $tag pelos deste build (mesmo commit $GITHUB_SHA da tag)"
+              gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            else
+              gh release upload "$tag" dist/* --repo "$GITHUB_REPOSITORY"
+            fi
+          else
+            gh release create "$tag" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "GenesisPDV $VERSAO" --notes "$notas"
+          fi
+
+      # As lojas baixam de download.<domínio> (não do GitHub), que só passa a oferecer esta versão na próxima
+      # Implantação (README de infra/producao › Página de download do PDV).
+      - name: Resumo
+        env:
+          VERSAO: ${{ needs.versao.outputs.versao }}
+        run: |
+          echo "::notice::Release pdv-v$VERSAO publicado. A página de download (download.grupoicebeer.com.br) só oferece esta versão depois da próxima Implantação (Actions › Implantação › Run workflow)."
+          {
+            echo "### GenesisPDV $VERSAO"
+            echo
+            echo "Release \`pdv-v$VERSAO\` publicado com \`GenesisPDV-Setup-$VERSAO.exe\` e o \`.sha256\`."
+            echo
+            echo "**A página de download só mostra esta versão depois da próxima implantação:** Actions › Implantação ›"
+            echo "Run workflow (branch \`main\`). Ela baixa este release, confere o sha256 e publica o instalador em"
+            echo "download.grupoicebeer.com.br (README de infra/producao › Página de download do PDV)."
+          } >>"$GITHUB_STEP_SUMMARY"

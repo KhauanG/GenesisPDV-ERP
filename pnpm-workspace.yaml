@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependências com scripts de instalação nativos permitidos (pnpm 10 bloqueia por padrão).
+onlyBuiltDependencies:
+  - argon2
+  - '@swc/core'
+  - esbuild

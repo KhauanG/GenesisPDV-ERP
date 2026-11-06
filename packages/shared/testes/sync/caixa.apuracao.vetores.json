@@ -1,0 +1,60 @@
+{
+  "descricao": "Apuração da sessão de caixa (PDV 20.4 e 21.2; ERP 14.9): o mesmo turno conferido pelos dois lados. O PDV roda o ApuracaoCaixa sobre os pagamentos e os movimentos (GenesisPDV.Core.Tests, ApuracaoVetoresTests); a API aplica o turno pelo push real (venda.finalizada, venda.cancelada forma A, caixa.reforco, caixa.sangria, caixa.movimento_cancelado e caixa.fechado; a devolucao_troca, que nenhum evento da 1C traz, vai direto no banco) e confere o calculoDinheiro do GET /sessoes-caixa/:id (consultas-vendas-caixa.test.ts). Os valores em 'esperado' são os que os dois lados precisam dar: mudar a regra de um lado só deixa um dos testes vermelho.",
+  "formas": {
+    "dinheiro": { "descricao": "Dinheiro", "tipo_forma": "dinheiro" },
+    "credito": { "descricao": "Cartão de Crédito", "tipo_forma": "cartao_credito" },
+    "pix": { "descricao": "PIX", "tipo_forma": "pix" },
+    "vale": { "descricao": "Vale-alimentação", "tipo_forma": "vale_alimentacao", "permite_troco": true }
+  },
+  "casos": [
+    {
+      "nome": "troco em outra forma, troco do dinheiro, estornos em dinheiro e no cartão, devolução de troca e sangria cancelada",
+      "fundo_troco": "150.00",
+      "vendas": [
+        {
+          "pagamentos": [
+            { "forma": "dinheiro", "valor": "50.00", "valor_recebido": "100.00", "troco": "50.00" }
+          ]
+        },
+        {
+          "pagamentos": [{ "forma": "vale", "valor": "45.00", "valor_recebido": "50.00", "troco": "5.00" }]
+        },
+        {
+          "pagamentos": [{ "forma": "pix", "valor": "25.00" }]
+        },
+        {
+          "cancelada": true,
+          "pagamentos": [
+            { "forma": "dinheiro", "valor": "15.00", "estorno": "dinheiro_devolvido" },
+            { "forma": "credito", "valor": "40.00", "estorno": "pos_cancelado_na_maquininha" }
+          ]
+        }
+      ],
+      "movimentos": [
+        { "tipo": "reforco", "valor": "50.00" },
+        { "tipo": "sangria", "valor": "30.00" },
+        { "tipo": "sangria", "valor": "1000.00", "cancelado": true },
+        { "tipo": "estorno_venda", "valor": "15.00", "forma": "dinheiro", "venda": 3 },
+        { "tipo": "estorno_venda", "valor": "40.00", "forma": "credito", "venda": 3 },
+        { "tipo": "devolucao_troca", "valor": "10.00" }
+      ],
+      "sangria_fechamento": "205.00",
+      "esperado": {
+        "vendas_dinheiro": "65.00",
+        "troco_outras_formas": "5.00",
+        "reforcos": "50.00",
+        "sangrias": "30.00",
+        "estornos_dinheiro": "15.00",
+        "devolucoes": "10.00",
+        "dinheiro": "205.00",
+        "gaveta_apos_sangria_fechamento": "0.00",
+        "formas": {
+          "dinheiro": { "calculado": "205.00", "quantidade_pagamentos": 2 },
+          "vale": { "calculado": "45.00", "quantidade_pagamentos": 1 },
+          "pix": { "calculado": "25.00", "quantidade_pagamentos": 1 },
+          "credito": { "calculado": "0.00", "quantidade_pagamentos": 1 }
+        }
+      }
+    }
+  ]
+}

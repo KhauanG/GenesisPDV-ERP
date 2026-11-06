@@ -1,0 +1,54 @@
+:root {
+  --genesis-fundo: var(--mantine-color-gray-0);
+}
+
+[data-mantine-color-scheme='dark'] {
+  --genesis-fundo: var(--mantine-color-dark-8);
+}
+
+body {
+  background: var(--genesis-fundo);
+}
+
+.linha-clicavel {
+  cursor: pointer;
+}
+
+.linha-clicavel:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+
+.grade-alca:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+
+/* Impressão/PDF dos relatórios (ERP 3.5): só o conteúdo, com o cabeçalho de impressão. */
+.so-impressao {
+  display: none;
+}
+
+@media print {
+  .mantine-AppShell-header,
+  .mantine-AppShell-navbar,
+  .nao-imprimir {
+    display: none !important;
+  }
+
+  .mantine-AppShell-main {
+    padding: 0 !important;
+  }
+
+  .so-impressao {
+    display: block;
+  }
+
+  body {
+    background: #fff;
+  }
+}
+
+.menu-plataforma.active {
+  background: var(--mantine-primary-color-light);
+}

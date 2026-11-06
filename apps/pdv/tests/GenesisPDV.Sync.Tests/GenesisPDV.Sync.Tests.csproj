@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GenesisPDV.Sync\GenesisPDV.Sync.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Suíte de contrato (SYNC 17): as mesmas fixtures do Vitest de packages/shared (src/sync/contratos.spec.ts) e os vetores JCS. -->
+    <None Include="..\..\..\..\packages\shared\testes\sync\*.json" Link="fixtures\sync\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\packages\shared\testes\jcs\vetores.json" Link="fixtures\jcs\vetores.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Envelopes ECIES gerados pela API (src/seguranca/ecies.ts): o PDV decifra a chave de backup da ativação. -->
+    <None Include="..\..\..\..\packages\shared\testes\ecies\vetores.json" Link="fixtures\ecies\vetores.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Catálogos de auditoria e de motivos de login da nuvem: o CicloOnlineTests (Catalogos_do_pdv_sao_os_da_nuvem) confere a cópia do PDV contra eles. -->
+    <None Include="..\..\..\..\packages\shared\src\enums.ts" Link="fixtures\shared\enums.ts" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Padrões do catálogo de configurações que o PDV repete (hora de corte do dia operacional, D7). -->
+    <None Include="..\..\..\..\packages\shared\src\configuracoes.ts" Link="fixtures\shared\configuracoes.ts" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Permissões e perfis padrão do PDV (Fase 1C, C10a): o caixa avalia as mesmas chaves, offline. -->
+    <None Include="..\..\..\..\packages\shared\src\permissoes.ts" Link="fixtures\shared\permissoes.ts" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\packages\shared\src\perfis-padrao.ts" Link="fixtures\shared\perfis-padrao.ts" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,21 @@
+{
+  "descricao": "Envelopes ECIES gerados pela API (src/seguranca/ecies.ts) para a suíte do PDV decifrar (SYNC 3.2, 22.3). Gerados uma vez; o Vitest da API confere que decifram.",
+  "casos": [
+    {
+      "descricao": "chave de backup (32 bytes) para a chave efêmera do assistente",
+      "algoritmo": "x25519",
+      "privada_pkcs8": "MC4CAQAwBQYDK2VuBCIEIDCwUthDpRKXHnXcfiBZrPXKYxfmsc3PecnL0rAUyQZU",
+      "publica_spki": "MCowBQYDK2VuAyEAdhRFvsmRlUB4bwPjdB14dxNmwssTD6ECxh1bioyzSms=",
+      "envelope": "AQAsMCowBQYDK2VuAyEAzWzHcukf51AHAGiiJV1VaiUoSuWNgtCq5pSQmyGLwj8RunPmQle6w2IzAJI12keC0GFftqgI4/qLEAiNj9Q0vG2DT56FNHSkn3iXUxiLTICYXiJbXNgNAdzPQP4=",
+      "claro": "rY5/weeWX3boqzABRQ60MzvoVHv1NCmufHjSN4gx7BY="
+    },
+    {
+      "descricao": "texto curto com acento",
+      "algoritmo": "x25519",
+      "privada_pkcs8": "MC4CAQAwBQYDK2VuBCIEIIjyCWsnGTTfpr/YBPAzkeNYc6cGnzPbEe8Z/WvbwyBQ",
+      "publica_spki": "MCowBQYDK2VuAyEApTurxHF12f/Ecb4h2Z+/ATHsxZHzDatiI4F0IzY0jC8=",
+      "envelope": "AQAsMCowBQYDK2VuAyEAsF/MFTHA1HIuVBIMjT2w5ntzao0JMi12GTzxlA86cDPuKHlGUPYOdtXY14O5Jlr85dbnGbjlqyb2NxoyN6x4O8arN1JCtkavLIU=",
+      "claro": "c2VncmVkbyBhw6fDo28="
+    }
+  ]
+}

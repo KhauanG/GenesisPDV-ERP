@@ -1,0 +1,13 @@
+# Dependabot só para as Actions de terceiros das workflows (D60): elas ficam fixadas pelo SHA do commit, com a versão
+# num comentário ao lado (`uses: actions/checkout@<sha> # v7`), para uma tag movida no repositório da Action não
+# trocar o código que roda aqui. Uma vez por mês o Dependabot abre um PR trocando o SHA e o comentário quando sai
+# versão nova; o merge segue as regras de sempre (revisão e liberação do dono). As dependências do pnpm e do NuGet
+# continuam pelos lockfiles, atualizadas à mão.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci

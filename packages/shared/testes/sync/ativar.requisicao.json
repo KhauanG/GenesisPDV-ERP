@@ -1,0 +1,18 @@
+{
+  "codigo_empresa": 100001,
+  "codigo_ativacao": "K7QM-2XRD",
+  "requisicao_ativacao_id": "01a1878f-bfb9-7958-8cd6-20c20ea2622b",
+  "maquina": {
+    "nome_maquina": "CAIXA02-HERMES",
+    "sistema_operacional": "Windows 11 Pro 24H2 x64",
+    "id_hardware": "3f1c9a2e8b7d4c6f0a1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a6978",
+    "versao_app": "1.4.2",
+    "plataforma": "windows_x64",
+    "versao_schema_local": 12
+  },
+  "chave_backup_publica": "MCowBQYDK2VuAyEAq3x0Wf0bM1u3zJ8yX6Z4D5v8kR2pT7nL9sH1cE6aB0w=",
+  "chave_publica_terminal": {
+    "algoritmo": "x25519",
+    "chave": "MCowBQYDK2VuAyEA9fPq1m3cR8wZ0vT4kL7yX2bN6hS5dJ1aG3eU8iO0pQc="
+  }
+}

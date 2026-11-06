@@ -1,0 +1,56 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:d="using:GenesisPDV.App.Servicos.Diagnostico"
+             x:Class="GenesisPDV.App.Views.Central.AbaPacoteView"
+             x:DataType="vm:AbaPacoteViewModel"
+             Focusable="True">
+  <!-- Aba P da Central do PDV, Pacote de suporte (bloco G9; README › decisão 76): onde salvar e o "Gerar e salvar".
+       Toda tecla também é botão (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding GerarCommand}" />
+    <KeyBinding Gesture="F2" Command="{Binding GerarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarDestinosCommand}" />
+    <KeyBinding Gesture="Up" Command="{Binding AnteriorCommand}" />
+    <KeyBinding Gesture="Down" Command="{Binding ProximoCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+      <TextBlock x:Name="TextoPacoteEntra" Text="{Binding Entra}" TextWrapping="Wrap" />
+      <TextBlock x:Name="TextoPacoteNuncaEntra" Text="{Binding NuncaEntra}" TextWrapping="Wrap" FontWeight="SemiBold" />
+      <TextBlock x:Name="TextoAvisoPacote" Text="{Binding Aviso}" Classes="secundario" TextWrapping="Wrap" />
+      <TextBlock x:Name="TextoDestinosPacote" Text="{Binding DestinosTexto}" TextWrapping="Wrap"
+                 IsVisible="{Binding DestinosTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock x:Name="TextoAndamentoPacote" Text="{Binding Andamento}" Classes="secundario" TextWrapping="Wrap"
+                 IsVisible="{Binding Andamento, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock x:Name="TextoMensagemPacote" Text="{Binding Mensagem}" TextWrapping="Wrap" FontWeight="SemiBold"
+                 IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock x:Name="TextoErroPacote" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                 IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    </StackPanel>
+    <Border Grid.Row="1" Classes="painel" Padding="12" Margin="0,8,0,8">
+      <Grid RowDefinitions="Auto,*">
+        <TextBlock Grid.Row="0" Text="Onde salvar" Classes="secundario" Margin="4,0,4,4" />
+        <!-- A aba fica com o foco (↑/↓ escolhem, Enter gera); a lista é para ver e clicar e devolve o foco à aba. -->
+        <ListBox Grid.Row="1" x:Name="ListaDestinosPacote" ItemsSource="{Binding Destinos}" SelectedItem="{Binding DestinoSelecionado}"
+                 Focusable="False" AutomationProperties.Name="Onde salvar o pacote de suporte">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="d:DestinoPacote">
+              <TextBlock Text="{Binding Nome}" FontSize="16" Padding="0,8" TextTrimming="CharacterEllipsis" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+    <StackPanel Grid.Row="2" Spacing="4">
+      <WrapPanel Classes="botoes">
+        <Button Classes="acao accent" x:Name="BotaoGerarPacote" Content="Enter  Gerar e salvar" Command="{Binding GerarCommand}" />
+        <Button Classes="acao" x:Name="BotaoProcurarPendrive" Content="F5  Procurar o pendrive" Command="{Binding AtualizarDestinosCommand}" />
+        <Button Classes="acao" x:Name="BotaoVoltarPacote" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+      <TextBlock Classes="secundario" Text="{Binding Teclas}" TextWrapping="Wrap" />
+    </StackPanel>
+  </Grid>
+</UserControl>

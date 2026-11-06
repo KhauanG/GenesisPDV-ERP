@@ -1,0 +1,1256 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             xmlns:core="using:GenesisPDV.Core.Produtos"
+             xmlns:servicos="using:GenesisPDV.App.Servicos"
+             xmlns:ent="using:GenesisPDV.Data.Entidades"
+             xmlns:repo="using:GenesisPDV.Data.Repositorios"
+             x:Class="GenesisPDV.App.Views.VendaView"
+             x:DataType="vm:VendaViewModel"
+             Classes="tela">
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="F1" Command="{Binding AjudaCommand}" />
+    <KeyBinding Gesture="F2" Command="{Binding PesquisarCommand}" />
+    <KeyBinding Gesture="F3" Command="{Binding QuantidadeCommand}" />
+    <KeyBinding Gesture="F4" Command="{Binding RemoverItemCommand}" />
+    <KeyBinding Gesture="Shift+F4" Command="{Binding CancelarVendaCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding ClienteCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding DescontoCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding FuturoCommand}" CommandParameter="F7 Vendedor" />
+    <KeyBinding Gesture="F8" Command="{Binding FuturoCommand}" CommandParameter="F8 Tipo de preço" />
+    <KeyBinding Gesture="F9" Command="{Binding FuturoCommand}" CommandParameter="F9 Pedidos/Orçamentos" />
+    <KeyBinding Gesture="F10" Command="{Binding ConcluirCommand}" />
+    <KeyBinding Gesture="F11" Command="{Binding FuncoesCommand}" />
+    <KeyBinding Gesture="F12" Command="{Binding GestaoVendasCommand}" />
+    <KeyBinding Gesture="Ctrl+N" Command="{Binding FuturoCommand}" CommandParameter="Ctrl+N Nova venda" />
+    <KeyBinding Gesture="Ctrl+T" Command="{Binding FuturoCommand}" CommandParameter="Ctrl+T Troca" />
+    <KeyBinding Gesture="Ctrl+Alt+T" Command="{Binding AlternarTemaCommand}" />
+    <KeyBinding Gesture="Ctrl+Alt+B" Command="{Binding BloquearTelaCommand}" />
+    <KeyBinding Gesture="Ctrl+Alt+S" Command="{Binding SincronizarAgoraCommand}" />
+  </UserControl.KeyBindings>
+
+  <!-- O foco fica no campo de código (ou no campo do diálogo): clicar numa linha seleciona sem roubar o foco (decisão 65). -->
+  <UserControl.Styles>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Focusable" Value="False" />
+    </Style>
+  </UserControl.Styles>
+
+  <UserControl.DataTemplates>
+    <DataTemplate DataType="vm:DialogoQuantidadeViewModel">
+      <Border Classes="dialogo">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="Quantidade" Classes="rotulo" />
+          <TextBox x:Name="CampoQuantidade" Text="{Binding Valor}" c:Foco.Inicial="True" AutomationProperties.Name="Quantidade" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoConfirmarQuantidade" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoRemoverItemViewModel">
+      <Border Classes="dialogo">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="Cancelar item nº" Classes="rotulo" />
+          <!-- Com a liberação do supervisor, a sequência é a do item que ele viu no pedido (só leitura). -->
+          <TextBox x:Name="CampoSequencia" Text="{Binding Sequencia}" IsReadOnly="{Binding SequenciaTravada}" c:Foco.Inicial="{Binding !SequenciaTravada}"
+                   AutomationProperties.Name="Número do item" />
+          <TextBlock Text="Quantidade a cancelar (vazio = o item inteiro)" Classes="rotulo" />
+          <TextBox x:Name="CampoQuantidadeCancelar" Text="{Binding Quantidade}" c:Foco.Inicial="{Binding SequenciaTravada}"
+                   AutomationProperties.Name="Quantidade a cancelar" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Cancelar o item [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoConfirmarRemover" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoMenuDescontoViewModel">
+      <Border Classes="dialogo" Focusable="True" c:Foco.Inicial="True">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="D1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="NumPad1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="D2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="NumPad2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="D4" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="NumPad4" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="D5" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="NumPad5" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <Button Classes="opcao" x:Name="OpcaoDescontoItem" Content="{Binding OpcaoItem}" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <Button Classes="opcao" x:Name="OpcaoDescontoTotal" Content="2  Desconto no total da venda" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <Button Classes="opcao" Content="4  Remover o desconto do total" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <Button Classes="opcao" Content="{Binding OpcaoRemoverItem}" IsVisible="{Binding TemDescontoItem}" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[1] [2] [4] [5] ou clique para escolher" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoValorDescontoViewModel">
+      <Border Classes="dialogo">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Dica}" Classes="rotulo" TextWrapping="Wrap" MaxWidth="560" HorizontalAlignment="Left" />
+          <TextBox x:Name="CampoDesconto" Text="{Binding Valor}" c:Foco.Inicial="True" AutomationProperties.Name="Valor do desconto" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <!-- R$ ou % pelo clique: o teclado numérico não tem a tecla % (decisão 65). -->
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Aplicar em R$" Command="{Binding AplicarReaisCommand}" x:Name="BotaoAplicarDescontoReais" />
+            <Button Classes="acao" Content="Aplicar em %" Command="{Binding AplicarPercentualCommand}" x:Name="BotaoAplicarDescontoPercentual" />
+            <Button Classes="acao" Content="Aplicar [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoAplicarDesconto" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Pagamento (PDV 16.1): ↑/↓ (ou Alt+1..9) escolhem a forma, Enter lança, F5 cliente, Del remove o último. -->
+    <DataTemplate DataType="vm:DialogoPagamentoViewModel">
+      <Border Classes="dialogo" MinWidth="720">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Delete" Command="{Binding RemoverUltimoPagamentoCommand}" />
+          <KeyBinding Gesture="F5" Command="{Binding ClienteCommand}" />
+          <KeyBinding Gesture="Alt+D1" Command="{Binding EscolherFormaCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="Alt+D2" Command="{Binding EscolherFormaCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="Alt+D3" Command="{Binding EscolherFormaCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="Alt+D4" Command="{Binding EscolherFormaCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="Alt+D5" Command="{Binding EscolherFormaCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="Alt+D6" Command="{Binding EscolherFormaCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="Alt+D7" Command="{Binding EscolherFormaCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="Alt+D8" Command="{Binding EscolherFormaCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="Alt+D9" Command="{Binding EscolherFormaCommand}" CommandParameter="9" />
+        </Border.KeyBindings>
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,24,*">
+          <TextBlock Grid.ColumnSpan="3" Text="{Binding Titulo}" Classes="titulo" Margin="0,0,0,12" />
+          <DockPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,0,0,12">
+            <TextBlock DockPanel.Dock="Right" FontSize="30" FontWeight="Bold" Foreground="{DynamicResource PincelTotalTexto}"
+                       Text="{Binding TotalTexto, StringFormat='R$ {0}'}" x:Name="TextoTotalPagamento" />
+            <TextBlock Text="A PAGAR" FontSize="22" VerticalAlignment="Center" />
+          </DockPanel>
+          <StackPanel Grid.Row="2" Grid.Column="0" Spacing="8">
+            <TextBlock Text="Formas de pagamento" Classes="rotulo" />
+            <ItemsControl x:Name="ListaFormasPagamento" ItemsSource="{Binding Formas}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:LinhaFormaViewModel">
+                  <!-- Clique escolhe a forma (como ↑/↓ ou Alt+número); o foco fica no valor. -->
+                  <Button Classes="opcao" Command="{Binding $parent[ItemsControl].((vm:DialogoPagamentoViewModel)DataContext).EscolherFormaCommand}"
+                          CommandParameter="{Binding Indice}" Padding="6,2" MinHeight="34" Background="Transparent">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="▸" FontSize="17" Foreground="{DynamicResource PincelAviso}" IsVisible="{Binding Selecionada}" />
+                      <TextBlock Text="{Binding Texto}" FontSize="17" FontWeight="{Binding Selecionada, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                    </StackPanel>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Text="{Binding RotuloValor}" Classes="rotulo" Margin="0,12,0,0" />
+            <TextBox x:Name="CampoValorRecebido" Text="{Binding ValorRecebido}" FontSize="24" c:Foco.Inicial="True"
+                     AutomationProperties.Name="Valor do pagamento">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Up" Command="{Binding MoverFormaCommand}" CommandParameter="acima" />
+                <KeyBinding Gesture="Down" Command="{Binding MoverFormaCommand}" CommandParameter="abaixo" />
+              </TextBox.KeyBindings>
+            </TextBox>
+          </StackPanel>
+          <StackPanel Grid.Row="2" Grid.Column="2" Spacing="6">
+            <TextBlock x:Name="TextoClientePagamento" Text="{Binding ClienteTexto}" FontWeight="SemiBold"
+                       IsVisible="{Binding ClienteTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Text="Pagamentos lançados" Classes="rotulo" />
+            <TextBlock x:Name="TextoPagamentosLancados" Text="{Binding LancadosTexto}" Classes="mono" />
+            <TextBlock Text="{Binding PagoTexto, StringFormat='Pago:   {0}'}" Classes="mono" FontSize="16" />
+            <TextBlock x:Name="TextoFaltaPagamento" Text="{Binding FaltaTexto, StringFormat='Falta:  {0}'}" Classes="mono" FontSize="16" />
+            <TextBlock x:Name="TextoTrocoPrevisto" Text="{Binding TrocoTexto, StringFormat='TROCO:  {0}'}" Classes="mono" FontSize="22"
+                       FontWeight="Bold" Foreground="{DynamicResource PincelAviso}" />
+          </StackPanel>
+          <StackPanel Grid.Row="3" Grid.ColumnSpan="3" Spacing="6" Margin="0,14,0,0">
+            <TextBlock x:Name="TextoErroPagamento" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                       IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Text="[↑↓] ou clique na forma   [Enter] Lançar (quitou = finaliza)   [F5] CPF/Cliente   [Del] Remover último   [Esc] Voltar para os itens"
+                       Classes="tecla" TextWrapping="Wrap" />
+            <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+              <Button Classes="acao" Content="Lançar [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoLancarPagamento" />
+              <Button Classes="acao" Content="CPF/Cliente [F5]" Command="{Binding ClienteCommand}" />
+              <Button Classes="acao" Content="Remover último [Del]" Command="{Binding RemoverUltimoPagamentoCommand}" />
+              <Button Classes="acao" Content="Voltar aos itens [Esc]" Command="{Binding CancelarCommand}" />
+            </WrapPanel>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <!-- Cartão na maquininha (PDV 16.5; O9c): bandeira obrigatória, NSU e autorização opcionais. -->
+    <DataTemplate DataType="vm:DialogoPosViewModel">
+      <Border Classes="dialogo" Width="640">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Instrucao}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding BandeirasTexto}" Classes="rotulo" TextWrapping="Wrap" />
+          <TextBlock Text="Bandeira (número)" Classes="rotulo" />
+          <TextBox x:Name="CampoBandeira" Text="{Binding Bandeira}" MaxLength="2" c:Foco.Inicial="True" FontSize="20" AutomationProperties.Name="Bandeira" />
+          <TextBlock Text="NSU/CV (opcional)" Classes="rotulo" />
+          <TextBox x:Name="CampoNsu" Text="{Binding Nsu}" MaxLength="12" AutomationProperties.Name="NSU" />
+          <TextBlock Text="Código de autorização (opcional)" Classes="rotulo" />
+          <TextBox x:Name="CampoAutorizacao" Text="{Binding Autorizacao}" MaxLength="6" AutomationProperties.Name="Autorização" />
+          <TextBlock Text="Parcelas" Classes="rotulo" IsVisible="{Binding Parcela}" />
+          <TextBox x:Name="CampoParcelas" Text="{Binding Parcelas}" MaxLength="2" IsVisible="{Binding Parcela}" AutomationProperties.Name="Parcelas" />
+          <TextBlock x:Name="TextoErroPos" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Aprovado [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Não aprovado [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- PIX estático/manual (PDV 16.7): QR com a chave da loja e o valor; confirmação conferida no banco da loja. -->
+    <DataTemplate DataType="vm:DialogoPixViewModel">
+      <Border Classes="dialogo" Width="720">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F4" Command="{Binding ImprimirQrCommand}" />
+        </Border.KeyBindings>
+        <Grid ColumnDefinitions="Auto,16,*" RowDefinitions="Auto,*">
+          <TextBlock Grid.ColumnSpan="3" Text="{Binding Titulo}" Classes="titulo" Margin="0,0,0,10" />
+          <Image Grid.Row="1" x:Name="ImagemQrPix" Source="{Binding Qr}" Width="260" Height="260"
+                 IsVisible="{Binding Qr, Converter={x:Static ObjectConverters.IsNotNull}}" AutomationProperties.Name="QR do PIX" />
+          <StackPanel Grid.Row="1" Grid.Column="2" Spacing="8">
+            <TextBlock Text="{Binding Instrucao}" TextWrapping="Wrap" FontWeight="SemiBold" />
+            <TextBlock x:Name="TextoChavePix" Text="{Binding ChaveTexto}" TextWrapping="Wrap" />
+            <TextBlock x:Name="TextoCopiaECola" Text="{Binding CopiaECola}" Classes="mono" TextWrapping="Wrap" FontSize="11"
+                       IsVisible="{Binding CopiaECola, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Text="Nome de quem pagou (como aparece no banco)" Classes="rotulo" />
+            <TextBox x:Name="CampoPagadorPix" Text="{Binding PagadorNome}" MaxLength="60" c:Foco.Inicial="True" AutomationProperties.Name="Nome de quem pagou" />
+            <TextBlock Text="Horário do PIX no app do banco (HH:MM)" Classes="rotulo" />
+            <TextBox x:Name="CampoHorarioPix" Text="{Binding Horario}" MaxLength="5" AutomationProperties.Name="Horário do PIX" />
+            <TextBlock x:Name="TextoErroPix" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                       IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock x:Name="TextoAvisoImpressaoPix" Text="{Binding AvisoImpressao}" TextWrapping="Wrap" Classes="secundario"
+                       IsVisible="{Binding AvisoImpressao, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <WrapPanel Classes="botoes" HorizontalAlignment="Left">
+              <Button Classes="acao" Content="Confirmar o PIX [Enter]" Command="{Binding ConfirmarCommand}" />
+              <Button Classes="acao" Content="Imprimir o QR [F4]" Command="{Binding ImprimirQrCommand}" />
+              <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+            </WrapPanel>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <!-- F5 Cliente (PDV 14.1–14.2; O8): CPF/CNPJ na nota ou cliente cadastrado; Ctrl+Del remove. -->
+    <DataTemplate DataType="vm:DialogoClienteViewModel">
+      <Border Classes="dialogo" Width="620">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Ctrl+Delete" Command="{Binding RemoverCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="CPF ou CNPJ na nota" Classes="rotulo" />
+          <TextBox x:Name="CampoDocumentoCliente" Text="{Binding Documento}" MaxLength="18" c:Foco.Inicial="True" AutomationProperties.Name="CPF ou CNPJ" />
+          <TextBlock Text="Nome na nota (opcional)" Classes="rotulo" />
+          <TextBox x:Name="CampoNomeNota" Text="{Binding Nome}" MaxLength="60" AutomationProperties.Name="Nome na nota" />
+          <TextBlock Text="Ou buscar cliente cadastrado (nome, CPF/CNPJ ou código)" Classes="rotulo" />
+          <TextBox x:Name="CampoBuscaCliente" Text="{Binding Busca}" MaxLength="60" AutomationProperties.Name="Buscar cliente">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+              <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <ListBox x:Name="ListaClientes" ItemsSource="{Binding Resultados}" SelectedItem="{Binding Selecionado}" MaxHeight="220" Focusable="False"
+                   c:Comandos.DuploClique="{Binding ConfirmarCommand}">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="repo:ClienteLocal">
+                <Grid ColumnDefinitions="70,*,140,80">
+                  <TextBlock Text="{Binding Codigo}" Classes="mono" />
+                  <TextBlock Grid.Column="1" Text="{Binding Nome}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding CpfCnpj}" Classes="mono" />
+                  <TextBlock Grid.Column="3" Text="inativo" Foreground="{DynamicResource PincelErro}" IsVisible="{Binding !Ativa}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="TextoErroCliente" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓] ou clique escolhe na busca (duplo clique usa)" Classes="tecla" TextWrapping="Wrap" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Usar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Remover a identificação [Ctrl+Del]" Command="{Binding RemoverCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoPesquisaViewModel">
+      <Border Classes="dialogo" Width="820">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock x:Name="TextoDicaPesquisa" Text="{Binding Dica}" Classes="rotulo" TextWrapping="Wrap" />
+          <TextBox x:Name="CampoPesquisa" Text="{Binding Filtro}" c:Foco.Inicial="True" AutomationProperties.Name="Buscar produto" />
+          <ListBox x:Name="ListaPesquisa" ItemsSource="{Binding Resultados}" SelectedItem="{Binding Selecionado}" Height="300" Focusable="False" Classes="itens"
+                   c:Comandos.DuploClique="{Binding ConfirmarCommand}">
+            <ListBox.ItemTemplate>
+              <!-- A linha da embalagem (o DUN do fardo, na pesquisa só por números) mostra o código e a embalagem ("FD 12"). -->
+              <DataTemplate DataType="core:ProdutoPesquisado">
+                <Grid ColumnDefinitions="70,140,*,64,90">
+                  <TextBlock Text="{Binding CodigoInterno}" Classes="mono" />
+                  <TextBlock Grid.Column="1" Text="{Binding Codigo}" Classes="mono secundario" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Descricao}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="3" Text="{Binding Unidade}" Classes="secundario" />
+                  <TextBlock Grid.Column="4" Text="{Binding Preco, StringFormat='{}{0:N2}'}" HorizontalAlignment="Right" Classes="mono" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="↑↓ ou clique escolhe   duplo clique ou [Enter] inclui" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Incluir [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoIncluirPesquisa" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoMontarComboViewModel">
+      <Border Classes="dialogo" Width="760" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoMontarCombo">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Up" Command="{Binding MoverOpcaoCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverOpcaoCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="Tab" Command="{Binding ProximaCommand}" />
+          <KeyBinding Gesture="Shift+Tab" Command="{Binding AnteriorCommand}" />
+          <KeyBinding Gesture="D1" Command="{Binding EscolherNumeroCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="D2" Command="{Binding EscolherNumeroCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="D3" Command="{Binding EscolherNumeroCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="D4" Command="{Binding EscolherNumeroCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="D5" Command="{Binding EscolherNumeroCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="D6" Command="{Binding EscolherNumeroCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="D7" Command="{Binding EscolherNumeroCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="D8" Command="{Binding EscolherNumeroCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="D9" Command="{Binding EscolherNumeroCommand}" CommandParameter="9" />
+          <KeyBinding Gesture="NumPad1" Command="{Binding EscolherNumeroCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="NumPad2" Command="{Binding EscolherNumeroCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="NumPad3" Command="{Binding EscolherNumeroCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="NumPad4" Command="{Binding EscolherNumeroCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="NumPad5" Command="{Binding EscolherNumeroCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="NumPad6" Command="{Binding EscolherNumeroCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="NumPad7" Command="{Binding EscolherNumeroCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="NumPad8" Command="{Binding EscolherNumeroCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="NumPad9" Command="{Binding EscolherNumeroCommand}" CommandParameter="9" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Text="{Binding PrecoBaseTexto}" Classes="titulo" />
+            <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          </DockPanel>
+          <TextBlock Text="{Binding QuantidadeTexto}" Classes="rotulo" IsVisible="{Binding QuantidadeTexto, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <ItemsControl ItemsSource="{Binding Posicoes}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:PosicaoComboViewModel">
+                <Grid ColumnDefinitions="20,170,50,*" Margin="0,4">
+                  <TextBlock Text="{Binding Marcador}" FontWeight="Bold" Foreground="{DynamicResource PincelDestaque}" />
+                  <TextBlock Grid.Column="1" Text="{Binding Rotulo}" FontWeight="SemiBold" FontSize="16" />
+                  <TextBlock Grid.Column="2" Text="{Binding QuantidadeTexto}" Classes="mono" />
+                  <TextBlock Grid.Column="3" Text="{Binding TextoFixo}" IsVisible="{Binding Fixa}" Classes="mono" />
+                  <ItemsControl Grid.Column="3" ItemsSource="{Binding Opcoes}" IsVisible="{Binding TemOpcoes}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate DataType="vm:OpcaoComboViewModel">
+                        <Grid ColumnDefinitions="*,150" Opacity="{Binding Disponivel, Converter={x:Static c:Conversores.OpacoSeVerdadeiro}}">
+                          <TextBlock Text="{Binding Texto}" Classes="mono" FontSize="15" FontWeight="{Binding Selecionada, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                          <TextBlock Grid.Column="1" Text="{Binding Info}" Classes="secundario" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="TextoTotalCombo" Text="{Binding TotalTexto}" HorizontalAlignment="Right" FontSize="20" FontWeight="Bold" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓/1-9] Opção   [Enter] Confirmar   [Tab] Próxima   [Esc] Voltar" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Anterior [Shift+Tab]" Command="{Binding AnteriorCommand}" />
+            <Button Classes="acao" Content="Próxima [Tab]" Command="{Binding ProximaCommand}" />
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoCascosViewModel">
+      <Border Classes="dialogo">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Produto}" FontSize="17" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding DevidosTexto}" Classes="rotulo" />
+          <TextBlock x:Name="TextoCascosJaDescontados" Text="{Binding AvisoDescontados}" Classes="rotulo" TextWrapping="Wrap"
+                     IsVisible="{Binding AvisoDescontados, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBox x:Name="CampoCascosTrazidos" Text="{Binding Valor}" c:Foco.Inicial="True" FontSize="24" AutomationProperties.Name="Cascos trazidos" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoConfirmacaoViewModel">
+      <Border Classes="dialogo" Focusable="True" c:Foco.Inicial="True" BorderBrush="{DynamicResource PincelErro}">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="S" Command="{Binding SimCommand}" />
+          <KeyBinding Gesture="N" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Mensagem}" FontSize="17" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Sim [S]" Command="{Binding SimCommand}" />
+            <Button Classes="acao" Content="Não [N] [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Liberação do supervisor (PDV 31.3): o pedido tem o próprio modelo (App.axaml), com Enter/Esc. -->
+    <DataTemplate DataType="vm:DialogoLiberacaoViewModel">
+      <ContentControl Content="{Binding Pedido}" />
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoFuncoesViewModel">
+      <Border Classes="dialogo" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoFuncoes">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="D1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="NumPad1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="D2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="NumPad2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="D3" Command="{Binding EscolherCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="NumPad3" Command="{Binding EscolherCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="D4" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="NumPad4" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="D5" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="NumPad5" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="D6" Command="{Binding EscolherCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="NumPad6" Command="{Binding EscolherCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="S" Command="{Binding EscolherCommand}" CommandParameter="S" />
+          <KeyBinding Gesture="V" Command="{Binding EscolherCommand}" CommandParameter="V" />
+          <KeyBinding Gesture="D7" Command="{Binding EscolherCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="NumPad7" Command="{Binding EscolherCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="D8" Command="{Binding EscolherCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="NumPad8" Command="{Binding EscolherCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="D9" Command="{Binding EscolherCommand}" CommandParameter="9" />
+          <KeyBinding Gesture="NumPad9" Command="{Binding EscolherCommand}" CommandParameter="9" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F11" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <!-- Cada item é clicável (decisão 65): o clique escolhe como a tecla. -->
+          <Button Classes="opcao" x:Name="OpcaoFuncao1" Content="1  Sangria" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao2" Content="2  Reforço" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao3" Content="3  Fechamento de caixa / troca de turno" Command="{Binding EscolherCommand}" CommandParameter="3" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao4" Content="4  Reimprimir a última venda" Command="{Binding EscolherCommand}" CommandParameter="4" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao5" Content="5  Cancelar a última venda" Command="{Binding EscolherCommand}" CommandParameter="5" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao6" Content="6  Resumo diário" Command="{Binding EscolherCommand}" CommandParameter="6" />
+          <Button Classes="opcao" x:Name="OpcaoFuncaoS" Content="S  Status da sincronização" Command="{Binding EscolherCommand}" CommandParameter="S" />
+          <Button Classes="opcao" x:Name="OpcaoFuncaoV" Content="V  Vasilhames (devolução avulsa de cascos)" Command="{Binding EscolherCommand}" CommandParameter="V" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao7" Content="7  Bloquear a tela (a venda fica guardada; também Ctrl+Alt+B)" Command="{Binding EscolherCommand}" CommandParameter="7" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao8" Content="8  ⚙ Central do PDV (impressora, gaveta, tela e diagnóstico)" Command="{Binding EscolherCommand}" CommandParameter="8" />
+          <Button Classes="opcao" x:Name="OpcaoFuncao9" Content="9  Abrir a gaveta (sem venda)" Command="{Binding EscolherCommand}" CommandParameter="9" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[1]–[6] [8] [9] [S] [V] ou clique para escolher" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Abrir a gaveta sem venda (PDV 19.4; I4): o motivo vai na auditoria gaveta_aberta. -->
+    <DataTemplate DataType="vm:DialogoAbrirGavetaViewModel">
+      <Border Classes="dialogo" Width="520" x:Name="DialogoAbrirGaveta">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="Motivo (vai na auditoria)" Classes="rotulo" />
+          <TextBox x:Name="CampoMotivoGaveta" Text="{Binding Motivo}" MaxLength="200" c:Foco.Inicial="True" AutomationProperties.Name="Motivo da abertura da gaveta" />
+          <TextBlock x:Name="TextoErroGaveta" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Abrir a gaveta [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Sangria e reforço (PDV 20.1–20.2): F2 quem retira, F3 cédulas, F12 movimentos; o estimado só sem o fechamento cego. -->
+    <DataTemplate DataType="vm:DialogoMovimentoCaixaViewModel">
+      <Border Classes="dialogo" Width="560" x:Name="DialogoMovimentoCaixa">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F2" Command="{Binding BuscarUsuarioCommand}" />
+          <KeyBinding Gesture="F3" Command="{Binding ContarCedulasCommand}" />
+          <KeyBinding Gesture="F12" Command="{Binding MovimentosCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock x:Name="TituloMovimentoCaixa" Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock x:Name="TextoEstimadoGaveta" Text="{Binding EstimadoTexto}" FontWeight="SemiBold"
+                     IsVisible="{Binding EstimadoTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="Valor (R$)" Classes="rotulo" />
+          <TextBox x:Name="CampoValorMovimento" Text="{Binding Valor}" c:Foco.Inicial="True" FontSize="22" AutomationProperties.Name="Valor" />
+          <TextBlock Text="{Binding RotuloQuem}" Classes="rotulo" />
+          <TextBox x:Name="CampoQuemRetira" Text="{Binding QuemRetira}" MaxLength="60" AutomationProperties.Name="{Binding RotuloQuem}" />
+          <TextBlock Text="Observação" Classes="rotulo" />
+          <TextBox x:Name="CampoObservacaoMovimento" Text="{Binding Observacao}" MaxLength="255" AutomationProperties.Name="Observação" />
+          <TextBlock Text="Inf. adicionais (malote, envelope)" Classes="rotulo" />
+          <TextBox x:Name="CampoInfAdicionais" Text="{Binding InfAdicionais}" MaxLength="255" AutomationProperties.Name="Inf. adicionais" />
+          <TextBlock x:Name="TextoErroMovimento" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Quem retira [F2]" Command="{Binding BuscarUsuarioCommand}" />
+            <Button Classes="acao" x:Name="BotaoCedulasMovimento" Content="Cédulas [F3]" Command="{Binding ContarCedulasCommand}" />
+            <Button Classes="acao" Content="Movimentos [F12]" Command="{Binding MovimentosCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoBuscaUsuarioViewModel">
+      <Border Classes="dialogo" Width="520">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBox x:Name="CampoBuscaUsuario" Text="{Binding Filtro}" c:Foco.Inicial="True" AutomationProperties.Name="Buscar usuário">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+              <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <ListBox ItemsSource="{Binding Resultados}" SelectedItem="{Binding Selecionado}" MaxHeight="260" Focusable="False"
+                   c:Comandos.DuploClique="{Binding ConfirmarCommand}">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="servicos:UsuarioRetirada">
+                <TextBlock Text="{Binding Nome}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓] ou clique escolhe (duplo clique usa)" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Usar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- O contador da abertura (App.axaml) com Enter/Esc próprios; Tab entra nas cédulas. -->
+    <DataTemplate DataType="vm:DialogoCedulasViewModel">
+      <Border Focusable="True" c:Foco.Inicial="True" x:Name="DialogoCedulasMovimento">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <ContentControl Content="{Binding Contador}" />
+      </Border>
+    </DataTemplate>
+
+    <!-- F12 Movimentos (PDV 20.3): Ctrl+Del cancela a sangria ou o reforço selecionado. -->
+    <DataTemplate DataType="vm:DialogoMovimentosViewModel">
+      <Border Classes="dialogo" Width="760" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoMovimentos">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="Ctrl+Delete" Command="{Binding CancelarSelecionadoCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <ListBox x:Name="ListaMovimentos" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" MaxHeight="320" Focusable="False">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaMovimentoCaixaViewModel">
+                <Grid ColumnDefinitions="60,180,110,*">
+                  <TextBlock Text="{Binding Hora}" Classes="mono" />
+                  <TextBlock Grid.Column="1" Text="{Binding TipoTexto}" />
+                  <TextBlock Grid.Column="2" Text="{Binding Valor}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                  <StackPanel Grid.Column="3">
+                    <TextBlock Text="{Binding Quem}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Situacao}" Foreground="{DynamicResource PincelErro}" TextWrapping="Wrap"
+                               IsVisible="{Binding Movimento.Cancelado}" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="TextoAvisoMovimentos" Text="{Binding Aviso}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                     IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓] ou clique escolhe" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Cancelar sangria/reforço [Ctrl+Del]" Command="{Binding CancelarSelecionadoCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoCancelarMovimentoViewModel">
+      <Border Classes="dialogo" Width="560" BorderBrush="{DynamicResource PincelErro}">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock Text="Motivo (obrigatório)" Classes="rotulo" />
+          <TextBox x:Name="CampoMotivoCancelamentoMovimento" Text="{Binding Motivo}" MaxLength="255" c:Foco.Inicial="True"
+                   AutomationProperties.Name="Motivo do cancelamento" />
+          <TextBlock x:Name="TextoErroCancelarMovimento" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Cancelar o movimento [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- F12 Gestão de vendas (PDV 22.1; C11b): vendas da sessão, detalhes, reimpressão (22.2) e cancelamento da paga (13.3). -->
+    <DataTemplate DataType="vm:DialogoGestaoVendasViewModel">
+      <Border Classes="dialogo" Width="820" x:Name="DialogoGestaoVendas">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Ctrl+R" Command="{Binding ReimprimirCommand}" />
+          <KeyBinding Gesture="Ctrl+Delete" Command="{Binding CancelarSelecionadaCommand}" />
+          <KeyBinding Gesture="F3" Command="{Binding CaixasAnterioresCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F12" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="Filtrar por número ou CPF/CNPJ" Classes="rotulo" />
+          <TextBox x:Name="CampoFiltroVendas" Text="{Binding Filtro}" c:Foco.Inicial="True" AutomationProperties.Name="Filtro da gestão de vendas" />
+          <ListBox x:Name="ListaVendasSessao" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" MaxHeight="340" Focusable="False"
+                   c:Comandos.DuploClique="{Binding ConfirmarCommand}">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaVendaSessaoViewModel">
+                <Grid ColumnDefinitions="60,220,110,*">
+                  <TextBlock Text="{Binding Hora}" Classes="mono" />
+                  <TextBlock Grid.Column="1" Text="{Binding Numero}" Classes="mono" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Total}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                  <StackPanel Grid.Column="3">
+                    <TextBlock Text="{Binding Formas}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Situacao}" Foreground="{DynamicResource PincelErro}" TextWrapping="Wrap" IsVisible="{Binding Cancelada}" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="TextoAvisoGestaoVendas" Text="{Binding Aviso}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroGestaoVendas" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓] ou clique escolhe (duplo clique mostra os detalhes)" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Detalhes [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoDetalhesVenda" />
+            <Button Classes="acao" Content="Reimprimir [Ctrl+R]" Command="{Binding ReimprimirCommand}" x:Name="BotaoReimprimirVenda" />
+            <Button Classes="acao" Content="Cancelar venda [Ctrl+Del]" Command="{Binding CancelarSelecionadaCommand}" />
+            <Button Classes="acao" x:Name="BotaoCaixasAnteriores" Content="Caixas anteriores [F3]" Command="{Binding CaixasAnterioresCommand}" />
+            <Button Classes="acao" Content="Fechar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoDetalheVendaViewModel">
+      <Border Classes="dialogo" Width="720" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoDetalheVenda">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <ScrollViewer MaxHeight="380">
+            <ItemsControl ItemsSource="{Binding Linhas}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <TextBlock Text="{Binding}" Classes="mono" FontSize="14" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Voltar à lista [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Cancelamento da venda paga (PDV 13.3; O6, O22 e D29 do dono): devolução por pagamento, cascos e motivo. -->
+    <DataTemplate DataType="vm:DialogoCancelarVendaFinalizadaViewModel">
+      <Border Classes="dialogo" Width="680" BorderBrush="{DynamicResource PincelErro}" x:Name="DialogoCancelarVendaFinalizada">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="F2" Command="{Binding ProximoPagamentoCommand}" />
+          <KeyBinding Gesture="F3" Command="{Binding AlternarEstornoCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock Text="Como cada pagamento volta ao cliente" Classes="rotulo" />
+          <ItemsControl ItemsSource="{Binding Pagamentos}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaEstornoViewModel">
+                <Grid ColumnDefinitions="20,220,100,*">
+                  <TextBlock Text="▶" IsVisible="{Binding Selecionada}" FontWeight="Bold" />
+                  <TextBlock Grid.Column="1" Text="{Binding Forma}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Valor}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                  <TextBlock Grid.Column="3" Text="{Binding Descricao}" TextWrapping="Wrap"
+                             FontWeight="{Binding Selecionada, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="TextoDinheiroADevolver" Text="{Binding DinheiroADevolver}" FontWeight="SemiBold" />
+          <ItemsControl ItemsSource="{Binding Vazios}" IsVisible="{Binding TemVazios}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <TextBlock Text="{Binding}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="Motivo do cancelamento (de 15 a 255 caracteres)" Classes="rotulo" />
+          <TextBox x:Name="CampoMotivoCancelamentoVenda" Text="{Binding Motivo}" MaxLength="255" c:Foco.Inicial="True"
+                   AutomationProperties.Name="Motivo do cancelamento da venda" />
+          <TextBlock x:Name="TextoErroCancelarVenda" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Próximo pagamento [F2]" Command="{Binding ProximoPagamentoCommand}" />
+            <Button Classes="acao" Content="Alternar a devolução [F3]" Command="{Binding AlternarEstornoCommand}" />
+            <Button Classes="acao" Content="Cancelar a venda [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Shift+F4 (PDV 13.2; O6 do dono): motivo em texto livre da venda em andamento cancelada. -->
+    <DataTemplate DataType="vm:DialogoMotivoCancelamentoViewModel">
+      <Border Classes="dialogo" Width="560" BorderBrush="{DynamicResource PincelErro}">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Regra}" Classes="rotulo" />
+          <TextBox x:Name="CampoMotivoCancelamento" Text="{Binding Motivo}" MaxLength="255" c:Foco.Inicial="True"
+                   AutomationProperties.Name="Motivo do cancelamento" />
+          <TextBlock x:Name="TextoErroMotivoCancelamento" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Cancelar a venda [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar à venda [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Resumo diário (PDV 21.6): filtro por dias ou por horário (pdv.resumo_diario_modo). -->
+    <DataTemplate DataType="vm:DialogoResumoDiarioViewModel">
+      <Border Classes="dialogo" Width="640" x:Name="DialogoResumoDiario">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Ctrl+P" Command="{Binding ImprimirCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <Grid ColumnDefinitions="*,12,*">
+            <StackPanel>
+              <TextBlock Text="{Binding RotuloDe}" Classes="rotulo" />
+              <TextBox x:Name="CampoResumoDe" Text="{Binding De}" c:Foco.Inicial="True" AutomationProperties.Name="{Binding RotuloDe}" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" IsVisible="{Binding PorDias}">
+              <TextBlock Text="Até (dd/mm/aaaa)" Classes="rotulo" />
+              <TextBox x:Name="CampoResumoAte" Text="{Binding Ate}" AutomationProperties.Name="Até" />
+            </StackPanel>
+            <Grid Grid.Column="2" ColumnDefinitions="*,8,*" IsVisible="{Binding PorHorario}">
+              <StackPanel>
+                <TextBlock Text="Das (hh:mm)" Classes="rotulo" />
+                <TextBox x:Name="CampoResumoDas" Text="{Binding Das}" AutomationProperties.Name="Das" />
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <TextBlock Text="Às (hh:mm)" Classes="rotulo" />
+                <TextBox x:Name="CampoResumoAs" Text="{Binding As}" AutomationProperties.Name="Às" />
+              </StackPanel>
+            </Grid>
+          </Grid>
+          <ScrollViewer MaxHeight="340" IsVisible="{Binding Texto, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock x:Name="TextoResumoDiario" Text="{Binding Texto}" Classes="mono" FontSize="11" AutomationProperties.Name="Resumo diário" />
+          </ScrollViewer>
+          <TextBlock Text="{Binding Aviso}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                     IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroResumo" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Mostrar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Imprimir [Ctrl+P]" Command="{Binding ImprimirCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- F11 › S (PDV 30.2): status detalhado do sync. -->
+    <DataTemplate DataType="vm:DialogoStatusSyncViewModel">
+      <Border Classes="dialogo" Width="760" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoStatusSync">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F4" Command="{Binding LacunaCommand}" />
+          <KeyBinding Gesture="F3" Command="{Binding ListaCompletaCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <ItemsControl x:Name="ListaStatusSync" ItemsSource="{Binding Linhas}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <TextBlock Text="{Binding}" Classes="mono" FontSize="13" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <!-- SYNC 8.6 (C15): com lacuna de eventos, F4 declara ou libera o reenvio (pdv.config.fiscal). -->
+          <TextBlock x:Name="TextoLacunaSync" Text="{Binding AcaoLacuna}" Classes="tecla" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding AcaoLacuna, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Lacuna [F4]" Command="{Binding LacunaCommand}" IsVisible="{Binding AcaoLacuna, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <Button Classes="acao" x:Name="BotaoListaCompletaSync" Content="Lista completa [F3]" Command="{Binding ListaCompletaCommand}" />
+            <Button Classes="acao" Content="Sincronizar agora [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- F11 › V (PDV 10.12): devolução avulsa de cascos — a entrada dos vazios (O14) e, com a venda em andamento, o
+         desconto nela pelo valor do casco (C11c; F3 alterna o destino). -->
+    <DataTemplate DataType="vm:DialogoVasilhamesViewModel">
+      <Border Classes="dialogo" Width="600" x:Name="DialogoVasilhames">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="F3" Command="{Binding AlternarDestinoCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock x:Name="TextoDestinoVasilhames" Text="{Binding DestinoTexto}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding DestinoTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <ListBox ItemsSource="{Binding Cascos}" SelectedItem="{Binding Selecionado}" MaxHeight="220" Focusable="False">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="ent:ProdutoRegistro">
+                <TextBlock Text="{Binding Nome}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="TextoDescontadoVasilhames" Text="{Binding DescontadoTexto}" TextWrapping="Wrap"
+                     IsVisible="{Binding DescontadoTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding RotuloQuantidade}" Classes="rotulo" />
+          <TextBox x:Name="CampoQuantidadeCascos" Text="{Binding Quantidade}" c:Foco.Inicial="True" FontSize="22"
+                   AutomationProperties.Name="{Binding RotuloQuantidade}" />
+          <TextBlock x:Name="TextoErroVasilhames" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding TeclasTexto}" Classes="tecla" TextWrapping="Wrap" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Alternar destino [F3]" Command="{Binding AlternarDestinoCommand}" IsVisible="{Binding ComVenda}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Janela do item (duplo clique no item; decisão 65): quantidade (F3), desconto (F6) e remover (F4), com as mesmas regras. -->
+    <DataTemplate DataType="vm:DialogoItemViewModel">
+      <Border Classes="dialogo" Width="720" x:Name="DialogoItem">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock x:Name="TituloDialogoItem" Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock x:Name="TextoResumoItem" Text="{Binding Resumo}" Classes="mono" FontSize="16" />
+          <TextBlock x:Name="TextoDescontoItem" Text="{Binding DescontoTexto}" Classes="secundario" />
+          <TextBlock Text="Quantidade" Classes="rotulo" Margin="0,6,0,0" />
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBox x:Name="CampoQuantidadeItem" Text="{Binding Quantidade}" IsEnabled="{Binding PodeAlterarQuantidade}" FontSize="22"
+                     c:Foco.Inicial="{Binding PodeAlterarQuantidade}" AutomationProperties.Name="Quantidade do item">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Enter" Command="{Binding AlterarQuantidadeCommand}" />
+              </TextBox.KeyBindings>
+            </TextBox>
+            <Button Grid.Column="1" Classes="acao" x:Name="BotaoAlterarQuantidade" Content="Alterar quantidade" Margin="8,0,0,0"
+                    Command="{Binding AlterarQuantidadeCommand}" IsEnabled="{Binding PodeAlterarQuantidade}" />
+          </Grid>
+          <TextBlock x:Name="TextoAvisoQuantidadeItem" Text="{Binding AvisoQuantidade}" Classes="secundario" TextWrapping="Wrap"
+                     IsVisible="{Binding AvisoQuantidade, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding DicaDesconto}" Classes="rotulo" Margin="0,6,0,0" TextWrapping="Wrap" />
+          <!-- R$ ou % pelo clique (o teclado numérico não tem a tecla %); o Enter no campo lê "2,50" ou "10%". -->
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+            <TextBox x:Name="CampoDescontoItem" Text="{Binding Desconto}" FontSize="22" c:Foco.Inicial="{Binding !PodeAlterarQuantidade}"
+                     AutomationProperties.Name="Desconto no item">
+              <TextBox.KeyBindings>
+                <KeyBinding Gesture="Enter" Command="{Binding AplicarDescontoCommand}" />
+              </TextBox.KeyBindings>
+            </TextBox>
+            <Button Grid.Column="1" Classes="acao" x:Name="BotaoAplicarDescontoReais" Content="Aplicar em R$" Margin="8,0,0,0"
+                    Command="{Binding AplicarDescontoReaisCommand}" />
+            <Button Grid.Column="2" Classes="acao" x:Name="BotaoAplicarDescontoPercentual" Content="Aplicar em %" Margin="8,0,0,0"
+                    Command="{Binding AplicarDescontoPercentualCommand}" />
+            <Button Grid.Column="3" Classes="acao" x:Name="BotaoRemoverDescontoItem" Content="Tirar desconto" Margin="8,0,0,0"
+                    Command="{Binding RemoverDescontoCommand}" IsEnabled="{Binding TemDesconto}" />
+          </Grid>
+          <TextBlock x:Name="TextoMensagemItem" Text="{Binding Mensagem}" FontWeight="SemiBold" Foreground="{DynamicResource PincelTotalTexto}" TextWrapping="Wrap"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroItem" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <DockPanel Margin="0,8,0,0">
+            <Button DockPanel.Dock="Left" Classes="acao" x:Name="BotaoRemoverItemJanela" Content="Remover item" Command="{Binding RemoverItemCommand}"
+                    Foreground="{DynamicResource PincelErro}" />
+            <Button Classes="acao" x:Name="BotaoFecharItem" Content="Fechar [Esc]" Command="{Binding CancelarCommand}" HorizontalAlignment="Right" />
+          </DockPanel>
+          <TextBlock Text="[Enter] no campo aplica   [Esc] Fecha" Classes="tecla" />
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <DataTemplate DataType="vm:DialogoAjudaViewModel">
+      <Border Classes="dialogo" Focusable="True" c:Foco.Inicial="True">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="F1" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <ItemsControl ItemsSource="{Binding Atalhos}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <TextBlock Text="{Binding}" Classes="mono" FontSize="15" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Fechar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+  </UserControl.DataTemplates>
+
+  <Grid>
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto">
+      <!-- Barra de status (PDV 9.1, 30.2): estado nunca só por cor — sempre ícone + texto. -->
+      <Border Grid.Row="0" Classes="barra" Padding="14,6">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="16">
+            <!-- Painel de saúde com item vermelho (Central do PDV, G4): o clique abre a Central no Painel. -->
+            <Button x:Name="BotaoSaude" Content="{Binding SaudeTexto}" Command="{Binding PainelSaudeCommand}" Focusable="False"
+                    IsVisible="{Binding SaudeTexto, Converter={x:Static ObjectConverters.IsNotNull}}" Padding="8,0" MinHeight="0"
+                    Foreground="{DynamicResource PincelErro}" FontWeight="SemiBold" Background="Transparent" BorderThickness="0"
+                    AutomationProperties.Name="Problema no Painel de saúde" ToolTip.Tip="{Binding SaudeDica}" />
+            <TextBlock x:Name="TextoConexao" Text="{Binding ConexaoTexto}" Classes="indicador" Classes.ok="{Binding ConexaoOk}"
+                       Classes.falha="{Binding ConexaoFalha}" AutomationProperties.Name="Conexão" ToolTip.Tip="{Binding ConexaoDetalhe}" />
+            <TextBlock x:Name="TextoSemImpressora" Text="{Binding ImpressoraTexto}" Classes="secundario"
+                       IsVisible="{Binding ImpressoraTexto, Converter={x:Static ObjectConverters.IsNotNull}}"
+                       ToolTip.Tip="Este caixa não tem impressora configurada: a venda segue e o cupom fica para a reimpressão (F11 › 8 › 3 Impressora e gaveta)" />
+            <!-- "⇅ N" (Central do PDV, G7; pedido do dono): o clique abre a Central › 4 Sincronização, nas vendas não confirmadas. -->
+            <Button x:Name="BotaoPendentes" Command="{Binding PendentesCommand}" Focusable="False" Padding="8,0" MinHeight="0"
+                    Background="Transparent" BorderThickness="0" AutomationProperties.Name="Pendentes de sincronização"
+                    ToolTip.Tip="Registros ainda não confirmados pela nuvem: o clique mostra quais (Central › 4 Sincronização)">
+              <TextBlock x:Name="TextoPendentes" Text="{Binding PendentesTexto}" FontWeight="SemiBold" />
+            </Button>
+            <TextBlock Text="{Binding Hora}" FontWeight="SemiBold" />
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="GenesisPDV" FontWeight="Bold" />
+            <TextBlock Text="│" Classes="secundario" />
+            <TextBlock Text="{Binding Loja}" />
+            <TextBlock Text="│" Classes="secundario" />
+            <TextBlock Text="{Binding Caixa}" />
+            <TextBlock Text="│" Classes="secundario" />
+            <TextBlock Text="{Binding Operador}" />
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <StackPanel Grid.Row="1">
+        <!-- Sessão antiga (PDV 8.1): faixa amarela, nunca só cor. -->
+        <Border Background="{DynamicResource PincelPainelAlto}" Padding="14,6" IsVisible="{Binding AlertaSessao, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="⚠" Foreground="{DynamicResource PincelAviso}" FontWeight="Bold" />
+            <TextBlock x:Name="TextoAlertaSessao" Text="{Binding AlertaSessao}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                       TextWrapping="Wrap" AutomationProperties.Name="Alerta da sessão de caixa" />
+          </StackPanel>
+        </Border>
+        <!-- Saldo estimado negativo (PDV 29.1; O15 do dono): vende com aviso âmbar; nunca só cor (ícone + texto). -->
+        <Border Padding="14,6" Background="{DynamicResource PincelPainelAlto}"
+                IsVisible="{Binding AlertaEstoque, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="⚠" Foreground="{DynamicResource PincelAviso}" FontWeight="Bold" />
+            <TextBlock x:Name="TextoAlertaEstoque" Text="{Binding AlertaEstoque}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                       TextWrapping="Wrap" AutomationProperties.Name="Aviso de estoque" />
+          </StackPanel>
+        </Border>
+        <!-- Limite de dinheiro na gaveta (PDV 20.4): âmbar a partir de 80%, vermelha no limite; nunca só cor (ícone + texto). -->
+        <Border Padding="14,6" Background="{DynamicResource PincelPainelAlto}"
+                IsVisible="{Binding AlertaGavetaAmbar, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="⚠" Foreground="{DynamicResource PincelAviso}" FontWeight="Bold" />
+            <TextBlock x:Name="TextoAlertaGaveta" Text="{Binding AlertaGavetaAmbar}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                       TextWrapping="Wrap" AutomationProperties.Name="Alerta do dinheiro na gaveta" />
+          </StackPanel>
+        </Border>
+        <Border Padding="14,6" Background="{DynamicResource PincelErroFundo}"
+                IsVisible="{Binding AlertaGavetaVermelho, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="■" Foreground="{DynamicResource PincelErro}" FontWeight="Bold" />
+            <TextBlock x:Name="TextoBloqueioGaveta" Text="{Binding AlertaGavetaVermelho}" Foreground="{DynamicResource PincelErro}" FontWeight="Bold"
+                       TextWrapping="Wrap" AutomationProperties.Name="Limite de dinheiro na gaveta atingido" />
+          </StackPanel>
+        </Border>
+        <Border Background="{DynamicResource PincelInfoFundo}" Padding="14,6" IsVisible="{Binding VendaRecuperada}">
+          <TextBlock x:Name="TextoVendaRecuperada" Text="ⓘ Venda recuperada após interrupção — continue ou cancele (Shift+F4)." FontWeight="SemiBold" />
+        </Border>
+        <Border Padding="14,6" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}"
+                Background="{DynamicResource PincelPainelAlto}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="▲" Foreground="{DynamicResource PincelErro}" IsVisible="{Binding MensagemEhErro}" FontWeight="Bold" />
+            <TextBlock x:Name="TextoMensagem" Text="{Binding Mensagem}" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.Name="Mensagem" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <Border Grid.Row="2" Padding="14,8" Background="{DynamicResource PincelPainelAlto}">
+        <TextBlock x:Name="TextoCabecalhoVenda" Text="{Binding CabecalhoVenda}" FontSize="18" FontWeight="SemiBold"
+                   AutomationProperties.Name="Cabeçalho da venda" />
+      </Border>
+
+      <Grid Grid.Row="3" ColumnDefinitions="*,360" Margin="10">
+        <Border Classes="painel" Padding="6">
+          <Grid RowDefinitions="Auto,*">
+            <Grid ColumnDefinitions="40,150,*,120,90,100" Margin="8,4,24,6">
+              <TextBlock Text="#" Classes="rotulo" />
+              <TextBlock Grid.Column="1" Text="Código" Classes="rotulo" />
+              <TextBlock Grid.Column="2" Text="Descrição" Classes="rotulo" />
+              <TextBlock Grid.Column="3" Text="Qtd" Classes="rotulo" HorizontalAlignment="Right" />
+              <TextBlock Grid.Column="4" Text="Unit." Classes="rotulo" HorizontalAlignment="Right" />
+              <TextBlock Grid.Column="5" Text="Total" Classes="rotulo" HorizontalAlignment="Right" />
+            </Grid>
+            <TextBlock Grid.Row="1" Text="CAIXA LIVRE" FontSize="64" FontWeight="Bold" Opacity="0.25"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding CaixaLivre}" />
+            <ListBox Grid.Row="1" x:Name="ListaItens" Classes="itens" ItemsSource="{Binding Itens}" SelectedItem="{Binding ItemSelecionado}"
+                     Focusable="False" AutomationProperties.Name="Itens da venda" c:Comandos.DuploClique="{Binding AbrirItemCommand}">
+              <ListBox.ItemTemplate>
+                <DataTemplate DataType="vm:ItemLinhaViewModel">
+                  <StackPanel>
+                    <Grid ColumnDefinitions="40,150,*,120,90,100" Classes.cancelado="{Binding Cancelado}">
+                      <TextBlock Text="{Binding SequenciaTexto}" Classes="mono" />
+                      <TextBlock Grid.Column="1" Text="{Binding Codigo}" Classes="mono" TextTrimming="CharacterEllipsis" />
+                      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{Binding Descricao}" TextTrimming="CharacterEllipsis" FontSize="16"
+                                   FontWeight="{Binding EhTituloCombo, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                        <Border Background="{DynamicResource PincelInfoFundo}" CornerRadius="3" Padding="4,0" IsVisible="{Binding TemEtiqueta}">
+                          <TextBlock Text="{Binding Etiqueta}" FontSize="12" FontWeight="Bold" />
+                        </Border>
+                        <TextBlock Text="{Binding VarejoRiscado}" IsVisible="{Binding TemVarejoRiscado}" Classes="secundario mono"
+                                   TextDecorations="Strikethrough" FontSize="13" VerticalAlignment="Center" />
+                      </StackPanel>
+                      <TextBlock Grid.Column="3" Text="{Binding Quantidade}" Classes="mono" HorizontalAlignment="Right" />
+                      <TextBlock Grid.Column="4" Text="{Binding Unitario}" Classes="mono" HorizontalAlignment="Right" />
+                      <TextBlock Grid.Column="5" Text="{Binding Total}" Classes="mono" HorizontalAlignment="Right" FontWeight="SemiBold" />
+                    </Grid>
+                    <TextBlock Text="{Binding Detalhe}" IsVisible="{Binding TemDetalhe}" Margin="40,0,0,0" Classes="secundario" FontSize="13" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" RowDefinitions="*,Auto" Margin="10,0,0,0">
+          <Border Classes="painel" Padding="14">
+            <Panel>
+              <StackPanel Spacing="6" IsVisible="{Binding UltimoCupom, Converter={x:Static ObjectConverters.IsNull}}">
+                <TextBlock Text="Item" Classes="rotulo" />
+                <TextBlock Text="{Binding PainelDescricao}" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding PainelDetalhe}" Classes="mono" FontSize="16" />
+              </StackPanel>
+              <DockPanel IsVisible="{Binding UltimoCupom, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <TextBlock DockPanel.Dock="Top" Text="Impressora simulada · último cupom" Classes="rotulo" Margin="0,0,0,6" />
+                <ScrollViewer>
+                  <TextBlock x:Name="TextoCupom" Text="{Binding UltimoCupom}" Classes="mono" FontSize="9.5" AutomationProperties.Name="Cupom impresso" />
+                </ScrollViewer>
+              </DockPanel>
+            </Panel>
+          </Border>
+          <Border Grid.Row="1" Classes="painel" Padding="14" Margin="0,10,0,0">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding ItensTexto}" x:Name="TextoItens" />
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding SubtotalTexto}" Classes="mono" />
+                <TextBlock Text="Subtotal" />
+              </DockPanel>
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding DescontosTexto}" Classes="mono" />
+                <TextBlock Text="Descontos" />
+              </DockPanel>
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding AcrescimosTexto}" Classes="mono" />
+                <TextBlock Text="Acréscimos" />
+              </DockPanel>
+              <TextBlock x:Name="TextoEconomia" Text="{Binding EconomiaTexto}" Foreground="{DynamicResource PincelDestaque}" FontWeight="SemiBold"
+                         IsVisible="{Binding EconomiaTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+              <TextBlock x:Name="TextoCascosDescontados" Text="{Binding CascosDescontadosTexto}" FontWeight="SemiBold" TextWrapping="Wrap"
+                         IsVisible="{Binding CascosDescontadosTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+              <Border Background="{DynamicResource PincelTotalFundo}" CornerRadius="6" Padding="12,8" Margin="0,8,0,0">
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Right" x:Name="TextoTotal" Text="{Binding TotalTexto}" FontSize="36" FontWeight="Bold"
+                             Foreground="{DynamicResource PincelTotalTexto}" AutomationProperties.Name="Total da venda" />
+                  <TextBlock Text="TOTAL R$" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{DynamicResource PincelTotalTexto}" />
+                </DockPanel>
+              </Border>
+              <Border Background="{DynamicResource PincelInfoFundo}" CornerRadius="6" Padding="12,8" Margin="0,8,0,0"
+                      IsVisible="{Binding TrocoTexto, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <TextBlock x:Name="TextoTroco" Text="{Binding TrocoTexto}" FontSize="32" FontWeight="Bold" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource PincelAviso}" AutomationProperties.Name="Troco" />
+              </Border>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Grid>
+
+      <Border Grid.Row="4" Padding="14,8" Background="{DynamicResource PincelPainelAlto}">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+          <TextBlock Text="Código / Qtd*Código:" VerticalAlignment="Center" FontSize="16" Margin="0,0,12,0" />
+          <TextBox Grid.Column="1" x:Name="CampoCodigo" Classes="codigo" Text="{Binding CodigoEntrada}"
+                   AutomationProperties.Name="Código do produto" AutomationProperties.HelpText="Digite ou bipe o código. Aceita 3*código.">
+            <TextBox.KeyBindings>
+              <KeyBinding Gesture="Enter" Command="{Binding ProcessarEntradaCommand}" />
+              <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+              <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+              <KeyBinding Gesture="PageUp" Command="{Binding MoverCommand}" CommandParameter="inicio" />
+              <KeyBinding Gesture="PageDown" Command="{Binding MoverCommand}" CommandParameter="fim" />
+            </TextBox.KeyBindings>
+          </TextBox>
+          <TextBlock Grid.Column="2" x:Name="TextoMultiplicador" Text="{Binding MultiplicadorTexto}" VerticalAlignment="Center" FontSize="16"
+                     FontWeight="SemiBold" Margin="16,0" Foreground="{DynamicResource PincelDestaque}" />
+          <StackPanel Grid.Column="3" VerticalAlignment="Center" MaxWidth="420">
+            <TextBlock Text="{Binding UltimoItemTexto}" Classes="secundario" TextTrimming="CharacterEllipsis" />
+            <TextBlock x:Name="TextoDicaPreco" Text="{Binding DicaPrecoTexto}" Foreground="{DynamicResource PincelDestaque}" FontSize="13"
+                       TextTrimming="CharacterEllipsis" IsVisible="{Binding DicaPrecoTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- Barra de funções (PDV 9.1; decisão 65): botões com o mesmo comando da tecla, ou só o texto (configuração do terminal). -->
+      <Border Grid.Row="5" Classes="barra" Padding="12,4">
+        <Panel>
+          <StackPanel Spacing="2" IsVisible="{Binding BarraTexto}" x:Name="LegendaTeclas">
+            <TextBlock Text="{Binding Legenda1}" Classes="mono" FontSize="13" />
+            <TextBlock Text="{Binding Legenda2}" Classes="mono" FontSize="13" />
+          </StackPanel>
+          <ItemsControl x:Name="BarraFuncoes" ItemsSource="{Binding Atalhos}" IsVisible="{Binding BarraBotoes}" AutomationProperties.Name="Barra de funções">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <UniformGrid Columns="8" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:AtalhoBarraViewModel">
+                <Button Classes="atalho" Classes.futuro="{Binding Futuro}" Classes.destaque="{Binding Destaque}"
+                        Command="{Binding $parent[UserControl].((vm:VendaViewModel)DataContext).AcionarAtalhoCommand}" CommandParameter="{Binding}"
+                        AutomationProperties.Name="{Binding Rotulo}" ToolTip.Tip="{Binding Rotulo}">
+                  <StackPanel Spacing="0">
+                    <TextBlock Text="{Binding Tecla}" Classes="tecla-atalho" />
+                    <TextBlock Text="{Binding Funcao}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </Panel>
+      </Border>
+    </Grid>
+
+    <!-- Diálogos sobrepostos: o véu impede clique na venda por trás; o teclado continua sendo o caminho principal. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Dialogo, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl x:Name="ConteudoDialogo" Content="{Binding Dialogo}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

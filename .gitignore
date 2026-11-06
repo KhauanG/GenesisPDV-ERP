@@ -1,0 +1,56 @@
+# Node / TypeScript
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+.vite/
+# Playwright (e2e do ERP web)
+test-results/
+playwright-report/
+# Estado dos servidores do e2e do PDV (o do ensaio leva a amostra do catálogo real: nunca vai para o Git)
+e2e-pdv-estado.json
+ensaio-piloto-estado.json
+
+# Variáveis de ambiente (nunca versionar segredos)
+.env
+.env.*
+!.env.example
+
+# .NET / C#
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+publish/
+
+# SQLite local do PDV (dados reais nunca vão para o Git)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# XMLs reais de fornecedores (D60: o repositório é público): ficam só na máquina de quem testa; o parser.spec.ts os
+# lê se a pasta existir (apps/api/test/fixtures/nfe/fixtures.ts). As fixtures versionadas são todas inventadas.
+apps/api/test/fixtures/nfe/reais/
+
+# Certificados digitais e chaves
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Logs e sistema
+logs/
+*.log
+.DS_Store
+Thumbs.db
+
+# Editores
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

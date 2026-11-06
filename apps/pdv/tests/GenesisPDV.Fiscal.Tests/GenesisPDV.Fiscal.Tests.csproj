@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GenesisPDV.Fiscal\GenesisPDV.Fiscal.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Tabela única de casos dos validadores, a mesma do Vitest de packages/shared (MD 1.2). -->
+    <None Include="..\..\..\..\packages\shared\src\validadores.casos.json" Link="validadores.casos.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

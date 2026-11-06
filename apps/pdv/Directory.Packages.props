@@ -1,0 +1,44 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup Label="UI">
+    <PackageVersion Include="Avalonia" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Fonts.Inter" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Skia" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Headless" Version="12.1.4" />
+    <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.4" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- QR do PIX estático na tela de pagamento (PDV 16.7; Fase 1C, C11a): só o PNG da matriz, sem System.Drawing. -->
+    <PackageVersion Include="QRCoder" Version="1.6.0" />
+  </ItemGroup>
+  <ItemGroup Label="Hardware">
+    <!-- Impressora térmica na porta serial/COM virtual do USB (PDV 6.2; implantação I4): o .NET não traz SerialPort. -->
+    <PackageVersion Include="System.IO.Ports" Version="10.0.14" />
+  </ItemGroup>
+  <ItemGroup Label="Dados e infraestrutura">
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+    <PackageVersion Include="Serilog" Version="4.4.0" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup Label="Criptografia">
+    <!-- X25519 (chave do terminal e envelope ECIES da API, SYNC 3.2/20.2): o .NET não tem X25519 no Linux. -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <!-- DPAPI (CurrentUser) do token no Windows (D21). -->
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.14" />
+    <!-- argon2id do login offline (SYNC 4.2: libsodium `crypto_pwhash_str_verify`, compatível com o node-argon2 da API). -->
+    <PackageVersion Include="Sodium.Core" Version="1.4.1" />
+  </ItemGroup>
+  <ItemGroup Label="Testes">
+    <!-- 3.2.x: o Avalonia.Headless.XUnit 12.1.4 é compilado contra xunit.v3.extensibility.core 3.2.2 e quebra com o 4.x (MissingMethodException na descoberta). -->
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+  </ItemGroup>
+</Project>

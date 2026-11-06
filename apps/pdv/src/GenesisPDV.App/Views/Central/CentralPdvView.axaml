@@ -1,0 +1,210 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:v="using:GenesisPDV.App.Views.Central"
+             x:Class="GenesisPDV.App.Views.Central.CentralPdvView"
+             x:DataType="vm:CentralPdvViewModel"
+             Classes="tela">
+  <!-- Central do PDV, a engrenagem (bloco G3; README › decisão 68): menu lateral com as abas 0 a 9 e P, cadeado nas que
+       pedem liberação, Ctrl+L Liberar e Esc volta. Tudo com teclado e com mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="Ctrl+L" Command="{Binding LiberarCommand}" />
+  </UserControl.KeyBindings>
+  <UserControl.Styles>
+    <!-- Alvos de no mínimo 44 px na Central inteira (plano 4), também nos botões da aba 3 e da liberação. -->
+    <Style Selector="Button.acao">
+      <Setter Property="MinHeight" Value="44" />
+    </Style>
+    <Style Selector="Button.aba">
+      <Setter Property="HorizontalAlignment" Value="Stretch" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Margin" Value="0,2" />
+      <Setter Property="FontSize" Value="16" />
+    </Style>
+    <Style Selector="Button.aba.selecionada">
+      <Setter Property="Background" Value="{DynamicResource PincelSelecao}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.aba.bloqueada TextBlock.nome-aba">
+      <Setter Property="Foreground" Value="{DynamicResource PincelTextoSecundario}" />
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+    <Border Grid.Row="0" Classes="barra" Padding="20,10">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Right" Text="{Binding Cabecalho}" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <TextBlock Text="GenesisPDV · ⚙ Central do PDV" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" />
+          <TextBlock x:Name="TextoUsuarioCentral" Text="{Binding UsuarioTexto}" Classes="secundario" VerticalAlignment="Center"
+                     IsVisible="{Binding UsuarioTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+    <!-- Faixas: a liberação ativa (quem liberou, as abas e até quando) e a desativação (D22, só consulta). -->
+    <StackPanel Grid.Row="1">
+      <Border Background="{DynamicResource PincelInfoFundo}" Padding="16,6"
+              IsVisible="{Binding LiberacaoTexto, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <TextBlock x:Name="TextoLiberacaoCentral" Text="{Binding LiberacaoTexto}" TextWrapping="Wrap" FontWeight="SemiBold" />
+      </Border>
+      <Border Background="{DynamicResource PincelErroFundo}" Padding="16,6"
+              IsVisible="{Binding SomenteLeituraTexto, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <TextBlock x:Name="TextoSomenteLeituraCentral" Text="{Binding SomenteLeituraTexto}" Classes="erro" />
+      </Border>
+    </StackPanel>
+
+    <!-- Entrada pelo login: usuário e PIN (as regras do login, sem abrir sessão de operador). -->
+    <Border Grid.Row="2" Classes="painel" Width="460" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center"
+            IsVisible="{Binding Entrando}">
+      <Border.KeyBindings>
+        <KeyBinding Gesture="Enter" Command="{Binding EntrarCommand}" />
+      </Border.KeyBindings>
+      <StackPanel Spacing="10">
+        <TextBlock Text="⚙ Central do PDV" Classes="titulo" />
+        <TextBlock Text="Usuário (login ou código)" Classes="rotulo" />
+        <TextBox x:Name="CampoUsuarioCentral" Text="{Binding Usuario}" AutomationProperties.Name="Usuário da Central" />
+        <TextBlock Text="PIN (senha do PDV)" Classes="rotulo" />
+        <TextBox x:Name="CampoPinCentral" Text="{Binding Pin}" PasswordChar="●" AutomationProperties.Name="PIN da Central" />
+        <TextBlock x:Name="TextoErroCentral" Text="{Binding Erro}" Classes="erro"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao accent" x:Name="BotaoEntrarCentral" Content="Enter  Entrar" Command="{Binding EntrarCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao login" Command="{Binding SairCommand}" />
+        </WrapPanel>
+        <TextBlock Classes="secundario" TextWrapping="Wrap" FontSize="13"
+                   Text="Qualquer usuário do caixa vê o Painel de saúde e o Sobre o terminal; as outras abas seguem as permissões de quem entrou." />
+      </StackPanel>
+    </Border>
+
+    <!-- Aberta: o menu lateral e a aba escolhida. -->
+    <Grid Grid.Row="2" ColumnDefinitions="270,*" IsVisible="{Binding Aberta}">
+      <Border Grid.Column="0" Classes="barra" Padding="8">
+        <DockPanel>
+          <WrapPanel DockPanel.Dock="Bottom" Classes="botoes" Margin="0,8,0,0">
+            <Button Classes="acao" x:Name="BotaoLiberarCentral" Content="Ctrl+L  Liberar" Command="{Binding LiberarCommand}" />
+            <Button Classes="acao" x:Name="BotaoSairCentral" Content="Esc  Sair" Command="{Binding SairCommand}" />
+          </WrapPanel>
+          <!-- 11 abas de 48 px: na altura mínima da janela (700) com as duas faixas, o menu rola em vez de cortar o P. -->
+          <ScrollViewer x:Name="RolagemMenuCentral" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="MenuCentral" ItemsSource="{Binding Abas}" AutomationProperties.Name="Abas da Central">
+              <ItemsControl.KeyBindings>
+                <KeyBinding Gesture="D0" Command="{Binding AbrirAbaCommand}" CommandParameter="0" />
+                <KeyBinding Gesture="NumPad0" Command="{Binding AbrirAbaCommand}" CommandParameter="0" />
+                <KeyBinding Gesture="D1" Command="{Binding AbrirAbaCommand}" CommandParameter="1" />
+                <KeyBinding Gesture="NumPad1" Command="{Binding AbrirAbaCommand}" CommandParameter="1" />
+                <KeyBinding Gesture="D2" Command="{Binding AbrirAbaCommand}" CommandParameter="2" />
+                <KeyBinding Gesture="NumPad2" Command="{Binding AbrirAbaCommand}" CommandParameter="2" />
+                <KeyBinding Gesture="D3" Command="{Binding AbrirAbaCommand}" CommandParameter="3" />
+                <KeyBinding Gesture="NumPad3" Command="{Binding AbrirAbaCommand}" CommandParameter="3" />
+                <KeyBinding Gesture="D4" Command="{Binding AbrirAbaCommand}" CommandParameter="4" />
+                <KeyBinding Gesture="NumPad4" Command="{Binding AbrirAbaCommand}" CommandParameter="4" />
+                <KeyBinding Gesture="D5" Command="{Binding AbrirAbaCommand}" CommandParameter="5" />
+                <KeyBinding Gesture="NumPad5" Command="{Binding AbrirAbaCommand}" CommandParameter="5" />
+                <KeyBinding Gesture="D6" Command="{Binding AbrirAbaCommand}" CommandParameter="6" />
+                <KeyBinding Gesture="NumPad6" Command="{Binding AbrirAbaCommand}" CommandParameter="6" />
+                <KeyBinding Gesture="D7" Command="{Binding AbrirAbaCommand}" CommandParameter="7" />
+                <KeyBinding Gesture="NumPad7" Command="{Binding AbrirAbaCommand}" CommandParameter="7" />
+                <KeyBinding Gesture="D8" Command="{Binding AbrirAbaCommand}" CommandParameter="8" />
+                <KeyBinding Gesture="NumPad8" Command="{Binding AbrirAbaCommand}" CommandParameter="8" />
+                <KeyBinding Gesture="D9" Command="{Binding AbrirAbaCommand}" CommandParameter="9" />
+                <KeyBinding Gesture="NumPad9" Command="{Binding AbrirAbaCommand}" CommandParameter="9" />
+                <KeyBinding Gesture="P" Command="{Binding AbrirAbaCommand}" CommandParameter="P" />
+              </ItemsControl.KeyBindings>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:ItemMenuCentralViewModel">
+                  <Button Classes="aba" Classes.selecionada="{Binding Selecionada}" Classes.bloqueada="{Binding Bloqueada}"
+                          Command="{Binding $parent[UserControl].((vm:CentralPdvViewModel)DataContext).AbrirAbaCommand}"
+                          CommandParameter="{Binding Codigo}" AutomationProperties.Name="{Binding Dica}" ToolTip.Tip="{Binding Dica}">
+                    <Grid ColumnDefinitions="28,*,Auto">
+                      <TextBlock Grid.Column="0" Text="{Binding Codigo}" Classes="tecla" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="{Binding Nome}" Classes="nome-aba" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="2" Text="🔒" IsVisible="{Binding Bloqueada}" VerticalAlignment="Center" Margin="6,0,0,0" />
+                      <TextBlock Grid.Column="2" Text="🔓" IsVisible="{Binding Emprestada}" VerticalAlignment="Center" Margin="6,0,0,0"
+                                 Foreground="{DynamicResource PincelDestaque}" />
+                    </Grid>
+                  </Button>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+      <Grid Grid.Column="1" RowDefinitions="Auto,*">
+        <StackPanel Grid.Row="0" Margin="16,8,16,0" Spacing="4">
+          <TextBlock x:Name="TextoMensagemCentral" Text="{Binding Mensagem}" TextWrapping="Wrap" FontSize="15"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroAbaCentral" Text="{Binding Erro}" Classes="erro"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+        <ContentControl Grid.Row="1" x:Name="ConteudoAba" Content="{Binding Conteudo}">
+          <ContentControl.DataTemplates>
+            <DataTemplate DataType="vm:AbaHardwareViewModel">
+              <v:AbaHardwareView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaPainelViewModel">
+              <v:AbaPainelView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaSobreViewModel">
+              <v:AbaSobreView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaVendasViewModel">
+              <v:AbaVendasView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaCaixasViewModel">
+              <v:AbaCaixasView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaSincronizacaoViewModel">
+              <v:AbaSincronizacaoView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaLogsViewModel">
+              <v:AbaLogsView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaHistoricoUsoViewModel">
+              <v:AbaHistoricoUsoView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaParametrosViewModel">
+              <v:AbaParametrosView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaBackupViewModel">
+              <v:AbaBackupView />
+            </DataTemplate>
+            <DataTemplate DataType="vm:AbaPacoteViewModel">
+              <v:AbaPacoteView />
+            </DataTemplate>
+          </ContentControl.DataTemplates>
+        </ContentControl>
+      </Grid>
+    </Grid>
+
+    <Border Grid.Row="3" Classes="barra" Padding="20,8">
+      <TextBlock x:Name="TextoRodapeCentral" Classes="secundario" Text="{Binding Rodape}" TextWrapping="Wrap" />
+    </Border>
+
+    <!-- Liberação (Ctrl+L ou o clique na aba com cadeado): usuário e PIN do supervisor; Enter libera, Esc volta. -->
+    <Border Grid.Row="0" Grid.RowSpan="4" Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberando}">
+      <Border Classes="dialogo" x:Name="DialogoLiberacaoCentral">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarLiberacaoCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarLiberacaoCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10" Width="420">
+          <TextBlock Text="{Binding TituloLiberacao}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock Classes="secundario" TextWrapping="Wrap"
+                     Text="Usuário e PIN do supervisor: as abas de consulta que ele vê ficam abertas até sair da Central ou 5 min sem uso. Mudar a impressora, os parâmetros ou reimprimir continuam pedindo a liberação própria." />
+          <TextBlock Text="Supervisor (login ou código)" Classes="rotulo" />
+          <TextBox x:Name="CampoUsuarioLiberacaoCentral" Text="{Binding UsuarioLiberacao}" AutomationProperties.Name="Supervisor que libera" />
+          <TextBlock Text="PIN do supervisor" Classes="rotulo" />
+          <TextBox x:Name="CampoPinLiberacaoCentral" Text="{Binding PinLiberacao}" PasswordChar="●" AutomationProperties.Name="PIN do supervisor" />
+          <TextBlock x:Name="TextoErroLiberacaoCentral" Text="{Binding ErroLiberacao}" Classes="erro"
+                     IsVisible="{Binding ErroLiberacao, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao accent" x:Name="BotaoConfirmarLiberacaoCentral" Content="Enter  Liberar" Command="{Binding ConfirmarLiberacaoCommand}" />
+            <Button Classes="acao" Content="Esc  Voltar" Command="{Binding CancelarLiberacaoCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+  </Grid>
+</UserControl>

@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+docs
+apps/pdv
+apps/api/drizzle/**/meta
+*.md
+infra

@@ -1,0 +1,1 @@
+ALTER TABLE "empresas" ADD COLUMN "ativacoes_liberadas_em" timestamp with time zone;

@@ -1,0 +1,40 @@
+   ICE BEER HERMES - LOJA 1
+ ICE BEER COMÉRCIO DE BEBIDAS
+             LTDA
+ CNPJ 00.000.000/0001-00  IE
+          123456789
+ Rua Exemplo, 123 - Centro -
+         Curitiba/PR
+      Tel (41) 3000-0000
+------------------------------
+*** NÃO É DOCUMENTO FISCAL ***
+     COMPROVANTE DE VENDA
+Venda: L01-C02-000007
+              04/11/2026 10:30
+Caixa: 02  Operador: MARIA
+------------------------------
+#  Descrição
+   Qtd x Unit.           Total
+------------------------------
+1  CERV BRAHMA DUPLO MALTE LT
+350ML
+   12,000 UN x 3,49      41,88
+2  ÁGUA CRYSTAL S/GÁS 500ML
+   2,000 UN x 2,50        5,00
+   Desconto item         -0,50
+------------------------------
+Itens: 2    Subtotal     46,88
+           Descontos     -0,50
+            TOTAL R$     46,38
+------------------------------
+Dinheiro                 50,00
+Troco                     3,62
+------------------------------
+  Obrigado pela preferência!
+*** NÃO É DOCUMENTO FISCAL ***
+      GenesisPDV v0.9.0
+
+
+
+
+✂ - - - - - - - - - - - - - - - - - - - - - -

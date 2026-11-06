@@ -1,0 +1,18 @@
+{
+  "movimentos_vasilhame": {
+    "id": "01a187a2-3d4e-7f60-9a1b-2c3d4e5f6a03",
+    "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+    "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "pessoa_id": null,
+    "produto_vasilhame_id": "01a1875d-11aa-7b2c-9d3e-4f5a6b7c8d04",
+    "quantidade": "6.000",
+    "destino": "entrada",
+    "vale_id": null,
+    "ocorrido_em": "2026-10-29T15:20:00.000Z"
+  },
+  "vales": [],
+  "movimentos_vale": []
+}

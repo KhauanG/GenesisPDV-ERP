@@ -1,0 +1,73 @@
+# Ambiente local (roadmap Fase 0): PostgreSQL 16, captura de e-mail (Mailpit) e armazenamento de objetos
+# S3-compatível (RustFS). Uso: docker compose -f infra/docker-compose.yml up -d
+#   - Mailpit: SMTP em localhost:1025, caixa de entrada em http://localhost:8025
+#   - RustFS: API S3 em http://localhost:9000, console em http://localhost:9001 (genesis / genesis_dev_minio)
+# A MinIO deixou de publicar imagens da edição comunitária; o RustFS fala a mesma API S3 (a API só usa o SDK S3).
+services:
+  postgres:
+    image: postgres:16
+    container_name: genesis-postgres
+    environment:
+      POSTGRES_USER: genesis
+      POSTGRES_PASSWORD: genesis_dev
+      POSTGRES_DB: genesis_control
+    ports:
+      - "5432:5432"
+    volumes:
+      - genesis-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genesis -d genesis_control"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.32
+    container_name: genesis-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+  armazenamento:
+    image: rustfs/rustfs:1.0.4
+    container_name: genesis-armazenamento
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # Credenciais só de desenvolvimento (as mesmas do padrão da API em AMBIENTE=desenvolvimento).
+      RUSTFS_ACCESS_KEY: genesis
+      RUSTFS_SECRET_KEY: genesis_dev_minio
+    volumes:
+      - genesis-objetos:/data
+
+  # Cria o bucket de desenvolvimento uma vez (idempotente) e termina.
+  armazenamento-init:
+    image: amazon/aws-cli:2.39.2
+    container_name: genesis-armazenamento-init
+    depends_on:
+      - armazenamento
+    environment:
+      AWS_ACCESS_KEY_ID: genesis
+      AWS_SECRET_ACCESS_KEY: genesis_dev_minio
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        for i in $$(seq 1 30); do
+          aws --endpoint-url http://armazenamento:9000 s3api head-bucket --bucket genesis-dev 2>/dev/null && exit 0;
+          aws --endpoint-url http://armazenamento:9000 s3 mb s3://genesis-dev && exit 0;
+          sleep 2;
+        done; exit 1
+    restart: "no"
+
+volumes:
+  genesis-pgdata:
+  genesis-objetos:

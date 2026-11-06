@@ -1,0 +1,38 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.SessaoOutroOperadorView"
+             x:DataType="vm:SessaoOutroOperadorViewModel"
+             Classes="tela">
+  <!-- Login com o caixa aberto por outro operador (PDV 8.1). -->
+  <Grid>
+    <Grid RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Classes="barra" Padding="20,10">
+        <TextBlock Text="GenesisPDV · Caixa aberto por outro operador" FontWeight="SemiBold" FontSize="16" />
+      </Border>
+      <Border Grid.Row="1" Classes="painel" Width="640" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center"
+              Focusable="True" c:Foco.Inicial="True" x:Name="PainelSessaoOutro">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="D1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="NumPad1" Command="{Binding EscolherCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="D2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="NumPad2" Command="{Binding EscolherCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="Escape" Command="{Binding SairCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="12">
+          <TextBlock x:Name="TextoSessaoOutro" Text="{Binding Mensagem}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding Cabecalho}" Classes="secundario" />
+          <TextBlock Text="1  Fazer troca de turno (contar a gaveta e abrir o seu caixa)" FontSize="16" />
+          <TextBlock Text="{Binding OpcaoOperar}" FontSize="16" />
+          <TextBlock x:Name="TextoErroSessaoOutro" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[1] [2] Escolher   [Esc] Sair" Classes="tecla" />
+        </StackPanel>
+      </Border>
+    </Grid>
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

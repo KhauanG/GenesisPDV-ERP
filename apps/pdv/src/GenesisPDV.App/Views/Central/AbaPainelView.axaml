@@ -1,0 +1,90 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             x:Class="GenesisPDV.App.Views.Central.AbaPainelView"
+             x:DataType="vm:AbaPainelViewModel"
+             Focusable="True">
+  <!-- Aba 0 da Central do PDV, o Painel de saúde (bloco G4; README › decisão 69): bolinha, frase, o que fazer e o botão de
+       cada verificação; o código do terminal para o suporte. Só leitura, sem PIN (PC-7). Tudo pelo teclado e pelo mouse. -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding VerificarCommand}" />
+    <KeyBinding Gesture="Ctrl+Alt+S" Command="{Binding SincronizarCommand}" />
+    <KeyBinding Gesture="P" Command="{Binding AbrirPacoteCommand}" />
+  </UserControl.KeyBindings>
+  <UserControl.Styles>
+    <Style Selector="Ellipse.bolinha">
+      <Setter Property="Width" Value="18" />
+      <Setter Property="Height" Value="18" />
+      <Setter Property="Fill" Value="{DynamicResource PincelTotalTexto}" />
+    </Style>
+    <Style Selector="Ellipse.bolinha.aviso">
+      <Setter Property="Fill" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="Ellipse.bolinha.problema">
+      <Setter Property="Fill" Value="{DynamicResource PincelErro}" />
+    </Style>
+    <Style Selector="TextBlock.nivel">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Foreground" Value="{DynamicResource PincelTotalTexto}" />
+    </Style>
+    <Style Selector="TextBlock.nivel.aviso">
+      <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="TextBlock.nivel.problema">
+      <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Right" x:Name="TextoCodigoTerminalPainel" Text="{Binding CodigoTexto}" FontWeight="SemiBold"
+                   VerticalAlignment="Center" />
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+      </DockPanel>
+      <TextBlock x:Name="TextoResumoPainel" Text="{Binding Resumo}" FontSize="16" FontWeight="SemiBold"
+                 Classes.erro="{Binding TemProblema}" />
+      <TextBlock x:Name="TextoMensagemPainel" Text="{Binding Mensagem}" Classes="secundario" TextWrapping="Wrap"
+                 IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    </StackPanel>
+    <ListBox Grid.Row="1" x:Name="ListaSaude" Margin="0,8,0,8" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}"
+             AutomationProperties.Name="Verificações do Painel de saúde">
+      <ListBox.KeyBindings>
+        <KeyBinding Gesture="Enter" Command="{Binding ExecutarAcaoCommand}" CommandParameter="{x:Null}" />
+      </ListBox.KeyBindings>
+      <ListBox.ItemTemplate>
+        <DataTemplate DataType="vm:LinhaSaudeViewModel">
+          <Grid ColumnDefinitions="28,*,Auto" Margin="2,6" AutomationProperties.Name="{Binding Leitura}">
+            <Ellipse Grid.Column="0" Classes="bolinha" Classes.aviso="{Binding Aviso}" Classes.problema="{Binding Problema}"
+                     VerticalAlignment="Top" Margin="0,3,0,0" />
+            <StackPanel Grid.Column="1" Spacing="2">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock Text="{Binding Nome}" FontWeight="SemiBold" FontSize="16" />
+                <TextBlock Text="{Binding NivelTexto}" Classes="nivel" Classes.aviso="{Binding Aviso}" Classes.problema="{Binding Problema}"
+                           VerticalAlignment="Center" />
+              </StackPanel>
+              <TextBlock Text="{Binding Frase}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding OQueFazer}" TextWrapping="Wrap" FontWeight="SemiBold"
+                         IsVisible="{Binding OQueFazer, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+            <Button Grid.Column="2" Classes="acao" Margin="12,0,0,0" VerticalAlignment="Center" Content="{Binding RotuloAcao}"
+                    IsVisible="{Binding TemAcao}"
+                    Command="{Binding $parent[UserControl].((vm:AbaPainelViewModel)DataContext).ExecutarAcaoCommand}"
+                    CommandParameter="{Binding}" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+    <StackPanel Grid.Row="2" Spacing="6">
+      <WrapPanel Classes="botoes">
+        <Button Classes="acao" x:Name="BotaoVerificarPainel" Content="F5  Verificar de novo" Command="{Binding VerificarCommand}" />
+        <Button Classes="acao" x:Name="BotaoSincronizarPainel" Content="Ctrl+Alt+S  Sincronizar agora" Command="{Binding SincronizarCommand}" />
+        <!-- O pacote para o suporte (bloco G9, decisão 76): a aba P pelo mesmo caminho do menu (o cadeado pede quem pode). -->
+        <Button Classes="acao" x:Name="BotaoPacotePainel" Content="P  Pacote para o suporte" Command="{Binding AbrirPacoteCommand}" />
+        <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+      <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+    </StackPanel>
+  </Grid>
+</UserControl>

@@ -1,0 +1,160 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:s="using:GenesisPDV.App.Servicos"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.Central.AbaVendasView"
+             x:DataType="vm:AbaVendasViewModel"
+             Focusable="True">
+  <!-- Aba 1 da Central do PDV, Vendas (bloco G5; README › decisão 70): o caixa aberto primeiro e, no filtro, os caixas
+       fechados deste terminal dos últimos 30 dias; CPF mascarado na lista; detalhe, 2ª via e, para a venda paga do caixa
+       aberto, o cancelamento do F12. Tudo pelo teclado (o foco fica no campo do número; as listas devolvem o foco a ele ao
+       fechar; o numérico: + e − paginam, * abre o detalhe, no code-behind) e pelo mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
+    <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+    <KeyBinding Gesture="Enter" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+    <KeyBinding Gesture="Ctrl+R" Command="{Binding ReimprimirCommand}" />
+    <KeyBinding Gesture="Ctrl+Delete" Command="{Binding CancelarCommand}" />
+    <KeyBinding Gesture="PageDown" Command="{Binding ProximaPaginaCommand}" />
+    <KeyBinding Gesture="PageUp" Command="{Binding PaginaAnteriorCommand}" />
+    <KeyBinding Gesture="F3" Command="{Binding ProximoCaixaCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F3" Command="{Binding ProximoCaixaCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F4" Command="{Binding ProximaSituacaoCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding LimparFiltrosCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding VerCaixaCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,8,16,8" IsVisible="{Binding !MostrandoDetalhe}">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <TextBlock x:Name="TextoAvisoHistoricoVendas" Text="{Binding AvisoHistorico}" Classes="secundario" TextWrapping="Wrap"
+                   IsVisible="{Binding AvisoHistorico, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+      <!-- Filtros (no SQL): o caixa, o número ou CPF/CNPJ, a situação, o operador, a forma e o valor. -->
+      <Grid Grid.Row="1" ColumnDefinitions="2*,12,*,12,*" RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,6,0,6">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Caixa [F3]" Classes="rotulo" />
+        <ComboBox Grid.Row="1" Grid.Column="0" x:Name="ListaCaixasVendas" DropDownClosed="AoFecharLista" ItemsSource="{Binding Caixas}" SelectedItem="{Binding CaixaEscolhido}"
+                  HorizontalAlignment="Stretch" AutomationProperties.Name="Caixa das vendas" />
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="Número ou CPF/CNPJ" Classes="rotulo" />
+        <TextBox Grid.Row="1" Grid.Column="2" x:Name="CampoFiltroVendasCentral" Text="{Binding Texto}" c:Foco.Inicial="True"
+                 AutomationProperties.Name="Número da venda ou CPF/CNPJ" />
+        <TextBlock Grid.Row="0" Grid.Column="4" Text="Situação [F4]" Classes="rotulo" />
+        <ComboBox Grid.Row="1" Grid.Column="4" x:Name="ListaSituacaoVendas" DropDownClosed="AoFecharLista" ItemsSource="{x:Static vm:AbaVendasViewModel.Situacoes}"
+                  SelectedIndex="{Binding SituacaoIndice}" HorizontalAlignment="Stretch" AutomationProperties.Name="Situação da venda" />
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Operador" Classes="rotulo" Margin="0,6,0,0" />
+        <ComboBox Grid.Row="3" Grid.Column="0" x:Name="ListaOperadorVendas" DropDownClosed="AoFecharLista" ItemsSource="{Binding Operadores}" SelectedItem="{Binding Operador}"
+                  HorizontalAlignment="Stretch" AutomationProperties.Name="Operador da venda">
+          <ComboBox.ItemTemplate>
+            <DataTemplate DataType="s:OpcaoFiltroVenda">
+              <TextBlock Text="{Binding Nome}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Grid.Row="2" Grid.Column="2" Text="Forma de pagamento" Classes="rotulo" Margin="0,6,0,0" />
+        <ComboBox Grid.Row="3" Grid.Column="2" x:Name="ListaFormaVendas" DropDownClosed="AoFecharLista" ItemsSource="{Binding Formas}" SelectedItem="{Binding Forma}"
+                  HorizontalAlignment="Stretch" AutomationProperties.Name="Forma de pagamento">
+          <ComboBox.ItemTemplate>
+            <DataTemplate DataType="s:OpcaoFiltroVenda">
+              <TextBlock Text="{Binding Nome}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Grid.Row="2" Grid.Column="4" Text="Valor de / até (R$)" Classes="rotulo" Margin="0,6,0,0" />
+        <Grid Grid.Row="3" Grid.Column="4" ColumnDefinitions="*,6,*">
+          <TextBox Grid.Column="0" x:Name="CampoValorMinimoVendas" Text="{Binding ValorMinimo}" AutomationProperties.Name="Valor mínimo" />
+          <TextBox Grid.Column="2" x:Name="CampoValorMaximoVendas" Text="{Binding ValorMaximo}" AutomationProperties.Name="Valor máximo" />
+        </Grid>
+      </Grid>
+      <DockPanel Grid.Row="2">
+        <!-- Cabeçalho das colunas (as mesmas larguras da linha). -->
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="170,100,110,90,*,130" Margin="12,0,12,2">
+          <TextBlock Grid.Column="0" Text="Número" Classes="rotulo" />
+          <TextBlock Grid.Column="1" Text="Data e hora" Classes="rotulo" />
+          <TextBlock Grid.Column="2" Text="Operador" Classes="rotulo" />
+          <TextBlock Grid.Column="3" Text="Total (R$)" Classes="rotulo" HorizontalAlignment="Right" Margin="0,0,16,0" />
+          <TextBlock Grid.Column="4" Text="Formas" Classes="rotulo" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="5" Text="CPF · caixa" Classes="rotulo" TextTrimming="CharacterEllipsis" />
+        </Grid>
+        <ListBox x:Name="ListaVendasCentral" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" Focusable="False"
+                 c:Comandos.DuploClique="{Binding DetalharCommand}" AutomationProperties.Name="Vendas">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="vm:LinhaVendaCentralViewModel">
+              <Grid ColumnDefinitions="170,100,110,90,*,130" AutomationProperties.Name="{Binding Leitura}">
+                <TextBlock Grid.Column="0" Text="{Binding Numero}" Classes="mono" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="1" Text="{Binding DataHora}" Classes="mono" />
+                <TextBlock Grid.Column="2" Text="{Binding Operador}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="3" Text="{Binding Total}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                <StackPanel Grid.Column="4">
+                  <TextBlock Text="{Binding Formas}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Selo}" Foreground="{DynamicResource PincelErro}" FontWeight="SemiBold" IsVisible="{Binding Cancelada}" />
+                </StackPanel>
+                <StackPanel Grid.Column="5">
+                  <TextBlock Text="{Binding Documento}" Classes="mono" />
+                  <TextBlock Text="{Binding Caixa}" Classes="secundario" FontSize="12" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+      <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
+        <TextBlock x:Name="TextoRodapeVendas" Text="{Binding Rodape}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMaisAntigasVendas" Text="{Binding AvisoMaisAntigas}" Classes="secundario" TextWrapping="Wrap"
+                   IsVisible="{Binding AvisoMaisAntigas, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoMensagemVendas" Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                   TextWrapping="Wrap" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroVendas" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao" x:Name="BotaoDetalheVendaCentral" Content="Enter  Detalhe" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoReimprimirVendaCentral" Content="Ctrl+R  Reimprimir" Command="{Binding ReimprimirCommand}" />
+          <Button Classes="acao" x:Name="BotaoCancelarVendaCentral" Content="Ctrl+Del  Cancelar" Command="{Binding CancelarCommand}" />
+          <Button Classes="acao" x:Name="BotaoPaginaAnteriorVendas" Content="PgUp  ◀ Mais novas" Command="{Binding PaginaAnteriorCommand}"
+                  IsEnabled="{Binding TemAnterior}" />
+          <Button Classes="acao" x:Name="BotaoProximaPaginaVendas" Content="PgDn  Mais antigas ▶" Command="{Binding ProximaPaginaCommand}"
+                  IsEnabled="{Binding TemProxima}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" x:Name="BotaoLimparFiltrosVendas" Content="F6  Limpar filtros" Command="{Binding LimparFiltrosCommand}" />
+          <Button Classes="acao" x:Name="BotaoCaixaDaVendaCentral" Content="F7  Caixa da venda" Command="{Binding VerCaixaCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Detalhe (Enter ou o duplo clique): itens, pagamentos, o caixa da venda e o CPF/CNPJ inteiro. -->
+    <Border x:Name="PainelDetalheVendaCentral" Classes="painel" Margin="16" Padding="20" Focusable="True" IsVisible="{Binding MostrandoDetalhe}">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="TextoTituloDetalheVenda" Text="{Binding TituloDetalhe}" Classes="titulo" TextWrapping="Wrap" />
+        <ScrollViewer Grid.Row="1" Margin="0,8,0,8">
+          <ItemsControl x:Name="ListaDetalheVendaCentral" ItemsSource="{Binding LinhasDetalhe}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <SelectableTextBlock Text="{Binding}" Classes="mono" FontSize="14" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Spacing="6">
+          <TextBlock Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao" Content="Ctrl+R  Reimprimir" Command="{Binding ReimprimirCommand}" />
+            <Button Classes="acao" Content="Ctrl+Del  Cancelar" Command="{Binding CancelarCommand}" />
+            <Button Classes="acao" x:Name="BotaoCaixaDetalheVenda" Content="F7  Caixa da venda" Command="{Binding VerCaixaCommand}" />
+            <Button Classes="acao" x:Name="BotaoVoltarDetalheVenda" Content="Esc  Voltar à lista" Command="{Binding VoltarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Reimpressão sem a permissão: o supervisor libera na hora (31.3), sobre a aba. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

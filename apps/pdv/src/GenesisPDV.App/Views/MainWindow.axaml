@@ -1,0 +1,33 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:GenesisPDV.App.ViewModels"
+        x:Class="GenesisPDV.App.Views.MainWindow"
+        x:DataType="vm:ShellViewModel"
+        Title="GenesisPDV"
+        Icon="avares://GenesisPDV/Assets/genesispdv.ico"
+        Width="1366" Height="768" MinWidth="1024" MinHeight="700"
+        Background="{DynamicResource PincelFundo}"
+        WindowStartupLocation="CenterScreen">
+  <Grid RowDefinitions="Auto,Auto,*">
+    <Border Grid.Row="0" IsVisible="{Binding ErroGlobal, Converter={x:Static ObjectConverters.IsNotNull}}"
+            Background="{DynamicResource PincelErroFundo}" Padding="16,8">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Content="Fechar" Command="{Binding FecharErroCommand}" />
+        <TextBlock x:Name="TextoErroGlobal" Text="{Binding ErroGlobal}" Classes="erro" VerticalAlignment="Center" FontSize="16"
+                   AutomationProperties.Name="Erro" />
+      </DockPanel>
+    </Border>
+    <!-- Mensagem do ERP (comando `mensagem`, SYNC 21.1): fica até o operador fechar. -->
+    <Border Grid.Row="1" IsVisible="{Binding MensagemNuvem, Converter={x:Static ObjectConverters.IsNotNull}}"
+            Background="{DynamicResource PincelInfoFundo}" Padding="16,8">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Content="Fechar" Command="{Binding FecharMensagemNuvemCommand}" Focusable="False" />
+        <TextBlock x:Name="TextoMensagemNuvem" Text="{Binding MensagemNuvem}" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold"
+                   TextWrapping="Wrap" AutomationProperties.Name="Mensagem do ERP" />
+      </DockPanel>
+    </Border>
+    <ContentControl Grid.Row="2" x:Name="ConteudoPagina" Content="{Binding PaginaAtual}" />
+    <TextBlock Grid.Row="2" Text="Iniciando o banco local…" IsVisible="{Binding Iniciando}"
+               HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="20" Classes="secundario" />
+  </Grid>
+</Window>

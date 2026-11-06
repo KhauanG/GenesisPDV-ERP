@@ -1,0 +1,24 @@
+{
+  "movimentos_caixa": {
+    "id": "01a18765-1c42-7d3a-9e51-2b6c7d8e9f01",
+    "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "numero_caixa": 2,
+    "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+    "tipo": "reforco",
+    "forma_pagamento_id": null,
+    "valor": "50.00",
+    "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "quem_retira_usuario_id": "01a18755-09d1-76b6-8b81-48f6b38a088c",
+    "quem_retira_nome": "CARLOS",
+    "observacao": "Troco em moedas",
+    "inf_adicionais": null,
+    "ocorrido_em": "2026-10-29T13:10:02.500Z",
+    "autorizado_por_id": null,
+    "troca_id": null,
+    "cancelado": false
+  },
+  "dinheiro_estimado_antes": "412.30",
+  "contagem_cedulas": null
+}

@@ -1,0 +1,26 @@
+            ICE BEER HERMES - LOJA 1
+               TESTE DE IMPRESSÃO
+                04/11/2026 10:30
+------------------------------------------------
+Modelo: Bematech MP-4200 TH (modo ESC/POS)
+Conexão: Rede: 192.168.0.50:9100
+Papel: 80 mm, 48 colunas
+Página de código: CP860
+Corte: parcial, 4 linha(s) de avanço
+QR Code: imagem
+------------------------------------------------
+Acentos: ÁÉÍÓÚ ÇÃÕ âêô
+         áéíóú çãõ àü
+123456789012345678901234567890123456789012345678
+Esquerda                                 Direita
+TOTAL R$                                1.234,56
+================================================
+[imagem]
+                        
+    Régua numa linha só e acentos certos: a
+            impressora está pronta.
+
+
+
+
+✂ - - - - - - - - - - - - - - - - - - - - - -

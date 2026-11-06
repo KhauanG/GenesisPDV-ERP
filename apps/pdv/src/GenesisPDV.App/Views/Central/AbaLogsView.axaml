@@ -1,0 +1,175 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.Central.AbaLogsView"
+             x:DataType="vm:AbaLogsViewModel"
+             Focusable="True">
+  <!-- Aba 5 da Central do PDV, Logs e ocorrências (bloco G8; README › decisão 73): as ocorrências do caixa (log_local, com
+       o que fazer) e o arquivo técnico do dia (Serilog, lido pelo final), tudo mascarado. Tudo pelo teclado (o foco fica no
+       campo do texto; o + e o − do numérico paginam e o * abre o detalhe, no code-behind; no detalhe, ↑/↓, PgUp/PgDn e o
+       8/2/9/3 rolam) e pelo mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <!-- ↑/↓ e PgUp/PgDn no code-behind: na lista escolhem e paginam, no detalhe rolam. -->
+    <KeyBinding Gesture="Enter" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+    <KeyBinding Gesture="F3" Command="{Binding AlternarFonteCommand}" CommandParameter="{x:Null}" />
+    <!-- O F4, o F6 e o F7 avançam; com Shift voltam um (como o Shift+F3 das abas 1 e 4). -->
+    <KeyBinding Gesture="F4" Command="{Binding ProximoNivelCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F4" Command="{Binding ProximoNivelCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding ProximoPeriodoCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F6" Command="{Binding ProximoPeriodoCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F7" Command="{Binding ProximaOrigemCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F7" Command="{Binding ProximaOrigemCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F8" Command="{Binding LimparFiltrosCommand}" />
+  </UserControl.KeyBindings>
+  <UserControl.Styles>
+    <Style Selector="Button.fonte.escolhida">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="BorderBrush" Value="{DynamicResource PincelDestaque}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+    <!-- A cor do nível nunca vem sozinha: a palavra (ERRO, AVISO, INFO) fica ao lado (PDV 9.1). -->
+    <Style Selector="Border.faixa">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="CornerRadius" Value="3" />
+      <Setter Property="Background" Value="{DynamicResource PincelTextoSecundario}" />
+    </Style>
+    <Style Selector="Border.faixa.aviso">
+      <Setter Property="Background" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="Border.faixa.erro">
+      <Setter Property="Background" Value="{DynamicResource PincelErro}" />
+    </Style>
+    <Style Selector="TextBlock.nivel">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock.nivel.aviso">
+      <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="TextBlock.nivel.erro">
+      <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+    </Style>
+  </UserControl.Styles>
+  <Grid>
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,8,16,8" IsVisible="{Binding !MostrandoDetalhe}">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <!-- As duas fontes (F3 alterna; o clique escolhe). -->
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao fonte" x:Name="BotaoFonteOcorrencias" Content="F3  Ocorrências" Classes.escolhida="{Binding EmOcorrencias}"
+                  Command="{Binding AlternarFonteCommand}" CommandParameter="ocorrencias" />
+          <Button Classes="acao fonte" x:Name="BotaoFonteArquivo" Content="F3  Arquivo técnico" Classes.escolhida="{Binding NoArquivo}"
+                  Command="{Binding AlternarFonteCommand}" CommandParameter="arquivo" />
+        </WrapPanel>
+        <TextBlock x:Name="TextoExplicacaoLogs" Text="{Binding Explicacao}" Classes="secundario" TextWrapping="Wrap" />
+      </StackPanel>
+      <!-- Filtros: o texto, o nível, o período (ocorrências) ou o dia (arquivo) e a origem (ocorrências). -->
+      <Grid Grid.Row="1" ColumnDefinitions="2*,12,*,12,*,12,*" RowDefinitions="Auto,Auto" Margin="0,6,0,6">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Procurar (mensagem, código, erro)" Classes="rotulo" />
+        <TextBox Grid.Row="1" Grid.Column="0" x:Name="CampoFiltroLogs" Text="{Binding Texto}" c:Foco.Inicial="True"
+                 AutomationProperties.Name="Procurar nos logs" />
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="Nível [F4]" Classes="rotulo" />
+        <ComboBox Grid.Row="1" Grid.Column="2" x:Name="ListaNivelLogs" DropDownClosed="AoFecharLista" ItemsSource="{x:Static vm:AbaLogsViewModel.Niveis}"
+                  SelectedIndex="{Binding NivelIndice}" HorizontalAlignment="Stretch" AutomationProperties.Name="Nível" />
+        <TextBlock Grid.Row="0" Grid.Column="4" Text="Período [F6]" Classes="rotulo" IsVisible="{Binding EmOcorrencias}" />
+        <ComboBox Grid.Row="1" Grid.Column="4" x:Name="ListaPeriodoLogs" DropDownClosed="AoFecharLista" ItemsSource="{x:Static vm:AbaLogsViewModel.Periodos}"
+                  SelectedIndex="{Binding PeriodoIndice}" HorizontalAlignment="Stretch" IsVisible="{Binding EmOcorrencias}"
+                  AutomationProperties.Name="Período" />
+        <TextBlock Grid.Row="0" Grid.Column="4" Grid.ColumnSpan="3" Text="Dia [F6]" Classes="rotulo" IsVisible="{Binding NoArquivo}" />
+        <ComboBox Grid.Row="1" Grid.Column="4" Grid.ColumnSpan="3" x:Name="ListaDiaLogs" DropDownClosed="AoFecharLista" ItemsSource="{Binding Dias}"
+                  SelectedIndex="{Binding DiaIndice}" HorizontalAlignment="Stretch" IsVisible="{Binding NoArquivo}"
+                  AutomationProperties.Name="Dia do arquivo" />
+        <TextBlock Grid.Row="0" Grid.Column="6" Text="Origem [F7]" Classes="rotulo" IsVisible="{Binding EmOcorrencias}" />
+        <ComboBox Grid.Row="1" Grid.Column="6" x:Name="ListaOrigemLogs" DropDownClosed="AoFecharLista" ItemsSource="{Binding Origens}"
+                  SelectedIndex="{Binding OrigemIndice}" HorizontalAlignment="Stretch" IsVisible="{Binding EmOcorrencias}"
+                  AutomationProperties.Name="Origem" />
+      </Grid>
+      <DockPanel Grid.Row="2">
+        <!-- Cabeçalho das colunas (as mesmas larguras da linha). -->
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="14,132,84,120,*,180" Margin="12,0,12,2">
+          <TextBlock Grid.Column="1" Text="Quando" Classes="rotulo" />
+          <TextBlock Grid.Column="2" Text="Nível" Classes="rotulo" />
+          <TextBlock Grid.Column="3" Text="Origem" Classes="rotulo" />
+          <TextBlock Grid.Column="4" Text="O que aconteceu" Classes="rotulo" />
+          <TextBlock Grid.Column="5" Text="Resumo" Classes="rotulo" TextTrimming="CharacterEllipsis" />
+        </Grid>
+        <ListBox x:Name="ListaLogsCentral" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" Focusable="False"
+                 c:Comandos.DuploClique="{Binding DetalharCommand}" AutomationProperties.Name="Logs e ocorrências">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="vm:LinhaLogViewModel">
+              <Grid ColumnDefinitions="14,132,84,120,*,180" AutomationProperties.Name="{Binding Leitura}">
+                <Border Grid.Column="0" Classes="faixa" Classes.aviso="{Binding EhAviso}" Classes.erro="{Binding EhErro}" Margin="0,2,8,2" />
+                <TextBlock Grid.Column="1" Text="{Binding Hora}" Classes="mono" />
+                <TextBlock Grid.Column="2" Text="{Binding NivelRotulo}" Classes="nivel" Classes.aviso="{Binding EhAviso}" Classes.erro="{Binding EhErro}" />
+                <TextBlock Grid.Column="3" Text="{Binding Origem}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="4" Text="{Binding Mensagem}" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                <TextBlock Grid.Column="5" Text="{Binding Resumo}" Classes="secundario" TextTrimming="CharacterEllipsis" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+      <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
+        <TextBlock x:Name="TextoRodapeLogs" Text="{Binding Rodape}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMensagemLogs" Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                   TextWrapping="Wrap" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroLogs" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao" x:Name="BotaoDetalheLogs" Content="Enter  Detalhe" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoPaginaAnteriorLogs" Content="PgUp  ◀ Mais novos" Command="{Binding PaginaAnteriorCommand}"
+                  IsEnabled="{Binding TemAnterior}" />
+          <Button Classes="acao" x:Name="BotaoProximaPaginaLogs" Content="PgDn  Mais antigos ▶" Command="{Binding ProximaPaginaCommand}"
+                  IsEnabled="{Binding TemProxima}" />
+          <Button Classes="acao" x:Name="BotaoNivelLogs" Content="F4  Nível" Command="{Binding ProximoNivelCommand}" />
+          <Button Classes="acao" x:Name="BotaoPeriodoLogs" Content="F6  Período / dia" Command="{Binding ProximoPeriodoCommand}" />
+          <Button Classes="acao" x:Name="BotaoOrigemLogs" Content="F7  Origem" Command="{Binding ProximaOrigemCommand}" IsEnabled="{Binding EmOcorrencias}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" x:Name="BotaoLimparFiltrosLogs" Content="F8  Limpar filtros" Command="{Binding LimparFiltrosCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Detalhe (Enter ou o duplo clique): o que aconteceu, o que fazer e o texto técnico (a exceção), mascarados. -->
+    <Border x:Name="PainelDetalheLogs" Classes="painel" Margin="16" Padding="20" Focusable="True" IsVisible="{Binding MostrandoDetalhe}">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="TextoTituloDetalheLogs" Text="{Binding TituloDetalhe}" Classes="titulo" TextWrapping="Wrap" />
+        <ScrollViewer Grid.Row="1" x:Name="RolagemDetalheLogs" Margin="0,8,0,8">
+          <StackPanel Spacing="10">
+            <ItemsControl x:Name="ListaDetalheLogs" ItemsSource="{Binding LinhasDetalhe}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <SelectableTextBlock Text="{Binding}" Classes="mono" FontSize="14" TextWrapping="Wrap" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <Border Classes="painel" Padding="12" IsVisible="{Binding OQueFazer, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <StackPanel Spacing="4">
+                <TextBlock Text="O que fazer" FontWeight="Bold" />
+                <TextBlock x:Name="TextoOQueFazerLogs" Text="{Binding OQueFazer}" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+            <Border Classes="painel" Padding="12" IsVisible="{Binding TextoTecnico, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <StackPanel Spacing="4">
+                <TextBlock Text="Texto técnico (para o suporte)" FontWeight="Bold" />
+                <SelectableTextBlock x:Name="TextoTecnicoLogs" Text="{Binding TextoTecnico}" Classes="mono" FontSize="12" TextWrapping="Wrap" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Spacing="6">
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao" x:Name="BotaoVoltarDetalheLogs" Content="Esc  Voltar à lista" Command="{Binding VoltarCommand}" />
+          </WrapPanel>
+          <TextBlock Text="{Binding TeclasDetalhe}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

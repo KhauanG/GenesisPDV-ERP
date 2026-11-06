@@ -1,0 +1,23 @@
+# Contexto do build das imagens de produção (apps/api/Dockerfile e apps/erp-web/Dockerfile, contexto = raiz do repo).
+# Só entra o que o build TypeScript precisa: o PDV (.NET), a documentação e os artefatos locais ficam de fora.
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/test-results
+**/playwright-report
+**/.vite
+**/.turbo
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+.claude
+.vscode
+.idea
+apps/pdv
+docs
+infra
+**/*.md

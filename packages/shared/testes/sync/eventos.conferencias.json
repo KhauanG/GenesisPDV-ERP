@@ -1,0 +1,44 @@
+{
+  "descricao": "Conferências dos payloads de evento entre o zod (eventos.spec.ts) e o PDV (ContratosEventosTests): bordas do motivo do cancelamento da venda (O6), ações de liberação que o PDV gera (T18), movimentos de caixa que se cancelam pelo caixa (PDV 20.3) e o SHA-256 do JCS de cada fixture *.payload.json (SYNC 7.3). Mudou uma fixture, recalcule o hash dela aqui.",
+  "motivo_cancelamento_venda": {
+    "minimo": 15,
+    "maximo": 255,
+    "aceitos": [
+      "Produto vencido",
+      "   Produto vencido   ",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  "
+    ],
+    "recusados": [
+      "",
+      "               ",
+      "Produto avaria",
+      "   Produto avaria    ",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ]
+  },
+  "acoes_liberacao_venda": [
+    "desconto_item",
+    "desconto_total",
+    "pix_manual",
+    "forma_pagamento",
+    "desconto_cascos"
+  ],
+  "movimentos_caixa_cancelaveis": ["reforco", "sangria"],
+  "payload_sha256": {
+    "alerta.cadastro.payload.json": "89db61396a2305a06dd26ddab493bdb682ae8f4987f2ff1fa14218306f5e22e3",
+    "auditoria.registros.payload.json": "ffb5eea4b2989f8f959a0a29d2c979ad9714d76342da48aed98cf88f95ef52a4",
+    "caixa.aberto.payload.json": "9b58e73afa152f0d97c34b6b66886605e925f30a446199318eb68710eb430eb9",
+    "caixa.fechado.payload.json": "13422123d4d0088acf4887638c9e5835d612c93a1ceb04cd9b6b26a5e995aa01",
+    "caixa.fechado.troca_turno.payload.json": "2640fbf6e97c9f7db56f5518490a29922a998c127b96744c393e42f507285424",
+    "caixa.movimento_cancelado.payload.json": "9c8c712587e5f7ece6654dae04e152b66cdc5efa530510c3acbedf3d16801e3c",
+    "caixa.reforco.payload.json": "6b2b782f2d995409128aa5b5501b13a5fdf80051d4356c144597f5e466fa75a4",
+    "caixa.sangria.payload.json": "c489e3fb667ccd23e95d7b6da08ca5fd30865690b1d65a2e8e02f7c850d9a8d0",
+    "vasilhame.movimentado.payload.json": "e4b979903aa178be4d8373e447de680048566ba6eb0869f7a6bf0501720c73d8",
+    "venda.cancelada.em_andamento.payload.json": "e47aff8efe4580b989cafe9d6d65845b85ea7f16316758749970748d15c8ed31",
+    "venda.cancelada.finalizada.payload.json": "6a3cb294d80b523800eb3748ebdc58b5d3a90987a6b8854324a4b9815900589c",
+    "venda.finalizada.cascos.payload.json": "a3ecd7f7269a88f0cb50938dc978f84e3499aefde50391e75aefbbbbfafca1be",
+    "venda.finalizada.payload.json": "8b5a2204d0ab74b7c9e491ba38111701b4b1f825f6842fe41ef070cc45b60633",
+    "venda.finalizada.formas.payload.json": "6606af45c56ad1ec50c9936d4ddf35e76f16a8080be87d9da6f1d556d91bbd1d"
+  }
+}

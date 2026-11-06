@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=GenesisPDV
+Comment=Frente de caixa do Genesis
+Exec=/opt/genesispdv/GenesisPDV
+Icon=genesispdv
+Terminal=false
+Categories=Office;Finance;
+StartupNotify=true

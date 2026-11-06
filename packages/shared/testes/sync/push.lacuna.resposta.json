@@ -1,0 +1,29 @@
+{
+  "lote_id": "01a18793-5c2e-7a41-9d07-3f6b2a8e1c94",
+  "recebido_em": "2026-10-30T09:05:18.102Z",
+  "agora_servidor": "2026-10-30T09:05:18.237Z",
+  "proxima_sequencia_esperada": 1050,
+  "resultados": [
+    {
+      "evento_id": "01a18777-7aaa-7203-840d-b9b4885f6e66",
+      "sequencia": 1048,
+      "status": "lacuna_recuperavel",
+      "resultado": {
+        "lacuna": {
+          "de": 1048,
+          "ate": 1049
+        }
+      },
+      "erro": {
+        "codigo": "LACUNA_RECUPERAVEL",
+        "mensagem": "A sequência 1048 está numa lacuna declarada (1048–1049): reenvie com a liberação do supervisor (recuperar_lacuna)."
+      }
+    },
+    {
+      "evento_id": "01a18778-08ab-7f25-b9ac-1b1ea8e56e0c",
+      "sequencia": 1049,
+      "status": "nao_processado"
+    }
+  ],
+  "comandos": []
+}

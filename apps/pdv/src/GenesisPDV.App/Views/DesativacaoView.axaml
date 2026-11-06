@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             x:Class="GenesisPDV.App.Views.DesativacaoView"
+             x:DataType="vm:DesativacaoViewModel"
+             Classes="tela"
+             Focusable="True">
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Ctrl+Alt+S" Command="{Binding SincronizarAgoraCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Classes="barra" Padding="20,10">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Right" Text="{Binding Caixa}" FontWeight="SemiBold" />
+        <TextBlock Text="GenesisPDV · Desativação" FontWeight="SemiBold" FontSize="16" />
+      </DockPanel>
+    </Border>
+    <Border Grid.Row="1" Classes="painel" Width="640" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock x:Name="TituloDesativacao" Text="{Binding Titulo}" Classes="titulo" Foreground="{DynamicResource PincelAviso}" TextWrapping="Wrap"
+                   AutomationProperties.Name="Desativação" />
+        <TextBlock Text="{Binding Detalhe}" TextWrapping="Wrap" FontSize="16" />
+        <Border Background="{DynamicResource PincelErroFundo}" CornerRadius="4" Padding="12,8"
+                IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock x:Name="TextoErroDesativacao" Text="{Binding Erro}" TextWrapping="Wrap" />
+        </Border>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="2" Classes="barra" Padding="20,8">
+      <TextBlock Classes="secundario" Text="Ctrl+Alt+S sincroniza agora · a tela muda sozinha quando a nuvem confirmar" />
+    </Border>
+  </Grid>
+</UserControl>

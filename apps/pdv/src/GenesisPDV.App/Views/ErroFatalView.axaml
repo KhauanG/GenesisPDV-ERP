@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             x:Class="GenesisPDV.App.Views.ErroFatalView"
+             x:DataType="vm:ErroFatalViewModel"
+             Classes="tela"
+             Focusable="True">
+  <!-- F2 (ou o botão) gera o pacote para o suporte sem login e sem abrir o banco (Central do PDV, bloco G9; decisão 76). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="F2" Command="{Binding Pacote.GerarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="*,Auto">
+    <Border Grid.Row="0" Classes="painel" Width="640" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" Foreground="{DynamicResource PincelErro}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Mensagem}" TextWrapping="Wrap" FontSize="16" />
+        <Button Classes="acao" x:Name="BotaoPacoteErroFatal" Content="F2  Gerar pacote para o suporte" Focusable="False" MinHeight="44"
+                Command="{Binding Pacote.GerarCommand}" IsEnabled="{Binding !Pacote.Ocupado}" HorizontalAlignment="Left" />
+        <TextBlock Text="{Binding Pacote.Aviso}" Classes="secundario" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoPacoteErroFatal" Text="{Binding Pacote.Mensagem}" TextWrapping="Wrap" FontWeight="SemiBold"
+                   IsVisible="{Binding Pacote.Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroPacoteErroFatal" Text="{Binding Pacote.Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Pacote.Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="1" Classes="barra" Padding="20,8">
+      <TextBlock Classes="secundario" Text="{Binding Rodape}" />
+    </Border>
+  </Grid>
+</UserControl>

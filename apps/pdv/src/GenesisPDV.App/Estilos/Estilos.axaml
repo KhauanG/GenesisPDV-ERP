@@ -1,0 +1,133 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Style Selector="UserControl.tela">
+    <Setter Property="Background" Value="{DynamicResource PincelFundo}" />
+    <Setter Property="Foreground" Value="{DynamicResource PincelTexto}" />
+  </Style>
+  <Style Selector="Border.painel">
+    <Setter Property="Background" Value="{DynamicResource PincelPainel}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource PincelBorda}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="6" />
+  </Style>
+  <Style Selector="Border.barra">
+    <Setter Property="Background" Value="{DynamicResource PincelBarra}" />
+  </Style>
+  <Style Selector="Border.dialogo">
+    <Setter Property="Background" Value="{DynamicResource PincelPainel}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource PincelDestaque}" />
+    <Setter Property="BorderThickness" Value="2" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="24" />
+    <Setter Property="MinWidth" Value="460" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="TextBlock.titulo">
+    <Setter Property="FontSize" Value="22" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.rotulo">
+    <Setter Property="Foreground" Value="{DynamicResource PincelTextoSecundario}" />
+    <Setter Property="FontSize" Value="14" />
+  </Style>
+  <Style Selector="TextBlock.secundario">
+    <Setter Property="Foreground" Value="{DynamicResource PincelTextoSecundario}" />
+  </Style>
+  <Style Selector="TextBlock.erro">
+    <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="TextBlock.tecla">
+    <Setter Property="Foreground" Value="{DynamicResource PincelDestaque}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="{StaticResource FonteMono}" />
+  </Style>
+  <!-- Indicador de sincronização (PDV 30.2): âmbar por padrão, verde online, vermelho offline/bloqueado. -->
+  <Style Selector="TextBlock.indicador">
+    <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.indicador.ok">
+    <Setter Property="Foreground" Value="{DynamicResource PincelTotalTexto}" />
+  </Style>
+  <Style Selector="TextBlock.indicador.falha">
+    <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+  </Style>
+  <Style Selector="TextBox">
+    <Setter Property="FontSize" Value="18" />
+    <Setter Property="MinHeight" Value="40" />
+  </Style>
+  <Style Selector="TextBox.codigo">
+    <Setter Property="FontSize" Value="26" />
+    <Setter Property="FontFamily" Value="{StaticResource FonteMono}" />
+    <Setter Property="MinHeight" Value="52" />
+  </Style>
+  <Style Selector="Button">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="14,6" />
+    <Setter Property="FontSize" Value="15" />
+  </Style>
+  <!-- Botões clicáveis do caixa (decisão 65): nunca recebem o foco, que fica no campo de código ou no campo do diálogo
+       (o leitor de código de barras digita no campo focado e o Enter continua sendo o do diálogo). -->
+  <Style Selector="Button.acao">
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="MinHeight" Value="42" />
+    <Setter Property="MinWidth" Value="96" />
+  </Style>
+  <Style Selector="WrapPanel.botoes">
+    <Setter Property="Margin" Value="0,4,0,0" />
+  </Style>
+  <Style Selector="WrapPanel.botoes > Button.acao">
+    <Setter Property="Margin" Value="8,4,0,0" />
+  </Style>
+  <Style Selector="Button.opcao">
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="FontSize" Value="16" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="Padding" Value="10,4" />
+  </Style>
+  <Style Selector="Button.atalho">
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="MinHeight" Value="44" />
+    <Setter Property="Padding" Value="8,2" />
+    <Setter Property="Margin" Value="2" />
+  </Style>
+  <Style Selector="Button.atalho.futuro">
+    <Setter Property="Opacity" Value="0.55" />
+  </Style>
+  <Style Selector="Button.atalho.destaque">
+    <Setter Property="Background" Value="{DynamicResource PincelTotalFundo}" />
+  </Style>
+  <Style Selector="Button.atalho TextBlock.tecla-atalho">
+    <Setter Property="Foreground" Value="{DynamicResource PincelDestaque}" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+  <Style Selector="Button.atalho.destaque TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource PincelTotalTexto}" />
+    <Setter Property="FontWeight" Value="Bold" />
+  </Style>
+  <Style Selector="Grid.cancelado TextBlock">
+    <Setter Property="TextDecorations" Value="Strikethrough" />
+    <Setter Property="Foreground" Value="{DynamicResource PincelTextoSecundario}" />
+  </Style>
+  <Style Selector="ListBox.itens">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+  <Style Selector="ListBox.itens ListBoxItem">
+    <Setter Property="Padding" Value="8,4" />
+    <Setter Property="MinHeight" Value="34" />
+  </Style>
+  <Style Selector="ListBox.itens ListBoxItem:selected /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource PincelSelecao}" />
+  </Style>
+</Styles>

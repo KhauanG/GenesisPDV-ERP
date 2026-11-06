@@ -1,0 +1,146 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.Central.AbaCaixasView"
+             x:DataType="vm:AbaCaixasViewModel"
+             Focusable="True">
+  <!-- Aba 2 da Central do PDV, Caixas (bloco G6; README › decisão 71): o caixa aberto primeiro e os fechados deste terminal
+       dos últimos 30 dias, como foram impressos (PC-9: o calculado e a diferença só no ERP); detalhe pelo retrato, 2ª via
+       do relatório pelos bytes originais, vendas do caixa (F7) e o resumo do dia (F6). Tudo pelo teclado (o foco fica no
+       painel da lista; o * do numérico abre o detalhe e, no detalhe, ↑/↓, PgUp/PgDn e o 8/2/9/3 do numérico rolam, no
+       code-behind) e pelo mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <!-- ↑/↓ no code-behind: na lista escolhem, no detalhe rolam (os atalhos de tecla são lidos antes do túnel da tela). -->
+    <KeyBinding Gesture="Enter" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+    <KeyBinding Gesture="Ctrl+R" Command="{Binding ReimprimirCommand}" />
+    <KeyBinding Gesture="Ctrl+P" Command="{Binding ImprimirResumoCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding ResumoDoDiaCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding VerVendasCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8" IsVisible="{Binding !MostrandoDetalhe}">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <TextBlock Text="Como foram impressos: o calculado e a diferença de cada fechamento ficam no ERP (Fechamentos de caixa)."
+                   Classes="secundario" TextWrapping="Wrap" />
+      </StackPanel>
+      <!-- O painel recebe o foco (↑/↓, Enter, Ctrl+R e as teclas F); a lista é só para ver e clicar. -->
+      <Border Grid.Row="1" x:Name="PainelListaCaixasCentral" Focusable="True" c:Foco.Inicial="True" Margin="0,8,0,0"
+              AutomationProperties.Name="Caixas deste terminal">
+        <DockPanel>
+          <!-- Cabeçalho das colunas (as mesmas larguras da linha). -->
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="112,112,112,*,76,86,1.1*" Margin="12,0,12,2">
+            <TextBlock Grid.Column="0" x:Name="CabecalhoSituacaoCaixas" Text="Situação" Classes="rotulo" />
+            <TextBlock Grid.Column="1" Text="Abertura" Classes="rotulo" />
+            <TextBlock Grid.Column="2" Text="Fechamento" Classes="rotulo" />
+            <TextBlock Grid.Column="3" Text="Operador" Classes="rotulo" />
+            <TextBlock Grid.Column="4" Text="Vendas" Classes="rotulo" />
+            <TextBlock Grid.Column="5" Text="Contado" Classes="rotulo" HorizontalAlignment="Right" Margin="0,0,16,0" />
+            <TextBlock Grid.Column="6" Text="Envio ao ERP" Classes="rotulo" TextTrimming="CharacterEllipsis" />
+          </Grid>
+          <ListBox x:Name="ListaCaixasCentral" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" Focusable="False"
+                   c:Comandos.DuploClique="{Binding DetalharCommand}" AutomationProperties.Name="Caixas">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaCaixaCentralViewModel">
+                <Grid ColumnDefinitions="112,112,112,*,76,86,1.1*" AutomationProperties.Name="{Binding Leitura}">
+                  <TextBlock Grid.Column="0" Text="{Binding Situacao}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="1" Text="{Binding Abertura}" Classes="mono" />
+                  <TextBlock Grid.Column="2" Text="{Binding Fechamento}" Classes="mono" />
+                  <TextBlock Grid.Column="3" Text="{Binding Operador}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="4" Text="{Binding Vendas}" />
+                  <TextBlock Grid.Column="5" Text="{Binding Contado}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,16,0" />
+                  <StackPanel Grid.Column="6">
+                    <TextBlock Text="{Binding Envio}" Classes.erro="{Binding EnvioRecusado}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Selo}" Foreground="{DynamicResource PincelErro}" FontWeight="SemiBold" IsVisible="{Binding TemSelo}"
+                               TextWrapping="Wrap" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+      <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+        <TextBlock x:Name="TextoRodapeCaixas" Text="{Binding Rodape}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMaisAntigosCaixas" Text="{Binding AvisoMaisAntigos}" Classes="secundario" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMensagemCaixas" Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                   TextWrapping="Wrap" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroCaixas" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao" x:Name="BotaoDetalheCaixaCentral" Content="Enter  Detalhe" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoReimprimirCaixaCentral" Content="Ctrl+R  Reimprimir fechamento" Command="{Binding ReimprimirCommand}" />
+          <Button Classes="acao" x:Name="BotaoVendasCaixaCentral" Content="F7  Vendas do caixa" Command="{Binding VerVendasCommand}" />
+          <Button Classes="acao" x:Name="BotaoResumoCaixaCentral" Content="F6  Resumo do dia" Command="{Binding ResumoDoDiaCommand}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Detalhe (Enter ou o duplo clique): o retrato do fechamento, as sangrias e reforços e as canceladas depois. -->
+    <Border x:Name="PainelDetalheCaixaCentral" Classes="painel" Margin="16" Padding="20" Focusable="True" IsVisible="{Binding MostrandoDetalhe}">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="TextoTituloDetalheCaixa" Text="{Binding TituloDetalhe}" Classes="titulo" TextWrapping="Wrap" />
+        <ScrollViewer Grid.Row="1" x:Name="RolagemDetalheCaixaCentral" Margin="0,8,0,8">
+          <StackPanel Spacing="10">
+            <ItemsControl x:Name="ListaDetalheCaixaCentral" ItemsSource="{Binding LinhasDetalhe}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <SelectableTextBlock Text="{Binding}" Classes="mono" FontSize="14" TextWrapping="Wrap" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <!-- A 2ª via que acabou de sair (sem impressora, a única cópia). -->
+            <Border Classes="painel" Padding="12" IsVisible="{Binding TextoSegundaVia, Converter={x:Static ObjectConverters.IsNotNull}}">
+              <SelectableTextBlock x:Name="TextoSegundaViaCaixa" Text="{Binding TextoSegundaVia}" Classes="mono" FontSize="13" />
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Spacing="6">
+          <TextBlock Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao" x:Name="BotaoReimprimirDetalheCaixa" Content="Ctrl+R  Reimprimir fechamento" Command="{Binding ReimprimirCommand}" />
+            <Button Classes="acao" x:Name="BotaoVendasDetalheCaixa" Content="F7  Vendas do caixa" Command="{Binding VerVendasCommand}" />
+            <Button Classes="acao" Content="F6  Resumo do dia" Command="{Binding ResumoDoDiaCommand}" />
+            <Button Classes="acao" x:Name="BotaoVoltarDetalheCaixa" Content="Esc  Voltar à lista" Command="{Binding VoltarCommand}" />
+          </WrapPanel>
+          <TextBlock Text="{Binding TeclasDetalhe}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Resumo do dia (F6): o do F11 › 6, para o dia operacional do caixa escolhido; Ctrl+P imprime, Esc volta. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding MostrandoResumo}">
+      <Border x:Name="PainelResumoCaixaCentral" Classes="dialogo" Width="620" MaxHeight="640" Focusable="True"
+              HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <TextBlock Grid.Row="0" Text="{Binding TituloResumo}" Classes="titulo" />
+          <ScrollViewer Grid.Row="1" Margin="0,8,0,8">
+            <SelectableTextBlock x:Name="TextoResumoCaixa" Text="{Binding TextoResumo}" Classes="mono" FontSize="13" />
+          </ScrollViewer>
+          <StackPanel Grid.Row="2" Spacing="6">
+            <TextBlock Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                       IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <WrapPanel Classes="botoes">
+              <Button Classes="acao" x:Name="BotaoImprimirResumoCaixa" Content="Ctrl+P  Imprimir" Command="{Binding ImprimirResumoCommand}" />
+              <Button Classes="acao" x:Name="BotaoVoltarResumoCaixa" Content="Esc  Voltar" Command="{Binding VoltarCommand}" />
+            </WrapPanel>
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Border>
+
+    <!-- Reimpressão ou resumo sem a permissão: o supervisor libera na hora (31.3), sobre a aba. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

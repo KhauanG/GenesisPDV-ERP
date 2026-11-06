@@ -1,0 +1,14 @@
+{
+  "lote_id": "01a18791-61f9-7eb8-bc75-057891cbde75",
+  "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+  "enviado_em": "2026-10-29T17:40:12.005Z",
+  "eventos_pendentes_total": 3,
+  "eventos": [],
+  "declarar_lacuna": {
+    "de": 1048,
+    "ate": 1049,
+    "motivo": "banco_local_perdido",
+    "observacao": "Banco do caixa trocado depois da queda de energia; vendas das 10h não existem mais",
+    "autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "casos": [
+    {
+      "descricao": "corpo fora do contrato",
+      "status": 400,
+      "corpo": {
+        "erro": {
+          "codigo": "REQUISICAO_INVALIDA",
+          "mensagem": "Requisição inválida.",
+          "detalhes": {
+            "campos": {
+              "maquina.plataforma": ["Opção inválida"]
+            }
+          },
+          "requisicao_id": "01a1878f-bfb9-7958-8cd6-20c20ea2622b"
+        }
+      }
+    },
+    {
+      "descricao": "código de ativação errado",
+      "status": 422,
+      "corpo": {
+        "erro": {
+          "codigo": "CODIGO_INVALIDO",
+          "mensagem": "Código de ativação inválido.",
+          "detalhes": {},
+          "requisicao_id": "01a1878f-bfb9-7958-8cd6-20c20ea2622b"
+        }
+      }
+    },
+    {
+      "descricao": "terminal revogado",
+      "status": 401,
+      "corpo": {
+        "erro": {
+          "codigo": "TERMINAL_REVOGADO",
+          "mensagem": "Este terminal foi desativado no ERP.",
+          "detalhes": { "revogado_em": "2026-10-29T18:00:00.000Z" },
+          "requisicao_id": null
+        }
+      }
+    },
+    {
+      "descricao": "regressão de sequência com os resultados já processados do lote",
+      "status": 409,
+      "corpo": {
+        "erro": {
+          "codigo": "REGRESSAO_DETECTADA",
+          "mensagem": "Sequência já usada por outro evento: banco local restaurado ou copiado.",
+          "detalhes": {
+            "sequencia": 1042,
+            "proxima_sequencia_esperada": 1044,
+            "resultados": []
+          },
+          "requisicao_id": "01a18790-50e8-7da7-ab5c-f46780bacd64"
+        }
+      }
+    },
+    {
+      "descricao": "IP bloqueado por força bruta (com Retry-After)",
+      "status": 429,
+      "cabecalhos": { "Retry-After": "1800" },
+      "corpo": {
+        "erro": {
+          "codigo": "IP_BLOQUEADO",
+          "mensagem": "Muitas tentativas. Aguarde 30 minutos.",
+          "detalhes": {},
+          "requisicao_id": "01a1878f-bfb9-7958-8cd6-20c20ea2622b"
+        }
+      }
+    }
+  ]
+}

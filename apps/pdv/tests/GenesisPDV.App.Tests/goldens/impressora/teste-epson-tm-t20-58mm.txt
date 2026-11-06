@@ -1,0 +1,28 @@
+    ICE BEER HERMES - LOJA 1
+       TESTE DE IMPRESSÃO
+        04/11/2026 10:30
+--------------------------------
+Modelo: Epson TM-T20 (II/III/X)
+Conexão: Rede: 192.168.0.50:9100
+Papel: 58 mm, 32 colunas
+Página de código: CP860
+Corte: parcial, 4 linha(s) de
+avanço
+QR Code: nativo
+--------------------------------
+Acentos: ÁÉÍÓÚ ÇÃÕ âêô
+         áéíóú çãõ àü
+12345678901234567890123456789012
+Esquerda                 Direita
+TOTAL R$                1.234,56
+================================
+[QR Code]
+                
+ Régua numa linha só e acentos
+   certos: a impressora está
+            pronta.
+
+
+
+
+✂ - - - - - - - - - - - - - - - - - - - - - -

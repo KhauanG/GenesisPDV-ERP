@@ -1,0 +1,179 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.Central.AbaHistoricoUsoView"
+             x:DataType="vm:AbaHistoricoUsoViewModel"
+             Focusable="True">
+  <!-- Aba 6 da Central do PDV, Histórico de uso (bloco G10; README › decisão 74): quem fez o quê neste caixa, em frases,
+       com a marca de envio, e o resumo por operador (F6). Tudo pelo teclado (o foco fica no campo do texto; o + e o − do
+       numérico paginam e o * abre o detalhe, no code-behind) e pelo mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <!-- ↑/↓ e PgUp/PgDn no code-behind: na lista escolhem e paginam, no resumo escolhem a pessoa. -->
+    <KeyBinding Gesture="Enter" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+    <!-- O F3, o F4 e o F7 avançam; com Shift voltam um (como nas abas 1, 4 e 5). -->
+    <KeyBinding Gesture="F3" Command="{Binding ProximoPeriodoCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F3" Command="{Binding ProximoPeriodoCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F4" Command="{Binding ProximoGrupoCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F4" Command="{Binding ProximoGrupoCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding AlternarResumoCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding ProximoQuemCommand}" CommandParameter="proximo" />
+    <KeyBinding Gesture="Shift+F7" Command="{Binding ProximoQuemCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F8" Command="{Binding LimparFiltrosCommand}" />
+  </UserControl.KeyBindings>
+  <UserControl.Styles>
+    <!-- A cor da marca de envio nunca vem sozinha: a palavra fica ao lado (PDV 9.1). -->
+    <Style Selector="TextBlock.envio">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Foreground" Value="{DynamicResource PincelTextoSecundario}" />
+    </Style>
+    <Style Selector="TextBlock.envio.enviado">
+      <Setter Property="Foreground" Value="{DynamicResource PincelTotalTexto}" />
+    </Style>
+    <Style Selector="TextBlock.envio.aenviar">
+      <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="TextBlock.envio.recusado">
+      <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+    </Style>
+    <!-- A linha que a pessoa do filtro "Quem" só liberou com o PIN (decisão 78): a palavra, nunca só a cor. -->
+    <Style Selector="TextBlock.liberou">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+  </UserControl.Styles>
+  <Grid>
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,8,16,8" IsVisible="{Binding !MostrandoDetalhe}">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <TextBlock x:Name="TextoExplicacaoHistoricoUso" Text="{Binding Explicacao}" Classes="secundario" TextWrapping="Wrap" />
+      </StackPanel>
+      <!-- Filtros: o texto, o período (lista e resumo), o grupo e quem fez ou liberou (só na lista). -->
+      <Grid Grid.Row="1" ColumnDefinitions="2*,12,*,12,*,12,*" RowDefinitions="Auto,Auto" Margin="0,6,0,6">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="Procurar (o que aconteceu, motivo)" Classes="rotulo" IsVisible="{Binding !MostrandoResumo}" />
+        <TextBox Grid.Row="1" Grid.Column="0" x:Name="CampoFiltroHistoricoUso" Text="{Binding Texto}" c:Foco.Inicial="True"
+                 IsVisible="{Binding !MostrandoResumo}" AutomationProperties.Name="Procurar no histórico de uso" />
+        <TextBlock Grid.Row="0" Grid.Column="0" Grid.RowSpan="2" x:Name="TextoTituloResumoUso" Text="{Binding TituloResumo}" Classes="titulo"
+                   VerticalAlignment="Bottom" IsVisible="{Binding MostrandoResumo}" />
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="Período [F3]" Classes="rotulo" />
+        <ComboBox Grid.Row="1" Grid.Column="2" x:Name="ListaPeriodoHistoricoUso" DropDownClosed="AoFecharLista"
+                  ItemsSource="{x:Static vm:AbaHistoricoUsoViewModel.Periodos}" SelectedIndex="{Binding PeriodoIndice}"
+                  HorizontalAlignment="Stretch" AutomationProperties.Name="Período" />
+        <TextBlock Grid.Row="0" Grid.Column="4" Text="Grupo [F4]" Classes="rotulo" IsVisible="{Binding !MostrandoResumo}" />
+        <ComboBox Grid.Row="1" Grid.Column="4" x:Name="ListaGrupoHistoricoUso" DropDownClosed="AoFecharLista"
+                  ItemsSource="{x:Static vm:AbaHistoricoUsoViewModel.Grupos}" SelectedIndex="{Binding GrupoIndice}"
+                  HorizontalAlignment="Stretch" IsVisible="{Binding !MostrandoResumo}" AutomationProperties.Name="Grupo" />
+        <TextBlock Grid.Row="0" Grid.Column="6" Text="Quem [F7]" Classes="rotulo" IsVisible="{Binding !MostrandoResumo}" />
+        <ComboBox Grid.Row="1" Grid.Column="6" x:Name="ListaQuemHistoricoUso" DropDownClosed="AoFecharLista" ItemsSource="{Binding Quem}"
+                  SelectedIndex="{Binding QuemIndice}" HorizontalAlignment="Stretch" IsVisible="{Binding !MostrandoResumo}"
+                  AutomationProperties.Name="Quem fez ou liberou" />
+      </Grid>
+      <!-- A lista (quem fez o quê) -->
+      <DockPanel Grid.Row="2" IsVisible="{Binding !MostrandoResumo}">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="96,104,*,2*,92" Margin="12,0,12,2">
+          <TextBlock Grid.Column="0" Text="Quando" Classes="rotulo" />
+          <TextBlock Grid.Column="1" Text="Grupo" Classes="rotulo" />
+          <TextBlock Grid.Column="2" Text="Quem fez o quê" Classes="rotulo" />
+          <TextBlock Grid.Column="3" Text="Registro" Classes="rotulo" />
+          <TextBlock Grid.Column="4" Text="Nuvem" Classes="rotulo" />
+        </Grid>
+        <ListBox x:Name="ListaHistoricoUso" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" Focusable="False"
+                 c:Comandos.DuploClique="{Binding DetalharCommand}" AutomationProperties.Name="Histórico de uso">
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="vm:LinhaHistoricoUsoViewModel">
+              <Grid ColumnDefinitions="96,104,*,2*,92" AutomationProperties.Name="{Binding Leitura}">
+                <TextBlock Grid.Column="0" Text="{Binding Hora}" Classes="mono" />
+                <TextBlock Grid.Column="1" Text="{Binding Grupo}" TextTrimming="CharacterEllipsis" />
+                <DockPanel Grid.Column="2" Margin="0,0,8,0">
+                  <TextBlock DockPanel.Dock="Left" Text="{Binding Marca}" Classes="liberou" IsVisible="{Binding PorLiberacao}" />
+                  <TextBlock Text="{Binding Frase}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+                <TextBlock Grid.Column="3" Text="{Binding Detalhe}" Classes="secundario" TextTrimming="CharacterEllipsis" Margin="0,0,8,0" />
+                <TextBlock Grid.Column="4" Text="{Binding Envio}" Classes="envio" Classes.enviado="{Binding Enviado}"
+                           Classes.aenviar="{Binding AEnviar}" Classes.recusado="{Binding Recusado}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+      <!-- O resumo por operador (F6) -->
+      <ListBox Grid.Row="2" x:Name="ListaResumoUso" ItemsSource="{Binding Resumo}" SelectedItem="{Binding ResumoSelecionado}"
+               IsVisible="{Binding MostrandoResumo}" Focusable="True" c:Comandos.DuploClique="{Binding DetalharCommand}"
+               AutomationProperties.Name="Resumo por operador">
+        <ListBox.ItemTemplate>
+          <DataTemplate DataType="vm:LinhaResumoUsoViewModel">
+            <StackPanel Spacing="2" Margin="0,4" AutomationProperties.Name="{Binding Leitura}">
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <TextBlock Text="{Binding Nome}" FontWeight="Bold" />
+                <TextBlock Text="{Binding Atividade}" Classes="secundario" />
+              </StackPanel>
+              <TextBlock Text="{Binding Vendas}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Cancelamentos}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Descontos}" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding Gaveta}" TextWrapping="Wrap" />
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
+        <TextBlock x:Name="TextoRodapeHistoricoUso" Text="{Binding Rodape}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMensagemHistoricoUso" Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                   TextWrapping="Wrap" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroHistoricoUso" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes" IsVisible="{Binding !MostrandoResumo}">
+          <Button Classes="acao" x:Name="BotaoDetalheHistoricoUso" Content="Enter  Detalhe" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoPaginaAnteriorHistoricoUso" Content="PgUp  ◀ Mais novos" Command="{Binding PaginaAnteriorCommand}"
+                  IsEnabled="{Binding TemAnterior}" />
+          <Button Classes="acao" x:Name="BotaoProximaPaginaHistoricoUso" Content="PgDn  Mais antigos ▶" Command="{Binding ProximaPaginaCommand}"
+                  IsEnabled="{Binding TemProxima}" />
+          <Button Classes="acao" x:Name="BotaoPeriodoHistoricoUso" Content="F3  Período" Command="{Binding ProximoPeriodoCommand}" />
+          <Button Classes="acao" x:Name="BotaoGrupoHistoricoUso" Content="F4  Grupo" Command="{Binding ProximoGrupoCommand}" />
+          <Button Classes="acao" x:Name="BotaoQuemHistoricoUso" Content="F7  Quem" Command="{Binding ProximoQuemCommand}" />
+          <Button Classes="acao" x:Name="BotaoResumoHistoricoUso" Content="F6  Resumo por operador" Command="{Binding AlternarResumoCommand}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" x:Name="BotaoLimparFiltrosHistoricoUso" Content="F8  Limpar filtros" Command="{Binding LimparFiltrosCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+        <WrapPanel Classes="botoes" IsVisible="{Binding MostrandoResumo}">
+          <Button Classes="acao" x:Name="BotaoVerPessoaResumoUso" Content="Enter  O que a pessoa fez" Command="{Binding DetalharCommand}"
+                  CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoPeriodoResumoUso" Content="F3  Período" Command="{Binding ProximoPeriodoCommand}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" x:Name="BotaoVoltarListaResumoUso" Content="F6  Voltar à lista" Command="{Binding AlternarResumoCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" IsVisible="{Binding !MostrandoResumo}" />
+        <TextBlock Text="{Binding TeclasResumo}" Classes="secundario" TextWrapping="Wrap" FontSize="13" IsVisible="{Binding MostrandoResumo}" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Detalhe (Enter ou o duplo clique): a frase, o registro, o motivo e o antes/depois exibível, mascarados. -->
+    <Border x:Name="PainelDetalheHistoricoUso" Classes="painel" Margin="16" Padding="20" Focusable="True" IsVisible="{Binding MostrandoDetalhe}">
+      <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="TextoTituloDetalheHistoricoUso" Text="{Binding TituloDetalhe}" Classes="titulo" TextWrapping="Wrap" />
+        <ScrollViewer Grid.Row="1" Margin="0,8,0,8">
+          <ItemsControl x:Name="ListaDetalheHistoricoUso" ItemsSource="{Binding LinhasDetalhe}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <SelectableTextBlock Text="{Binding}" Classes="mono" FontSize="14" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+        <StackPanel Grid.Row="2" Spacing="6">
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao" x:Name="BotaoVoltarDetalheHistoricoUso" Content="Esc  Voltar à lista" Command="{Binding VoltarCommand}" />
+          </WrapPanel>
+          <TextBlock Text="{Binding TeclasDetalhe}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

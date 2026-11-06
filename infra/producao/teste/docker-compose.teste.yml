@@ -1,0 +1,61 @@
+# Override do teste local da stack de produção (testar-local.sh; README › Teste local). NUNCA usar na VPS.
+# - genesis-cloudsql-proxy vira um PostgreSQL 18 com o mesmo nome na rede interna: a API e as tarefas conectam em
+#   genesis-cloudsql-proxy:5432 como em produção. O usuário `genesis` é criado como no Cloud SQL (cloudsqlsuperuser):
+#   CREATEDB e CREATEROLE, sem SUPERUSER — as migrações e o provisionamento rodam com os mesmos privilégios.
+# - traefik-teste: um Traefik v3 (versão fixada na imagem) só neste teste, na rede "proxy" de teste, com o entrypoint
+#   `websecure` em 127.0.0.1:${TESTE_PORTA_HTTPS:-18443} e o certificado padrão (autoassinado) do Traefik. Os labels
+#   do docker-compose.yml de produção são usados sem mudança (o resolvedor letsencrypt não existe aqui: o Traefik
+#   avisa no log e serve com o certificado padrão).
+# - genesis-armazenamento-teste: um S3 local (RustFS, o mesmo do ambiente de desenvolvimento) no lugar do bucket do
+#   GCS, na rede interna: o genesis-backup envia os dumps para ele (mesma assinatura SigV4 do GCS) e a API lê o
+#   backups/estado.json para o /api/saude/detalhada (I1b).
+services:
+  genesis-cloudsql-proxy:
+    image: postgres:18-alpine
+    command: !override ['postgres', '-c', 'max_connections=100']
+    environment: !override
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${TESTE_SENHA_POSTGRES:?}
+      POSTGRES_DB: postgres
+      GENESIS_SENHA_TESTE: ${TESTE_SENHA_GENESIS:?}
+    volumes: !override
+      - ${TESTE_INITDB:?}:/docker-entrypoint-initdb.d:ro
+    tmpfs: ['/var/lib/postgresql:size=1g', '/var/run/postgresql', '/tmp']
+    healthcheck: !override
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres -h 127.0.0.1']
+      interval: 2s
+      timeout: 3s
+      start_period: 10s
+      retries: 30
+    # O entrypoint do postgres troca de usuário (root → postgres): precisa das capacidades padrão.
+    cap_drop: !reset []
+    mem_limit: !override 512m
+    memswap_limit: !override 512m
+
+  traefik-teste:
+    image: traefik:v3.7.10
+    container_name: genesis-traefik-teste
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --log.level=WARN
+    ports:
+      - '127.0.0.1:${TESTE_PORTA_HTTPS:-18443}:443'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [proxy]
+
+  genesis-armazenamento-teste:
+    image: rustfs/rustfs:1.0.4
+    container_name: genesis-armazenamento-teste
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: 'false'
+      RUSTFS_ACCESS_KEY: teste
+      RUSTFS_SECRET_KEY: ${TESTE_SENHA_ARMAZENAMENTO:?}
+    # O RustFS roda como o usuário rustfs (10001).
+    tmpfs: ['/data:size=512m,uid=10001,gid=10001']
+    networks: [interna]

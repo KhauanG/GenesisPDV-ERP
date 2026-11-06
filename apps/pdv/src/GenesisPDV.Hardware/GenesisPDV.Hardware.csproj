@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>GenesisPDV.Hardware</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- QR do PIX em imagem (GS v 0) nas impressoras sem QR nativo, e a porta serial/COM (implantação I4). -->
+    <PackageReference Include="QRCoder" />
+    <PackageReference Include="System.IO.Ports" />
+  </ItemGroup>
+</Project>

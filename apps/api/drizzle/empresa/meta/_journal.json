@@ -1,0 +1,181 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793326188296,
+      "tag": "0000_funcoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793326207994,
+      "tag": "0001_fundacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793326244715,
+      "tag": "0002_triggers_auditoria",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793333622215,
+      "tag": "0003_sincronizacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793364534601,
+      "tag": "0004_cadastros_fase1",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793370011185,
+      "tag": "0005_produtos_custo_combo",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793380027361,
+      "tag": "0006_produtos_custo_medio_historico",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793385856686,
+      "tag": "0007_acerto_definir_negativo",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793414939853,
+      "tag": "0008_toque_versao",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793419158477,
+      "tag": "0009_relevancia_inicial_motivos_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793450450025,
+      "tag": "0010_eventos_recebidos_envelope",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793454170583,
+      "tag": "0011_fn_versao_colunas_isentas",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793456906347,
+      "tag": "0012_vendas_caixa",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793475544818,
+      "tag": "0013_movimentos_compensacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793490286478,
+      "tag": "0014_formas_pagamento_lojas",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793715105701,
+      "tag": "0015_lojas_treino",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793793603157,
+      "tag": "0016_movimentos_seq_a",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793793615456,
+      "tag": "0017_movimentos_seq_b",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793806945873,
+      "tag": "0018_compensacao_por_definir",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793809358876,
+      "tag": "0019_usuarios_estoques_virada",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793814508533,
+      "tag": "0020_lotes_motor",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793825964425,
+      "tag": "0021_acerto_mudanca_tipo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793849109878,
+      "tag": "0022_produtos_fornecedores_custo",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793853029060,
+      "tag": "0023_recebimentos",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793872054386,
+      "tag": "0024_notas_entrada",
+      "breakpoints": true
+    }
+  ]
+}

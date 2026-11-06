@@ -1,0 +1,98 @@
+/* Página de download do PDV (index.html). Arquivo próprio: a CSP do download não aceita estilo inline. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  background: #f4f6f8;
+  color: #1d2733;
+  font-family: system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+main {
+  max-width: 44rem;
+  margin: 2rem auto;
+  padding: 1.5rem 2rem 2rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+h2 {
+  margin-top: 2rem;
+  font-size: 1.2rem;
+}
+
+.subtitulo {
+  margin-top: 0.25rem;
+  color: #556270;
+}
+
+.versao {
+  font-size: 1.15rem;
+}
+
+.botao {
+  display: inline-block;
+  padding: 0.8rem 1.6rem;
+  background: #1864ab;
+  color: #fff;
+  border-radius: 6px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.botao:hover,
+.botao:focus-visible {
+  background: #134f88;
+}
+
+.detalhe {
+  color: #3d4a57;
+  font-size: 0.95rem;
+}
+
+.aviso {
+  padding: 0.75rem 1rem;
+  background: #fff4e6;
+  border-left: 4px solid #e8590c;
+}
+
+code {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.9rem;
+}
+
+.hash {
+  word-break: break-all;
+}
+
+pre {
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+  background: #f1f3f5;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+li {
+  margin-bottom: 0.75rem;
+}
+
+@media (max-width: 600px) {
+  main {
+    margin: 0;
+    padding: 1rem;
+    border-radius: 0;
+  }
+}

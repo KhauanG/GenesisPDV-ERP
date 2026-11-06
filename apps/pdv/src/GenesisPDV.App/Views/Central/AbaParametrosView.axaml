@@ -1,0 +1,87 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:d="using:GenesisPDV.App.Servicos.Diagnostico"
+             x:Class="GenesisPDV.App.Views.Central.AbaParametrosView"
+             x:DataType="vm:AbaParametrosViewModel"
+             Focusable="True">
+  <!-- Aba 7 da Central do PDV, Parâmetros (bloco G11; README › decisão 75): os do caixa (editáveis, F2) e as regras da
+       loja (só leitura, definidas no ERP). Toda tecla também é botão (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="F2" Command="{Binding SalvarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding TestarPastaCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="*,Auto">
+      <ScrollViewer Grid.Row="0">
+        <StackPanel Spacing="10" Margin="16,8,16,8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <Border Classes="painel" Padding="16">
+            <StackPanel Spacing="6">
+              <TextBlock Text="Do caixa (só deste computador)" Classes="titulo" FontSize="18" />
+              <TextBlock Text="Bloqueio da tela por inatividade (minutos; 0 = desligado)" Classes="rotulo" />
+              <TextBox x:Name="CampoBloqueioMinutos" Text="{Binding BloqueioMinutos}" MaxLength="3" Width="140" HorizontalAlignment="Left"
+                       AutomationProperties.Name="Minutos sem uso até bloquear a tela" />
+              <TextBlock Text="{Binding AjudaBloqueio}" Classes="secundario" TextWrapping="Wrap" />
+              <TextBlock Text="Tema da tela" Classes="rotulo" Margin="0,6,0,0" />
+              <ComboBox x:Name="ListaTemaParametros" ItemsSource="{x:Static vm:AbaParametrosViewModel.Temas}" SelectedIndex="{Binding TemaIndice}"
+                        Width="260" HorizontalAlignment="Left" AutomationProperties.Name="Tema da tela" />
+              <TextBlock Text="Também troca na venda com Ctrl+Alt+T, sem PIN." Classes="secundario" TextWrapping="Wrap" />
+              <TextBlock Text="Pasta secundária do backup (pendrive, outra pasta desta máquina ou da rede; vazia = sem cópia)" Classes="rotulo" Margin="0,6,0,0" />
+              <TextBox x:Name="CampoPastaSecundaria" Text="{Binding PastaSecundaria}" AutomationProperties.Name="Pasta secundária do backup" />
+              <TextBlock x:Name="TextoAvisoPasta" Text="{Binding AvisoPasta}" TextWrapping="Wrap" Foreground="{DynamicResource PincelAviso}" />
+              <TextBlock x:Name="TextoPermissaoParametros" Text="{Binding PermissaoTexto}" Classes="secundario" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <TextBlock x:Name="TextoAndamentoParametros" Text="{Binding Andamento}" Classes="secundario" TextWrapping="Wrap"
+                     IsVisible="{Binding Andamento, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoMensagemParametros" Text="{Binding Mensagem}" TextWrapping="Wrap" FontWeight="SemiBold"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroParametros" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <Border Classes="painel" Padding="16">
+            <StackPanel Spacing="6">
+              <TextBlock Text="Da loja (definido no ERP; aqui só se consulta)" Classes="titulo" FontSize="18" />
+              <TextBlock x:Name="TextoUltimoPull" Text="{Binding UltimoPullTexto}" Classes="secundario" TextWrapping="Wrap" />
+              <ItemsControl x:Name="ListaRegrasLoja" ItemsSource="{Binding Regras}" AutomationProperties.Name="Regras da loja">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate DataType="d:RegraLojaExibida">
+                    <Grid ColumnDefinitions="*,200,110" Margin="0,4">
+                      <StackPanel Grid.Column="0" Spacing="1">
+                        <TextBlock Text="{Binding Rotulo}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding OndeMudar}" Classes="secundario" FontSize="12" TextWrapping="Wrap" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="1" Spacing="1" Margin="8,0">
+                        <TextBlock Text="{Binding Valor}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Origem}" Classes="secundario" FontSize="12" TextWrapping="Wrap" />
+                      </StackPanel>
+                      <Border Grid.Column="2" Background="{DynamicResource PincelPainelAlto}" CornerRadius="4" Padding="6,2"
+                              VerticalAlignment="Top" HorizontalAlignment="Right">
+                        <TextBlock Text="🔒 definido no ERP" FontSize="12" />
+                      </Border>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+      <Border Grid.Row="1" Classes="barra" Padding="12,4">
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao accent" x:Name="BotaoSalvarParametros" Content="F2  Salvar" Command="{Binding SalvarCommand}" />
+          <Button Classes="acao" x:Name="BotaoTestarPasta" Content="F6  Testar pasta" Command="{Binding TestarPastaCommand}" />
+          <Button Classes="acao" x:Name="BotaoAtualizarParametros" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+      </Border>
+    </Grid>
+
+    <!-- Gravar sem a permissão: o supervisor libera na hora (31.3), sobre a aba. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

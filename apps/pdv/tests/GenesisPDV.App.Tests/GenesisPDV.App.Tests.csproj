@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Avalonia.Skia" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GenesisPDV.App\GenesisPDV.App.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- API falsa do sync e as fixtures do contrato (as mesmas do GenesisPDV.Sync.Tests). -->
+    <Compile Include="..\GenesisPDV.Sync.Tests\ApiFalsa.cs" Link="ApiFalsa.cs" />
+    <Compile Include="..\GenesisPDV.Sync.Tests\EciesApi.cs" Link="EciesApi.cs" />
+    <None Include="..\..\..\..\packages\shared\testes\sync\*.json" Link="fixtures\sync\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

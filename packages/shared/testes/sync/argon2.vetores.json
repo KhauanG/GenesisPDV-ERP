@@ -1,0 +1,98 @@
+{
+  "descricao": "Hashes argon2id gerados pela API (node-argon2, src/seguranca/senhas.ts) para o login offline do PDV (SYNC 4.2). Gerados uma vez; o Vitest da API e o LoginOfflineTests do PDV conferem os mesmos casos.",
+  "casos": [
+    {
+      "descricao": "PIN de 6 dígitos (gerarHashPin, parâmetros da SYNC 4.2)",
+      "senha": "482913",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$YQcyvmqqnwU3ZOr6LnuZtQ$8mx/XGK+AyS4/bbp79sLoD9BGsF3Um4bCstFMl8Jeu0",
+      "valido": true
+    },
+    {
+      "descricao": "PIN de 6 dígitos (gerarHashPin, parâmetros da SYNC 4.2), PIN errado",
+      "senha": "482914",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$YQcyvmqqnwU3ZOr6LnuZtQ$8mx/XGK+AyS4/bbp79sLoD9BGsF3Um4bCstFMl8Jeu0",
+      "valido": false,
+      "motivo": "senha_incorreta"
+    },
+    {
+      "descricao": "PIN de 8 dígitos (gerarHashPin)",
+      "senha": "73950264",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$VHpPwpCtBMuoOdXszlJLkw$EIO7p86QItk819bwnNXrB/qdxV8os7FyoTfmKrITeJE",
+      "valido": true
+    },
+    {
+      "descricao": "PIN de 8 dígitos (gerarHashPin), PIN errado",
+      "senha": "73950265",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$VHpPwpCtBMuoOdXszlJLkw$EIO7p86QItk819bwnNXrB/qdxV8os7FyoTfmKrITeJE",
+      "valido": false,
+      "motivo": "senha_incorreta"
+    },
+    {
+      "descricao": "PIN curto de 4 dígitos (pdv.permite_pin_curto)",
+      "senha": "5821",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$prTbuRXhEyD+qVbsRqPLYw$mVt26ZzoV3FgSIM6QN//hXcSZrvNpw2AtjEErnp+0nw",
+      "valido": true
+    },
+    {
+      "descricao": "PIN curto de 4 dígitos (pdv.permite_pin_curto), PIN errado",
+      "senha": "5822",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=1$prTbuRXhEyD+qVbsRqPLYw$mVt26ZzoV3FgSIM6QN//hXcSZrvNpw2AtjEErnp+0nw",
+      "valido": false,
+      "motivo": "senha_incorreta"
+    },
+    {
+      "descricao": "senha da forma/ERP (gerarHashSenha: m=19456, dentro dos limites)",
+      "senha": "Liberacao#2026",
+      "hash": "$argon2id$v=19$m=19456,p=1,t=3$q0QgsHlTBYabeRBIzuzpqQ$D4KC82uiD1Q4Tyr2iPcTcZpv/q4LkG7Wvyt2228Ybgw",
+      "valido": true
+    },
+    {
+      "descricao": "senha da forma/ERP (gerarHashSenha: m=19456, dentro dos limites), PIN errado",
+      "senha": "Liberacao#2027",
+      "hash": "$argon2id$v=19$m=19456,p=1,t=3$q0QgsHlTBYabeRBIzuzpqQ$D4KC82uiD1Q4Tyr2iPcTcZpv/q4LkG7Wvyt2228Ybgw",
+      "valido": false,
+      "motivo": "senha_incorreta"
+    },
+    {
+      "descricao": "saída do node-argon2 sem reordenar os parâmetros",
+      "senha": "120934",
+      "hash": "$argon2id$v=19$m=65536,p=1,t=3$CBCCR+HpsFOhZXtQP1Rlog$JW2wC3Qfq0ZD+nTtDeFEjm4PegxX2UiygjAW75p1xqA",
+      "valido": true
+    },
+    {
+      "descricao": "saída do node-argon2 sem reordenar os parâmetros, PIN errado",
+      "senha": "120935",
+      "hash": "$argon2id$v=19$m=65536,p=1,t=3$CBCCR+HpsFOhZXtQP1Rlog$JW2wC3Qfq0ZD+nTtDeFEjm4PegxX2UiygjAW75p1xqA",
+      "valido": false,
+      "motivo": "senha_incorreta"
+    },
+    {
+      "descricao": "memória abaixo do limite (m=8192): fora dos limites",
+      "senha": "482913",
+      "hash": "$argon2id$v=19$m=8192,p=1,t=3$SyklnFQ7jIG8DX7TKL216A$REpcreKHwvKivS7joU7QaeZXRZCIda7Fvhs+uQohH/c",
+      "valido": false,
+      "motivo": "fora_dos_limites"
+    },
+    {
+      "descricao": "tempo acima do limite (t=11): fora dos limites",
+      "senha": "482913",
+      "hash": "$argon2id$v=19$m=19456,p=1,t=11$OisCAIE5Pd5wvgEZ9QxrSQ$h2w6hkFoqcta/Ag/mpEBi61yO5Ek2Eo3ANRqjso4oo0",
+      "valido": false,
+      "motivo": "fora_dos_limites"
+    },
+    {
+      "descricao": "hash de 16 bytes: fora dos limites",
+      "senha": "482913",
+      "hash": "$argon2id$v=19$m=19456,p=1,t=3$VVrSbi/UfrgAaXoIbq/8TA$kxImOLMfwFUbXnVJEaMGdw",
+      "valido": false,
+      "motivo": "fora_dos_limites"
+    },
+    {
+      "descricao": "argon2i (não id): fora dos limites",
+      "senha": "482913",
+      "hash": "$argon2i$v=19$m=19456,p=1,t=3$GiQm+MlgLp7BFguFLAFpLw$1Kd/9sbqNeYY3lyUSSjJVYFA+wLqkXG89Vkho/X4eT4",
+      "valido": false,
+      "motivo": "fora_dos_limites"
+    }
+  ]
+}

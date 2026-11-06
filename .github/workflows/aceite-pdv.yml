@@ -1,0 +1,137 @@
+# Aceite da Fase 1C (bloco C13; crítica da 1C, itens 6 e 24): as rodadas longas que são condição de merge do PR 1C-1,
+# com o resultado anexado como artefato. Disparo manual (Actions › Aceite PDV › Run workflow), sobre o branch do PR,
+# ou pela etiqueta `aceite-pdv` no PR (o workflow_dispatch só existe depois que este arquivo chega ao branch padrão;
+# antes do merge do PR 1C-1, a etiqueta é o único jeito de rodar). Sem inputs (etiqueta), valem 240 min e 200 vendas.
+#   - Carga: 4 terminais reconectando juntos com o ERP gravando (apps/api/test/integracao/carga-terminais.test.ts),
+#     200 vendas de 10 itens por terminal → carga.json (p95 da trava 7300001, tempos do ERP, contagens).
+#   - PDV 30.7: o e2e do PDV com as 200 vendas offline espalhadas pelas 4 h do critério → pdv-30-7.json.
+# O CI comum (ci.yml) roda os dois em tamanho curto em todo PR.
+name: Aceite PDV
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      minutos_30_7:
+        description: Minutos offline do PDV 30.7 (240 = as 4 h do critério)
+        default: '240'
+      vendas_por_terminal:
+        description: Vendas por terminal na carga
+        default: '200'
+
+permissions:
+  contents: read
+
+jobs:
+  carga:
+    name: Carga (4 terminais + ERP)
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'aceite-pdv'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: genesis
+          POSTGRES_PASSWORD: genesis_dev
+          POSTGRES_DB: genesis_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genesis -d genesis_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://genesis:genesis_dev@localhost:5432/genesis_control
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Dependências
+        run: pnpm install --frozen-lockfile
+
+      # Sozinho no PostgreSQL do runner: vale a meta de 50 ms da SYNC 8.3 (sem o afrouxamento do ci.yml).
+      - name: Carga
+        env:
+          CARGA_VENDAS_POR_TERMINAL: ${{ inputs.vendas_por_terminal || '200' }}
+          RELATORIO_CARGA: ${{ runner.temp }}/relatorios/carga.json
+        run: |
+          mkdir -p "$RUNNER_TEMP/relatorios"
+          pnpm --filter api exec vitest run -c vitest.integracao.config.ts test/integracao/carga-terminais.test.ts
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: aceite-carga
+          path: ${{ runner.temp }}/relatorios
+          if-no-files-found: error
+          retention-days: 90
+
+  pdv-30-7:
+    name: PDV 30.7 (${{ inputs.minutos_30_7 || '240' }} min offline)
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'aceite-pdv'
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: genesis
+          POSTGRES_PASSWORD: genesis_dev
+          POSTGRES_DB: genesis_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genesis -d genesis_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://genesis:genesis_dev@localhost:5432/genesis_control
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: apps/pdv/global.json
+
+      - name: Dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore e build do e2e do PDV
+        working-directory: apps/pdv
+        run: |
+          dotnet restore GenesisPDV.slnx --locked-mode
+          dotnet build tests/GenesisPDV.E2E.Tests --no-restore -c Release
+
+      - name: E2E com o PDV 30.7 longo
+        env:
+          E2E_LOG_API: ${{ runner.temp }}/e2e-api.log
+          GENESISPDV_CAPTURAS: ${{ runner.temp }}/capturas
+          GENESIS_E2E_RELATORIOS: ${{ runner.temp }}/relatorios
+          GENESIS_E2E_30_7_MINUTOS: ${{ inputs.minutos_30_7 || '240' }}
+        run: apps/api/test/e2e-pdv/rodar.sh -c Release --no-build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: aceite-pdv-30-7
+          path: |
+            ${{ runner.temp }}/relatorios
+            ${{ runner.temp }}/e2e-api.log
+            ${{ runner.temp }}/capturas
+          if-no-files-found: error
+          retention-days: 90

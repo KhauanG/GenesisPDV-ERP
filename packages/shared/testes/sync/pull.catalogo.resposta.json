@@ -1,0 +1,56 @@
+{
+  "fluxo": "catalogo",
+  "desde": 1880000,
+  "novo_cursor": 1880412,
+  "tem_mais": false,
+  "cursor_teto": 1880412,
+  "agora_servidor": "2026-10-29T17:40:01.120Z",
+  "alteracoes": [
+    {
+      "tabela": "produtos",
+      "versao": 1880101,
+      "linha": {
+        "id": "01a18760-0b0e-7c1a-9a51-0d9c2f1b7e01",
+        "criado_em": "2026-10-01T12:00:00.000Z",
+        "atualizado_em": "2026-10-29T17:39:58.311Z",
+        "excluido_em": null,
+        "versao": 1880101,
+        "codigo": 1045,
+        "nome": "CERVEJA BRAHMA LATA 350ML",
+        "tipo": "simples",
+        "ativo": true,
+        "ncm": "22030000",
+        "preco_venda": "4.9900",
+        "preco_atacado": "4.4900",
+        "qtd_minima_atacado": "12.000",
+        "controla_estoque": true,
+        "vasilhame_quantidade": null
+      }
+    },
+    {
+      "tabela": "produtos_lojas",
+      "versao": 1880102,
+      "linha": {
+        "id": "01a18760-1c2d-7e3f-8a9b-0c1d2e3f4a5b",
+        "produto_id": "01a18760-0b0e-7c1a-9a51-0d9c2f1b7e01",
+        "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+        "preco_venda": "4.7900",
+        "excluido_em": null,
+        "versao": 1880102
+      }
+    },
+    {
+      "tabela": "produtos_codigos_barras",
+      "versao": 1880410,
+      "linha": {
+        "id": "01a18760-2a3b-7c4d-9e5f-6a7b8c9d0e1f",
+        "produto_id": "01a18760-0b0e-7c1a-9a51-0d9c2f1b7e01",
+        "codigo": "7891149103102",
+        "tipo": "gtin",
+        "principal": false,
+        "excluido_em": "2026-10-29T17:39:59.004Z",
+        "versao": 1880410
+      }
+    }
+  ]
+}

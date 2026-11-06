@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GenesisPDV · Download</title>
+    <!-- Sem estilo nem script inline (CSP do download, genesis.conf): estilo.css e pagina.js ao lado. A pagina.js lê
+         /pdv/atual.json (publicado pela Implantação a partir do último GitHub Release do PDV; README de
+         infra/producao › Página de download do PDV) e mostra o bloco certo. -->
+    <link rel="stylesheet" href="/estilo.css" />
+    <script src="/pagina.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>GenesisPDV</h1>
+      <p class="subtitulo">Instalador do caixa (PDV) para Windows 10 e 11, 64 bits</p>
+
+      <p id="carregando">Procurando a versão mais recente…</p>
+
+      <noscript>
+        <p class="aviso">
+          Esta página precisa do JavaScript ligado para mostrar o instalador. Ligue-o no navegador ou peça o
+          link ao suporte.
+        </p>
+      </noscript>
+
+      <section id="nao-publicado" hidden>
+        <p>O instalador do caixa ainda não foi publicado aqui.</p>
+      </section>
+
+      <section id="erro" hidden>
+        <p class="aviso">
+          Não foi possível consultar a versão publicada agora. Confira a internet e recarregue a página (F5).
+        </p>
+      </section>
+
+      <section id="publicado" hidden>
+        <p class="versao">Versão <strong id="versao"></strong> <span id="data"></span></p>
+        <p>
+          <a id="baixar" class="botao" href="#">Baixar o instalador</a>
+        </p>
+        <p class="detalhe">
+          <span id="arquivo"></span> · <span id="tamanho"></span> ·
+          <a id="link-sha256" href="#">arquivo .sha256</a>
+        </p>
+        <p class="detalhe">SHA-256: <code id="sha256" class="hash"></code></p>
+
+        <h2>Como instalar na loja</h2>
+        <ol>
+          <li>
+            <strong>Baixe</strong> no próprio computador do caixa (Windows 10 22H2 ou Windows 11, 64 bits),
+            entrando no Windows com a <strong>conta do caixa</strong> (a conta comum da loja, a mesma de todo
+            dia). O instalador ainda não é assinado: se o navegador avisar que o arquivo “não é baixado com
+            frequência” e o arquivo não aparecer na pasta Downloads, clique em <strong>…</strong> (ao lado do
+            aviso) › <strong>Manter</strong> › <strong>Mostrar mais</strong> ›
+            <strong>Manter assim mesmo</strong> (no Chrome, <strong>Manter</strong> ou
+            <strong>Baixar mesmo assim</strong>).
+          </li>
+          <li>
+            <strong>Confira o arquivo</strong> (opcional, garante que veio inteiro e é o publicado): abra o
+            PowerShell e rode o comando abaixo (o arquivo na pasta Downloads); tem de aparecer
+            <code>True</code>.
+            <pre><code id="comando-conferir"></code></pre>
+          </li>
+          <li>
+            <strong>Instale</strong> com dois cliques no arquivo e <strong>Sim</strong> no aviso do Windows
+            (como a conta do caixa não é administradora, o Windows pede o usuário e a senha de um
+            administrador do computador: digite-os ou chame quem tem). Se aparecer “O Windows protegeu o
+            computador”, clique em <strong>Mais informações › Executar assim mesmo</strong>. Se o Windows 11
+            disser que o “Controle Inteligente de Aplicativos” bloqueou o aplicativo, chame o suporte.
+          </li>
+          <li>
+            <strong>Ative.</strong> No ERP, em
+            <strong>Cadastros › PDVs / Terminais › Gerar código de ativação</strong>, escolha a loja e o
+            caixa. Na primeira abertura, o PDV pede o código da empresa e o código de ativação: digite os
+            dois, confira a loja e o caixa e espere a carga inicial terminar.
+          </li>
+        </ol>
+        <p class="detalhe">
+          <strong>Atualizar:</strong> feche o PDV pelo próprio programa (Alt+F4, sem venda em andamento) e
+          instale a versão nova por cima; banco, backups e ativação continuam. Nunca instale uma versão mais
+          antiga por cima.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,73 @@
+{
+  "vendas": {
+    "id": "01a18787-4a31-7ced-b171-0434134c6c92",
+    "status": "cancelada",
+    "status_fiscal": "nao_aplicavel",
+    "cancelada_em": "2026-10-29T17:52:11.090Z",
+    "cancelada_por_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "cancelamento_autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c",
+    "motivo_cancelamento": "Cliente desistiu da compra apos o pagamento",
+    "cancelamento_origem": "pdv"
+  },
+  "sessao_caixa_cancelamento_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+  "pagamentos_venda": [
+    {
+      "id": "01a18788-67c3-78a7-bfd0-f9d5a6f2f7b8",
+      "status": "estornado",
+      "estorno": "dinheiro_devolvido"
+    },
+    {
+      "id": "01a18788-f3a1-7c5e-8d24-6b7a8c9d0e12",
+      "status": "estornado",
+      "estorno": "pos_cancelado_na_maquininha"
+    },
+    {
+      "id": "01a18789-2b4c-7d6e-9f80-a1b2c3d4e5f6",
+      "status": "estornado",
+      "estorno": "devolvido_em_dinheiro"
+    }
+  ],
+  "movimentos_caixa": [
+    {
+      "id": "01a18793-b480-79e8-8a2c-827e98326856",
+      "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+      "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+      "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+      "numero_caixa": 2,
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "tipo": "estorno_venda",
+      "forma_pagamento_id": "01a1875e-a2ca-7299-9d65-a441d58842de",
+      "valor": "40.00",
+      "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "quem_retira_usuario_id": null,
+      "quem_retira_nome": null,
+      "observacao": "Estorno da venda L01-C02-000131",
+      "inf_adicionais": null,
+      "ocorrido_em": "2026-10-29T17:52:11.090Z",
+      "autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c",
+      "troca_id": null,
+      "cancelado": false
+    },
+    {
+      "id": "01a18793-c5d6-7e8f-9a0b-1c2d3e4f5a60",
+      "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+      "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+      "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+      "numero_caixa": 2,
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "tipo": "estorno_venda",
+      "forma_pagamento_id": "01a1875f-c261-7aef-afc8-9849b3aa7efe",
+      "valor": "40.00",
+      "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "quem_retira_usuario_id": null,
+      "quem_retira_nome": null,
+      "observacao": "Estorno da venda L01-C02-000131",
+      "inf_adicionais": null,
+      "ocorrido_em": "2026-10-29T17:52:11.090Z",
+      "autorizado_por_id": "01a18755-09d1-76b6-8b81-48f6b38a088c",
+      "troca_id": null,
+      "cancelado": false
+    }
+  ],
+  "transacoes_tef": []
+}

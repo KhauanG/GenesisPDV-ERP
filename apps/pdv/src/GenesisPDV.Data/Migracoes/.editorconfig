@@ -1,0 +1,4 @@
+# Código gerado pelo dotnet-ef (com BOM); não é reformatado.
+[*.cs]
+generated_code = true
+charset = utf-8-bom

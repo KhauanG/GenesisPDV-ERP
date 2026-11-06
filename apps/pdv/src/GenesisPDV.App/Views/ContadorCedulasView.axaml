@@ -1,0 +1,35 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.ContadorCedulasView"
+             x:DataType="vm:ContadorCedulasViewModel">
+  <!-- "Contar cédulas" (PDV 8.2): Tab anda entre as cédulas, Enter soma e preenche o campo. -->
+  <Border Classes="dialogo" Width="460" x:Name="DialogoCedulas">
+    <Border.KeyBindings>
+      <KeyBinding Gesture="Enter" Command="{Binding AplicarCommand}" />
+      <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    </Border.KeyBindings>
+    <StackPanel Spacing="6">
+      <TextBlock Text="Contar cédulas e moedas" Classes="titulo" />
+      <ItemsControl ItemsSource="{Binding Linhas}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="vm:LinhaCedulaViewModel">
+            <Grid ColumnDefinitions="140,*" Margin="0,2">
+              <TextBlock Text="{Binding Rotulo}" VerticalAlignment="Center" Classes="mono" />
+              <TextBox Grid.Column="1" Text="{Binding Quantidade}" AutomationProperties.Name="{Binding Rotulo}" />
+            </Grid>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <TextBlock x:Name="TextoTotalCedulas" Text="{Binding TotalTexto, StringFormat='Total: R$ {0}'}" FontSize="18" FontWeight="Bold" />
+      <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Text="[Enter] Usar o total   [Esc] Voltar" Classes="tecla" />
+      <!-- Clicáveis para o caixa só com teclado numérico e mouse (decisão 65). -->
+      <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+        <Button Classes="acao" x:Name="BotaoUsarTotalCedulas" Content="Usar o total [Enter]" Command="{Binding AplicarCommand}" />
+        <Button Classes="acao" x:Name="BotaoVoltarCedulas" Content="Voltar [Esc]" Command="{Binding VoltarCommand}" />
+      </WrapPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

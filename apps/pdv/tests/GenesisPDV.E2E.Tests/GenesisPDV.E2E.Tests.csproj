@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    E2E PDV ↔ API (Fase 1B, B5): o PDV de verdade (Avalonia headless) contra a API local de apps/api/test/e2e-pdv/servidor.ts.
+    Só roda com GENESIS_E2E_API definida (job e2e-sync do CI); sem ela os testes são pulados.
+  -->
+  <PropertyGroup>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
+    <PackageReference Include="Avalonia.Skia" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GenesisPDV.App\GenesisPDV.App.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- O mesmo PDV headless dos testes de tela (janela, teclado simulado, espera por polling). -->
+    <Compile Include="..\GenesisPDV.App.Tests\AmbienteUi.cs" Link="AmbienteUi.cs" />
+    <Compile Include="..\GenesisPDV.App.Tests\AppTeste.cs" Link="AppTeste.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Exemplo versionado do estado: o servidor.ts confere contra ele o que grava; o EstadoE2ETests lê o mesmo arquivo. -->
+    <None Include="..\..\..\api\test\e2e-pdv\estado.exemplo.json" Link="estado.exemplo.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

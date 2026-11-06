@@ -1,0 +1,127 @@
+# Decisões do dono
+
+Fonte da verdade das respostas do dono (Fase 2: perguntas F2-Q1..F2-Q14 do `fase2-plano.md`; Central do PDV: PC-1..PC-13 do `pdv-central-plano.md`; e as decisões D do roadmap §16). Enquanto uma pergunta não tiver
+resposta aqui, vale a RECOMENDAÇÃO do plano (configurável), registrada no README como "padrão até a confirmação do dono".
+
+## Respondidas
+
+Respostas do dono em 04/11/2026 (as demais seguem a recomendação do plano, "padrão até a confirmação do dono"):
+
+- **F2-Q1 (D43) — RESPONDIDA (04/11/2026): complementos SIM, variações NÃO.** A Petiscaria 2 vende com adicionais
+  escolhidos na hora (ex.: porção + cheddar/bacon; caipirinha escolhendo fruta e bebida). Logo:
+  - **Complementos entram na Fase 2:** as tabelas de complementos no F2-B45 e o F2-B51 (cadastro de grupos/itens no ERP,
+    com preço adicional e baixa de estoque; liga `produtos.complementos_habilitados`). A **venda com complementos no caixa
+    vai para a Fase 3** (PDV-2), não para o backlog/Fase 8: registrar no roadmap.
+  - **Variações continuam travadas** (opção (a) para variações): F2-B48–B50 vão para o backlog; `produtos.variacoes_habilitadas`
+    = false. F2-Q2 (D44) segue a recomendação (recusar no caixa o EAN de variação).
+- **F2-Q3 (D6) — RESPONDIDA: (b).** O CD TEM CNPJ próprio, e cada loja tem o seu CNPJ. O CD é cadastrado como loja do
+  tipo "depósito" com o CNPJ dele; a NF-e de compra pode vir com o CNPJ do CD ou de qualquer loja, e o estoque de
+  destino é escolhido entre os permitidos. Avisado ao dono: transferência física entre CNPJs diferentes exige NF-e de
+  transferência, que o Genesis só emitirá na fase fiscal — até lá, o documento fiscal da transferência sai por fora
+  (Nuvem3/contador) e o Genesis registra o movimento de estoque (F2-B22..B27 devem deixar um campo para a chave/número
+  da NF-e de transferência emitida por fora, opcional).
+- **F2-Q5 (D46) — RESPONDIDA: (c).** Saldo inicial pela exportação de saldos do Nuvem3 na virada; depois contagens
+  ("vamos auditando") com a loja aberta.
+- **F2-Q8 (D49) — RESPONDIDA: (a) + preço de custo maleável.** Entram todos (ICMS-ST, FCP-ST, IPI, frete, seguro,
+  outras despesas) e os créditos não são descontados. ALÉM disso, o dono quer o **"Preço de custo" cadastrável à mão**
+  (já existe `produtos.preco_custo`) e o **custo do produto por fornecedor** editável: em `produtos_fornecedores`,
+  além do último custo (somente leitura, vindo da compra), um **custo do fornecedor editável** (F2-B13), com a opção de
+  levar esse custo para o preço de custo do produto. A NF-e/recebimento atualiza custo médio e último custo; o preço de
+  custo manual NÃO é sobrescrito sem confirmação (chave `estoque.compra_atualiza_preco_custo` = 'perguntar', opções
+  'sempre' | 'perguntar' | 'nunca'). "Bem maleável": a margem/preço sugerido pode usar preço de custo, custo médio ou
+  último custo (chave `produtos.custo_base_margem`, padrão 'preco_custo').
+- Demais (F2-Q2, Q4, Q6, Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano.
+
+## Contexto da implantação informado pelo dono (04/11/2026)
+
+- Duas lojas no piloto: **Loja 1** e **Petiscaria 2**, cada uma com CNPJ próprio; CD com CNPJ próprio.
+- PCs: Windows 10 numa loja e Windows 11 na outra; rede por cabo; impressora térmica USB (modelo a comprar).
+- Usuários: o dono (Master); Loja 1: 3 atendentes (Atendente 1, 2 e 3); Petiscaria 2: 1 atendente ("Caixa
+  Central"). Sem gerentes por enquanto.
+- **Convivência com o Nuvem3 (D42) — RESPONDIDA (04/11/2026): Genesis no caixa + NFC-e no Nuvem3.** O Genesis é o caixa
+  principal e o estoque oficial nas lojas reais (Loja 1 e Petiscaria 2, não a loja Treino); a NFC-e de cada venda continua
+  sendo emitida no Nuvem3 até a Fase 3F (digitação dupla, decisão do dono, ciente). Atualizar D42 no roadmap e a seção 5 do
+  docs/implantacao/roteiro-piloto.md. Ordem das fases mantida: 2 → 3 → 4 → 5 → 3F (fiscal por último).
+- **Liberações (supervisor) — RESPONDIDA (04/11/2026):** por enquanto só o PIN do dono (Master), nas duas lojas; o dono criará
+  depois, no ERP, um login de "Encarregado" para liberar. Avisado: com o padrão atual, todo PIX confirmado à mão pede o PIN do
+  supervisor (chave `pdv.pix_manual_exige_supervisor` e permissão `pdv.pagamento.confirmar_pix_manual`).
+  **Confirmado pelo dono (04/11/2026): cada PIX confirmado à mão pede o PIN dele** (mantém o padrão:
+  `pdv.pix_manual_exige_supervisor = true` e os atendentes sem `pdv.pagamento.confirmar_pix_manual`). Ciente de que, sem ele
+  na loja, a venda em PIX manual não fecha até o login de "Encarregado" existir.
+
+
+## Central do PDV (engrenagem) — decisões do dono
+
+- **PC-1 / D23 mantida (04/11/2026):** venda de caixa FECHADO só se cancela pelo ERP (Fase 3). Na Central do PDV, as vendas e os
+  caixas antigos ficam só para consulta e reimpressão; o cancelamento no PDV continua só para a sessão de caixa aberta.
+- **Cancelamento de venda de caixa fechado pelo ERP (04/11/2026):** o dono prefere ESPERAR a Fase 3 (não antecipar). Até lá,
+  venda de caixa fechado não se cancela em lugar nenhum; o erro fica registrado e é corrigido na Fase 3.
+- **PC-7 (04/11/2026):** sim — o operador vê o Painel de saúde e o Sobre, só leitura, sem PIN.
+- **PC-8 (04/11/2026):** sim — criar o perfil de sistema "Encarregado" (Supervisor + vendas/caixas antigos + diagnóstico +
+  pacote de suporte; sem histórico de uso e sem parâmetros). Ninguém recebe sozinho.
+- **PC-9 (04/11/2026):** não — caixas antigos no PDV só como foram impressos; calculado/diferença só no ERP (O3 mantida).
+- **PC-13 (04/11/2026):** bloqueio de tela por inatividade existe, desligado por padrão, configurável por caixa.
+- PC-2, PC-11, PC-12: valem as recomendações (regras da loja só no ERP; não apagar histórico, telas até 90 dias; pacote de
+  suporte em pendrive agora, envio pelo ERP depois).
+- **Vendas e caixas antigos na Central (04/11/2026), no lugar dos "90 dias":** a aba Vendas abre só com as vendas do CAIXA
+  ABERTO (no topo); um filtro escolhe um dos **10 últimos caixas fechados** deste terminal; mais antigos, só no ERP. A aba
+  Caixas segue o mesmo limite (10 últimos fechamentos). O banco local continua guardando tudo (nada é apagado, PC-11).
+- **Ajuste (04/11/2026):** o limite passa a ser **30 dias** (não 10 caixas): o filtro lista os caixas fechados deste terminal
+  nos **últimos 30 dias** (pelo dia operacional do fechamento); mais antigos, só no ERP. Vale para Vendas e Caixas.
+
+## Respostas de 05/11/2026
+
+Todas as decisões abaixo saem de "padrão até a confirmação do dono" e passam a "Decidida (dono, 05/11/2026)" no roadmap §16.
+
+- **D47 (tolerância da conferência do inventário):** confirmada — 1% do valor contado a custo no total e 5% por item, e
+  **ajustável** por loja nas Configurações (`estoque.tolerancia_conferencia_total_pct` / `_item_pct`).
+- **D48 (venda sem lote):** confirmada — baixa por FEFO (o que vence primeiro sai primeiro).
+- **D55 (Tipos de Estoque):** confirmada — tipo novo nasce não vendável; só deixa de ser vendável com saldo zero. O dono
+  acrescentou: **a loja nunca deve travar a venda por estoque negativo** (`pdv.bloqueia_venda_sem_estoque` = false é o
+  padrão; a API nunca recusa venda do PDV por saldo negativo).
+- **Importação dividida (planilha > 5.000 itens):** 4A — as partes já efetivadas ficam valendo e o aviso diz qual parte
+  falhou (cada parte é um acerto estornável sozinho).
+- **D56 (estorno de recebimento/NF-e que deixa saldo negativo):** A **com aviso** — bloqueado, salvo Master ou
+  `estoque.permite_negativo_erp`; quando permitido, a tela mostra os produtos que ficarão negativos e pede confirmação, e a
+  auditoria registra a confirmação.
+- **D57 (lotes):** confirmada — o estoque do lote não muda depois de gravado; lote com saldo/movimento/acerto em rascunho só
+  se inativa.
+- **Estoquista:** pode cadastrar fornecedor **e pessoas** (cadastro completo): ganha `pessoas.criar_fornecedor` (cadastro
+  rápido de fornecedor no recebimento, inclusive dar a categoria Fornecedor a uma pessoa existente) e `pessoas.criar`;
+  não ganha editar, excluir nem importar pessoas. README da API › decisões 165 e 168.
+- **Pergunta "preço geral / só desta loja" no recebimento:** escondida para quem não pode alterar preço.
+- **D50 (assinatura do XML que não confere):** confirmada — avisa (`notas_entrada.assinatura_invalida = 'avisar'`).
+- **XMLs reais de fornecedores:** o dono envia depois. Com o repositório público (D60), **não entram no repositório**:
+  ficam em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa (no `.gitignore`), e o teste com eles roda
+  só localmente.
+- **Encarregado:** **pode** cancelar venda paga com o caixa aberto (diferente do Supervisor).
+- **Painel de saúde do PDV:** vermelho com o caixa sem internet e venda pendente há mais de **1 h** (confirmado).
+- **2ª via do fechamento (Central › Caixas):** quem não vê o "calculado" precisa do PIN de quem vê (confirmado).
+- **Histórico de uso (Central):** o filtro "Quem" inclui também quem **liberou** com o PIN.
+- **Decisões antigas confirmadas em bloco:** D31 (abertura de caixa), D37 (PIX manual e maquininha), D40 (alertas críticos
+  no Dashboard), D44 (produto com variações recusado no caixa), D45 (acesso ao CD como antes da virada).
+- **Infra:** GitHub Pro assinado em 05/11/2026 (Actions voltou); o dono roda a Implantação.
+- **PDV só no Windows (D58):** o dono pediu para focar só no Windows daqui para frente — o Linux era só para os testes,
+  foi o que mais gastou minutos no Actions e nenhum computador dos PDVs usa Linux. O PDV na CI roda só no Windows (a
+  formatação do C# num job leve no Linux), o `.deb` sai do CI e do release (só o `.exe`), e o Linux deixa de ser
+  plataforma de distribuição (o código continua compilando e os testes rodam no Linux do desenvolvimento). README do
+  PDV › decisão 80; CONTRIBUTING.md › CI.
+- **Integração da API na CI só no PostgreSQL 18 (D59):** o dono mandou seguir a recomendação (05/11/2026). A suíte de
+  integração roda só no job do PostgreSQL 18 (a versão da produção); o 16 fica no `pnpm test` local. CONTRIBUTING.md › CI.
+- **Pedidos de economia (05/11/2026):** CI só no push da `main` (#27); a memória do projeto fica no repositório
+  (`CLAUDE.md`, `docs/andamento.md`, este arquivo) para qualquer sessão do Claude Code continuar; o dono vai pôr US$ 10
+  de orçamento no Actions.
+
+## Repositório público (06/11/2026)
+
+- **D60 — RESPONDIDA (06/11/2026): opção B.** Para o GitHub Actions deixar de cobrar minutos, o código vai para um
+  **repositório público novo**, com uma única versão limpa (sem histórico), feita a partir da branch
+  `infra/repositorio-publico` (bloco PUB-1); o repositório atual fica **privado, como arquivo**, sem reescrever o
+  histórico. O relatório do Nuvem3 (a pasta de referências) saiu do repositório: o dono recebeu uma cópia em
+  06/11/2026 e a guarda fora dele. Regra nova (`CLAUDE.md`): nada de dado real (cliente, funcionário, fornecedor, catálogo, planilha,
+  XML de nota real), log de produção, IP ou credencial no repositório; os XMLs reais de fornecedores ficam só na
+  máquina de quem testa. Ficam com o dono: criar o repositório novo, recadastrar os segredos, environments e variáveis,
+  ligar a proteção da `main` (PR obrigatório com 0 aprovações, sem a revisão do `CODEOWNERS`: os PRs saem da conta do
+  dono, e o GitHub não deixa o autor aprovar o próprio PR; o `CODEOWNERS` só pede a revisão), a regra de branch dos
+  environments (`producao`: só `main`; `release-pdv`: `main` e tags `pdv-v*`, com o tag ruleset), apagar os logs antigos do Actions e endurecer o SSH da
+  VPS (`infra/producao/README.md` › Proteger o SSH da VPS). Roadmap §16, D60.

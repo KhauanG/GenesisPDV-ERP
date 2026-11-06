@@ -1,0 +1,32 @@
+{
+  "$comentario": "Casos únicos dos validadores (MD 1.2): lidos por validadores.spec.ts e pelo xUnit de GenesisPDV.Fiscal.",
+  "cpf": [
+    { "valor": "529.982.247-25", "valido": true },
+    { "valor": "52998224725", "valido": true },
+    { "valor": "52998224724", "valido": false },
+    { "valor": "111.111.111-11", "valido": false },
+    { "valor": "123", "valido": false }
+  ],
+  "cnpj": [
+    { "valor": "11.222.333/0001-81", "valido": true },
+    { "valor": "12.ABC.345/01DE-35", "valido": true },
+    { "valor": "12abc34501de35", "valido": true },
+    { "valor": "A1B2C3D4E5F668", "valido": true },
+    { "valor": "12ABC34501DE36", "valido": false },
+    { "valor": "12ABC34501DEA5", "valido": false },
+    { "valor": "00000000000000", "valido": false },
+    { "valor": "1122233300018", "valido": false }
+  ],
+  "completarCnpj": [
+    { "base": "A1B2C3D4E5F6", "cnpj": "A1B2C3D4E5F668" },
+    { "base": "12ABC34501DE", "cnpj": "12ABC34501DE35" },
+    { "base": "112223330001", "cnpj": "11222333000181" }
+  ],
+  "chaveAcesso": [
+    { "valor": "35261012ABC34501DE35650010000001231000000017", "valido": true },
+    { "valor": "3526 1011 2223 3300 0181 6500 1000 0001 2310 0000 0016", "valido": true },
+    { "valor": "35261011222333000181650010000001231000000017", "valido": false },
+    { "valor": "A5261011222333000181650010000001231000000016", "valido": false },
+    { "valor": "3526101122233300018165001000000123100000001", "valido": false }
+  ]
+}

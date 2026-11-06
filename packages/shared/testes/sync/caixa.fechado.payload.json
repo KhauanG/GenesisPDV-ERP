@@ -1,0 +1,104 @@
+{
+  "sessoes_caixa": {
+    "id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "status": "fechada",
+    "fechada_em": "2026-10-29T23:05:40.118Z"
+  },
+  "fechamentos_caixa": {
+    "id": "01a18767-aae7-795a-bf3c-4c06434308bc",
+    "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+    "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+    "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+    "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+    "numero_caixa": 2,
+    "tipo": "fechamento",
+    "zera_caixa": true,
+    "usuario_anterior_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+    "usuario_subsequente_id": null,
+    "valor_caixa": "0.00",
+    "total_calculado": "6761.40",
+    "total_digitado": "6759.90",
+    "justificativa": null,
+    "recontagem": false,
+    "fechamento_cego": true,
+    "ocorrido_em": "2026-10-29T23:05:40.118Z",
+    "dia_operacional": "2026-10-29",
+    "resumo": {
+      "qtd_vendas": 212,
+      "total_vendas": "9421.40",
+      "ticket_medio": "44.44",
+      "qtd_canceladas": 3,
+      "total_canceladas": "88.30",
+      "qtd_itens_cancelados": 9,
+      "total_itens_cancelados": "61.70",
+      "total_descontos": "73.15",
+      "qtd_liberacoes": 4,
+      "qtd_trocas": 0,
+      "total_vales_emitidos": "0.00",
+      "nfce_emitidas": 0,
+      "nfce_contingencia": 0,
+      "nfce_pendentes": 0,
+      "ultima_sequencia_evento": 1288
+    }
+  },
+  "fechamentos_caixa_formas": [
+    {
+      "id": "01a18768-3afe-7662-9562-69f0e5d7b875",
+      "fechamento_id": "01a18767-aae7-795a-bf3c-4c06434308bc",
+      "forma_pagamento_id": "01a1875e-a2ca-7299-9d65-a441d58842de",
+      "descricao_forma": "Dinheiro",
+      "tipo_forma": "dinheiro",
+      "valor_calculado": "1736.00",
+      "valor_digitado": "1734.50",
+      "quantidade_pagamentos": 96,
+      "preenchido_automatico": false,
+      "valor_primeira_contagem": null
+    },
+    {
+      "id": "01a18768-cb42-7ff7-bf50-bde4382567b8",
+      "fechamento_id": "01a18767-aae7-795a-bf3c-4c06434308bc",
+      "forma_pagamento_id": "01a1875f-3243-7ab8-b5a2-40ae5af30553",
+      "descricao_forma": "PIX",
+      "tipo_forma": "pix",
+      "valor_calculado": "1105.00",
+      "valor_digitado": "1105.00",
+      "quantidade_pagamentos": 31,
+      "preenchido_automatico": false,
+      "valor_primeira_contagem": null
+    },
+    {
+      "id": "01a18769-5ae5-7175-be57-0ddf827050a8",
+      "fechamento_id": "01a18767-aae7-795a-bf3c-4c06434308bc",
+      "forma_pagamento_id": "01a1875f-c261-7aef-afc8-9849b3aa7efe",
+      "descricao_forma": "Cartão de Crédito",
+      "tipo_forma": "cartao_credito",
+      "valor_calculado": "3920.40",
+      "valor_digitado": "3920.40",
+      "quantidade_pagamentos": 54,
+      "preenchido_automatico": false,
+      "valor_primeira_contagem": null
+    }
+  ],
+  "movimentos_caixa": [
+    {
+      "id": "01a18769-ede5-71c3-9c71-3d960c0fd195",
+      "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+      "loja_id": "01a18752-3782-7bda-ad3c-2d6d1a3d1fa7",
+      "caixa_id": "01a18752-c8a9-7970-9641-9f828b9d2434",
+      "numero_caixa": 2,
+      "terminal_id": "01a18751-a521-7238-b924-56de3eb13b90",
+      "tipo": "sangria_fechamento",
+      "forma_pagamento_id": null,
+      "valor": "1734.50",
+      "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "quem_retira_usuario_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+      "quem_retira_nome": "MARIA",
+      "observacao": "Fechamento",
+      "inf_adicionais": null,
+      "ocorrido_em": "2026-10-29T23:05:40.118Z",
+      "autorizado_por_id": null,
+      "troca_id": null,
+      "cancelado": false
+    }
+  ]
+}

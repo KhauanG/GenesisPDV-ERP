@@ -1,0 +1,29 @@
+{
+  "api": "http://127.0.0.1:3399/",
+  "codigoEmpresa": 600001,
+  "erp": { "login": "admin", "senha": "SenhaE2ePdv123" },
+  "operador": { "login": "caixa1", "pin": "258036", "nome": "MARIA CAIXA" },
+  "gerente": { "login": "gerente1", "pin": "369147", "nome": "CARLOS GERENTE" },
+  "lojaId": "01a1905a-9282-703a-9931-ad87d12cf0f1",
+  "estoqueId": "01a1905a-9285-7d1e-8c52-0e5b9d1f3a10",
+  "caixas": [
+    "01a1905a-929a-7c7b-924d-89641d10a751",
+    "01a1905a-929c-7e8d-b7a7-798ac1cea68a",
+    "01a1905a-929e-7a40-9d0b-3c71f5a2e0c4",
+    "01a1905a-92a0-7b51-8e1c-4d82a6b3f1d5"
+  ],
+  "produto": { "id": "01a1905a-9421-70f9-bc9e-44187ac5dab2", "ean": "7891149103102", "preco": "4.99" },
+  "catalogo": {
+    "lata": { "id": "01a1905a-9430-7b11-9a6e-2f0d8c3e5a71", "ean": "7891991013000", "dun": "17891991013007" },
+    "retornavel": { "id": "01a1905a-9433-7c22-8b7f-3e1e9d4f6b82", "ean": "7891149104000" },
+    "casco": { "id": "01a1905a-9431-7d33-9c80-4f2fae507c93" },
+    "combo": { "id": "01a1905a-9439-7e44-8d91-5034bf618da4", "ean": "7890000131308" },
+    "componentesCombo": [
+      "01a1905a-9435-7f55-9ea2-6145c0729eb5",
+      "01a1905a-9436-7066-8fb3-7256d183afc6",
+      "01a1905a-9438-7177-a0c4-8367e294b0d7"
+    ]
+  },
+  "bancoControle": "genesis_e2epdv_x_ctl",
+  "nomeBanco": "genesis_emp_600001"
+}

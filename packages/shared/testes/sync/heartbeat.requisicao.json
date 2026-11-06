@@ -1,0 +1,51 @@
+{
+  "versao_app": "1.4.2",
+  "estado_local": "ativo",
+  "so": "Windows 11 Pro 24H2 x64",
+  "hora_local": "2026-10-29T17:45:00.120Z",
+  "desvio_relogio_ms": 1239,
+  "relogio_confiavel": true,
+  "cursor_pull": {
+    "configuracao": 1880300,
+    "acesso": 1880200,
+    "catalogo": 1880412
+  },
+  "ultimo_pull_sucesso_em": "2026-10-29T17:44:31.002Z",
+  "eventos_pendentes": 3,
+  "evento_mais_antigo_em": "2026-10-29T17:40:12.000Z",
+  "eventos_rejeitados": 0,
+  "ultima_sequencia_gerada": 1046,
+  "venda_ultimo_numero": 126,
+  "vale_ultimo_numero": 8,
+  "nfce_ultimo_numero": [
+    {
+      "serie": 2,
+      "ambiente": 1,
+      "numero": 4515
+    }
+  ],
+  "nfce_contingencia_pendentes": 1,
+  "nfce_contingencia_mais_antiga_em": "2026-10-29T17:20:00.000Z",
+  "inutilizacoes_pendentes": 0,
+  "sessao_caixa_id": "01a18755-98a1-7472-96da-1dac72ff5d2a",
+  "operador_id": "01a18754-76cb-7b74-b2e7-06298fadc1a6",
+  "dinheiro_estimado_gaveta": "350.25",
+  "certificado_validade": null,
+  "disco_livre_mb": 51200,
+  "tamanho_banco_mb": 412,
+  "fila_impressao_pendentes": 0,
+  "sse_conectado": false,
+  "versao_schema_local": 12,
+  "ultimo_erro": null,
+  "vendas_cancelamento_pendente": [],
+  "eventos_resolvidos_ack": ["01a18770-3d4e-7f50-8162-7c8d9e0f1a2b"],
+  "comandos_resultado": [
+    {
+      "comando_id": "01a18799-4e5f-7061-9273-8d9e0f1a2b3c",
+      "status": "executado",
+      "resultado": {
+        "ok": true
+      }
+    }
+  ]
+}

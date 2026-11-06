@@ -1,0 +1,10 @@
+{
+  "tipo_alerta": "ean_duplicado_no_caixa",
+  "produto_id": "01a1875c-ef91-7fc1-8a15-544dc5e7ce8a",
+  "variacao_id": null,
+  "descricao": "Código 7891149103102 cadastrado em dois produtos (CERV BRAHMA LT 350ML e CERV BRAHMA LT 350ML CX)",
+  "detalhes": {
+    "codigo_lido": "7891149103102",
+    "produtos": ["01a1875c-ef91-7fc1-8a15-544dc5e7ce8a", "01a1875b-4061-7e2a-9e57-4f7aa0ee89ae"]
+  }
+}

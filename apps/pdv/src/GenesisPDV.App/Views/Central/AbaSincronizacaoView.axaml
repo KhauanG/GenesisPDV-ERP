@@ -1,0 +1,184 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.Central.AbaSincronizacaoView"
+             x:DataType="vm:AbaSincronizacaoViewModel"
+             Focusable="True">
+  <!-- Aba 4 da Central do PDV, Sincronização (bloco G7; README › decisão 72; o pedido do dono de 04/11/2026, "vendas a
+       copiar"): as vendas que a nuvem ainda não confirmou (amarelo pendente, vermelho recusada, verde confirmada agora),
+       o caixa não confirmado, todos os registros e os comandos do ERP; o detalhe sem o payload; F6 Reenviar agora só
+       força o ciclo de envio. Tudo pelo teclado (o foco fica no painel da lista; o * e o + e − do numérico, no
+       code-behind) e pelo mouse (decisão 65). -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <!-- ↑/↓ no code-behind: na lista escolhem, no detalhe rolam (os atalhos de tecla são lidos antes do túnel da tela). -->
+    <KeyBinding Gesture="Enter" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+    <KeyBinding Gesture="F3" Command="{Binding TrocarVisaoCommand}" CommandParameter="proxima" />
+    <KeyBinding Gesture="Shift+F3" Command="{Binding TrocarVisaoCommand}" CommandParameter="anterior" />
+    <KeyBinding Gesture="F4" Command="{Binding LacunaCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AtualizarCommand}" />
+    <KeyBinding Gesture="F6" Command="{Binding ReenviarCommand}" />
+    <KeyBinding Gesture="Ctrl+Alt+S" Command="{Binding ReenviarCommand}" />
+    <KeyBinding Gesture="F7" Command="{Binding ProximaSituacaoCommand}" />
+    <KeyBinding Gesture="F8" Command="{Binding ProximoTipoCommand}" />
+    <KeyBinding Gesture="F9" Command="{Binding SituacaoCompletaCommand}" />
+  </UserControl.KeyBindings>
+  <UserControl.Styles>
+    <!-- A faixa da cor da linha (nunca sozinha: a palavra da situação fica ao lado, PDV 9.1). -->
+    <Style Selector="Border.faixa">
+      <Setter Property="Width" Value="6" />
+      <Setter Property="CornerRadius" Value="3" />
+      <Setter Property="Background" Value="{DynamicResource PincelTextoSecundario}" />
+    </Style>
+    <Style Selector="Border.faixa.pendente">
+      <Setter Property="Background" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="Border.faixa.recusada">
+      <Setter Property="Background" Value="{DynamicResource PincelErro}" />
+    </Style>
+    <Style Selector="Border.faixa.confirmada">
+      <Setter Property="Background" Value="{DynamicResource PincelTotalTexto}" />
+    </Style>
+    <Style Selector="TextBlock.situacao">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="TextBlock.situacao.pendente">
+      <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    </Style>
+    <Style Selector="TextBlock.situacao.recusada">
+      <Setter Property="Foreground" Value="{DynamicResource PincelErro}" />
+    </Style>
+    <Style Selector="TextBlock.situacao.confirmada">
+      <Setter Property="Foreground" Value="{DynamicResource PincelTotalTexto}" />
+    </Style>
+    <Style Selector="Button.visao.escolhida">
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="BorderBrush" Value="{DynamicResource PincelDestaque}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+  </UserControl.Styles>
+  <Grid>
+    <Grid RowDefinitions="Auto,*,Auto" Margin="16,8,16,8" IsVisible="{Binding !MostrandoDetalhe}">
+      <StackPanel Grid.Row="0" Spacing="4">
+        <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+        <TextBlock x:Name="TextoResumoSincronizacao" Text="{Binding Resumo}" FontWeight="SemiBold" TextWrapping="Wrap"
+                   Classes.erro="{Binding ResumoComProblema}" />
+        <TextBlock x:Name="TextoErroConexaoSincronizacao" Text="{Binding ErroConexao}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding ErroConexao, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoLacunaSincronizacao" Text="{Binding AcaoLacuna}" Classes="erro" FontWeight="SemiBold" TextWrapping="Wrap"
+                   IsVisible="{Binding AcaoLacuna, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <!-- As visões (F3 troca; o clique escolhe): a segunda seção do pedido do dono é o "Caixa não confirmado". -->
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao visao" x:Name="BotaoVisaoVendasSync" Content="{Binding TextoVisaoVendas}" Classes.escolhida="{Binding VisaoVendas}"
+                  Command="{Binding TrocarVisaoCommand}" CommandParameter="Vendas" />
+          <Button Classes="acao visao" x:Name="BotaoVisaoCaixaSync" Content="{Binding TextoVisaoCaixa}" Classes.escolhida="{Binding VisaoCaixa}"
+                  Command="{Binding TrocarVisaoCommand}" CommandParameter="Caixa" />
+          <Button Classes="acao visao" x:Name="BotaoVisaoTodosSync" Content="{Binding TextoVisaoTodos}" Classes.escolhida="{Binding VisaoTodos}"
+                  Command="{Binding TrocarVisaoCommand}" CommandParameter="Todos" />
+          <Button Classes="acao visao" x:Name="BotaoVisaoComandosSync" Content="{Binding TextoVisaoComandos}" Classes.escolhida="{Binding VisaoComandos}"
+                  Command="{Binding TrocarVisaoCommand}" CommandParameter="Comandos" />
+        </WrapPanel>
+        <TextBlock x:Name="TextoExplicacaoSincronizacao" Text="{Binding Explicacao}" Classes="secundario" TextWrapping="Wrap" />
+        <WrapPanel Classes="botoes" IsVisible="{Binding NaVisaoTodos}">
+          <Button Classes="acao" x:Name="BotaoSituacaoSync" Content="{Binding TextoSituacao}" Command="{Binding ProximaSituacaoCommand}" />
+          <Button Classes="acao" x:Name="BotaoTipoSync" Content="{Binding TextoTipo}" Command="{Binding ProximoTipoCommand}" />
+        </WrapPanel>
+      </StackPanel>
+      <!-- O painel recebe o foco (↑/↓, Enter, F6 e as teclas F); a lista é só para ver e clicar. -->
+      <Border Grid.Row="1" x:Name="PainelListaSincronizacao" Focusable="True" c:Foco.Inicial="True" Margin="0,8,0,0"
+              AutomationProperties.Name="Registros da sincronização">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="14,128,*,104,84,1.4*" Margin="12,0,12,2">
+            <TextBlock Grid.Column="1" Text="Situação" Classes="rotulo" />
+            <TextBlock Grid.Column="2" Text="Registro" Classes="rotulo" />
+            <TextBlock Grid.Column="3" Text="Hora" Classes="rotulo" />
+            <TextBlock Grid.Column="4" Text="Valor" Classes="rotulo" HorizontalAlignment="Right" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="5" Text="Envio e motivo" Classes="rotulo" TextTrimming="CharacterEllipsis" />
+          </Grid>
+          <ListBox x:Name="ListaSincronizacao" ItemsSource="{Binding Linhas}" SelectedItem="{Binding Selecionada}" Focusable="False"
+                   c:Comandos.DuploClique="{Binding DetalharCommand}" AutomationProperties.Name="Registros">
+            <ListBox.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaSincronizacaoViewModel">
+                <Grid ColumnDefinitions="14,128,*,104,84,1.4*" AutomationProperties.Name="{Binding Leitura}">
+                  <Border Grid.Column="0" Classes="faixa" Classes.pendente="{Binding Pendente}" Classes.recusada="{Binding Recusada}"
+                          Classes.confirmada="{Binding Confirmada}" Margin="0,2,8,2" />
+                  <TextBlock Grid.Column="1" Text="{Binding Situacao}" Classes="situacao" Classes.pendente="{Binding Pendente}"
+                             Classes.recusada="{Binding Recusada}" Classes.confirmada="{Binding Confirmada}" TextTrimming="CharacterEllipsis"
+                             VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="2" Text="{Binding Registro}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="3" Text="{Binding Hora}" Classes="mono" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="4" Text="{Binding Valor}" Classes="mono" HorizontalAlignment="Right" Margin="0,0,12,0" VerticalAlignment="Center" />
+                  <StackPanel Grid.Column="5">
+                    <TextBlock Text="{Binding Envio}" TextTrimming="CharacterEllipsis" FontSize="13" />
+                    <TextBlock Text="{Binding Motivo}" IsVisible="{Binding TemMotivo}" Classes.erro="{Binding Recusada}" FontSize="13"
+                               TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+      <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+        <TextBlock x:Name="TextoRodapeSincronizacao" Text="{Binding Rodape}" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="TextoMensagemSincronizacao" Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold"
+                   TextWrapping="Wrap" IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <TextBlock x:Name="TextoErroSincronizacao" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                   IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <WrapPanel Classes="botoes">
+          <Button Classes="acao" x:Name="BotaoDetalheSync" Content="Enter  Detalhe" Command="{Binding DetalharCommand}" CommandParameter="{x:Null}" />
+          <Button Classes="acao" x:Name="BotaoReenviarSync" Content="F6  Reenviar agora" Command="{Binding ReenviarCommand}" />
+          <Button Classes="acao" x:Name="BotaoLacunaSync" Content="F4  Lacuna" Command="{Binding LacunaCommand}"
+                  IsVisible="{Binding AcaoLacuna, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <Button Classes="acao" x:Name="BotaoVisaoSync" Content="F3  Próxima lista" Command="{Binding TrocarVisaoCommand}" CommandParameter="proxima" />
+          <Button Classes="acao" x:Name="BotaoAnteriorSync" Content="PgUp  Anterior" Command="{Binding PaginaAnteriorCommand}" IsEnabled="{Binding TemAnterior}" />
+          <Button Classes="acao" x:Name="BotaoProximaSync" Content="PgDn  Mais" Command="{Binding ProximaPaginaCommand}" IsEnabled="{Binding TemProxima}" />
+          <Button Classes="acao" Content="F5  Atualizar" Command="{Binding AtualizarCommand}" />
+          <Button Classes="acao" x:Name="BotaoSituacaoCompletaSync" Content="F9  Situação completa" Command="{Binding SituacaoCompletaCommand}" />
+          <Button Classes="acao" Content="Esc  Voltar ao menu" Command="{Binding VoltarCommand}" />
+        </WrapPanel>
+        <TextBlock Text="{Binding Teclas}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Detalhe (Enter ou o duplo clique): a venda, cada envio (sem o payload) e as ocorrências ligadas. -->
+    <Border x:Name="PainelDetalheSincronizacao" Classes="painel" Margin="16" Padding="20" Focusable="True" IsVisible="{Binding MostrandoDetalhe}">
+      <Grid RowDefinitions="Auto,Auto,*,Auto">
+        <TextBlock Grid.Row="0" x:Name="TextoTituloDetalheSync" Text="{Binding TituloDetalhe}" Classes="titulo" TextWrapping="Wrap" />
+        <Border Grid.Row="1" Background="{DynamicResource PincelPainelAlto}" Padding="12,8" Margin="0,8,0,0" CornerRadius="4">
+          <DockPanel>
+            <Border DockPanel.Dock="Left" Classes="faixa" Classes.pendente="{Binding DetalhePendente}"
+                    Classes.recusada="{Binding DetalheRecusado}" Classes.confirmada="{Binding DetalheConfirmado}" Margin="0,0,10,0" />
+            <TextBlock x:Name="TextoSituacaoDetalheSync" Text="{Binding SituacaoDetalhe}" FontWeight="SemiBold" TextWrapping="Wrap" />
+          </DockPanel>
+        </Border>
+        <ScrollViewer Grid.Row="2" x:Name="RolagemDetalheSincronizacao" Margin="0,8,0,8">
+          <ItemsControl x:Name="ListaDetalheSincronizacao" ItemsSource="{Binding LinhasDetalhe}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <SelectableTextBlock Text="{Binding}" Classes="mono" FontSize="14" TextWrapping="Wrap" />
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+        <StackPanel Grid.Row="3" Spacing="6">
+          <TextBlock Text="{Binding Mensagem}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes">
+            <Button Classes="acao" x:Name="BotaoReenviarDetalheSync" Content="{Binding TextoBotaoReenvio}" Command="{Binding ReenviarCommand}" />
+            <Button Classes="acao" x:Name="BotaoVoltarDetalheSync" Content="Esc  Voltar à lista" Command="{Binding VoltarCommand}" />
+          </WrapPanel>
+          <TextBlock Text="{Binding TeclasDetalhe}" Classes="secundario" TextWrapping="Wrap" FontSize="13" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- A lacuna sem pdv.config.fiscal: quem a tem libera na hora (31.3), sobre a aba. -->
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

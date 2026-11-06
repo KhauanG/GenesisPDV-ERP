@@ -1,0 +1,167 @@
+{
+  "versao": 1,
+  "vetores": [
+    {
+      "descricao": "acentos e cedilha",
+      "entrada": {
+        "nome": "ÁGUA MINERAL",
+        "endereco": "PRAÇA DA SÉ"
+      },
+      "saida": "{\"endereco\":\"PRAÇA DA SÉ\",\"nome\":\"ÁGUA MINERAL\"}",
+      "sha256": "0055a404293c2dbadc6ab06a16318996ba63247559b2cef4b6b19d9d98f2d9b2"
+    },
+    {
+      "descricao": "caracteres que o System.Text.Json escaparia",
+      "entrada": {
+        "s": "&<>'+/"
+      },
+      "saida": "{\"s\":\"&<>'+/\"}",
+      "sha256": "f9d0635350e3218559744e28b2963860e9c6edf07709f1112a08b00bb9230b60"
+    },
+    {
+      "descricao": "aspas e barra invertida",
+      "entrada": {
+        "s": "a\"b\\c"
+      },
+      "saida": "{\"s\":\"a\\\"b\\\\c\"}",
+      "sha256": "97a1049b950c4967857a84a892616be14cfa33824839b42b557d9299074e9ea6"
+    },
+    {
+      "descricao": "emoji (par substituto)",
+      "entrada": {
+        "s": "🍺"
+      },
+      "saida": "{\"s\":\"🍺\"}",
+      "sha256": "610ad4a827db02d6121cb8a3e7ffe84117597902a3279a810cd88f5b3d30af6f"
+    },
+    {
+      "descricao": "U+2028 e U+2029 literais",
+      "entrada": {
+        "s": "  "
+      },
+      "saida": "{\"s\":\"  \"}",
+      "sha256": "37291683554efe5b232ef434c7f2ed8b3f39ce37f4a2d8db100eb4224e48edcd"
+    },
+    {
+      "descricao": "controles curtos",
+      "entrada": {
+        "s": "\b\t\n\f\r"
+      },
+      "saida": "{\"s\":\"\\b\\t\\n\\f\\r\"}",
+      "sha256": "b087fcbc53f88174f9c3ccf7d6cb1c3906ab32d0198eb62c3e541c4aebdcdad0"
+    },
+    {
+      "descricao": "demais controles em \\u00xx minúsculo",
+      "entrada": {
+        "s": "\u0000\u0001\u001f\u000b"
+      },
+      "saida": "{\"s\":\"\\u0000\\u0001\\u001f\\u000b\"}",
+      "sha256": "54b3d65b63b47733db21677608ad66f0862455c67a0628da1e3faefb0fda308b"
+    },
+    {
+      "descricao": "ordem UTF-16 das chaves (acento, maiúsculas, emoji, ideograma)",
+      "entrada": {
+        "é": 1,
+        "e": 2,
+        "E": 3,
+        "😀": 4,
+        "דּ": 5,
+        "a": 6
+      },
+      "saida": "{\"E\":3,\"a\":6,\"e\":2,\"é\":1,\"😀\":4,\"דּ\":5}",
+      "sha256": "813488c8d1555f2d28c269456b2ed14a59e7b0a214918cfb10d354ad2c9c28e4"
+    },
+    {
+      "descricao": "números do envelope (ES6)",
+      "entrada": {
+        "a": 9007199254740991,
+        "b": 0,
+        "c": -1,
+        "d": 1e21,
+        "e": 0.5,
+        "f": 0
+      },
+      "saida": "{\"a\":9007199254740991,\"b\":0,\"c\":-1,\"d\":1e+21,\"e\":0.5,\"f\":0}",
+      "sha256": "45b05fe29f63cf743c8fbb4ca32426eeea34969cf1a87660cb6b0044bbca1683"
+    },
+    {
+      "descricao": "dinheiro como string",
+      "entrada": {
+        "valor": "41.88",
+        "qtd": "3.4900"
+      },
+      "saida": "{\"qtd\":\"3.4900\",\"valor\":\"41.88\"}",
+      "sha256": "5d1d2310f9562205672b04a61c00a152a3a5f73ba3109bbe3927567a33cd1c4a"
+    },
+    {
+      "descricao": "aninhados, listas vazias e nulos",
+      "entrada": {
+        "z": [],
+        "y": {},
+        "x": [
+          null,
+          true,
+          false,
+          {
+            "b": 1,
+            "a": [1, 2]
+          }
+        ]
+      },
+      "saida": "{\"x\":[null,true,false,{\"a\":[1,2],\"b\":1}],\"y\":{},\"z\":[]}",
+      "sha256": "a2de32a9d7a68edf85d4f2d029287b48725a0f589dc6002d4cae4f7eb2ca08f3"
+    },
+    {
+      "descricao": "payload típico",
+      "entrada": {
+        "movimentos_caixa": {
+          "id": "01a18767-18c6-78fa-beb7-99193f22faf8",
+          "tipo": "reforco",
+          "valor": "100.00",
+          "observacao": "Troco – manhã"
+        }
+      },
+      "saida": "{\"movimentos_caixa\":{\"id\":\"01a18767-18c6-78fa-beb7-99193f22faf8\",\"observacao\":\"Troco – manhã\",\"tipo\":\"reforco\",\"valor\":\"100.00\"}}",
+      "sha256": "384b4959c57fe326bc179c8d6d5cb43d063fc9ee85b5c9b227205bc717810089"
+    },
+    {
+      "descricao": "cada controle de 0x00 a 0x1F",
+      "entrada": {
+        "c00": "\u0000",
+        "c01": "\u0001",
+        "c02": "\u0002",
+        "c03": "\u0003",
+        "c04": "\u0004",
+        "c05": "\u0005",
+        "c06": "\u0006",
+        "c07": "\u0007",
+        "c08": "\b",
+        "c09": "\t",
+        "c0a": "\n",
+        "c0b": "\u000b",
+        "c0c": "\f",
+        "c0d": "\r",
+        "c0e": "\u000e",
+        "c0f": "\u000f",
+        "c10": "\u0010",
+        "c11": "\u0011",
+        "c12": "\u0012",
+        "c13": "\u0013",
+        "c14": "\u0014",
+        "c15": "\u0015",
+        "c16": "\u0016",
+        "c17": "\u0017",
+        "c18": "\u0018",
+        "c19": "\u0019",
+        "c1a": "\u001a",
+        "c1b": "\u001b",
+        "c1c": "\u001c",
+        "c1d": "\u001d",
+        "c1e": "\u001e",
+        "c1f": "\u001f"
+      },
+      "saida": "{\"c00\":\"\\u0000\",\"c01\":\"\\u0001\",\"c02\":\"\\u0002\",\"c03\":\"\\u0003\",\"c04\":\"\\u0004\",\"c05\":\"\\u0005\",\"c06\":\"\\u0006\",\"c07\":\"\\u0007\",\"c08\":\"\\b\",\"c09\":\"\\t\",\"c0a\":\"\\n\",\"c0b\":\"\\u000b\",\"c0c\":\"\\f\",\"c0d\":\"\\r\",\"c0e\":\"\\u000e\",\"c0f\":\"\\u000f\",\"c10\":\"\\u0010\",\"c11\":\"\\u0011\",\"c12\":\"\\u0012\",\"c13\":\"\\u0013\",\"c14\":\"\\u0014\",\"c15\":\"\\u0015\",\"c16\":\"\\u0016\",\"c17\":\"\\u0017\",\"c18\":\"\\u0018\",\"c19\":\"\\u0019\",\"c1a\":\"\\u001a\",\"c1b\":\"\\u001b\",\"c1c\":\"\\u001c\",\"c1d\":\"\\u001d\",\"c1e\":\"\\u001e\",\"c1f\":\"\\u001f\"}",
+      "sha256": "ae62aefa0f0b91c61c4408870cfbcf0de6e4bb88e69fb619bbfab2f23c240733"
+    }
+  ]
+}

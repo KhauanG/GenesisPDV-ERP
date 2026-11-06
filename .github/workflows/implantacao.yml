@@ -1,0 +1,391 @@
+# Implantação na VPS da Hostinger (Implantação do piloto, I1 e I1b; passo a passo em infra/producao/README.md).
+# Builda as imagens da API, do ERP e do backup (I1b), envia para a VPS por SSH (`docker save | ssh docker load`, sem registry nem
+# credencial de registry na VPS), roda o instalar.sh (idempotente) e o implantar.sh (proxy do Cloud SQL, migrações do
+# controle e das empresas num container de tarefa, `up --wait` da nova API, do novo ERP e do novo backup, volta
+# sozinho para a versão anterior se a nova não ficar saudável) e confere a saúde pelas URLs públicas (e que o
+# /api/saude/detalhada recusa quem não tem o token de monitoramento).
+#
+# Disparo: manual (Actions › Implantação › Run workflow) ou, com a variável IMPLANTACAO_AUTOMATICA=true **do
+# repositório** (não do environment: o `if:` do job é avaliado antes de o job entrar no environment, quando `vars` só
+# tem as variáveis do repositório e da organização), depois de cada CI verde de um push na main (nunca de PR, nem de
+# fork). Sempre no environment `producao` (aprovação opcional nas configurações do repositório). Só implanta commit
+# que está na main, mesmo no disparo manual com o campo "commit". Secrets do environment: VPS_HOST, VPS_USUARIO,
+# VPS_CHAVE_SSH, VPS_KNOWN_HOSTS (VPS_PORTA opcional). Variáveis opcionais do environment: GENESIS_API_URL,
+# GENESIS_ERP_URL, GENESIS_DOWNLOAD_URL.
+#
+# Página de download do PDV (README › Página de download do PDV): os PCs das lojas baixam o instalador de
+# download.<domínio>, uma página simples com a versão e o sha256 (sem procurar no GitHub). Cada implantação procura o
+# GitHub Release pdv-vX.Y.Z publicado mais novo (sem rascunho nem pre-release), baixa o instalador com o GITHUB_TOKEN
+# (contents: read; nenhum segredo novo), confere o sha256 e, só se a versão mudou, envia para a VPS
+# (/opt/genesis/download/pdv, montada só leitura no genesis-web).
+# Sem release publicado: aviso, e a implantação segue com a página como está.
+name: Implantação
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit da main a implantar, hash curto (os 12 caracteres de versoes/historico) ou completo; vazio = o último da main. Serve para voltar a uma versão antiga
+        type: string
+        default: ''
+      conferir_url_publica:
+        description: Conferir a API e o ERP pelos domínios públicos no fim (deixe ligado; o DNS existe desde 03/11/2026)
+        type: boolean
+        default: true
+      publicar_pdv:
+        description: Publicar na página de download o instalador do último GitHub Release do PDV (desmarcado, a página fica como está)
+        type: boolean
+        default: true
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# Uma implantação por vez; a seguinte espera (nunca cancela uma em andamento).
+concurrency:
+  group: implantacao-producao
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  implantar:
+    name: Build, envio e implantação na VPS
+    # workflow_run: só CI verde de push na main deste repositório (um PR de fork com branch "main" também dispara
+    # workflow_run; o event/head_repository o barram).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.IMPLANTACAO_AUTOMATICA == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: producao
+      url: ${{ vars.GENESIS_ERP_URL || 'https://erp.grupoicebeer.com.br' }}
+    env:
+      COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.commit || github.sha }}
+      API_URL: ${{ vars.GENESIS_API_URL || 'https://api.grupoicebeer.com.br' }}
+      ERP_URL: ${{ vars.GENESIS_ERP_URL || 'https://erp.grupoicebeer.com.br' }}
+      DOWNLOAD_URL: ${{ vars.GENESIS_DOWNLOAD_URL || 'https://download.grupoicebeer.com.br' }}
+      CONFERIR_URL_PUBLICA: ${{ github.event_name == 'workflow_run' || inputs.conferir_url_publica }}
+      PUBLICAR_PDV: ${{ github.event_name == 'workflow_run' || inputs.publicar_pdv }}
+    steps:
+      - name: Confere o formato do commit informado
+        run: |
+          [[ $COMMIT =~ ^[0-9a-f]{7,40}$ ]] || { echo "::error::commit inválido: '$COMMIT' (use o hash, curto ou completo, ex.: 1a2b3c4d5e6f)"; exit 1; }
+
+      # Histórico completo (fetch-depth 0 traz todos os branches) para o passo seguinte: (1) resolver o hash curto que
+      # a VPS registra (12 caracteres em versoes/ e na tag das imagens), que o actions/checkout não aceita em `ref`
+      # (só SHA completo; o curto vira nome de branch e falha); (2) conferir que o commit está na main, porque a regra
+      # "só main" do environment `producao` olha o branch do disparo, não o commit informado.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Commit da main e versão (commit de 12 caracteres)
+        run: |
+          git rev-parse --verify --quiet origin/main >/dev/null || { echo "::error::branch main não encontrado no checkout"; exit 1; }
+          sha=$(git rev-parse --verify --quiet "$COMMIT^{commit}") ||
+            { echo "::error::commit '$COMMIT' não encontrado nos branches do repositório (ou o hash curto é ambíguo: informe o completo, git rev-parse $COMMIT)"; exit 1; }
+          git merge-base --is-ancestor "$sha" origin/main ||
+            { echo "::error::o commit $sha não está na main: só vai para produção o que entrou na main (PR revisado, CI verde)"; exit 1; }
+          git checkout --quiet --detach "$sha"
+          echo "Commit a implantar: $sha"
+          echo "VERSAO=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Imagem da API
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: genesis-api:${{ env.VERSAO }}
+          build-args: VERSAO=${{ env.VERSAO }}
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=genesis-api
+          cache-to: type=gha,scope=genesis-api,mode=max
+
+      - name: Imagem do ERP
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/erp-web/Dockerfile
+          tags: genesis-web:${{ env.VERSAO }}
+          build-args: VERSAO=${{ env.VERSAO }}
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=genesis-web
+          cache-to: type=gha,scope=genesis-web,mode=max
+
+      # Backup lógico diário (I1b): clientes do PostgreSQL 18, curl e jq; contexto = a própria pasta.
+      - name: Imagem do backup
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: infra/producao/backup
+          file: infra/producao/backup/Dockerfile
+          tags: genesis-backup:${{ env.VERSAO }}
+          build-args: VERSAO=${{ env.VERSAO }}
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=genesis-backup
+          cache-to: type=gha,scope=genesis-backup,mode=max
+
+      - name: Acesso SSH à VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORTA: ${{ secrets.VPS_PORTA }}
+          VPS_USUARIO: ${{ secrets.VPS_USUARIO }}
+          VPS_CHAVE_SSH: ${{ secrets.VPS_CHAVE_SSH }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          for s in VPS_HOST VPS_USUARIO VPS_CHAVE_SSH VPS_KNOWN_HOSTS; do
+            [ -n "${!s}" ] || { echo "::error::Falta o secret $s (infra/producao/README.md › Passo 3)"; exit 1; }
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_CHAVE_SSH" > ~/.ssh/genesis_vps
+          chmod 600 ~/.ssh/genesis_vps
+          # Só a chave de host conferida pelo dono (nada de StrictHostKeyChecking=no). HostKeyAlias: a chave é
+          # procurada pelo VPS_HOST puro, sem o `[host]:porta` que o ssh usa fora da porta 22, então as linhas
+          # `IP tipo chave` do Passo 2 do README valem com qualquer VPS_PORTA.
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host genesis-vps
+            HostName $VPS_HOST
+            Port ${VPS_PORTA:-22}
+            HostKeyAlias $VPS_HOST
+            User $VPS_USUARIO
+            IdentityFile ~/.ssh/genesis_vps
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 15
+            ServerAliveCountMax 8
+          EOF
+          # Só confere que o acesso funciona: o log do Actions é público (D60), então nada de versões da VPS nele.
+          ssh genesis-vps true && echo "Acesso SSH à VPS: ok"
+
+      - name: Envio das imagens (docker save | ssh docker load)
+        run: |
+          docker save "genesis-api:$VERSAO" "genesis-web:$VERSAO" "genesis-backup:$VERSAO" | gzip -1 |
+            ssh genesis-vps 'gunzip | docker load'
+
+      - name: Envio dos arquivos da versão (/opt/genesis/releases/<versao>)
+        # VERSAO expande aqui no runner (de propósito): o caminho remoto leva a versão desta implantação.
+        run: |
+          # shellcheck disable=SC2029
+          tar -C infra/producao -czf - docker-compose.yml implantar.sh instalar.sh compose.env.exemplo genesis.env.exemplo |
+            ssh genesis-vps "mkdir -p /opt/genesis/releases/$VERSAO && tar -xzf - -C /opt/genesis/releases/$VERSAO && chmod +x /opt/genesis/releases/$VERSAO/*.sh"
+
+      # Antes do instalar.sh e da troca de versão: um release com o sha256 errado para a implantação aqui, com a produção
+      # intacta (as imagens e os arquivos enviados só valem quando o implantar.sh troca a versão). Falha do GitHub (lista,
+      # leitura ou download) é só um aviso: a implantação segue e a página fica como está. O que a VPS já serve vem do
+      # `implantar.sh pdv atual` (o sha256, só se o atual.json e o arquivo conferem): igual ao do release, nada é baixado
+      # nem enviado. Nenhum release publicado (lista vazia, sem erro): a página é esvaziada depois da troca (retirar).
+      # Os nomes e a data passam por expressões antes de ir para a linha do ssh.
+      - name: Instalador do PDV (último GitHub Release)
+        id: pdv
+        if: env.PUBLICAR_PDV == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pular() {
+            echo "::warning::$* A página de download fica como está (README de infra/producao › Página de download do PDV)."
+            exit 0
+          }
+          tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name') ||
+            pular "Não foi possível listar os GitHub Releases."
+          tag=$(grep -E '^pdv-v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags" | sort -V | tail -n 1 || true)
+          if [ -z "$tag" ]; then
+            echo "::warning::Nenhum GitHub Release pdv-vX.Y.Z publicado (rascunho e pre-release não contam): a página de download volta a dizer que o instalador ainda não foi publicado (README de infra/producao › Página de download do PDV)."
+            echo "retirar=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          versao_pdv=${tag#pdv-v}
+          exe="GenesisPDV-Setup-$versao_pdv.exe"
+          info=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json publishedAt,assets) ||
+            pular "Não foi possível ler o release $tag."
+          publicado=$(jq -r .publishedAt <<<"$info")
+          [[ $publicado =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
+            pular "Data de publicação inesperada no release $tag: '$publicado'."
+          for nome in "$exe" "$exe.sha256"; do
+            jq -e --arg n "$nome" 'any(.assets[]; .name == $n)' <<<"$info" >/dev/null ||
+              pular "O release $tag não tem o arquivo $nome (ainda enviando?)."
+          done
+          pasta=$RUNNER_TEMP/pdv
+          rm -rf "$pasta" && mkdir -p "$pasta"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$exe.sha256" --dir "$pasta" ||
+            pular "Não foi possível baixar $exe.sha256 do release $tag."
+          # O mesmo formato que a VPS exige (implantar.sh pdv publicar): uma linha só, '<64 hex>  <nome do instalador>'.
+          [ "$(awk 'END { print NR }' "$pasta/$exe.sha256")" = 1 ] || {
+            echo "::error::$exe.sha256 do release $tag deveria ter uma linha só ('<hash>  $exe'): nada foi publicado. Refaça o release (PDV release com \"substituir\") ou implante sem publicar o PDV (campo publicar_pdv desmarcado)."
+            exit 1
+          }
+          esperado=$(awk '{ print tolower($1) }' "$pasta/$exe.sha256")
+          nome=$(awk '{ sub(/^\*/, "", $2); print $2 }' "$pasta/$exe.sha256")
+          [[ $esperado =~ ^[0-9a-f]{64}$ ]] && [ "$nome" = "$exe" ] || {
+            echo "::error::$exe.sha256 do release $tag fora do formato do sha256sum ('<hash>  $exe'): nada foi publicado. Refaça o release (PDV release com \"substituir\") ou implante sem publicar o PDV (campo publicar_pdv desmarcado)."
+            exit 1
+          }
+          # shellcheck disable=SC2029
+          na_vps=$(ssh genesis-vps "bash /opt/genesis/releases/$VERSAO/implantar.sh pdv atual" || true)
+          if [ "$na_vps" = "$esperado" ]; then
+            echo "A página de download já serve o PDV $versao_pdv (sha256 $esperado): nada a enviar."
+            {
+              echo "versao=$versao_pdv"
+              echo "situacao=já publicado"
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$exe" --dir "$pasta" ||
+            pular "Não foi possível baixar $exe do release $tag (rede ou GitHub; rode a Implantação de novo)."
+          # O hash calculado do arquivo baixado, não o `sha256sum -c` (que confere o nome que o próprio .sha256 traz).
+          calculado=$(sha256sum "$pasta/$exe" | cut -d' ' -f1)
+          [ "$calculado" = "$esperado" ] || {
+            echo "::error::o sha256 de $exe baixado do release $tag ($calculado) não confere com o $exe.sha256 do release ($esperado): nada foi publicado. Refaça o release (PDV release com \"substituir\") ou implante sem publicar o PDV (campo publicar_pdv desmarcado)."
+            exit 1
+          }
+          echo "PDV $versao_pdv baixado e conferido ($(stat -c %s "$pasta/$exe") bytes, sha256 $esperado); a VPS servia: ${na_vps:-nada}."
+          {
+            echo "versao=$versao_pdv"
+            echo "publicar=true"
+            echo "publicado_em=$publicado"
+            echo "pasta=$pasta"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Preparação da VPS (instalar.sh, idempotente)
+        run: |
+          # shellcheck disable=SC2029
+          ssh genesis-vps "bash /opt/genesis/releases/$VERSAO/instalar.sh"
+
+      - name: Implantação (migrações e troca de versão)
+        id: implantacao
+        run: |
+          # shellcheck disable=SC2029
+          ssh genesis-vps "bash /opt/genesis/releases/$VERSAO/implantar.sh implantar $VERSAO"
+
+      # Depois da troca (o instalador novo só aparece com a versão nova no ar). O implantar.sh confere o sha256 de novo
+      # na VPS, grava em temporário e troca por rename: a página nunca serve um arquivo pela metade. Sem release
+      # publicado, `pdv retirar` tira o atual.json e os instaladores (a página diz "ainda não foi publicado").
+      - name: Página de download (publica o instalador do PDV)
+        id: pagina
+        if: steps.pdv.outputs.publicar == 'true' || steps.pdv.outputs.retirar == 'true'
+        env:
+          PDV_VERSAO: ${{ steps.pdv.outputs.versao }}
+          PDV_PUBLICADO_EM: ${{ steps.pdv.outputs.publicado_em }}
+          PDV_PASTA: ${{ steps.pdv.outputs.pasta }}
+          PDV_RETIRAR: ${{ steps.pdv.outputs.retirar }}
+        run: |
+          if [ "$PDV_RETIRAR" = true ]; then
+            # shellcheck disable=SC2029
+            ssh genesis-vps "bash /opt/genesis/releases/$VERSAO/implantar.sh pdv retirar"
+            exit 0
+          fi
+          exe="GenesisPDV-Setup-$PDV_VERSAO.exe"
+          # shellcheck disable=SC2029
+          tar -C "$PDV_PASTA" -cf - "$exe" "$exe.sha256" |
+            ssh genesis-vps "bash /opt/genesis/releases/$VERSAO/implantar.sh pdv publicar $PDV_VERSAO $PDV_PUBLICADO_EM"
+
+      - name: Conferência pelas URLs públicas
+        if: env.CONFERIR_URL_PUBLICA == 'true'
+        env:
+          PDV_VERSAO: ${{ steps.pdv.outputs.versao }}
+          PDV_RETIRAR: ${{ steps.pdv.outputs.retirar }}
+        run: |
+          conferir() {
+            for _ in $(seq 1 20); do
+              if curl -fsS --max-time 10 "$1" -o /tmp/resposta; then
+                grep -q "$2" /tmp/resposta && { echo "OK: $1"; return 0; }
+              fi
+              sleep 6
+            done
+            echo "::error::$1 não respondeu como esperado (DNS, certificado ou Traefik?). Versão anterior: ssh na VPS e rode /opt/genesis/implantar.sh voltar"
+            return 1
+          }
+          conferir "$API_URL/saude" '"status":"ok"'
+          conferir "$ERP_URL/saude" '"status":"ok"'
+          conferir "$ERP_URL/" '<div id="root">'
+          # Painel do monitoramento (I1b): publicado e fechado sem o token (o token nunca passa pelo workflow).
+          codigo=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$API_URL/api/saude/detalhada")
+          [ "$codigo" = 401 ] || { echo "::error::$API_URL/api/saude/detalhada sem token deveria responder 401 (veio $codigo)"; exit 1; }
+          echo "OK: $API_URL/api/saude/detalhada sem token → 401"
+          # Página de download e, com release publicado, o atual.json e o primeiro byte do instalador.
+          conferir "$DOWNLOAD_URL/" 'pagina.js'
+          if [ -n "$PDV_VERSAO" ]; then
+            conferir "$DOWNLOAD_URL/pdv/atual.json" "\"versao\": \"$PDV_VERSAO\""
+            curl -fsS --max-time 10 -r 0-0 -o /dev/null "$DOWNLOAD_URL/pdv/GenesisPDV-Setup-$PDV_VERSAO.exe" ||
+              { echo "::error::$DOWNLOAD_URL/pdv/GenesisPDV-Setup-$PDV_VERSAO.exe não foi servido"; exit 1; }
+            echo "OK: $DOWNLOAD_URL/pdv/GenesisPDV-Setup-$PDV_VERSAO.exe"
+          elif [ "$PDV_RETIRAR" = true ]; then
+            codigo=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$DOWNLOAD_URL/pdv/atual.json")
+            [ "$codigo" = 404 ] || { echo "::error::$DOWNLOAD_URL/pdv/atual.json deveria responder 404 sem release publicado (veio $codigo)"; exit 1; }
+            echo "OK: $DOWNLOAD_URL/pdv/atual.json → 404 (página: ainda não publicado)"
+          fi
+
+      - name: Resumo
+        if: always()
+        env:
+          PDV_RESULTADO: ${{ steps.pdv.outcome }}
+          PDV_VERSAO: ${{ steps.pdv.outputs.versao }}
+          PDV_SITUACAO: ${{ steps.pdv.outputs.situacao }}
+          PDV_PUBLICAR: ${{ steps.pdv.outputs.publicar }}
+          PDV_RETIRAR: ${{ steps.pdv.outputs.retirar }}
+          PAGINA_RESULTADO: ${{ steps.pagina.outcome }}
+          IMPLANTACAO_RESULTADO: ${{ steps.implantacao.outcome }}
+        # O log do Actions e este resumo são públicos (repositório público, D60): só a versão e a página de download.
+        # O estado da VPS (containers, versões, memória, backup) fica no `implantar.sh estado`, rodado na VPS.
+        run: |
+          # A situação da página sai do resultado do passo que mexe nela (pagina), não do que só baixa (pdv).
+          if [ "$PUBLICAR_PDV" != true ]; then
+            pagina="não mexida (publicar_pdv desmarcado)"
+          elif [ "$PDV_RESULTADO" = skipped ] || [ -z "$PDV_RESULTADO" ]; then
+            pagina="não mexida: a implantação parou antes do passo do instalador do PDV"
+          elif [ "$PDV_RESULTADO" != success ]; then
+            pagina="não mexida: o passo do instalador do PDV falhou (veja o erro acima)"
+          elif [ "$PDV_SITUACAO" = "já publicado" ]; then
+            pagina="PDV $PDV_VERSAO (já publicado)"
+          elif [ "$PDV_PUBLICAR" = true ] || [ "$PDV_RETIRAR" = true ]; then
+            if [ "$PDV_RETIRAR" = true ]; then
+              o_que="tirar o instalador (sem GitHub Release do PDV publicado)"
+              feito="instalador retirado nesta implantação (sem GitHub Release do PDV publicado): diz \"ainda não publicado\""
+            else
+              o_que="publicar o PDV $PDV_VERSAO"
+              feito="PDV $PDV_VERSAO (publicado nesta implantação)"
+            fi
+            case "$PAGINA_RESULTADO" in
+              success) pagina=$feito ;;
+              skipped | '') pagina="não mexida: a implantação parou antes de $o_que; rode a Implantação de novo" ;;
+              *) pagina="não mexida: falhou ao $o_que; a página continua com o que servia, rode a Implantação de novo" ;;
+            esac
+          else
+            pagina="não mexida (o GitHub não respondeu ou o release está incompleto: veja os avisos)"
+          fi
+          case "$IMPLANTACAO_RESULTADO" in
+            success) versao="$VERSAO no ar" ;;
+            # A falha pode ser de qualquer etapa (SSH, trava, proxy do banco, migrações ou a saúde da versão nova): o
+            # que fazer está na mensagem ERRO do passo, não aqui. O script citado é o da release nova, que sempre existe
+            # quando o passo rodou (o link /opt/genesis/implantar.sh só passa para ela quando a troca dá certo).
+            failure) versao="$VERSAO não ficou no ar: a mensagem ERRO (ou o erro do SSH) do passo Implantação diz em que etapa parou e o que fazer. Antes da troca de versão (migrações, trava), a anterior, se havia, continuou no ar; se a nova não ficou saudável, a VPS voltou sozinha para a anterior e o log da API ficou guardado na VPS (\`bash /opt/genesis/releases/$VERSAO/implantar.sh logs\`)" ;;
+            *) versao="${VERSAO:-?} não foi implantada: o workflow parou antes da troca de versão (veja o passo que falhou)" ;;
+          esac
+          # Com a versão nova no ar o link já é dela; senão, o script da release nova (o da anterior pode não ter o
+          # que se pede, e na primeira instalação o link nem existe).
+          script=/opt/genesis/implantar.sh
+          [ "$IMPLANTACAO_RESULTADO" = failure ] && script="/opt/genesis/releases/$VERSAO/implantar.sh"
+          {
+            echo "### Implantação ${VERSAO:-}"
+            echo
+            echo "Versão: $versao."
+            echo
+            echo "Página de download ($DOWNLOAD_URL): $pagina."
+            echo
+            echo "Estado da VPS (containers, memória, backup): no terminal da VPS, \`bash $script estado\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove a chave SSH do runner
+        if: always()
+        run: rm -rf ~/.ssh

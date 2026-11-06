@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.AberturaCaixaView"
+             x:DataType="vm:AberturaCaixaViewModel"
+             Classes="tela">
+  <!-- Abertura de caixa (PDV 8.2): fundo de troco obrigatório, F2 conta cédulas, Enter abre, Esc sai. -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding AbrirCommand}" />
+    <KeyBinding Gesture="F2" Command="{Binding ContarCedulasCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding SairCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Classes="barra" Padding="20,10">
+        <TextBlock Text="GenesisPDV · Abertura de caixa" FontWeight="SemiBold" FontSize="16" />
+      </Border>
+      <Border Grid.Row="1" Classes="painel" Width="620" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="10">
+          <TextBlock x:Name="TituloAbertura" Text="Abertura de caixa" Classes="titulo" />
+          <TextBlock Text="{Binding Cabecalho}" FontWeight="SemiBold" />
+          <TextBlock Text="{Binding DataHora, StringFormat='Data/hora: {0}'}" Classes="secundario" />
+          <TextBlock Text="Fundo de troco (R$)" Classes="rotulo" />
+          <TextBox x:Name="CampoFundo" Text="{Binding Fundo}" c:Foco.Inicial="True" FontSize="24" AutomationProperties.Name="Fundo de troco"
+                   IsReadOnly="{Binding Automatica}" />
+          <TextBlock x:Name="TextoHerdado" Text="{Binding HerdadoTexto}" Classes="secundario"
+                     IsVisible="{Binding HerdadoTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <!-- A abertura automática parada pelo disco quase cheio (G4): o fundo herdado, sem observação nem contagem. -->
+          <TextBlock x:Name="TextoAberturaAutomatica" Text="{Binding AutomaticaTexto}" Classes="secundario" TextWrapping="Wrap"
+                     IsVisible="{Binding Automatica}" />
+          <TextBlock Text="Observação" Classes="rotulo" IsVisible="{Binding !Automatica}" />
+          <TextBox x:Name="CampoObservacao" Text="{Binding Observacao}" MaxLength="255" AutomationProperties.Name="Observação"
+                   IsVisible="{Binding !Automatica}" />
+          <TextBlock x:Name="TextoAvisoAbertura" Text="{Binding Aviso}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                     IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroAbertura" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[Enter] Abrir caixa   [F2] Contar cédulas   [Esc] Sair" Classes="tecla" />
+        </StackPanel>
+      </Border>
+    </Grid>
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Contador, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Contador}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Liberacao, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Liberacao}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

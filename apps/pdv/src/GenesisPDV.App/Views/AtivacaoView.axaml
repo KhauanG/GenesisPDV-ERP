@@ -1,0 +1,104 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:c="using:GenesisPDV.App.Comportamentos"
+             x:Class="GenesisPDV.App.Views.AtivacaoView"
+             x:DataType="vm:AtivacaoViewModel"
+             Classes="tela"
+             Focusable="True">
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding AvancarCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="F8" Command="{Binding AtivarDemonstracaoCommand}" />
+  </UserControl.KeyBindings>
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Classes="barra" Padding="20,10">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Right" Text="{Binding Versao}" Classes="secundario" VerticalAlignment="Center" />
+        <TextBlock Text="GenesisPDV · Assistente de ativação" FontWeight="SemiBold" FontSize="16" />
+      </DockPanel>
+    </Border>
+    <Border Grid.Row="1" Classes="painel" Width="620" Padding="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="10">
+        <TextBlock Text="Ativar este caixa" Classes="titulo" x:Name="TituloAtivacao" />
+        <TextBlock x:Name="TextoPasso" Text="{Binding PassoTexto}" Classes="tecla" />
+
+        <!-- 1. Boas-vindas: versão e requisitos detectados (PDV 32.7). -->
+        <StackPanel Spacing="8" IsVisible="{Binding EmBoasVindas}">
+          <TextBlock Classes="secundario" TextWrapping="Wrap"
+                     Text="Este assistente liga o caixa à nuvem com o código gerado no ERP (Cadastros › PDVs / Terminais › Gerar código de ativação). A ativação exige internet; depois de ativado, o PDV funciona offline." />
+          <TextBlock Text="Requisitos deste computador" Classes="rotulo" Margin="0,6,0,0" />
+          <ItemsControl ItemsSource="{Binding Requisitos}" x:Name="ListaRequisitos">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ItemRequisito">
+                <Grid ColumnDefinitions="140,*" Margin="0,2">
+                  <TextBlock Text="{Binding Nome}" Classes="secundario" />
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="{Binding Valor}" TextWrapping="Wrap" MaxWidth="300" />
+                    <TextBlock Text="{Binding Aviso, StringFormat='⚠ {0}'}" Classes="erro" IsVisible="{Binding Abaixo}" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <!-- 2. Conexão: GET /saude no servidor informado. -->
+        <StackPanel Spacing="8" IsVisible="{Binding EmConexao}">
+          <TextBlock Classes="secundario" TextWrapping="Wrap"
+                     Text="Endereço do servidor da Genesis (o padrão serve para todas as lojas)." />
+          <TextBlock Text="Endereço do servidor" Classes="rotulo" />
+          <TextBox x:Name="CampoUrl" Text="{Binding UrlServidor}" AutomationProperties.Name="Endereço do servidor" />
+          <TextBlock Text="{Binding ErroUrl}" Classes="erro" IsVisible="{Binding ErroUrl, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+
+        <!-- 3. Código da empresa e de ativação. -->
+        <StackPanel Spacing="8" IsVisible="{Binding EmCodigo}">
+          <TextBlock Classes="secundario" TextWrapping="Wrap"
+                     Text="Digite o código da empresa e o código de ativação mostrados no ERP. O código vale uma vez e tem validade." />
+          <TextBlock Text="Código da empresa (6 dígitos)" Classes="rotulo" Margin="0,4,0,0" />
+          <TextBox x:Name="CampoCodigoEmpresa" Text="{Binding CodigoEmpresa}" MaxLength="6"
+                   AutomationProperties.Name="Código da empresa" />
+          <TextBlock Text="{Binding ErroCodigoEmpresa}" Classes="erro" IsVisible="{Binding ErroCodigoEmpresa, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+          <TextBlock Text="Código de ativação (XXXX-XXXX)" Classes="rotulo" />
+          <TextBox x:Name="CampoCodigoAtivacao" Text="{Binding CodigoAtivacao}" MaxLength="9" FontFamily="{StaticResource FonteMono}"
+                   AutomationProperties.Name="Código de ativação" />
+          <TextBlock Text="{Binding ErroCodigoAtivacao}" Classes="erro" IsVisible="{Binding ErroCodigoAtivacao, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </StackPanel>
+
+        <!-- 4. Confirmação: o terminal já está ativado; o instalador confere loja e caixa. -->
+        <StackPanel Spacing="6" IsVisible="{Binding EmConfirmacao}">
+          <TextBlock Text="Terminal ativado. Confira os dados:" FontWeight="SemiBold" />
+          <Grid ColumnDefinitions="110,*" RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,4,0,0">
+            <TextBlock Grid.Row="0" Text="Empresa" Classes="secundario" />
+            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TextoEmpresa" Text="{Binding EmpresaTexto}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="1" Text="Loja" Classes="secundario" />
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TextoLoja" Text="{Binding LojaTexto}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="2" Text="CNPJ" Classes="secundario" />
+            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TextoCnpj" Text="{Binding CnpjTexto}" />
+            <TextBlock Grid.Row="3" Text="Caixa" Classes="secundario" />
+            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TextoCaixa" Text="{Binding CaixaTexto}" FontWeight="SemiBold" />
+          </Grid>
+          <TextBlock Classes="secundario" TextWrapping="Wrap" Margin="0,6,0,0"
+                     Text="Se a loja ou o caixa não conferem, revogue este terminal no ERP (Cadastros › PDVs / Terminais) e gere outro código. Enter baixa os cadastros (produtos, usuários, estoque); o hardware pode ser configurado depois." />
+        </StackPanel>
+
+        <Border Background="{DynamicResource PincelInfoFundo}" CornerRadius="4" Padding="12,8" Margin="0,8,0,0"
+                IsVisible="{Binding Mensagem, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock x:Name="TextoMensagem" Text="{Binding Mensagem}" TextWrapping="Wrap" AutomationProperties.Name="Mensagem" />
+        </Border>
+
+        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,12,0,0">
+          <Button Content="{Binding TextoAvancar}" Command="{Binding AvancarCommand}" Classes="accent" Focusable="False" x:Name="BotaoAvancar" />
+          <Button Content="[Esc] Voltar" Command="{Binding VoltarCommand}" Focusable="False" IsVisible="{Binding PodeVoltar}" />
+          <Button Content="[F8] Modo demonstração" Command="{Binding AtivarDemonstracaoCommand}" Focusable="False" x:Name="BotaoDemonstracao"
+                  IsVisible="{Binding MostraDemonstracao}" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="2" Classes="barra" Padding="20,8">
+      <TextBlock x:Name="TextoRodape" Classes="secundario" Text="{Binding Rodape}" />
+    </Border>
+  </Grid>
+</UserControl>

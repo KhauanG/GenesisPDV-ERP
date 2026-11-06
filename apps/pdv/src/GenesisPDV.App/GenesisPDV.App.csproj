@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>GenesisPDV.App</RootNamespace>
+    <AssemblyName>GenesisPDV</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\genesispdv.ico</ApplicationIcon>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Os RIDs de publicação entram no packages.lock.json; sem isso "dotnet publish -r" reescreveria o lock. -->
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <!--
+    Operadores de demonstração (maria/carlos) só entram em build/test/run de desenvolvimento. Todo "dotnet publish"
+    (o executável entregue a uma loja) sai sem eles, a menos que se peça explicitamente -p:ModoDemonstracao=true.
+  -->
+  <PropertyGroup>
+    <ModoDemonstracao Condition="'$(ModoDemonstracao)' == '' and '$(_IsPublishing)' == 'true'">false</ModoDemonstracao>
+    <ModoDemonstracao Condition="'$(ModoDemonstracao)' == ''">true</ModoDemonstracao>
+    <DefineConstants Condition="'$(ModoDemonstracao)' == 'true'">$(DefineConstants);MODO_DEMONSTRACAO</DefineConstants>
+  </PropertyGroup>
+  <!--
+    URL padrão da API no assistente de ativação (I3; README › decisão 62), gravada como AssemblyMetadata e lida por
+    ConfiguracaoBuild. O padrão é a do produto; o instalador do piloto sai com
+    -p:GenesisUrlApiPadrao=https://api.grupoicebeer.com.br. A variável GENESISPDV_API continua sobrepondo.
+  -->
+  <PropertyGroup>
+    <GenesisUrlApiPadrao Condition="'$(GenesisUrlApiPadrao)' == ''">https://api.genesispdv.com.br</GenesisUrlApiPadrao>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="GenesisUrlApiPadrao" Value="$(GenesisUrlApiPadrao)" />
+  </ItemGroup>
+  <Target Name="ConferirUrlApiPadrao" BeforeTargets="CoreCompile">
+    <Error Condition="!$(GenesisUrlApiPadrao.StartsWith('https://')) or $(GenesisUrlApiPadrao.Contains(' '))"
+           Text="GenesisUrlApiPadrao precisa ser uma URL https:// sem espaços (recebido: '$(GenesisUrlApiPadrao)')." />
+  </Target>
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Símbolos dentro das DLLs: o log de erro mantém número de linha sem .pdb soltos ao lado do exe. -->
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <!-- Os pacotes nativos (Skia/HarfBuzz) trazem ~100 MB de .pdb que não servem ao caixa. -->
+  <Target Name="RemoverPdbsDaPublicacao" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+  <ItemGroup>
+    <!-- Ícone do executável (ApplicationIcon), da janela e do instalador (instalador/windows) e o PNG do .deb. -->
+    <AvaloniaResource Include="Assets\genesispdv.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="QRCoder" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Serilog.Extensions.Logging" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GenesisPDV.Core\GenesisPDV.Core.csproj" />
+    <ProjectReference Include="..\GenesisPDV.Data\GenesisPDV.Data.csproj" />
+    <ProjectReference Include="..\GenesisPDV.Sync\GenesisPDV.Sync.csproj" />
+    <ProjectReference Include="..\GenesisPDV.Hardware\GenesisPDV.Hardware.csproj" />
+    <ProjectReference Include="..\GenesisPDV.Fiscal\GenesisPDV.Fiscal.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GenesisPDV.App.Tests" />
+    <InternalsVisibleTo Include="GenesisPDV.E2E.Tests" />
+  </ItemGroup>
+</Project>

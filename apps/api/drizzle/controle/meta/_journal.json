@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793326144650,
+      "tag": "0000_funcoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793326155074,
+      "tag": "0001_tabelas",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793326176225,
+      "tag": "0002_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793333540685,
+      "tag": "0003_ajustes_fase0",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793402237281,
+      "tag": "0004_liberar_ativacoes",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793430983498,
+      "tag": "0005_hardware_pendente",
+      "breakpoints": true
+    }
+  ]
+}

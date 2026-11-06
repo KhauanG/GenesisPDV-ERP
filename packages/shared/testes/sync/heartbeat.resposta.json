@@ -1,0 +1,51 @@
+{
+  "agora_servidor": "2026-10-29T17:45:00.402Z",
+  "status_terminal": "ativo",
+  "comandos": [
+    {
+      "id": "01a1879a-5f60-7172-8384-9e0f1a2b3c4d",
+      "tipo": "mensagem",
+      "parametros": {
+        "texto": "Inventário amanhã às 7h"
+      }
+    },
+    {
+      "id": "01a1879b-6071-7283-9495-0f1a2b3c4d5e",
+      "tipo": "ressincronizar_fluxo",
+      "parametros": {
+        "fluxo": "catalogo"
+      }
+    }
+  ],
+  "eventos_resolvidos": [
+    {
+      "evento_id": "01a18771-4e5f-7061-8273-8d9e0f1a2b3c",
+      "status": "aplicado",
+      "versao_nuvem": 1882301,
+      "versao_nuvem_fim": 1882305,
+      "resultado": {}
+    },
+    {
+      "evento_id": "01a18772-5f60-7172-9384-9e0f1a2b3c4d",
+      "status": "descartado",
+      "resultado": {
+        "descartado": true,
+        "justificativa": "Venda de teste lançada por engano"
+      }
+    }
+  ],
+  "renovar_token": false,
+  "app": {
+    "versao_minima": "1.3.0",
+    "versao_disponivel": "1.4.3",
+    "url_pacote": "https://downloads.genesispdv.com.br/pdv/windows_x64/1.4.3/GenesisPDV.exe",
+    "sha256": "a3f5c1d2e4b6a7988796a5b4c3d2e1f00f1e2d3c4b5a69783f1c9a2e8b7d4c6f",
+    "atualizar_ate": null
+  },
+  "intervalos": {
+    "heartbeat_s": 30,
+    "pull_s": 30,
+    "pull_com_sse_s": 300,
+    "push_pendente_s": 15
+  }
+}

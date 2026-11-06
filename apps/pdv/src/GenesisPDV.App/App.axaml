@@ -1,0 +1,110 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             xmlns:v="using:GenesisPDV.App.Views"
+             xmlns:vmc="using:GenesisPDV.App.ViewModels.Central"
+             xmlns:vc="using:GenesisPDV.App.Views.Central"
+             x:Class="GenesisPDV.App.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.ThemeDictionaries>
+        <!-- Tema escuro (padrão do caixa): contraste AA, total em verde. -->
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="PincelFundo" Color="#0F1720" />
+          <SolidColorBrush x:Key="PincelPainel" Color="#17212B" />
+          <SolidColorBrush x:Key="PincelPainelAlto" Color="#1F2C39" />
+          <SolidColorBrush x:Key="PincelBarra" Color="#0A1016" />
+          <SolidColorBrush x:Key="PincelBorda" Color="#2E3F50" />
+          <SolidColorBrush x:Key="PincelTexto" Color="#E6EDF3" />
+          <SolidColorBrush x:Key="PincelTextoSecundario" Color="#9FB0C0" />
+          <SolidColorBrush x:Key="PincelDestaque" Color="#4C9AFF" />
+          <SolidColorBrush x:Key="PincelTotalFundo" Color="#0E4429" />
+          <SolidColorBrush x:Key="PincelTotalTexto" Color="#7EE2A8" />
+          <SolidColorBrush x:Key="PincelErro" Color="#FF7B72" />
+          <SolidColorBrush x:Key="PincelErroFundo" Color="#3D1418" />
+          <SolidColorBrush x:Key="PincelAviso" Color="#E3B341" />
+          <SolidColorBrush x:Key="PincelInfoFundo" Color="#0C2D57" />
+          <SolidColorBrush x:Key="PincelSelecao" Color="#1D3B5E" />
+          <SolidColorBrush x:Key="PincelVeu" Color="#B0000000" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="PincelFundo" Color="#EEF1F5" />
+          <SolidColorBrush x:Key="PincelPainel" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="PincelPainelAlto" Color="#F3F6F9" />
+          <SolidColorBrush x:Key="PincelBarra" Color="#DCE3EA" />
+          <SolidColorBrush x:Key="PincelBorda" Color="#C5CED8" />
+          <SolidColorBrush x:Key="PincelTexto" Color="#1F2328" />
+          <SolidColorBrush x:Key="PincelTextoSecundario" Color="#57606A" />
+          <SolidColorBrush x:Key="PincelDestaque" Color="#0A5BC4" />
+          <SolidColorBrush x:Key="PincelTotalFundo" Color="#DAFBE1" />
+          <SolidColorBrush x:Key="PincelTotalTexto" Color="#116329" />
+          <SolidColorBrush x:Key="PincelErro" Color="#B3261E" />
+          <SolidColorBrush x:Key="PincelErroFundo" Color="#FFEBE9" />
+          <SolidColorBrush x:Key="PincelAviso" Color="#7D4E00" />
+          <SolidColorBrush x:Key="PincelInfoFundo" Color="#DDF4FF" />
+          <SolidColorBrush x:Key="PincelSelecao" Color="#CFE4FF" />
+          <SolidColorBrush x:Key="PincelVeu" Color="#80000000" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+      <FontFamily x:Key="FonteMono">Cascadia Mono, Consolas, DejaVu Sans Mono, Liberation Mono, monospace</FontFamily>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.DataTemplates>
+    <DataTemplate DataType="vm:AtivacaoViewModel">
+      <v:AtivacaoView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:CargaInicialViewModel">
+      <v:CargaInicialView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:LoginViewModel">
+      <v:LoginView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:VendaViewModel">
+      <v:VendaView />
+    </DataTemplate>
+    <!-- Caixa (Fase 1C, C10a; PDV 8, 21, 31.3). -->
+    <DataTemplate DataType="vm:AberturaCaixaViewModel">
+      <v:AberturaCaixaView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:SessaoOutroOperadorViewModel">
+      <v:SessaoOutroOperadorView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:FechamentoCaixaViewModel">
+      <v:FechamentoCaixaView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:PedidoLiberacaoViewModel">
+      <v:PedidoLiberacaoView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:ContadorCedulasViewModel">
+      <v:ContadorCedulasView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:DesativacaoViewModel">
+      <v:DesativacaoView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:TerminalBloqueadoViewModel">
+      <v:TerminalBloqueadoView />
+    </DataTemplate>
+    <!-- Tela bloqueada (PDV 7.4; Central do PDV, bloco G11). -->
+    <DataTemplate DataType="vm:TelaBloqueadaViewModel">
+      <v:TelaBloqueadaView />
+    </DataTemplate>
+    <DataTemplate DataType="vm:ErroFatalViewModel">
+      <v:ErroFatalView />
+    </DataTemplate>
+    <!-- Restaurar backup (Fase 1C, C17; PDV 32.5). -->
+    <DataTemplate DataType="vm:RestaurarBackupViewModel">
+      <v:RestaurarBackupView />
+    </DataTemplate>
+    <!-- Central do PDV, a engrenagem (bloco G3): a aba 3 é a antiga configuração do terminal (implantação I4; PDV 6). -->
+    <DataTemplate DataType="vmc:CentralPdvViewModel">
+      <vc:CentralPdvView />
+    </DataTemplate>
+  </Application.DataTemplates>
+
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://GenesisPDV/Estilos/Estilos.axaml" />
+  </Application.Styles>
+</Application>

@@ -1,0 +1,90 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GenesisPDV.App.ViewModels"
+             x:Class="GenesisPDV.App.Views.FechamentoCaixaView"
+             x:DataType="vm:FechamentoCaixaViewModel"
+             Classes="tela"
+             Focusable="True">
+  <!--
+    Fechamento cego (PDV 21.2): o operador digita o contado por forma; o calculado só aparece quando a regra da loja
+    permite (O3 do dono: nunca no PDV). F5 alterna o zera caixa, F3 conta as cédulas do dinheiro, F4 reconta. Fora da
+    contagem os valores ficam só leitura (a conferência grava o que foi contado).
+  -->
+  <UserControl.KeyBindings>
+    <KeyBinding Gesture="Enter" Command="{Binding AvancarCommand}" />
+    <KeyBinding Gesture="Escape" Command="{Binding VoltarCommand}" />
+    <KeyBinding Gesture="F3" Command="{Binding ContarCedulasCommand}" />
+    <KeyBinding Gesture="F4" Command="{Binding RecontarCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding AlternarZeraCommand}" />
+  </UserControl.KeyBindings>
+  <Grid>
+    <Grid RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Classes="barra" Padding="20,10">
+        <TextBlock x:Name="TituloFechamento" Text="{Binding Titulo}" FontWeight="SemiBold" FontSize="16" />
+      </Border>
+      <Border Grid.Row="1" Classes="painel" Width="760" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Spacing="10">
+          <StackPanel Spacing="10" IsVisible="{Binding !Concluido}">
+            <TextBlock Text="Informe os valores CONTADOS por forma de pagamento" Classes="titulo" />
+            <Grid ColumnDefinitions="*,160,140,140">
+              <TextBlock Text="Forma" Classes="rotulo" />
+              <TextBlock Grid.Column="1" Text="Valor contado" Classes="rotulo" />
+              <TextBlock Grid.Column="2" Text="Calculado" Classes="rotulo" HorizontalAlignment="Right" IsVisible="{Binding CalculadoVisivel}" />
+              <TextBlock Grid.Column="3" Text="Diferença" Classes="rotulo" HorizontalAlignment="Right" IsVisible="{Binding Conferindo}" />
+            </Grid>
+            <ItemsControl x:Name="ListaFormas" ItemsSource="{Binding Formas}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:FormaFechamentoViewModel">
+                  <Grid ColumnDefinitions="*,160,140,140" Margin="0,3">
+                    <TextBlock Text="{Binding Descricao}" VerticalAlignment="Center" FontSize="16" />
+                    <TextBox Grid.Column="1" x:Name="CampoValorForma" Text="{Binding Valor}" IsReadOnly="{Binding SomenteLeitura}" Classes="mono"
+                             AutomationProperties.Name="{Binding Descricao}" />
+                    <TextBlock Grid.Column="2" Text="{Binding CalculadoTexto}" Classes="mono" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding DiferencaTexto}" Classes="mono" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock x:Name="TextoZera" Text="{Binding ZeraTexto}" FontWeight="SemiBold" />
+            <StackPanel Spacing="4" IsVisible="{Binding JustificativaVisivel}">
+              <TextBlock Text="{Binding RotuloJustificativa}" Classes="rotulo" />
+              <TextBox x:Name="CampoJustificativa" Text="{Binding Justificativa}" MaxLength="255" AutomationProperties.Name="Justificativa" />
+            </StackPanel>
+            <TextBlock x:Name="TextoPendentesFechamento" Text="{Binding AvisoPendentes}" Classes="secundario" TextWrapping="Wrap"
+                       IsVisible="{Binding AvisoPendentes, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock x:Name="TextoAvisoFechamento" Text="{Binding Aviso}" Foreground="{DynamicResource PincelAviso}" FontWeight="SemiBold" TextWrapping="Wrap"
+                       IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock x:Name="TextoErroFechamento" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                       IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <TextBlock Text="{Binding Teclas}" Classes="tecla" />
+            <!-- Cada tecla da legenda tem o seu botão (o caixa só com teclado numérico e mouse; decisão 65). -->
+            <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+              <Button Classes="acao" x:Name="BotaoAvancarFechamento" Content="{Binding RotuloAvancar}" Command="{Binding AvancarCommand}" />
+              <Button Classes="acao" x:Name="BotaoCedulasFechamento" Content="Contar cédulas [F3]" Command="{Binding ContarCedulasCommand}"
+                      IsVisible="{Binding Contando}" />
+              <Button Classes="acao" x:Name="BotaoZeraFechamento" Content="Zera caixa sim/não [F5]" Command="{Binding AlternarZeraCommand}"
+                      IsVisible="{Binding BotaoZeraVisivel}" />
+              <Button Classes="acao" x:Name="BotaoRecontarFechamento" Content="Recontar [F4]" Command="{Binding RecontarCommand}"
+                      IsVisible="{Binding BotaoRecontarVisivel}" />
+              <Button Classes="acao" x:Name="BotaoVoltarFechamento" Content="Voltar [Esc]" Command="{Binding VoltarCommand}"
+                      IsVisible="{Binding PodeVoltar}" />
+            </WrapPanel>
+          </StackPanel>
+          <DockPanel IsVisible="{Binding Concluido}">
+            <TextBlock DockPanel.Dock="Top" x:Name="TextoResultadoFechamento" Text="{Binding Resultado}" Classes="titulo" TextWrapping="Wrap" />
+            <TextBlock DockPanel.Dock="Top" Text="Impressora simulada · relatório de fechamento" Classes="rotulo" Margin="0,8,0,4" />
+            <WrapPanel DockPanel.Dock="Bottom" Classes="botoes" HorizontalAlignment="Right">
+              <Button Classes="acao" x:Name="BotaoSeguirFechamento" Content="Seguir [Enter]" Command="{Binding AvancarCommand}" />
+            </WrapPanel>
+            <ScrollViewer MaxHeight="420">
+              <TextBlock x:Name="TextoRelatorio" Text="{Binding Relatorio}" Classes="mono" FontSize="11" AutomationProperties.Name="Relatório de fechamento" />
+            </ScrollViewer>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+    <Border Background="{DynamicResource PincelVeu}" IsVisible="{Binding Contador, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <ContentControl Content="{Binding Contador}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>
