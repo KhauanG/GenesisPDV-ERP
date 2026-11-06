@@ -86,6 +86,9 @@ const LINHAS: Linha[] = [
   // Estoque
   ['estoque.permite_negativo_erp', bool, false],
   ['estoque.transferencia_recebimento_automatico', bool, false],
+  // F2-B25 (F2-Q11 = D52, padrão até a confirmação do dono): a sugestão de reposição da transferência sobe ao fardo ou
+  // à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; desligada, sai em unidades.
+  ['estoque.reposicao_arredonda_embalagem', bool, true],
   ['estoque.custo_inclui_st', bool, true],
   ['estoque.custo_inclui_ipi', bool, true],
   ['estoque.custo_inclui_frete', bool, true],

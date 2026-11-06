@@ -804,6 +804,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `geral.dia_operacional_hora_corte` | hora `hh:mm` | `'05:00'` | S | S | Novo: hora de virada do dia operacional (regra em 1.2; padrão `05:00` decidido pelo dono, roadmap D7). **Não** é o "Resumo Diário por" do Nuvem3 (`pdv.resumo_diario_modo`) |
 | `estoque.permite_negativo_erp` | bool | `false` | — | — | Novo |
 | `estoque.transferencia_recebimento_automatico` | bool | `false` | — | — | Novo |
+| `estoque.reposicao_arredonda_embalagem` | bool | `true` | — | — | Novo (Fase 2, F2-B25; roadmap D52, padrão até a confirmação do dono): a sugestão de reposição da transferência (ERP 13.7) sobe ao múltiplo da embalagem de compra de maior fator do produto (3.6.5, `usa_compra`, fator > 1), sem passar do saldo da origem; desligada, sai em unidades |
 | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | bool | `true` | — | — | Novo (custo da NF-e) |
 | `estoque.custo_abate_creditos` | bool | `false` | — | — | Novo (ERP 9.1, 13.4.1): abate créditos de ICMS/PIS/COFINS do custo; só para regime normal |
 | `estoque.compra_atualiza_preco_custo` | `sempre`/`perguntar`/`nunca` | `perguntar` | — | — | Novo (Fase 2, F2-B15; roadmap D49, decidida pelo dono): a compra (recebimento e NF-e) leva o custo ao `produtos.preco_custo` sempre, com a confirmação de quem movimenta, ou nunca; o custo médio, a última compra e o último custo do fornecedor mudam sempre (3.8.1) |

@@ -1587,6 +1587,7 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Permitir acesso do suporte Genesis **(Novo)** | `geral.permite_acesso_suporte` | booleano | Sim | N | N | habilita "Acessar como suporte" no painel da plataforma (19.6; modelo 3.1.2) |
 | Permitir saldo negativo em documentos do ERP **(Novo)** | `estoque.permite_negativo_erp` | booleano | Não | N | N | 13.1.1 (vendas do PDV sempre são aceitas) |
 | Transferência com recebimento automático **(Novo)** | `estoque.transferencia_recebimento_automatico` | booleano | Não | N | N | 13.7 (envio já gera a entrada no destino) |
+| Sugestão de reposição arredonda para a embalagem de compra **(Novo)** | `estoque.reposicao_arredonda_embalagem` | booleano | Sim (D52, padrão até a confirmação do dono) | N | N | 13.7 "Sugerir reposição": a quantidade sobe ao fardo ou à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; Não = em unidades |
 | Custo da NF-e inclui ICMS ST / IPI / frete e despesas **(Novo)** | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | booleano | Sim | N | N | composição do custo na importação de NF-e (13.4.1) |
 | Abater créditos de ICMS/PIS/COFINS do custo **(Novo)** | `estoque.custo_abate_creditos` | booleano | Não | N | N | só para regime normal (13.4.1; modelo 3.1.2) |
 | Compra atualiza o preço de custo do produto **(Novo)** | `estoque.compra_atualiza_preco_custo` | enum `sempre` / `perguntar` (ao movimentar) / `nunca` | `perguntar` (D49) | N | N | Fase 2, F2-B15; roadmap D49: o recebimento e a NF-e sempre atualizam o custo médio e o último custo; o preço de custo cadastrado à mão só muda conforme a chave (13.3) |
@@ -3337,6 +3338,18 @@ Grade: **Produto**, **Variação**, **Lote** **(Novo)**, **Saldo na origem** **(
 recebida** **(Novo, etapa 2)**, **Diferença** **(Novo)**. Botão **Sugerir reposição (Novo)**: preenche a grade com
 os produtos do destino abaixo do estoque mínimo, na quantidade `máximo − saldo` (ou `mínimo × 2 − saldo` sem máximo),
 limitada ao saldo da origem.
+
+Fase 2, F2-B25 (API): **Sugerir reposição** (`GET /transferencias/sugestao-reposicao?origem&destino[&tipoEstoqueId]`,
+quem cria o rascunho: `transferencias.criar` e a origem entre os estoques permitidos; o destino ativo e também entre os
+estoques permitidos, porque a sugestão mostra o saldo dele — o expedidor do CD tem as lojas que abastece; erros nos
+campos do rascunho). Entram os produtos da loja do estoque de destino com estoque mínimo (cadastro do produto › Lojas), ativos na
+loja e com saldo próprio (sem combo, serviço, produzido nem "Com variações"), **abaixo do mínimo contando o que já está
+em trânsito para o destino** (enviado e não recebido): `saldo + em trânsito < mínimo`. A quantidade é `máximo − (saldo
++ em trânsito)`, ou `mínimo × 2 − (saldo + em trânsito)` sem máximo; com `estoque.reposicao_arredonda_embalagem`
+(padrão Sim; F2-Q11 = D52, padrão até a confirmação do dono) sobe ao fardo ou à caixa fechada (a embalagem de compra de
+maior fator) e, por fim, **nunca passa do saldo da origem**. Ex.: mínimo 24, máximo 72, saldo 10 e 12 em trânsito → 50,
+ou 60 com o fardo de 12. Saldos e em trânsito no tipo de estoque escolhido. O produto sem saldo na origem fica de fora,
+com aviso; o destino sem loja (o CD) não tem mínimo: sugestão vazia, com aviso (README da API › decisão 173).
 
 ```mermaid
 stateDiagram-v2

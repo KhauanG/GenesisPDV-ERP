@@ -12,6 +12,7 @@ import {
   type Pagina,
   receberTransferenciaSchema,
   type StatusTransferencia,
+  type SugestaoReposicao,
   type TransferenciaDetalhe,
   type TransferenciaResumo,
   tratarDivergenciaTransferenciaSchema,
@@ -39,6 +40,7 @@ import {
   resumoTratamento,
   tratarDivergenciaTransferencia,
 } from './recebimento.js';
+import { sugestaoReposicao, validarSugestaoReposicao } from './reposicao.js';
 import {
   cancelarTransferencia,
   conferirCabecalhoTransferencia,
@@ -80,10 +82,10 @@ function filtroVisivel(sessao: SessaoErp): SQL | undefined {
 }
 
 /**
- * Transferência entre estoques (ERP 13.7; MD 3.7.6; Fase 2, F2-B23 e F2-B24; README da API › decisões 171 e 172):
- * listagem, detalhe, o rascunho (criar, alterar, excluir), **enviar** (1ª etapa: `TRANSF_SAIDA` na origem; no modo de
- * uma etapa, já recebe tudo), **receber** (2ª etapa: `TRANSF_ENTRADA` no destino), **tratar a divergência** (retorno à
- * origem ou perda) e **cancelar** (do rascunho, sem efeito; do trânsito, `TRANSF_RETORNO` integral), e a anotação da
+ * Transferência entre estoques (ERP 13.7; MD 3.7.6; Fase 2, F2-B23 a F2-B25; README da API › decisões 171 a 173):
+ * listagem, detalhe, a sugestão de reposição, o rascunho (criar, alterar, excluir), **enviar** (1ª etapa: `TRANSF_SAIDA`
+ * na origem; no modo de uma etapa, já recebe tudo), **receber** (2ª etapa: `TRANSF_ENTRADA` no destino), **tratar a
+ * divergência** (retorno à origem ou perda) e **cancelar** (do rascunho, sem efeito; do trânsito, `TRANSF_RETORNO` integral), e a anotação da
  * NF-e emitida por fora (D6). Vê quem tem a origem ou o destino entre os estoques visíveis; gravar, enviar, cancelar e
  * anotar a NF-e exigem a **origem** permitida para movimentar (403), e o destino não precisa estar permitido (o
  * seletor lê `GET /transferencias/destinos`, sem o filtro dos permitidos); receber exige o **destino** permitido, e
@@ -187,6 +189,20 @@ export class TransferenciasController {
         lojaNome: r.loja_nome,
       }));
     });
+  }
+
+  /**
+   * "Sugerir reposição" do rascunho (ERP 13.7; F2-B25; F2-Q11 = D52; decisão 173): os produtos da loja do destino
+   * abaixo do mínimo, contando o que já está em trânsito para ele, na quantidade até o máximo (ou mínimo × 2),
+   * arredondada à embalagem de compra e limitada ao saldo da origem (`reposicao.ts`). Só leitura, com as conferências
+   * de quem cria (a origem entre os permitidos para movimentar, 403) e o destino entre os permitidos para ver (403: a
+   * resposta mostra o saldo dele); os erros, os do schema inclusive, nos campos do rascunho.
+   */
+  @Permissao('transferencias.criar')
+  @Get('sugestao-reposicao')
+  async sugestaoReposicao(@Query() query: unknown, @Sessao() sessao: SessaoErp): Promise<SugestaoReposicao> {
+    const q = validarSugestaoReposicao(query);
+    return this.s.tenancy.cx().consulta((db) => sugestaoReposicao(db, q, sessao));
   }
 
   @Permissao('transferencias.ver')

@@ -451,14 +451,21 @@ export interface TransferenciaDetalhe extends MetadadosRegistro {
 // ---------------------------------------------------------------- Sugestão de reposição (F2-B25)
 
 /**
- * `GET /transferencias/sugestao-reposicao?origem&destino`: os produtos do destino abaixo do mínimo da loja dele
- * (`produtos_lojas`), no tipo de estoque escolhido (vazio = o padrão). Destino sem loja: sugestão vazia, com aviso.
+ * `GET /transferencias/sugestao-reposicao?origem&destino[&tipoEstoqueId]` (F2-B25; README da API › decisão 173): os
+ * produtos do destino abaixo do mínimo da loja dele (`produtos_lojas`), contando o que já está em trânsito para ele,
+ * no tipo de estoque escolhido (vazio = o padrão), arredondados à embalagem de compra
+ * (`estoque.reposicao_arredonda_embalagem`) e limitados ao saldo da origem. Destino sem loja: sugestão vazia, com aviso.
+ * A API devolve os erros de `origem` e `destino` nos campos do rascunho (`estoqueOrigemId`, `estoqueDestinoId`).
  */
 export const sugestaoReposicaoSchema = z
   .object({
     origem: z.uuid('Escolha o estoque de origem'),
     destino: z.uuid('Escolha o estoque de destino'),
-    tipoEstoqueId: z.uuid().optional(),
+    // `?tipoEstoqueId=` vazio (o seletor sem escolha) = o padrão, como no rascunho.
+    tipoEstoqueId: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+      z.uuid().optional(),
+    ),
   })
   .refine((v) => v.origem.toLowerCase() !== v.destino.toLowerCase(), {
     path: ['destino'],
@@ -476,9 +483,12 @@ export interface ItemSugestaoReposicao {
   /** Já enviado para o destino e ainda não recebido (descontado da sugestão). */
   emTransito: string;
   saldoOrigem: string;
-  /** Embalagem de compra usada no arredondamento (`estoque.reposicao_arredonda_embalagem`, F2-Q11); `null` = unidade. */
+  /**
+   * Embalagem de compra usada no arredondamento (a viva com `usa_compra` de maior fator > 1;
+   * `estoque.reposicao_arredonda_embalagem`, F2-Q11 = D52); `null` = em unidades (chave desligada ou sem embalagem).
+   */
   embalagem: { unidadeSigla: string | null; fator: string } | null;
-  /** A sugerida, na unidade do produto, já arredondada e limitada ao saldo da origem. */
+  /** A sugerida (> 0), na unidade do produto, já arredondada e limitada ao saldo da origem. */
   quantidade: string;
 }
 

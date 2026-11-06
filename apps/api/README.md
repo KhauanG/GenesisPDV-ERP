@@ -4298,6 +4298,68 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      a recebida sem gravar); o modo de uma etapa Loja 1 → Loja 2 com a chave da empresa (recusada por loja), o lote
      preso à origem (o lote novo preso ao destino, o reaproveitado na segunda vez e o de outra validade recusado sem
      lançar nada) e o saldo novo nos PDVs das duas lojas; e o `conferirRazaoDoBanco` no fim).
+173. **Transferência: sugestão de reposição** (Fase 2, F2-B25; ERP 13.7 "Sugerir reposição"; MD 3.6.9, 3.6.5; F2-Q11 =
+     D52 do roadmap, **padrão até a confirmação do dono**; `src/transferencias/reposicao.ts` e `em-transito.ts` (novos),
+     a rota em `transferencias.controller.ts`, a chave em `packages/shared/src/configuracoes.ts`). **Sem migração**: o
+     contrato (`sugestaoReposicaoSchema`, `SugestaoReposicao`) é do F2-B22 (decisão 170), só com o `?tipoEstoqueId=`
+     vazio passando a valer o padrão; a chave nova não tem seed (só existe linha para o valor diferente do padrão).
+     Rota nova: `GET /transferencias/sugestao-reposicao?origem&destino[&tipoEstoqueId]`, declarada antes de `:id`.
+     - **Acesso** (as conferências de quem cria o rascunho, `conferirCabecalhoTransferencia`, e mais uma):
+       `transferencias.criar`, a **origem** entre os estoques permitidos para movimentar (403 em `estoqueOrigemId`) e
+       ativa, o **destino** ativo e **entre os estoques permitidos para ver** (403 em `estoqueDestinoId`), e o tipo de
+       estoque ativo (vazio = o padrão). O destino permitido é o que difere do rascunho (que aceita qualquer destino
+       ativo, decisão 170): a sugestão mostra o saldo, o em trânsito, o mínimo e o máximo do destino, e a própria
+       quantidade (máximo − saldo − em trânsito) os entrega, então o destino fora dos permitidos vazaria o saldo de uma
+       loja que o usuário não vê (D45; decisões 89 e 149). O expedidor do CD que monta a carga tem em
+       `usuarios_estoques` os estoques das lojas que abastece. **Todos os erros saem nos campos do rascunho**
+       (`estoqueOrigemId`, `estoqueDestinoId`, `tipoEstoqueId`), de onde a tela (F2-B27) pede a sugestão, inclusive os
+       do schema: `validarSugestaoReposicao` traduz `origem` → `estoqueOrigemId` e `destino` → `estoqueDestinoId`
+       (parâmetro faltando ou malformado, e origem = destino, o `.refine` do schema, em `estoqueDestinoId`). Só
+       leitura, sem auditoria: quem grava o rascunho confere tudo de novo (`gravarItensTransferencia`). O custo do
+       produto na opção só com `produtos.ver_custo`.
+     - **Quem entra**: os produtos da loja do estoque de destino (a de menor código, `lojaDoEstoque`) com
+       `produtos_lojas.estoque_minimo` preenchido, vivos, ativos, ativos na loja (`ativo_na_loja`) e que controlam
+       estoque, **abaixo do mínimo** contando o que está a caminho: `saldo + em trânsito < mínimo` (o mesmo `<` do
+       filtro "Abaixo do mínimo" dos saldos; o que já foi mandado e não chegou não é pedido de novo, nem dispara a
+       sugestão). Ficam de fora o combo, o serviço e o produzido (sem saldo próprio, `TIPOS_SEM_ESTOQUE`) e o "Com
+       variações" (saldo por variação, travado pelo D43). Saldo do destino, saldo da origem e em trânsito são os do
+       **tipo de estoque** pedido (o Vasilhame vazio repõe os cascos com o saldo de cascos), sem variação. Ordem: nome.
+       **Destino sem loja** (o CD): sugestão vazia com aviso (o mínimo e o máximo são da loja).
+     - **A conta** (`calcularReposicao`, função pura em decimal com teste unitário): falta = `máximo − (saldo + em
+       trânsito)` ou, sem máximo, `mínimo × 2 − (saldo + em trânsito)`; o produto sem fração (`permite_fracao` falso)
+       sobe ao inteiro; com `estoque.reposicao_arredonda_embalagem` (bool, padrão **Sim**, da empresa), sobe ao
+       próximo múltiplo do fator da **embalagem de compra de maior fator** do produto (o código de barras vivo com
+       `usa_compra`, sem variação e fator > 1; empate pelo principal e pelo código), que volta em `embalagem` com a
+       sigla da unidade (nula = em unidades); por fim, **nunca passa do saldo da origem** (o negativo conta como zero;
+       sem fração, o saldo desce ao inteiro) — o limitado ao saldo pode ficar fora do múltiplo do fardo: é o que o CD
+       tem. Mínimo 24, máximo 72, saldo 10 e 12 em trânsito → 50, ou 60 com o fardo de 12 (o critério de pronto).
+     - **Avisos**: o produto abaixo do mínimo sem saldo na origem sai da lista (a grade não aceita quantidade zero) e
+       é citado ("N produtos abaixo do mínimo ficaram de fora por não ter saldo na origem: …", os 5 primeiros nomes e
+       "e mais N"); acima de `LIMITE_ITENS_TRANSFERENCIA` (990) itens, ficam os primeiros por nome, com aviso.
+     - **Em trânsito reaproveitável** (`sqlEmTransito` em `em-transito.ts`): a subconsulta da soma das quantidades
+       **enviadas** dos itens das transferências `em_transito`, por estoque de destino, tipo de estoque, produto e
+       variação, com filtros opcionais de destinos, produtos e tipo (usa o `ix_transferencias_estoque_destino_status`).
+       Não contam o rascunho, a cancelada, a recebida nem a `recebida_divergencia` (a diferença a menor é a
+       "divergência a tratar", pendência separada). A coluna "Em trânsito" do produto e dos saldos (F2-B26) usa a
+       mesma subconsulta.
+     - **F2-Q11 = D52** (padrão até a confirmação do dono): arredondar ao fardo ou à caixa fechada (a recomendação (a)
+       do plano). Alternativa: desligar a chave (Configurações › Geral › Estoque, "Sugestão de reposição arredonda para
+       a embalagem de compra"), e a sugestão sai em unidades; o em trânsito é descontado sempre.
+     - **Testes**: unitário da conta (`reposicao.spec.ts`: com e sem máximo, em trânsito, arredondamento, fator 1,
+       limite ao saldo da origem, negativo, frações de 3 casas, produto sem fração), dos avisos e do corte
+       (`limitarSugestao`: singular, plural, "e mais N" e o corte em `LIMITE_ITENS_TRANSFERENCIA`) e dos erros da query
+       nos campos do rascunho (`validarSugestaoReposicao`), e integração
+       (`test/integracao/transferencias-reposicao.test.ts`): o critério de pronto com `produtos_lojas` e o fardo de 12
+       (a embalagem só de venda de fator 24 ignorada), o em trânsito só das `em_transito` para o destino (o rascunho,
+       a cancelada, a recebida e a de outro destino não contam), a chave desligada (50 em unidades), o limite ao saldo
+       do CD (55) e a sugestão gravada como rascunho sem retoque; sem máximo, o limite e o aviso do sem saldo na
+       origem, e de fora o produto no mínimo, o sem mínimo na loja (o da outra loja não conta), o inativo na loja, a
+       embalagem excluída, o inativo, o excluído, o que não controla estoque (simples), o serviço, o combo, o
+       produzido e o "Com variações" (cada filtro sozinho); o tipo de estoque (Vasilhame vazio, com o em trânsito do
+       tipo: o casco abaixo do mínimo no Disponível não desconta os vazios a caminho) e o tipo inexistente; o destino
+       sem loja, a origem fora dos permitidos (403 em `estoqueOrigemId`), o destino que o usuário não vê (403 em
+       `estoqueDestinoId`), sem `transferencias.criar` (403), origem = destino, parâmetro faltando ou malformado (422
+       nos campos do rascunho) e destino inativo (422).
 
 ### Operação – tarefas em segundo plano (API)
 
