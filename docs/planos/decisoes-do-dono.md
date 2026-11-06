@@ -125,3 +125,9 @@ Todas as decisões abaixo saem de "padrão até a confirmação do dono" e passa
   dono, e o GitHub não deixa o autor aprovar o próprio PR; o `CODEOWNERS` só pede a revisão), a regra de branch dos
   environments (`producao`: só `main`; `release-pdv`: `main` e tags `pdv-v*`, com o tag ruleset), apagar os logs antigos do Actions e endurecer o SSH da
   VPS (`infra/producao/README.md` › Proteger o SSH da VPS). Roadmap §16, D60.
+  **Feito em 06/11/2026:** o repositório antigo virou `KhauanG/GenesisPDV-ERP-arquivo` (privado; como fica privado,
+  os logs antigos do Actions não precisaram ser apagados) e o novo `KhauanG/GenesisPDV-ERP` (público) começou com a
+  versão única `a66397f`. O dono configurou os environments, o ruleset da `main`, as permissões do Actions e o secret
+  scanning, gerou a chave SSH nova da implantação e revogou a antiga; o PDV 0.10.0 e a `main` foram implantados pelo
+  repositório novo. Sem certificado de assinatura do PDV (o dono nunca teve; padrão do README do PDV). A chave PIX
+  `pix@icebeer.com.br` dos testes é só de teste (confirmado pelo dono). Falta: proteger o SSH da VPS.
