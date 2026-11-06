@@ -12,8 +12,10 @@
  * abre a transação com `travaVersao` (os saldos descem ao PDV pelo fluxo `estoque`) e trava o cabeçalho antes.
  */
 import {
+  ALERTA_TRANSFERENCIA_PARADA,
   dec,
   decTexto,
+  type AlertaTransferenciaParada,
   type CriarTransferencia,
   type Dec,
   type ItemTransferencia,
@@ -42,7 +44,7 @@ import {
 import { estoquePermitido } from '../estoques/permitidos.js';
 import { opcoesPorId } from '../produtos/consultas.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
-import { resolverAlertasTransferencia } from './alertas.js';
+import { chaveAlertaTransferencia, resolverAlertasTransferencia } from './alertas.js';
 
 type Linha = Record<string, unknown>;
 
@@ -50,6 +52,24 @@ const lista = (ids: Iterable<string>) => `{${[...new Set([...ids].map((i) => i.t
 
 /** Versão do documento inteiro (cabeçalho + itens, inclusive excluídos; decisão 47), como o recebimento e o acerto. */
 export const sqlVersaoTransferencia = sql`greatest(t.versao, coalesce((select max(i.versao) from itens_transferencia i where i.transferencia_id = t.id), 0))`;
+
+/**
+ * A embalagem de compra viva (`usa_compra`) de maior fator > 1 do produto `p` (sem variação): o fardo ou a caixa
+ * fechada, com a sigla da unidade (`emb.fator`, `emb.sigla`). A mesma da sugestão de reposição (F2-B25); o detalhe, os
+ * dados da grade e o romaneio a mostram (F2-B27). `lateral`: um `left join` por produto.
+ */
+export const sqlEmbalagemTransferencia = (produto: SQL) => sql`left join lateral (
+  select c.fator, u.sigla from produtos_codigos_barras c
+    left join unidades_medida u on u.id = c.unidade_id
+   where c.produto_id = ${produto} and c.variacao_id is null and c.excluido_em is null and c.usa_compra
+     and c.fator > 1
+   order by c.fator desc, c.principal desc, c.codigo limit 1) emb on true`;
+
+/** `emb.fator` e `emb.sigla` (o `sqlEmbalagemTransferencia`) no contrato; sem embalagem, `null`. */
+export const embalagemDaLinha = (fator: unknown, sigla: unknown) =>
+  fator === null || fator === undefined
+    ? null
+    : { unidadeSigla: (sigla as string | null) ?? null, fator: decTexto(fator as string, 3) };
 
 /** Cabeçalho conferido: o tipo de estoque e a data já resolvidos (os padrões aplicados). */
 export interface CabecalhoTransferencia {
@@ -555,9 +575,11 @@ export async function detalheTransferencia(
     select i.id, i.sequencia, i.produto_id, i.variacao_id, i.lote_id, pl.lote, pl.validade::text as validade,
            i.quantidade_enviada::text, i.quantidade_recebida::text, i.diferenca::text, i.tratamento_divergencia,
            i.divergencia_tratada_em, i.custo_unitario::text,
-           case when i.lote_id is null then s.quantidade::text else sl.quantidade::text end as saldo_origem
+           case when i.lote_id is null then s.quantidade::text else sl.quantidade::text end as saldo_origem,
+           emb.fator::text as emb_fator, emb.sigla as emb_sigla
       from itens_transferencia i
       left join produtos_lotes pl on pl.id = i.lote_id
+      ${sqlEmbalagemTransferencia(sql`i.produto_id`)}
       left join saldos_estoque s on s.estoque_id = ${t.estoque_origem_id as string}::uuid
                                  and s.produto_id = i.produto_id and s.variacao_id is not distinct from i.variacao_id
                                  and s.tipo_estoque_id = ${t.tipo_estoque_id as string}::uuid
@@ -592,7 +614,28 @@ export async function detalheTransferencia(
     custoUnitario: verCusto ? texto(i.custo_unitario) : null,
     // Sem linha de saldo (nunca movimentou na origem), o saldo é zero.
     saldoOrigem: veOrigem ? ((i.saldo_origem as string | null) ?? '0.000') : null,
+    embalagem: embalagemDaLinha(i.emb_fator, i.emb_sigla),
   }));
+  // O alerta de transferência parada ainda aberto (decisão 174), pela chave de deduplicação (o índice parcial dos
+  // abertos): um por situação, e só o da situação atual fica aberto (o receber, o tratar e o cancelar o fecham na
+  // mesma transação); o mais recente, por garantia.
+  const { rows: alerta } = await db.execute<Linha>(sql`
+    select a.titulo, a.mensagem, a.dados->>'situacao' as situacao, (a.dados->>'dias')::int as dias, a.criado_em
+      from alertas a
+     where a.chave_deduplicacao in (${chaveAlertaTransferencia(id, 'em_transito')},
+                                    ${chaveAlertaTransferencia(id, 'recebida_divergencia')})
+       and a.tipo = ${ALERTA_TRANSFERENCIA_PARADA} and a.resolvido_em is null and a.excluido_em is null
+     order by a.criado_em desc limit 1`);
+  const a = alerta[0];
+  const alertaParada: AlertaTransferenciaParada | null = a
+    ? {
+        situacao: a.situacao as AlertaTransferenciaParada['situacao'],
+        titulo: a.titulo as string,
+        mensagem: texto(a.mensagem),
+        dias: (a.dias as number | null) ?? null,
+        abertoEm: iso(a.criado_em)!,
+      }
+    : null;
   return {
     id: t.id as string,
     versao: Number(t.versao_documento),
@@ -621,5 +664,8 @@ export async function detalheTransferencia(
     nfeExternaNumero: texto(t.nfe_externa_numero),
     qtdItens: t.qtd_itens as number,
     itens: itensDetalhe,
+    alertaParada,
+    origemPermitida: estoquePermitido(sessao, t.estoque_origem_id as string, 'movimentar'),
+    destinoPermitido: estoquePermitido(sessao, t.estoque_destino_id as string, 'movimentar'),
   };
 }

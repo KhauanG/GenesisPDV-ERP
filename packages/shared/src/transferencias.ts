@@ -401,6 +401,15 @@ export interface DestinoTransferenciaOpcao {
   lojaNome: string | null;
 }
 
+/**
+ * Um dos estoques permitidos de quem está na tela (`GET /transferencias/origens`; F2-B27): as opções do seletor
+ * "Origem" (só os ativos) e do filtro "Estoque origem" da listagem (também os inativos, para achar o documento antigo).
+ * Exige só `transferencias.ver`, para a tela não depender de `estoques.ver` (a permissão do cadastro de locais).
+ */
+export interface OrigemTransferenciaOpcao extends DestinoTransferenciaOpcao {
+  ativo: boolean;
+}
+
 export interface TransferenciaResumo {
   id: string;
   codigo: number;
@@ -439,6 +448,29 @@ export interface ItemTransferenciaDetalhe {
   custoUnitario: string | null;
   /** "Saldo na origem" (ERP 13.7) no estoque × tipo da transferência; `null` fora dos estoques visíveis. */
   saldoOrigem: string | null;
+  /**
+   * A embalagem de compra viva (`usa_compra`) de maior fator > 1 do produto (o fardo ou a caixa fechada), a mesma da
+   * sugestão de reposição; `null` = só em unidades. O romaneio e a grade mostram a quantidade nela (F2-B27).
+   */
+  embalagem: EmbalagemTransferencia | null;
+}
+
+/** Embalagem em que a quantidade é contada no romaneio (F2-B27): a sigla (FD, CX) e o fator, em unidades do produto. */
+export interface EmbalagemTransferencia {
+  unidadeSigla: string | null;
+  fator: string;
+}
+
+/**
+ * O alerta `TRANSFERENCIA_PARADA` aberto da transferência (F2-B27; README da API › decisão 174), para a tela avisar
+ * sem abrir o painel de alertas: o título e a mensagem que a varredura gravou, os dias e quando abriu.
+ */
+export interface AlertaTransferenciaParada {
+  situacao: 'em_transito' | 'recebida_divergencia';
+  titulo: string;
+  mensagem: string | null;
+  dias: number | null;
+  abertoEm: string;
 }
 
 export interface TransferenciaDetalhe extends MetadadosRegistro {
@@ -464,6 +496,110 @@ export interface TransferenciaDetalhe extends MetadadosRegistro {
   nfeExternaNumero: string | null;
   qtdItens: number;
   itens: ItemTransferenciaDetalhe[];
+  /** O alerta de transferência parada ainda aberto (o mais recente); `null` sem alerta. */
+  alertaParada: AlertaTransferenciaParada | null;
+  /**
+   * A origem e o destino entre os estoques permitidos para movimentar de **quem lê** (F2-B27): os botões da tela seguem
+   * as conferências da API (gravar, enviar e cancelar com a origem; receber com o destino; tratar com um dos dois),
+   * também com o estoque inativado depois e sem depender de `estoques.ver`.
+   */
+  origemPermitida: boolean;
+  destinoPermitido: boolean;
+}
+
+/**
+ * Quantidade em embalagens fechadas e unidades avulsas (o romaneio de F2-B27: "5 FD + 3 UN"): `embalagens` é a parte
+ * inteira de quantidade ÷ fator e `avulsas`, o resto (3 casas). Sem embalagem (ou fator ≤ 1), tudo avulso.
+ */
+export function quantidadeEmEmbalagens(
+  quantidade: Valor,
+  fator: Valor | null | undefined,
+): { embalagens: number; avulsas: string } {
+  const q = dec(quantidade);
+  if (fator === null || fator === undefined || dec(fator).lte(1) || q.lte(0))
+    return { embalagens: 0, avulsas: decTexto(q, 3) };
+  const f = dec(fator);
+  const embalagens = q.div(f).floor();
+  return { embalagens: embalagens.toNumber(), avulsas: decTexto(q.minus(embalagens.times(f)), 3) };
+}
+
+// ---------------------------------------------------------------- Romaneio (F2-B27)
+
+/** Uma ponta do romaneio: o estoque e a loja dele (a de menor código; nula no CD), com o endereço para a entrega. */
+export interface PontaRomaneioTransferencia {
+  estoqueId: string;
+  estoqueCodigo: number;
+  estoqueNome: string;
+  /** O endereço do estoque (cadastro do estoque) ou, sem ele, o da loja. */
+  endereco: string | null;
+  lojaNome: string | null;
+  lojaRazaoSocial: string | null;
+  lojaCnpj: string | null;
+}
+
+/**
+ * `GET /transferencias/:id/romaneio` (ERP 13.7 "Imprime romaneio"; F2-B27): o documento impresso pelo navegador que
+ * acompanha a carga — o cabeçalho da empresa, a origem e o destino com a loja e o endereço, os itens (com a embalagem)
+ * e a assinatura. Só com `transferencias.ver` (o cabeçalho não exige `empresa.ver`: são os dados que saem no papel).
+ */
+export interface RomaneioTransferencia {
+  empresa: {
+    razaoSocial: string;
+    nomeFantasia: string | null;
+    cnpj: string;
+    ie: string | null;
+    endereco: string | null;
+    telefone: string | null;
+  };
+  origem: PontaRomaneioTransferencia;
+  destino: PontaRomaneioTransferencia;
+  transferencia: TransferenciaDetalhe;
+  /** Quando o romaneio foi gerado (relógio do servidor). */
+  geradoEm: string;
+}
+
+// ---------------------------------------------------------------- Dados dos produtos da grade (F2-B27)
+
+/** Produtos por consulta de `GET /transferencias/dados-produtos` (a tela consulta em blocos e junta). */
+export const LIMITE_PRODUTOS_DADOS_TRANSFERENCIA = 200;
+
+/**
+ * `GET /transferencias/dados-produtos?estoqueOrigemId&tipoEstoqueId&produtoIds` (F2-B27): o saldo na origem, os lotes
+ * e a embalagem dos produtos da grade do rascunho, com as conferências de quem cria (`transferencias.criar` e a origem
+ * entre os permitidos). Sem exigir `estoque_acertos.ver` (o `/saldos-estoque/itens` e o `/lotes` são do acerto).
+ */
+export const consultaDadosProdutosTransferenciaSchema = z.object({
+  estoqueOrigemId: z.uuid('Escolha o estoque de origem'),
+  tipoEstoqueId: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.uuid().optional(),
+  ),
+  produtoIds: z.preprocess(
+    (v) => (typeof v === 'string' ? v.split(',').filter(Boolean) : v),
+    z.array(z.uuid()).min(1).max(LIMITE_PRODUTOS_DADOS_TRANSFERENCIA),
+  ),
+});
+export type ConsultaDadosProdutosTransferencia = z.output<typeof consultaDadosProdutosTransferenciaSchema>;
+
+export interface LoteOrigemTransferencia {
+  loteId: string;
+  lote: string;
+  validade: string | null;
+  /** Saldo do lote na origem × tipo (zero sem linha). */
+  quantidade: string;
+}
+
+export interface DadosProdutoTransferencia {
+  produtoId: string;
+  /** Saldo na origem × tipo (zero sem linha). */
+  saldoOrigem: string;
+  embalagem: EmbalagemTransferencia | null;
+  /** Os lotes ativos do produto que são da origem ou sem estoque (ou com saldo nela), em ordem FEFO. */
+  lotes: LoteOrigemTransferencia[];
+}
+
+export interface DadosProdutosTransferencia {
+  produtos: DadosProdutoTransferencia[];
 }
 
 // ---------------------------------------------------------------- Sugestão de reposição (F2-B25)

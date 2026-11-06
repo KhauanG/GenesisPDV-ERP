@@ -49,7 +49,15 @@ const COLUNAS: ColunaGrade<Item>[] = [
 
 const estado: { linhas: Item[] } = { linhas: [] };
 
-function Tela({ inicial = [], mostrarErros = false }: { inicial?: Item[]; mostrarErros?: boolean }) {
+function Tela({
+  inicial = [],
+  mostrarErros = false,
+  linhasFixas = false,
+}: {
+  inicial?: Item[];
+  mostrarErros?: boolean;
+  linhasFixas?: boolean;
+}) {
   const [linhas, setLinhas] = useState<Item[]>(inicial);
   useEffect(() => {
     estado.linhas = linhas;
@@ -67,6 +75,7 @@ function Tela({ inicial = [], mostrarErros = false }: { inicial?: Item[]; mostra
       rodape={{ quantidade: 'quantidade', total: totalLinha }}
       colarEm={['codigo', 'quantidade', 'preco']}
       mostrarErros={mostrarErros}
+      linhasFixas={linhasFixas}
     />
   );
 }
@@ -78,6 +87,29 @@ const campo = (rotulo: string, linha: number) =>
   screen.getByRole('textbox', { name: `${rotulo} da linha ${linha}` });
 
 describe('<GradeItens>', () => {
+  it('linhas fixas: edita os campos, mas sem inserir (F9, botão, Enter no fim) nem remover linhas', async () => {
+    const usuario = userEvent.setup();
+    montar({
+      linhasFixas: true,
+      inicial: [
+        { ...nova(), codigo: 'A', quantidade: '10' },
+        { ...nova(), codigo: 'B', quantidade: '5' },
+      ],
+    });
+    expect(screen.queryByRole('button', { name: /Inserir item/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Remover linha/ })).not.toBeInTheDocument();
+    await usuario.clear(campo('Qtd.', 2));
+    await usuario.type(campo('Qtd.', 2), '4');
+    await usuario.click(campo('Preço', 2));
+    await usuario.keyboard('{Enter}{F9}');
+    await usuario.keyboard('{Control>}{Delete}{/Control}');
+    expect(estado.linhas).toHaveLength(2);
+    expect(estado.linhas[1]).toMatchObject({ codigo: 'B', quantidade: '4' });
+    await usuario.click(screen.getByRole('button', { name: 'Linha 1' }));
+    await usuario.keyboard('{Delete}');
+    expect(estado.linhas).toHaveLength(2);
+  });
+
   it('F9 insere a linha com foco no 1º campo; Enter avança e, na última coluna, cria a próxima linha', async () => {
     const usuario = userEvent.setup();
     montar();

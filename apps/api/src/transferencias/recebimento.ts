@@ -2,7 +2,7 @@
  * Transferência entre estoques, 2ª etapa (ERP 13.7; MD 3.7.6; Fase 2, F2-B24; README da API › decisão 172): o destino
  * **recebe** (`TRANSF_ENTRADA` com o custo da saída, a quantidade conferida por item ou "receber tudo como enviado") e,
  * com diferença recebida a menor, a diferença é **tratada** por item: "Retornar à origem" (`TRANSF_RETORNO` da
- * diferença) ou "Baixar como perda" (F2-Q10 = D51, padrão até a confirmação do dono: o mesmo retorno mais um acerto de
+ * diferença) ou "Baixar como perda" (F2-Q10 = D51, decidida pelo dono em 06/11/2026: o mesmo retorno mais um acerto de
  * Saída na origem com a origem `perda_transferencia`, `lancarPerdaTransferencia`). O modo de uma etapa
  * (`estoque.transferencia_recebimento_automatico`) chama `receberTransferencia` logo depois do `enviarTransferencia`,
  * na mesma transação.

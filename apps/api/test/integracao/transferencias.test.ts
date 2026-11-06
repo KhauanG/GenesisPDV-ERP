@@ -20,6 +20,10 @@
  * no recebimento em duas etapas (o sem estoque do mesmo código, o inativo, o excluído ao lado do vivo e a outra
  * fabricação); o modo de uma etapa (a chave da empresa) com o lote preso à origem e os saldos nos PDVs das duas lojas. No fim o razão refaz as projeções idênticas (`conferirRazaoDoBanco`, o
  * núcleo do `db:recalcular-saldos`).
+ *
+ * As telas (F2-B27; README da API › decisão 175): os dados da grade do rascunho (o saldo, os lotes e a embalagem da
+ * origem, sem as permissões do acerto), a embalagem de compra em cada item do detalhe e o romaneio (o cabeçalho da
+ * empresa e as duas pontas com a loja e o endereço).
  */
 import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -1838,6 +1842,254 @@ describe('receber, tratar a divergência e o modo de uma etapa (F2-B24; ERP 13.7
     // O fluxo `estoque` desce os saldos novos aos PDVs das duas lojas: 6 + 10 + 3 + 2 − 8 − 3 = 10 na Loja 1 e 11 na 2.
     expect(ultimoSaldoNoPdv((await puxar(pdvLoja1, 'estoque', c1.cursor)).alteracoes, p)).toBe(10);
     expect(ultimoSaldoNoPdv((await puxar(pdvLoja2, 'estoque', c2.cursor)).alteracoes, p)).toBe(11);
+  });
+});
+
+describe('telas: dados da grade, embalagem e romaneio (F2-B27; ERP 13.7)', () => {
+  it('a grade do rascunho lê saldo, lotes e embalagem da origem; o romaneio traz a empresa, as pontas e o fardo', async () => {
+    const unidades = (await amb.http().get('/api/referencias/unidades').set(bearer())).body as Array<{
+      id: string;
+      sigla: string;
+    }>;
+    const fd = unidades.find((u) => u.sigla === 'FD')!.id;
+    const p = await produto('Pilsen do romaneio', {
+      codigosBarras: [
+        { codigo: 'ROM-FD6', tipo: 'interno', unidadeId: fd, fator: '6' },
+        { codigo: 'ROM-FD12', tipo: 'interno', unidadeId: fd, fator: '12' },
+        // A embalagem só de venda não conta (a de compra de maior fator é o fardo de 12).
+        { codigo: 'ROM-CX24', tipo: 'interno', unidadeId: fd, fator: '24', usaCompra: false },
+      ],
+    });
+    const semEmbalagem = await produto('Gelo do romaneio');
+    const doCd = await lote(p, 'L-ROM-1', '2027-01-31');
+    await lote(p, 'L-ROM-LOJA', '2027-02-28', estoqueLoja2);
+    await entrada(cd, [
+      { produtoId: p, quantidade: '63', custoUnitario: '4', loteId: doCd },
+      { produtoId: semEmbalagem, quantidade: '5', custoUnitario: '2' },
+    ]);
+
+    // Dados da grade: quem cria e tem a origem (a expedição, do perfil Estoquista).
+    const dados = await amb
+      .http()
+      .get('/api/transferencias/dados-produtos')
+      .query({ estoqueOrigemId: cd, tipoEstoqueId: '', produtoIds: `${p},${semEmbalagem}` })
+      .set(bearer(tokenExpedicao));
+    expect(dados.status, JSON.stringify(dados.body)).toBe(200);
+    const porProduto = new Map(
+      (dados.body.produtos as Array<{ produtoId: string }>).map((x) => [x.produtoId, x]),
+    );
+    expect(porProduto.get(p)).toEqual({
+      produtoId: p,
+      saldoOrigem: '63.000',
+      embalagem: { unidadeSigla: 'FD', fator: '12.000' },
+      // Só o lote do CD (o preso à Loja 2 não sai do CD).
+      lotes: [{ loteId: doCd, lote: 'L-ROM-1', validade: '2027-01-31', quantidade: '63.000' }],
+    });
+    expect(porProduto.get(semEmbalagem)).toEqual({
+      produtoId: semEmbalagem,
+      saldoOrigem: '5.000',
+      embalagem: null,
+      lotes: [],
+    });
+    // A origem fora dos permitidos é 403 no campo; sem produtos, 422 (o 403 sem `transferencias.criar` fica no teste
+    // dos perfis personalizados, abaixo).
+    const fora = await amb
+      .http()
+      .get('/api/transferencias/dados-produtos')
+      .query({ estoqueOrigemId: cd, produtoIds: p })
+      .set(bearer(tokenLoja2));
+    expect(fora.status).toBe(403);
+    expect(fora.body.campos).toEqual({ estoqueOrigemId: ['Fora dos seus estoques permitidos'] });
+    expect(
+      (
+        await amb
+          .http()
+          .get('/api/transferencias/dados-produtos')
+          .query({ estoqueOrigemId: cd })
+          .set(bearer(tokenExpedicao))
+      ).status,
+    ).toBe(422);
+
+    // O detalhe traz a embalagem de cada item; o romaneio, o cabeçalho da empresa e as duas pontas.
+    const r = await rascunho([
+      { produtoId: p, quantidade: '63' },
+      { produtoId: semEmbalagem, quantidade: '5' },
+    ]);
+    expect(r.itens.map((i) => (i as { embalagem?: unknown }).embalagem)).toEqual([
+      { unidadeSigla: 'FD', fator: '12.000' },
+      null,
+    ]);
+    expect((await enviar(r.id)).status).toBe(200);
+    // A Loja 2, que vai receber, imprime o romaneio também; quem não vê nenhuma das pontas, 404.
+    const rom = await amb.http().get(`/api/transferencias/${r.id}/romaneio`).set(bearer(tokenLoja2));
+    expect(rom.status, JSON.stringify(rom.body)).toBe(200);
+    expect(rom.body.empresa).toMatchObject({ razaoSocial: expect.any(String), cnpj: expect.any(String) });
+    expect(rom.body.origem).toMatchObject({
+      estoqueId: cd,
+      estoqueNome: 'CD - Estoque Ice Beer',
+      lojaNome: null,
+      lojaCnpj: null,
+      endereco: null,
+    });
+    expect(rom.body.destino).toMatchObject({
+      estoqueId: estoqueLoja2,
+      lojaNome: 'Loja 2 - Bairro',
+      lojaCnpj: expect.stringMatching(/^\w{14}$/),
+      endereco: 'Praça da Sé, 1, Sé, São Paulo/SP, CEP 01001-000',
+    });
+    expect(rom.body.transferencia).toMatchObject({ id: r.id, status: 'em_transito', alertaParada: null });
+    expect(rom.body.transferencia.itens[0]).toMatchObject({
+      quantidadeEnviada: '63.000',
+      embalagem: { unidadeSigla: 'FD', fator: '12.000' },
+    });
+    expect(Date.parse(rom.body.geradoEm)).not.toBeNaN();
+    expect(
+      (await amb.http().get(`/api/transferencias/${r.id}/romaneio`).set(bearer(tokenSemEstoque))).status,
+    ).toBe(404);
+    // O endereço do cadastro do estoque vale mais que o da loja.
+    await consultar(
+      emp.nomeBanco,
+      "update estoques set endereco = 'Galpão 3, Rod. PR-445 km 2' where id = $1",
+      [cd],
+    );
+    const rom2 = await amb.http().get(`/api/transferencias/${r.id}/romaneio`).set(bearer());
+    expect(rom2.body.origem.endereco).toBe('Galpão 3, Rod. PR-445 km 2');
+    expect((await cancelar(r.id, 'Fim do teste do romaneio')).status).toBe(200);
+    await consultar(emp.nomeBanco, 'update estoques set endereco = null where id = $1', [cd]);
+  });
+
+  it('as telas pedem só as permissões da transferência: dados da grade, origens e quem tem cada ponta no detalhe', async () => {
+    // Perfis personalizados (os perfis são editáveis): o expedidor do CD com `transferencias.*` e o conferente da loja
+    // com `ver` e `receber`, os dois sem `estoques.ver` (o cadastro de locais) nem `estoque_acertos.*` (o acerto).
+    const perfil = async (chave: string, permissoes: string[]) => {
+      const [{ id }] = (await consultar<{ id: string }>(
+        emp.nomeBanco,
+        'insert into perfis (nome, descricao, chave_sistema) values ($1, $2, $1) returning id',
+        [chave, 'teste'],
+      )) as [{ id: string }];
+      for (const permissao of permissoes)
+        await consultar(
+          emp.nomeBanco,
+          'insert into perfis_permissoes (perfil_id, permissao) values ($1, $2)',
+          [id, permissao],
+        );
+    };
+    await perfil('teste_transf_cd', [
+      'transferencias.ver',
+      'transferencias.criar',
+      'transferencias.enviar',
+      'transferencias.cancelar',
+    ]);
+    await perfil('teste_transf_conferente', ['transferencias.ver', 'transferencias.receber']);
+    await criarUsuario(emp.nomeBanco, {
+      login: 'so_transf_cd',
+      perfil: 'teste_transf_cd',
+      lojas: [],
+      estoques: [cd],
+    });
+    await criarUsuario(emp.nomeBanco, {
+      login: 'conferente_l2',
+      perfil: 'teste_transf_conferente',
+      lojas: [loja2],
+      estoques: [estoqueLoja2],
+    });
+    const tokenSoTransf = await amb.entrar(emp.codigo, 'so_transf_cd', SENHA_TESTE);
+    const tokenConferente = await amb.entrar(emp.codigo, 'conferente_l2', SENHA_TESTE);
+    // Sem `estoques.ver`, o `GET /estoques` é 403: as telas não podem depender dele.
+    expect((await amb.http().get('/api/estoques').set(bearer(tokenSoTransf))).status).toBe(403);
+    expect((await amb.http().get('/api/estoques').set(bearer(tokenConferente))).status).toBe(403);
+
+    const p = await produto('Pilsen do expedidor sem acerto');
+    await entrada(cd, [{ produtoId: p, quantidade: '12', custoUnitario: '4' }]);
+    // A grade do rascunho funciona sem `estoque_acertos.ver` (o motivo de existir o `dados-produtos`)…
+    const dados = await amb
+      .http()
+      .get('/api/transferencias/dados-produtos')
+      .query({ estoqueOrigemId: cd, produtoIds: p })
+      .set(bearer(tokenSoTransf));
+    expect(dados.status, JSON.stringify(dados.body)).toBe(200);
+    expect(dados.body.produtos).toEqual([
+      { produtoId: p, saldoOrigem: '12.000', embalagem: null, lotes: [] },
+    ]);
+    // … e sem `transferencias.criar` (o conferente), 403.
+    expect(
+      (
+        await amb
+          .http()
+          .get('/api/transferencias/dados-produtos')
+          .query({ estoqueOrigemId: estoqueLoja2, produtoIds: p })
+          .set(bearer(tokenConferente))
+      ).status,
+    ).toBe(403);
+
+    // As origens: os estoques permitidos de quem está na tela, com `transferencias.ver`; o inativo vem marcado.
+    const [{ id: inativo }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome, tipo, ativo) values ('Depósito das origens, inativo', 'deposito', false) returning id",
+    )) as [{ id: string }];
+    const origens = async (token: string) => {
+      const r = await amb.http().get('/api/transferencias/origens').set(bearer(token));
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return r.body as Array<{ id: string; ativo: boolean }>;
+    };
+    expect(await origens(tokenSoTransf)).toEqual([
+      {
+        id: cd,
+        codigo: expect.any(Number),
+        nome: 'CD - Estoque Ice Beer',
+        tipo: 'deposito',
+        ativo: true,
+        lojaId: null,
+        lojaNome: null,
+      },
+    ]);
+    expect((await origens(tokenConferente)).map((e) => e.id)).toEqual([estoqueLoja2]);
+    // O Master: todos os estoques vivos, também o inativo (o filtro da listagem; o seletor da tela usa só os ativos).
+    const doMaster = new Map((await origens(tokenAdmin)).map((e) => [e.id, e]));
+    expect([...doMaster.keys()]).toEqual(expect.arrayContaining([cd, estoqueLoja1, estoqueLoja2, inativo]));
+    expect(doMaster.get(inativo)!.ativo).toBe(false);
+    // Sem `transferencias.ver` (só o cadastro de locais), 403.
+    await perfil('teste_so_locais', ['estoques.ver']);
+    await criarUsuario(emp.nomeBanco, { login: 'sem_transf', perfil: 'teste_so_locais', lojas: [loja1] });
+    const tokenSemTransf = await amb.entrar(emp.codigo, 'sem_transf', SENHA_TESTE);
+    expect((await amb.http().get('/api/transferencias/origens').set(bearer(tokenSemTransf))).status).toBe(
+      403,
+    );
+
+    // O detalhe diz quem tem cada ponta (os botões da tela): o expedidor, a origem; o conferente, o destino.
+    const r = await rascunho([{ produtoId: p, quantidade: '12' }], {}, tokenSoTransf);
+    const detalhe = async (token: string) =>
+      (await amb.http().get(`/api/transferencias/${r.id}`).set(bearer(token))).body;
+    expect(await detalhe(tokenSoTransf)).toMatchObject({ origemPermitida: true, destinoPermitido: false });
+    expect(await detalhe(tokenAdmin)).toMatchObject({ origemPermitida: true, destinoPermitido: true });
+    const e = await enviar(r.id, {}, tokenSoTransf);
+    expect(e.status, JSON.stringify(e.body)).toBe(200);
+    expect(await detalhe(tokenConferente)).toMatchObject({
+      status: 'em_transito',
+      origemPermitida: false,
+      destinoPermitido: true,
+    });
+    // O conferente recebe sem `estoques.ver`.
+    const recebida = await amb
+      .http()
+      .post(`/api/transferencias/${r.id}/receber`)
+      .send({ versao: e.body.versao, receberTudo: true, itens: [] })
+      .set(bearer(tokenConferente));
+    expect(recebida.status, JSON.stringify(recebida.body)).toBe(200);
+    expect(recebida.body).toMatchObject({ status: 'recebida', destinoPermitido: true });
+
+    // O rascunho com a origem inativada depois (o rascunho não impede a inativação): continua sendo de quem tem a
+    // origem, que o exclui (ou troca a origem); antes a tela tirava os botões porque o estoque inativo saía da lista.
+    const [{ id: provisorio }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome, tipo) values ('Depósito provisório', 'deposito') returning id",
+    )) as [{ id: string }];
+    const preso = await rascunho([], { estoqueOrigemId: provisorio });
+    await consultar(emp.nomeBanco, 'update estoques set ativo = false where id = $1', [provisorio]);
+    expect(await amb.http().get(`/api/transferencias/${preso.id}`).set(bearer())).toMatchObject({
+      body: { status: 'rascunho', origemPermitida: true },
+    });
+    expect((await amb.http().delete(`/api/transferencias/${preso.id}`).set(bearer())).status).toBe(204);
   });
 });
 

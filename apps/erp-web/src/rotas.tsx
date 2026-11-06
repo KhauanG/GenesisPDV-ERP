@@ -21,6 +21,8 @@ import { FormularioNotaEntrada, ListaNotasEntrada } from './paginas/estoques/Not
 import { FormularioRecebimento, ListaRecebimentos } from './paginas/estoques/Recebimentos';
 import { EspelhoRecebimento } from './paginas/estoques/RecebimentosEspelho';
 import { ListaSaldos } from './paginas/estoques/Saldos';
+import { FormularioTransferencia, ListaTransferencias } from './paginas/estoques/Transferencias';
+import { RomaneioTransferenciaImpressao } from './paginas/estoques/TransferenciasRomaneio';
 import { FormularioTipoEstoque, TiposEstoque } from './paginas/estoques/TiposEstoque';
 import { DetalheTerminal } from './paginas/terminais/DetalheTerminal';
 import { ListagemTerminais } from './paginas/terminais/ListagemTerminais';
@@ -290,6 +292,22 @@ export const rotas: RouteObject[] = [
                 ':id/:aba?',
               ),
               ...cadastro('/estoque/tipos', 'tipos_estoque', <TiposEstoque />, <FormularioTipoEstoque />),
+              // Transferência CD ⇄ loja (F2-B27): o rascunho, as etapas e o romaneio impresso (o segmento fixo
+              // `romaneio` ganha do `:id/:aba?` do cadastro).
+              ...cadastro(
+                '/estoque/transferencias',
+                'transferencias',
+                <ListaTransferencias />,
+                <FormularioTransferencia />,
+              ),
+              {
+                path: '/estoque/transferencias/:id/romaneio',
+                element: (
+                  <ExigePermissao permissao="transferencias.ver">
+                    <RomaneioTransferenciaImpressao />
+                  </ExigePermissao>
+                ),
+              },
               {
                 path: '/estoque/saldos',
                 element: (

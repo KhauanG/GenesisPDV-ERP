@@ -26,9 +26,9 @@ import { estoquePermitido } from '../estoques/permitidos.js';
 import { opcoesPorId } from '../produtos/consultas.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { sqlEmTransito } from './em-transito.js';
-import { conferirCabecalhoTransferencia } from './transferencias.js';
+import { conferirCabecalhoTransferencia, sqlEmbalagemTransferencia } from './transferencias.js';
 
-/** F2-Q11 = D52 (padrão até a confirmação do dono): arredonda ao fardo ou à caixa fechada. */
+/** F2-Q11 = D52 (decidida pelo dono em 06/11/2026): arredonda ao fardo ou à caixa fechada. */
 export const CHAVE_REPOSICAO_ARREDONDA_EMBALAGEM = 'estoque.reposicao_arredonda_embalagem';
 
 /** Quantos produtos sem saldo na origem o aviso cita pelo nome (os demais saem como "e mais N"). */
@@ -188,12 +188,7 @@ export async function sugestaoReposicao(
   const arredonda = await lerConfiguracao<boolean>(db, CHAVE_REPOSICAO_ARREDONDA_EMBALAGEM);
   // A embalagem de compra viva (`usa_compra`) de maior fator do produto, sem variação: o fardo ou a caixa fechada.
   const embalagem = arredonda
-    ? sql`left join lateral (
-             select c.fator, u.sigla from produtos_codigos_barras c
-               left join unidades_medida u on u.id = c.unidade_id
-              where c.produto_id = p.id and c.variacao_id is null and c.excluido_em is null and c.usa_compra
-                and c.fator > 1
-              order by c.fator desc, c.principal desc, c.codigo limit 1) emb on true`
+    ? sqlEmbalagemTransferencia(sql`p.id`)
     : sql`left join lateral (select null::numeric as fator, null::text as sigla) emb on true`;
   const saldo = (estoque: string) => sql`
     saldos_estoque where estoque_id = ${estoque}::uuid and tipo_estoque_id = ${cab.tipoEstoqueId}::uuid

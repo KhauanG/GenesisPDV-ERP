@@ -79,6 +79,11 @@ export interface PropsGradeItens<L> {
   /** Mostra os erros de todas as linhas (depois de tentar gravar); sem ele, só das linhas já editadas. */
   mostrarErros?: boolean;
   somenteLeitura?: boolean;
+  /**
+   * Linhas fixas: os campos editam, mas não se insere nem se remove linha (sem F9, "Inserir item", lixeira nem Delete;
+   * o Enter da última coluna da última linha para ali). Ex.: a conferência do recebimento da transferência (F2-B27).
+   */
+  linhasFixas?: boolean;
   rotuloInserir?: string;
 }
 
@@ -114,8 +119,11 @@ export function GradeItens<L extends object>({
   colarEm,
   mostrarErros = false,
   somenteLeitura = false,
+  linhasFixas = false,
   rotuloInserir = 'Inserir item',
 }: PropsGradeItens<L>) {
+  /** Sem inserir nem remover linhas (somente leitura ou linhas fixas). */
+  const semMudarLinhas = somenteLeitura || linhasFixas;
   const campos = useRef(new Map<string, HTMLElement>());
   // Campo a focar quando a lista nova for renderizada (linha inserida/removida).
   const focoPendente = useRef<{ linha: string; coluna: number } | null>(null);
@@ -147,10 +155,10 @@ export function GradeItens<L extends object>({
   });
 
   useEffect(() => {
-    if (somenteLeitura) return;
+    if (semMudarLinhas) return;
     window.addEventListener('keydown', aoF9);
     return () => window.removeEventListener('keydown', aoF9);
-  }, [somenteLeitura]);
+  }, [semMudarLinhas]);
 
   function alterar(indice: number, campo: string, valor: unknown) {
     const lista = [...linhas];
@@ -190,21 +198,21 @@ export function GradeItens<L extends object>({
       const proxima = editaveis.find(({ i }) => i > coluna);
       if (proxima) focar(indice, proxima.i);
       else if (indice < linhas.length - 1) focar(indice + 1, primeira);
-      else inserir();
+      else if (!linhasFixas) inserir();
     } else if (ev.key === 'ArrowDown' && !lista && indice < linhas.length - 1) {
       ev.preventDefault();
       focar(indice + 1, coluna);
     } else if (ev.key === 'ArrowUp' && !lista && indice > 0) {
       ev.preventDefault();
       focar(indice - 1, coluna);
-    } else if (ev.key === 'Delete' && (ev.ctrlKey || ev.metaKey)) {
+    } else if (ev.key === 'Delete' && (ev.ctrlKey || ev.metaKey) && !linhasFixas) {
       ev.preventDefault();
       remover(indice);
     }
   }
 
   function aoColar(indice: number, ev: ClipboardEvent<HTMLElement>) {
-    if (!colarEm?.length) return;
+    if (!colarEm?.length || linhasFixas) return;
     const texto = ev.clipboardData.getData('text/plain');
     if (!/[\t\n]/.test(texto.trim())) return; // um valor só: colagem normal no campo
     ev.preventDefault();
@@ -253,7 +261,7 @@ export function GradeItens<L extends object>({
                   {c.rotulo}
                 </Table.Th>
               ))}
-              {!somenteLeitura && <Table.Th w={44} aria-label="Ações" />}
+              {!semMudarLinhas && <Table.Th w={44} aria-label="Ações" />}
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -280,7 +288,7 @@ export function GradeItens<L extends object>({
                         aria-label={`Linha ${indice + 1}`}
                         className="grade-alca"
                         onKeyDown={(ev: KeyboardEvent<HTMLButtonElement>) => {
-                          if (!somenteLeitura && ev.key === 'Delete') {
+                          if (!semMudarLinhas && ev.key === 'Delete') {
                             ev.preventDefault();
                             remover(indice);
                           }
@@ -314,7 +322,7 @@ export function GradeItens<L extends object>({
                       />
                     </Table.Td>
                   ))}
-                  {!somenteLeitura && (
+                  {!semMudarLinhas && (
                     <Table.Td>
                       <ActionIcon
                         variant="subtle"
@@ -335,7 +343,7 @@ export function GradeItens<L extends object>({
       </Table.ScrollContainer>
       {linhas.length === 0 && (
         <Text c="dimmed" size="sm" ta="center" py="md">
-          Nenhum item. Use “{rotuloInserir}” ou F9.
+          {semMudarLinhas ? 'Nenhum item.' : `Nenhum item. Use “${rotuloInserir}” ou F9.`}
         </Text>
       )}
       <Group
@@ -345,7 +353,7 @@ export function GradeItens<L extends object>({
         wrap="wrap"
         style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
       >
-        {!somenteLeitura ? (
+        {!semMudarLinhas ? (
           <Button
             variant="light"
             size="xs"

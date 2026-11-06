@@ -1593,7 +1593,7 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Permitir acesso do suporte Genesis **(Novo)** | `geral.permite_acesso_suporte` | booleano | Sim | N | N | habilita "Acessar como suporte" no painel da plataforma (19.6; modelo 3.1.2) |
 | Permitir saldo negativo em documentos do ERP **(Novo)** | `estoque.permite_negativo_erp` | booleano | Não | N | N | 13.1.1 (vendas do PDV sempre são aceitas) |
 | Transferência com recebimento automático **(Novo)** | `estoque.transferencia_recebimento_automatico` | booleano | Não | N | N | 13.7 (envio já gera a entrada no destino) |
-| Sugestão de reposição arredonda para a embalagem de compra **(Novo)** | `estoque.reposicao_arredonda_embalagem` | booleano | Sim (D52, padrão até a confirmação do dono) | N | N | 13.7 "Sugerir reposição": a quantidade sobe ao fardo ou à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; Não = em unidades |
+| Sugestão de reposição arredonda para a embalagem de compra **(Novo)** | `estoque.reposicao_arredonda_embalagem` | booleano | Sim (D52, decidida pelo dono em 06/11/2026) | N | N | 13.7 "Sugerir reposição": a quantidade sobe ao fardo ou à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; Não = em unidades |
 | Alerta de transferência parada (dias) **(Novo)** | `estoque.transferencia_alerta_dias` | inteiro 1–365 | 3 | N | N | 13.7 (Fase 2, F2-B26): a transferência em trânsito (desde o envio) ou com divergência sem tratar (desde o recebimento) há mais destes dias gera o alerta `TRANSFERENCIA_PARADA` |
 | Custo da NF-e inclui ICMS ST / IPI / frete e despesas **(Novo)** | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | booleano | Sim | N | N | composição do custo na importação de NF-e (13.4.1) |
 | Abater créditos de ICMS/PIS/COFINS do custo **(Novo)** | `estoque.custo_abate_creditos` | booleano | Não | N | N | só para regime normal (13.4.1; modelo 3.1.2) |
@@ -3334,9 +3334,9 @@ primeiro o lote que vence primeiro) e **tratar a diferença** (`POST /transferen
 uma vez, por quem tem a origem ou o destino: "Retornar à origem" = `TRANSF_RETORNO` da diferença ao custo da saída;
 "Baixar como perda" = o mesmo retorno mais um acerto de Saída automático no estoque de origem, origem "Perda na
 transferência", motivo "Perda em transferência", que fica na tela de acertos e não se estorna; o saldo da origem não
-muda e a perda fica registrada a custo — F2-Q10/D51, padrão até a confirmação do dono). O lote preso ao estoque de
+muda e a perda fica registrada a custo — F2-Q10/D51, decidida pelo dono em 06/11/2026). O lote preso ao estoque de
 origem entra no lote do mesmo código e validade do destino (criado preso ao destino quando não existe; com outra
-validade no destino, o recebimento é recusado no item — D61, padrão até a confirmação do dono). **Uma etapa**: com
+validade no destino, o recebimento é recusado no item — D61, decidida pelo dono em 06/11/2026). **Uma etapa**: com
 `estoque.transferencia_recebimento_automatico` ligada (chave da empresa, Configurações › Geral: vale para toda
 transferência da empresa, não só entre estoques do mesmo endereço), o Enviar já recebe tudo na mesma operação, com
 quem enviou como quem recebeu (README da API › decisão 172).
@@ -3353,7 +3353,7 @@ campos do rascunho). Entram os produtos da loja do estoque de destino com estoqu
 loja e com saldo próprio (sem combo, serviço, produzido nem "Com variações"), **abaixo do mínimo contando o que já está
 em trânsito para o destino** (enviado e não recebido): `saldo + em trânsito < mínimo`. A quantidade é `máximo − (saldo
 + em trânsito)`, ou `mínimo × 2 − (saldo + em trânsito)` sem máximo; com `estoque.reposicao_arredonda_embalagem`
-(padrão Sim; F2-Q11 = D52, padrão até a confirmação do dono) sobe ao fardo ou à caixa fechada (a embalagem de compra de
+(padrão Sim; F2-Q11 = D52, decidida pelo dono em 06/11/2026) sobe ao fardo ou à caixa fechada (a embalagem de compra de
 maior fator) e, por fim, **nunca passa do saldo da origem**. Ex.: mínimo 24, máximo 72, saldo 10 e 12 em trânsito → 50,
 ou 60 com o fardo de 12. Saldos e em trânsito no tipo de estoque escolhido. O produto sem saldo na origem fica de fora,
 com aviso; o destino sem loja (o CD) não tem mínimo: sugestão vazia, com aviso (README da API › decisão 173).
@@ -3365,6 +3365,19 @@ transferência em trânsito há mais de `estoque.transferencia_alerta_dias` (pad
 sem tratar há mais desses dias desde o recebimento: um por transferência e situação, na loja do destino (trânsito) ou
 da origem (divergência), verificado a cada hora e fechado sozinho no recebimento, no tratamento e no cancelamento
 (README da API › decisão 174).
+
+Fase 2, F2-B27 (ERP): as telas. **Listagem** com os filtros e as colunas acima (o filtro de destino inclui os estoques
+fora dos permitidos). **Formulário**: origem entre os estoques permitidos, destino de todo estoque ativo menos a origem,
+tipo de estoque, data, motivo, observações e a NF-e de fora; a grade com produto, lote (vazio = FEFO), saldo na origem,
+quantidade, a quantidade **em embalagens** ("5 FD + 3 UN", pela embalagem de compra de maior fator) e, depois do envio,
+recebida, diferença e tratamento (a coluna de variação só com o PR-12). **Botões por situação e permissão**: Sugerir
+reposição (preenche a grade; com o destino fora dos estoques permitidos, a tela explica que a sugestão precisa ver o
+saldo do destino), Salvar e enviar, Receber (a conferência item a item, já com a enviada, e "Receber tudo como
+enviado"), Tratar diferença (por item, "Retornar à origem" ou "Baixar como perda"), Cancelar (o rascunho) ou Cancelar
+envio (em trânsito), a NF-e de fora depois do envio e o **Romaneio**. O alerta de transferência parada aberto aparece no
+topo. **Romaneio** pela impressão do navegador: o cabeçalho da empresa, a origem e o destino (estoque, loja com CNPJ e
+endereço), os itens com o lote, a embalagem e a quantidade, a coluna "Conferido" em branco e as assinaturas de quem
+expediu, transportou e recebeu (README da API › decisão 175; README do ERP › decisão 64).
 
 ```mermaid
 stateDiagram-v2
@@ -3392,7 +3405,11 @@ stateDiagram-v2
 
 **Entidades**: `transferencias_estoque`, `itens_transferencia`, `movimentos_estoque`, `saldos_estoque`,
 `documentos_fiscais` (P6). **API**: `/api/transferencias`, `POST /api/transferencias/:id/enviar`,
-`POST /api/transferencias/:id/receber`, `POST /api/transferencias/:id/cancelar`, `GET /api/transferencias/sugestao-reposicao`.
+`POST /api/transferencias/:id/receber`, `POST /api/transferencias/:id/tratar-divergencia`,
+`POST /api/transferencias/:id/cancelar`, `PUT /api/transferencias/:id/nfe-externa`, `GET /api/transferencias/destinos`,
+`GET /api/transferencias/origens` (os estoques permitidos, só com `transferencias.ver`: as telas não exigem `estoques.ver`),
+`GET /api/transferencias/sugestao-reposicao`, `GET /api/transferencias/dados-produtos`,
+`GET /api/transferencias/:id/romaneio`.
 
 ---
 

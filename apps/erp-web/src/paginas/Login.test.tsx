@@ -164,11 +164,11 @@ describe('fluxo de login do ERP', () => {
   it('rota de tela sem a permissão mostra "Sem permissão"; tela futura mostra "Em construção"', async () => {
     simularApi(
       rota('POST', '/api/auth/refresh', () => ({ corpo: respostaLogin() })),
-      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'transferencias.ver']) })),
+      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'produtos.exportar']) })),
     );
     const { router } = renderizarRotas(rotas, '/cadastros/usuarios');
     expect(await screen.findByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument();
-    await router.navigate('/estoque/transferencias');
+    await router.navigate('/produtos/exportacao');
     expect(await screen.findByText('Em construção · Fase 2')).toBeInTheDocument();
   });
 });

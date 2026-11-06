@@ -7,9 +7,12 @@ import {
   enviarTransferenciaSchema,
   excluirTransferenciaSchema,
   filtroTransferenciasSchema,
+  consultaDadosProdutosTransferenciaSchema,
   LIMITE_ITENS_TRANSFERENCIA,
+  LIMITE_PRODUTOS_DADOS_TRANSFERENCIA,
   nfeExternaTransferenciaSchema,
   podeTransitarTransferencia,
+  quantidadeEmEmbalagens,
   receberTransferenciaSchema,
   situacaoAposRecebimento,
   STATUS_TRANSFERENCIA,
@@ -279,5 +282,38 @@ describe('regras puras da situação da transferência (ERP 13.7)', () => {
     expect(situacaoAposRecebimento([{ quantidadeEnviada: '5', quantidadeRecebida: '0' }])).toBe(
       'recebida_divergencia',
     );
+  });
+});
+
+describe('romaneio e dados da grade (F2-B27)', () => {
+  it('quantidade em embalagens fechadas e unidades avulsas', () => {
+    expect(quantidadeEmEmbalagens('60', '12')).toEqual({ embalagens: 5, avulsas: '0.000' });
+    expect(quantidadeEmEmbalagens('63', '12.000')).toEqual({ embalagens: 5, avulsas: '3.000' });
+    expect(quantidadeEmEmbalagens('11', '12')).toEqual({ embalagens: 0, avulsas: '11.000' });
+    expect(quantidadeEmEmbalagens('2.5', '0.5')).toEqual({ embalagens: 0, avulsas: '2.500' });
+    // Sem embalagem (ou fator 1), tudo avulso; a fracionada mantém as casas.
+    expect(quantidadeEmEmbalagens('7.250', null)).toEqual({ embalagens: 0, avulsas: '7.250' });
+    expect(quantidadeEmEmbalagens('24', '1')).toEqual({ embalagens: 0, avulsas: '24.000' });
+    expect(quantidadeEmEmbalagens('0', '12')).toEqual({ embalagens: 0, avulsas: '0.000' });
+    expect(quantidadeEmEmbalagens('25.5', '12')).toEqual({ embalagens: 2, avulsas: '1.500' });
+  });
+
+  it('a consulta dos dados dos produtos: ids separados por vírgula, tipo vazio = o padrão, limite por bloco', () => {
+    const ok = consultaDadosProdutosTransferenciaSchema.parse({
+      estoqueOrigemId: CD,
+      tipoEstoqueId: '',
+      produtoIds: `${PRODUTO},${LOTE}`,
+    });
+    expect(ok).toEqual({ estoqueOrigemId: CD, tipoEstoqueId: undefined, produtoIds: [PRODUTO, LOTE] });
+    expect(erros(consultaDadosProdutosTransferenciaSchema, { produtoIds: PRODUTO })).toEqual([
+      'estoqueOrigemId',
+    ]);
+    expect(erros(consultaDadosProdutosTransferenciaSchema, { estoqueOrigemId: CD, produtoIds: '' })).toEqual([
+      'produtoIds',
+    ]);
+    const muitos = Array.from({ length: LIMITE_PRODUTOS_DADOS_TRANSFERENCIA + 1 }, () => PRODUTO).join(',');
+    expect(
+      erros(consultaDadosProdutosTransferenciaSchema, { estoqueOrigemId: CD, produtoIds: muitos }),
+    ).toEqual(['produtoIds']);
   });
 });

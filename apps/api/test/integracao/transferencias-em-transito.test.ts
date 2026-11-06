@@ -261,6 +261,15 @@ describe('em trânsito, divergência a tratar e alerta (F2-B26)', () => {
       },
     });
     expect(a[0]!.mensagem).toContain('Enviada de CD - Estoque Ice Beer para Estoque Loja 2 - Bairro');
+    // A tela da transferência mostra o alerta aberto (F2-B27): o mesmo título e a mensagem da varredura.
+    const comAlerta = await amb.http().get(`/api/transferencias/${t.id}`).set(bearer());
+    expect(comAlerta.body.alertaParada).toEqual({
+      situacao: 'em_transito',
+      titulo: `Transferência Nº ${codigo} em trânsito há 4 dias`,
+      mensagem: a[0]!.mensagem,
+      dias: 4,
+      abertoEm: expect.any(String),
+    });
 
     // A varredura repetida mantém o mesmo alerta (deduplicado), com os dias atualizados.
     await envelhecer(t.id, 'enviada_em', 5);
@@ -297,6 +306,7 @@ describe('em trânsito, divergência a tratar e alerta (F2-B26)', () => {
     expect(a).toHaveLength(1);
     expect(a[0]!.resolvido_em).not.toBeNull();
     expect(a[0]!.resolucao).toBe('Transferência recebida com divergência');
+    expect((await amb.http().get(`/api/transferencias/${t.id}`).set(bearer())).body.alertaParada).toBeNull();
 
     // A divergência conta do recebimento: hoje, nada; há 4 dias, o alerta na loja da origem (o CD não tem: nula).
     expect(await varrer()).toMatchObject({ abertos: 0 });
@@ -309,6 +319,13 @@ describe('em trânsito, divergência a tratar e alerta (F2-B26)', () => {
       loja_id: null,
       chave_deduplicacao: chaveAlertaTransferencia(t.id, 'recebida_divergencia'),
       dados: { situacao: 'recebida_divergencia', itens: 1, quantidade: '10.000' },
+    });
+    expect(
+      (await amb.http().get(`/api/transferencias/${t.id}`).set(bearer())).body.alertaParada,
+    ).toMatchObject({
+      situacao: 'recebida_divergencia',
+      titulo: `Transferência Nº ${codigo} com divergência a tratar há 4 dias`,
+      dias: 4,
     });
 
     // Tratada (retorno à origem): a divergência zera, o CD volta a 50 e o alerta fecha.

@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B26 commitados)._
+_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto; decisões D51, D52, D61 e D62 respondidas)._
 
 ## Repositório
 
@@ -50,8 +50,9 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B26 commitados)._
 | PR-3 inventário inicial e ajustes | B9–B12 | concluído (arquivo #18) |
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
-| **PR-6 transferências** | **B22–B27** | **em andamento** no branch `claude/blissful-cray-cvroui` (abaixo) |
-| PR-7 em diante | | não iniciados |
+| **PR-6 transferências** | **B22–B27** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
+| PR-7 relatórios de estoque | B28–B33 | próximo, depois do merge do PR-6 |
+| PR-8 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -59,21 +60,23 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B26 commitados)._
 |---|---|
 | F2-B22 schema e contratos (migração `0025_transferencias`, `packages/shared/src/transferencias.ts`; README da API › decisão 170) | **commitado** (`9d8ed39`) |
 | F2-B23 rascunho, enviar e cancelar (`apps/api/src/transferencias/`, sem migração; travas de inativar/excluir estoque e tipo de estoque; NF-e de fora depois do envio; README da API › decisão 171) | **commitado** |
-| F2-B24 receber, divergência e modo de uma etapa (`apps/api/src/transferencias/recebimento.ts`, rotas `receber` e `tratar-divergencia`, sem migração; perda = retorno + acerto de Saída `perda_transferencia` que estorna o retorno (mesmo lote, custo do envio; efeito líquido zero) e não se estorna; lote preso à origem → lote do mesmo código e validade no destino; README da API › decisão 172; D61 padrão até a confirmação do dono) | **commitado** |
-| F2-B25 sugestão de reposição (`GET /transferencias/sugestao-reposicao`; `apps/api/src/transferencias/reposicao.ts` e `em-transito.ts` — a subconsulta do em trânsito que o F2-B26 reaproveita —, sem migração; chave `estoque.reposicao_arredonda_embalagem` = Sim, D52 padrão até a confirmação do dono; README da API › decisão 173) | **commitado** |
+| F2-B24 receber, divergência e modo de uma etapa (`apps/api/src/transferencias/recebimento.ts`, rotas `receber` e `tratar-divergencia`, sem migração; perda = retorno + acerto de Saída `perda_transferencia` que estorna o retorno (mesmo lote, custo do envio; efeito líquido zero) e não se estorna; lote preso à origem → lote do mesmo código e validade no destino; README da API › decisão 172; D61 decidida pelo dono em 06/11/2026) | **commitado** |
+| F2-B25 sugestão de reposição (`GET /transferencias/sugestao-reposicao`; `apps/api/src/transferencias/reposicao.ts` e `em-transito.ts` — a subconsulta do em trânsito que o F2-B26 reaproveita —, sem migração; chave `estoque.reposicao_arredonda_embalagem` = Sim, D52 decidida pelo dono em 06/11/2026; README da API › decisão 173) | **commitado** |
 | F2-B26 em trânsito, divergência a tratar e alerta (`em-transito.ts`: `sqlDivergenciaATratar`, `sqlPendenciasTransferencia`, `sqlSaldosComPendencias`; `apps/api/src/transferencias/alertas.ts` e a fila `genesis-alerta-transferencias` a cada hora; colunas em `GET /produtos/:id/saldos`, `GET /saldos-estoque`, no bloco Estoque do produto e na tela Saldos; a divergência fica na origem, fora do em trânsito; chave `estoque.transferencia_alerta_dias` = 3, padrão aplicado sem pergunta; sem migração; README da API › decisão 174; README do ERP › decisão 63) | **commitado** |
-| F2-B27 telas e romaneio | não iniciado |
+| F2-B27 telas e romaneio (`apps/erp-web/src/paginas/estoques/Transferencias.tsx`, `transferenciaItens.ts` e `TransferenciasRomaneio.tsx`, rotas e menu; `GradeItens` com `linhasFixas`; na API, `GET /transferencias/dados-produtos`, `GET /transferencias/:id/romaneio`, a embalagem de compra nos itens e o alerta `TRANSFERENCIA_PARADA` aberto no detalhe — `apps/api/src/transferencias/romaneio.ts`; sem migração, PDV sem mudança; e2e `apps/erp-web/e2e/fluxo-transferencia.spec.ts` rodado localmente: verde; README da API › decisão 175; README do ERP › decisão 64) | **commitado** |
 
 ## Próximo passo
 
-1. Rodar o workflow `genesis-bloco` no F2-B27 (telas e romaneio; branch `claude/blissful-cray-cvroui`,
-   `docs/planos/fase2-plano.md`). A tela da transferência pode mostrar o alerta `TRANSFERENCIA_PARADA` aberto (README
-   da API › decisão 174).
-2. Perguntar ao dono no fechamento do PR-6: D51 (perda na transferência), D52 (a sugestão de reposição arredonda ao
-   fardo) e D61 (quem trata a diferença, o modo de uma etapa sem o destino e o lote preso à origem), todas com o padrão
-   aplicado.
-3. Numeração das próximas decisões nos READMEs: **API 175**, **ERP 64**, **PDV 81** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D62**.
+1. **PR-6 "Transferência CD ⇄ loja"** (F2-B22 a F2-B27) aberto para a `main`: o dono revisa e testa (Estoque ›
+   Transferência de estoque: CD → loja, Salvar e enviar, Romaneio, Receber com diferença e Tratar diferença) e libera
+   o merge. **Merge só com a liberação explícita do dono**; a implantação é dele (workflow Implantação).
+2. Depois do merge e da implantação, o dono libera em Usuários › Estoques permitidos o CD **e as lojas que ele
+   abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
+3. Em seguida, o **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): rodar o workflow `genesis-bloco` no F2-B28
+   (`docs/planos/fase2-plano.md`) num branch novo a partir da `main` já com o PR-6.
+4. Numeração das próximas decisões nos READMEs: **API 176**, **ERP 65**, **PDV 81** (confira o último número no próprio
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
+   em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
 ## Pendências e lembretes
 

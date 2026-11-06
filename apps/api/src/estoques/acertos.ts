@@ -481,7 +481,7 @@ export async function ajustarEstoqueDoCadastro(
 }
 
 /**
- * "Baixar como perda" da divergência da transferência (ERP 13.7; F2-Q10 = D51, padrão até a confirmação do dono; Fase 2,
+ * "Baixar como perda" da divergência da transferência (ERP 13.7; F2-Q10 = D51, decidida pelo dono em 06/11/2026; Fase 2,
  * F2-B24; README da API › decisão 172): cria e efetiva, na transação de quem trata a diferença (com `travaVersao`), uma
  * **Saída** no estoque de origem com a origem `perda_transferencia`, `origem_id` = a transferência e o motivo
  * `MOTIVO_PERDA_TRANSFERENCIA`. Quem chama já lançou o `TRANSF_RETORNO` da diferença (um por parte da saída) e passa,

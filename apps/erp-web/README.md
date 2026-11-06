@@ -921,6 +921,62 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     caminho da Loja 2 sem saldo e 10 a tratar no CD; sem divergência, a coluna não aparece) e `Acertos.test.tsx` (o em
     trânsito na linha da lista e as duas colunas).
 
+64. **Transferência de estoque: telas e romaneio** (Fase 2, F2-B27; ERP 13.7, 3.3, 3.7; README da API › decisões 171 a
+    175). `paginas/estoques/Transferencias.tsx` (listagem e formulário), `transferenciaItens.ts` (as regras puras) e
+    `TransferenciasRomaneio.tsx`; rotas `/estoque/transferencias`, `/novo`, `/:id` e `/:id/romaneio` (o segmento fixo
+    ganha do `:id/:aba?`); o item do menu ficou pronto.
+    - **Listagem**: filtros Nº, origem (os estoques permitidos de `GET /transferencias/origens`, também os inativos),
+      destino (os mesmos mais os de `GET /transferencias/destinos`, porque o destino pode estar fora deles), situação, "Período por" (criação ou envio) e as datas; colunas Nº (o link),
+      origem, destino, data de criação, de transferência (envio) e de recebimento, quantidade de itens e situação.
+    - **Formulário** (o padrão do recebimento: `useCadastro`, `FormularioEntidade`, `GradeItens`, 409 com
+      "Recarregar", 422 nos campos e nas linhas): origem entre os estoques permitidos e ativos (`GET
+      /transferencias/origens`, mais a origem gravada; o padrão é o único permitido ou o primeiro depósito, o CD), destino de `GET /transferencias/destinos` **sem a origem** (trocar
+      a origem para o destino escolhido limpa o destino), tipo de estoque, data, motivo, observações e a NF-e emitida por
+      fora (só anotação, D6). Grade: produto (só os tipos com saldo próprio), **lote** (vazio = FEFO; aparece quando
+      algum produto tem lote), **saldo na origem**, quantidade (enviada), **em embalagens** ("5 FD + 3 UN", pela
+      embalagem de compra de maior fator), e depois do envio **recebida**, **diferença**, **tratamento** ("A tratar" ou o
+      escolhido) e o custo do envio (com `produtos.ver_custo`). A coluna de variação fica para o PR-12 (D43). O saldo, os
+      lotes e a embalagem do rascunho vêm de `GET /transferencias/dados-produtos` (sem as permissões do acerto); o
+      gravado, do detalhe.
+    - **Botões por situação e permissão** (`acoesTransferencia`, as transições do ERP 13.7 com as conferências da API;
+      quem tem a origem ou o destino sai do próprio detalhe, `origemPermitida` e `destinoPermitido`, calculados pela
+      API, e não de `GET /estoques`, que exige `estoques.ver` — a tela pede só as permissões da transferência, e o
+      estoque de origem inativado depois do rascunho não tira os botões de quem o tem): no rascunho, Salvar, Excluir,
+      **Sugerir reposição** e **Salvar e enviar** (grava antes; quem só tem `transferencias.enviar` envia o gravado sem
+      alteração) com a origem, e Cancelar; em trânsito, **Receber** (o destino e `transferencias.receber`) e **Cancelar
+      envio** (a origem); recebida com divergência, **Tratar diferença** (a origem ou o destino); a **NF-e de fora**
+      depois do envio (a origem e `transferencias.enviar`); o **Romaneio** sempre que o documento está gravado (desligado
+      com alteração não salva). Recebida e cancelada só imprimem.
+    - **Sugerir reposição** mescla na grade: o produto já nela sem lote recebe a quantidade sugerida, o novo entra numa
+      linha nova e o resto fica; os avisos da API viram notificação. O **403 em `estoqueDestinoId`** (decisão 173: a
+      sugestão mostra o saldo do destino) marca o campo e explica: "o estoque de destino está fora dos seus estoques
+      permitidos… Monte a carga à mão, ou peça a quem tem acesso ao destino".
+    - **Receber** abre a conferência numa grade de **linhas fixas** (prop nova `linhasFixas` do `GradeItens`: edita os
+      campos sem inserir nem remover linhas; Enter e ↑/↓ como na grade), com a enviada já preenchida (o conferente
+      corrige o que faltou), a diferença por linha, o aviso de quantos itens vão ficar com divergência e o botão
+      **Receber tudo como enviado** (com confirmação). A recebida acima da enviada bloqueia o Confirmar.
+    - **Tratar diferença**: a grade fixa dos itens com diferença sem tratamento, um "Retornar à origem"/"Baixar como
+      perda" por linha (e os atalhos "Todos: …"); manda só os escolhidos (o parcial deixa os outros a tratar).
+    - **O alerta `TRANSFERENCIA_PARADA` aberto** (`alertaParada` do detalhe) aparece no topo, em laranja, com o título e
+      a mensagem da varredura.
+    - **Os erros por item da ação** (o saldo insuficiente do envio, `itens.N.quantidade`) ficam num estado à parte do
+      `form.errors`, porque a recarga do rascunho gravado logo antes do envio (o `setValues` do `useCadastro`) podia
+      limpá-los antes de a linha aparecer em vermelho; saem na edição da grade.
+    - **Romaneio** (impressão pelo navegador, aba nova com `imprimir=1`, como o espelho do recebimento): o cabeçalho da
+      empresa, a origem e o destino (estoque, loja com razão social e CNPJ, endereço), os itens com código, lote,
+      embalagem, a quantidade na embalagem e em unidades, a coluna **Conferido** em branco (ou a recebida, depois do
+      recebimento), os totais, as observações e três campos de **assinatura** (expedido, transportado, recebido e
+      conferido). Avisa que não substitui a NF-e de transferência quando ela for exigida (nada fiscal).
+    - Testes: `Transferencias.test.tsx` (as transições por situação e permissão — rascunho, em trânsito na loja e no
+      CD, divergência, recebida e cancelada —, a linha, a sugestão mesclada, a conferência, o tratamento, a embalagem e
+      a consulta em blocos; e as telas: a listagem com as opções dos filtros de origem — o inativo também — e de
+      destino — a Loja 2 que o CD não vê, e a busca com ela —, o rascunho com a origem inativada depois (Salvar,
+      Excluir, Cancelar e o seletor de origem continuam), o rascunho com o 403 da sugestão e depois a sugestão aplicada,
+      o "Salvar e enviar" com o 422 no item, o recebimento a menor com o alerta parado, o conferente só com
+      `transferencias.ver` e `receber` usando o "Receber tudo como enviado" — sem nenhuma chamada ao `GET /estoques`,
+      que as referências do teste respondem com 403 —, o tratamento como perda, o 409 do cancelamento e o romaneio), `GradeItens.test.tsx` (linhas fixas) e o e2e `e2e/fluxo-transferencia.spec.ts` (CD →
+      Loja 2 com 5 fardos, o romaneio, 58 recebidos de 60 e a perda; os saldos 40 e 58 no fim), fora do CI.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) e ícone de tarefas no cabeçalho; avisos globais (certificado, PDV com pendências); exportação

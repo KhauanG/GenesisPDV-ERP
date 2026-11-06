@@ -2,15 +2,19 @@ import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Quer
 import {
   alterarTransferenciaSchema,
   cancelarTransferenciaSchema,
+  consultaDadosProdutosTransferenciaSchema,
   criarTransferenciaSchema,
+  type DadosProdutosTransferencia,
   type DestinoTransferenciaOpcao,
   enviarTransferenciaSchema,
   excluirTransferenciaSchema,
   filtroTransferenciasSchema,
   limiteDeslocamento,
   nfeExternaTransferenciaSchema,
+  type OrigemTransferenciaOpcao,
   type Pagina,
   receberTransferenciaSchema,
+  type RomaneioTransferencia,
   type StatusTransferencia,
   type SugestaoReposicao,
   type TransferenciaDetalhe,
@@ -41,6 +45,7 @@ import {
   tratarDivergenciaTransferencia,
 } from './recebimento.js';
 import { sugestaoReposicao, validarSugestaoReposicao } from './reposicao.js';
+import { dadosProdutosTransferencia, romaneioTransferencia } from './romaneio.js';
 import {
   cancelarTransferencia,
   conferirCabecalhoTransferencia,
@@ -165,30 +170,21 @@ export class TransferenciasController {
   @Permissao('transferencias.criar')
   @Get('destinos')
   async destinos(): Promise<DestinoTransferenciaOpcao[]> {
-    return this.s.tenancy.cx().consulta(async (db) => {
-      const { rows } = await db.execute<{
-        id: string;
-        codigo: number;
-        nome: string;
-        tipo: DestinoTransferenciaOpcao['tipo'];
-        loja_id: string | null;
-        loja_nome: string | null;
-      }>(sql`
-        select e.id, e.codigo, e.nome, e.tipo, l.id as loja_id, l.nome as loja_nome
-          from estoques e
-          left join lateral (select l.id, l.nome from lojas l
-                              where l.estoque_id = e.id and l.excluido_em is null order by l.codigo limit 1) l on true
-         where e.excluido_em is null and e.ativo
-         order by lower(e.nome), e.codigo`);
-      return rows.map((r) => ({
-        id: r.id,
-        codigo: r.codigo,
-        nome: r.nome,
-        tipo: r.tipo,
-        lojaId: r.loja_id,
-        lojaNome: r.loja_nome,
-      }));
-    });
+    const linhas = await this.s.tenancy.cx().consulta((db) => estoquesDaTransferencia(db, sql`e.ativo`));
+    return linhas.map(({ ativo: _ativo, ...d }) => d);
+  }
+
+  /**
+   * Os estoques permitidos para movimentar de quem está na tela (F2-B27; decisão 175): o seletor "Origem" do rascunho
+   * (os ativos) e o filtro "Estoque origem" da listagem (os inativos também). Exige só `transferencias.ver` — o
+   * `GET /estoques` exige `estoques.ver`, a permissão do cadastro de locais, que o conferente da loja ou o expedidor do
+   * CD pode não ter —, e só a identificação, sem saldo nem custo (Master e `estoques.todos`: todos os estoques vivos).
+   */
+  @Permissao('transferencias.ver')
+  @Get('origens')
+  async origens(@Sessao() sessao: SessaoErp): Promise<OrigemTransferenciaOpcao[]> {
+    const permitido = estoqueVisivel(sessao, sql`e.id`, 'movimentar');
+    return this.s.tenancy.cx().consulta((db) => estoquesDaTransferencia(db, permitido ?? sql`true`));
   }
 
   /**
@@ -205,6 +201,21 @@ export class TransferenciasController {
     return this.s.tenancy.cx().consulta((db) => sugestaoReposicao(db, q, sessao));
   }
 
+  /**
+   * Dados dos produtos da grade do rascunho (F2-B27; decisão 175): o saldo na origem, os lotes da origem e a embalagem
+   * de compra, com as conferências de quem cria (a origem entre os permitidos, 403 no campo). A tela não usa o
+   * `/saldos-estoque/itens` nem o `/lotes`, que exigem as permissões do acerto.
+   */
+  @Permissao('transferencias.criar')
+  @Get('dados-produtos')
+  async dadosProdutos(
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<DadosProdutosTransferencia> {
+    const q = validar(consultaDadosProdutosTransferenciaSchema, query);
+    return this.s.tenancy.cx().consulta((db) => dadosProdutosTransferencia(db, q, sessao));
+  }
+
   @Permissao('transferencias.ver')
   @Get(':id')
   async obter(@Param('id') idBruto: string, @Sessao() sessao: SessaoErp): Promise<TransferenciaDetalhe> {
@@ -212,6 +223,21 @@ export class TransferenciasController {
     const d = await this.s.tenancy.cx().consulta((db) => this.detalhe(db, id, sessao));
     if (!d) throw ErroApi.naoEncontrado('Transferência não encontrada.');
     return d;
+  }
+
+  /**
+   * O romaneio impresso pelo navegador (ERP 13.7; F2-B27; decisão 175): o cabeçalho da empresa, as duas pontas com a
+   * loja e o endereço, e o documento, para quem vê a transferência (a origem ou o destino visível; fora dos dois, 404).
+   */
+  @Permissao('transferencias.ver')
+  @Get(':id/romaneio')
+  async romaneio(@Param('id') idBruto: string, @Sessao() sessao: SessaoErp): Promise<RomaneioTransferencia> {
+    const id = validar(z.uuid(), idBruto);
+    return this.s.tenancy.cx().consulta(async (db) => {
+      const d = await this.detalhe(db, id, sessao);
+      if (!d) throw ErroApi.naoEncontrado('Transferência não encontrada.');
+      return romaneioTransferencia(db, d);
+    });
   }
 
   /** Cria o rascunho (origem permitida, destino qualquer estoque ativo da empresa). */
@@ -441,7 +467,7 @@ export class TransferenciasController {
 
   /**
    * Tratar a diferença recebida a menor (ERP 13.7 "Divergência"), por item, uma vez cada: "Retornar à origem"
-   * (`TRANSF_RETORNO` da diferença) ou "Baixar como perda" (F2-Q10 = D51, padrão até a confirmação do dono: o retorno
+   * (`TRANSF_RETORNO` da diferença) ou "Baixar como perda" (F2-Q10 = D51, decidida pelo dono em 06/11/2026: o retorno
    * mais o acerto de Saída na origem com a origem `perda_transferencia`). Sem diferença pendente, a transferência passa
    * a `recebida`. Exige `transferencias.receber` e a origem **ou** o destino permitidos para movimentar (padrão até a
    * confirmação do dono, D61: quem recebeu e quem enviou decidem; os movimentos são todos na origem). Só na
@@ -641,6 +667,34 @@ export class TransferenciasController {
     if (versao !== undefined && linha.versao !== versao) await conflitoVersao(tx, linha);
     return linha;
   }
+}
+
+/** Os estoques vivos que passam em `condicao` (sobre `e`), com a loja (a de menor código; nula no CD), por nome. */
+async function estoquesDaTransferencia(db: DbEmpresa, condicao: SQL): Promise<OrigemTransferenciaOpcao[]> {
+  const { rows } = await db.execute<{
+    id: string;
+    codigo: number;
+    nome: string;
+    tipo: OrigemTransferenciaOpcao['tipo'];
+    ativo: boolean;
+    loja_id: string | null;
+    loja_nome: string | null;
+  }>(sql`
+    select e.id, e.codigo, e.nome, e.tipo, e.ativo, l.id as loja_id, l.nome as loja_nome
+      from estoques e
+      left join lateral (select l.id, l.nome from lojas l
+                          where l.estoque_id = e.id and l.excluido_em is null order by l.codigo limit 1) l on true
+     where e.excluido_em is null and ${condicao}
+     order by lower(e.nome), e.codigo`);
+  return rows.map((r) => ({
+    id: r.id,
+    codigo: r.codigo,
+    nome: r.nome,
+    tipo: r.tipo,
+    ativo: r.ativo,
+    lojaId: r.loja_id,
+    lojaNome: r.loja_nome,
+  }));
 }
 
 /**
