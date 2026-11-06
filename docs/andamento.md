@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto; decisões D51, D52, D61 e D62 respondidas)._
+_Última atualização: 06/11/2026 (PR-6 juntado na `main` com os PRs #1 e #2 do Dependabot; aguardando a implantação do dono; PR-7 em andamento)._
 
 ## Repositório
 
@@ -50,8 +50,8 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 | PR-3 inventário inicial e ajustes | B9–B12 | concluído (arquivo #18) |
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
-| **PR-6 transferências** | **B22–B27** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
-| PR-7 relatórios de estoque | B28–B33 | próximo, depois do merge do PR-6 |
+| PR-6 transferências | B22–B27 | concluído (#4, juntado em 06/11/2026 com a liberação do dono); **falta implantar** (migração **0025**) |
+| **PR-7 relatórios de estoque** | **B28–B33** | **em andamento** (branch `claude/blissful-cray-cvroui`, recomeçado da `main` com o PR-6) |
 | PR-8 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -67,14 +67,13 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 
 ## Próximo passo
 
-1. **PR-6 "Transferência CD ⇄ loja"** (F2-B22 a F2-B27) aberto para a `main`: o dono revisa e testa (Estoque ›
-   Transferência de estoque: CD → loja, Salvar e enviar, Romaneio, Receber com diferença e Tratar diferença) e libera
-   o merge. **Merge só com a liberação explícita do dono**; a implantação é dele (workflow Implantação).
-2. Depois do merge e da implantação, o dono libera em Usuários › Estoques permitidos o CD **e as lojas que ele
-   abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-3. Em seguida, o **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): rodar o workflow `genesis-bloco` no F2-B28
-   (`docs/planos/fase2-plano.md`) num branch novo a partir da `main` já com o PR-6.
-4. Numeração das próximas decisões nos READMEs: **API 176**, **ERP 65**, **PDV 81** (confira o último número no próprio
+1. **Implantar o PR-6 (dono):** workflow **Implantação** na `main` (commit `45b07ec` ou mais novo), aprovando o
+   environment `producao`. Leva a migração de empresa **0025** (transferências). Depois, em Usuários › Estoques
+   permitidos, liberar o CD **e as lojas que ele abastece** para quem monta as cargas: a sugestão de reposição exige o
+   destino permitido (D62 (2)). O PDV não muda (nenhum release novo).
+2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): workflow `genesis-bloco` bloco a bloco, a partir do F2-B28
+   (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui`.
+3. Numeração das próximas decisões nos READMEs: **API 176**, **ERP 65**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
@@ -82,9 +81,11 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 
 - **Proteger o SSH da VPS** (dono; `infra/producao/README.md` › Proteger o SSH da VPS): só chave, firewall da
   Hostinger e fail2ban. A chave antiga do GitHub Actions já foi revogada em 06/11/2026 (sobrou só a nova).
-- **PRs do Dependabot #1 e #2** (`docker/setup-buildx-action` v3→v4 e `docker/build-push-action` v6→v7): mudanças de
-  versão principal das Actions que montam as imagens Docker; revisar o que mudou antes de juntar (não juntar sem
-  revisão).
+- **PRs do Dependabot #1 e #2** (`docker/setup-buildx-action` v3→v4.4.1 e `docker/build-push-action` v6→v7.4.0):
+  revisados e juntados em 06/11/2026 com a liberação do dono (os SHAs conferem com as tags oficiais; as versões novas
+  só tiram opções que o Genesis não usa — `config`, `config-inline`, `install` e as variáveis `DOCKER_BUILD_NO_SUMMARY`
+  e `DOCKER_BUILD_EXPORT_RETENTION_DAYS` — e passam ao Node 24). A primeira "Implantação" depois deles é a que prova a
+  montagem das imagens com `load` e o cache `gha`.
 - **Verificação em duas etapas (2FA)** na conta do GitHub do dono: o GitHub exige a partir de 19/12/2026.
 - **XMLs reais de fornecedores** (para conferir a NF-e com notas de verdade, F2-B53): o dono envia depois; **não
   entram no repositório** (público, D60): ficam em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa
