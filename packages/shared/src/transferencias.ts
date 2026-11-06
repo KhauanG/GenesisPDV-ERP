@@ -18,6 +18,7 @@ import {
   type MetadadosRegistro,
 } from './campos.js';
 import { dec, decTexto, type Valor } from './decimal.js';
+import type { TIPOS_ESTOQUE_LOCAL } from './enums.js';
 import { paginacaoQuerySchema } from './paginacao.js';
 import type { ProdutoOpcao } from './produtos.js';
 import { validarChaveAcesso } from './validadores.js';
@@ -366,6 +367,21 @@ export const filtroTransferenciasSchema = paginacaoQuerySchema.extend({
   dataFinal: dataFiltro,
 });
 export type FiltroTransferencias = z.infer<typeof filtroTransferenciasSchema>;
+
+/**
+ * Opção do seletor "Destino" (`GET /transferencias/destinos`; ERP 13.7): todo estoque **ativo** da empresa, sem o
+ * filtro dos estoques permitidos, porque o destino não precisa ser permitido para quem envia (o expedidor do CD
+ * despacha para a loja que não enxerga; a loja devolve os cascos ao CD). Só a identificação: sem saldo nem custo.
+ */
+export interface DestinoTransferenciaOpcao {
+  id: string;
+  codigo: number;
+  nome: string;
+  tipo: (typeof TIPOS_ESTOQUE_LOCAL)[number];
+  /** A loja do estoque (a de menor código, como a origem); `null` no estoque sem loja (o CD). */
+  lojaId: string | null;
+  lojaNome: string | null;
+}
 
 export interface TransferenciaResumo {
   id: string;

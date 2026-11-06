@@ -3309,6 +3309,16 @@ Colunas: **Nº** **(Novo)** (link), **Estoque Origem**, **Estoque Destino**, **D
 Fase 2, F2-B22: schema (MD 3.7.6, migração `0025_transferencias`) e contratos (`packages/shared/src/transferencias.ts`);
 os endpoints e as telas entram nos F2-B23..B27 (README da API › decisão 170).
 
+Fase 2, F2-B23 (API): rascunho (`GET|POST|PUT|DELETE /transferencias`), **Enviar** (`TRANSF_SAIDA` na origem ao custo
+médio vigente, com o saldo conferido — o ERP não deixa negativo, salvo Master ou "Permite saldo negativo no ERP" — e,
+sem lote, dividido em FEFO; o custo fica no item; enviar de novo não lança outra saída) e **Cancelar** com motivo (do
+rascunho, sem efeito; do trânsito, `TRANSF_RETORNO` integral ao custo da saída; a recebida não se cancela: faz-se a
+transferência inversa), e a anotação da NF-e de fora depois do envio (`PUT /transferencias/:id/nfe-externa`). Vê a
+transferência quem tem a origem **ou** o destino entre os estoques permitidos; só quem tem a origem altera, envia ou
+cancela. O estoque com transferência em trânsito (ou com divergência a tratar) não se inativa, e o usado numa
+transferência não se exclui; o tipo de estoque com transferência em rascunho, em trânsito ou com divergência não se
+inativa (README da API › decisão 171). Receber e tratar a divergência são do F2-B24; as telas, do F2-B27.
+
 Grade: **Produto**, **Variação**, **Lote** **(Novo)**, **Saldo na origem** **(Novo)**, **Quant** (enviada), **Qtd.
 recebida** **(Novo, etapa 2)**, **Diferença** **(Novo)**. Botão **Sugerir reposição (Novo)**: preenche a grade com
 os produtos do destino abaixo do estoque mínimo, na quantidade `máximo − saldo` (ou `mínimo × 2 − saldo` sem máximo),

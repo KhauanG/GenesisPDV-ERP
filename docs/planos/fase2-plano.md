@@ -1057,6 +1057,8 @@ convivência com o Nuvem3).
     - Item do menu pronto (`menu.ts:208`).
   - **Grade (GradeItens):** produto, lote, saldo na origem, enviada, recebida e diferença. A coluna de variação só aparece se o
     PR-12 entrar.
+  - **Seletor de destino** do rascunho: `GET /transferencias/destinos` (F2-B23; README da API › decisão 171), todo estoque ativo
+    da empresa, também fora dos permitidos de quem cria (não o `GET /estoques`, que só mostra os visíveis); esconder a origem.
   - **Botões por situação e permissão:** Sugerir reposição, Enviar, Receber (com "Receber tudo como enviado"), Tratar diferença e
     Cancelar.
   - **Romaneio** pela impressão do navegador: cabeçalho da empresa, origem, destino, itens com a embalagem e campo de assinatura.

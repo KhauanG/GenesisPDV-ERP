@@ -2494,7 +2494,10 @@ tipo do acerto).
 Transferência em **duas etapas** (enviada → recebida). Fase 2, F2-B22: tabelas e contratos (migração
 `0025_transferencias`; README da API › decisão 170); F2-B23..B27: rascunho, envio, cancelamento, recebimento,
 divergência, sugestão de reposição, em trânsito e telas, sem migração nova. Nenhuma das duas desce ao PDV
-(`fn_versao_local`); os saldos que ela muda descem pelo fluxo `estoque`.
+(`fn_versao_local`); os saldos que ela muda descem pelo fluxo `estoque`. F2-B23 (README da API › decisão 171): o envio
+lança um `TRANSF_SAIDA` por item na origem (`documento_tipo = 'transferencia'`, `documento_item_id` = o item; sem lote,
+um por lote na divisão FEFO) ao custo médio vigente, gravado em `itens_transferencia.custo_unitario`; o cancelamento do
+trânsito lança um `TRANSF_RETORNO` de cada saída com `estorno_de_id` = ela, no mesmo lote e ao custo dela (T20).
 
 `transferencias_estoque`:
 

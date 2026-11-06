@@ -8,7 +8,7 @@ import {
   type EstoqueResumo,
   type Pagina,
 } from '@genesis/shared';
-import { and, count, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
@@ -23,6 +23,7 @@ import {
   lojas,
   movimentosEstoque,
   saldosEstoque,
+  transferenciasEstoque,
   usuarios,
   usuariosEstoques,
 } from '../database/empresa/schema/index.js';
@@ -165,6 +166,7 @@ export class EstoquesController {
               },
             );
           }
+          await garantirSemTransferenciaPendente(tx, id);
           const [loja] = await tx
             .select({ nome: lojas.nome })
             .from(lojas)
@@ -218,6 +220,26 @@ export class EstoquesController {
           .where(eq(movimentosEstoque.estoqueId, id))
           .limit(1);
         if (mov) throw new ErroApi('REGRA_NEGOCIO', 'O estoque tem movimentos: inative em vez de excluir.');
+        // A transferência em qualquer situação conta (F2-B23): o rascunho ainda vai sair dele ou entrar nele, e a
+        // enviada para ele (sem movimento no destino até o recebimento) deixaria a mercadoria sem ter onde entrar.
+        const [transf] = await tx
+          .select({ id: transferenciasEstoque.id })
+          .from(transferenciasEstoque)
+          .where(
+            and(
+              or(
+                eq(transferenciasEstoque.estoqueOrigemId, id),
+                eq(transferenciasEstoque.estoqueDestinoId, id),
+              ),
+              isNull(transferenciasEstoque.excluidoEm),
+            ),
+          )
+          .limit(1);
+        if (transf)
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            'O estoque já foi usado em transferências: inative em vez de excluir (a transferência em trânsito tem de ser recebida ou cancelada antes de inativar).',
+          );
         const agora = new Date();
         await tx
           .update(estoques)
@@ -238,6 +260,32 @@ export class EstoquesController {
         });
       },
       { travaVersao: true },
+    );
+  }
+}
+
+/**
+ * Inativar só sem transferência pendente com o estoque na origem ou no destino (F2-B23; ERP 13.7): a em trânsito ainda
+ * vai entrar no destino (F2-B24) ou voltar à origem no cancelamento, e a recebida com divergência ainda devolve a
+ * diferença à origem. A mercadoria em trânsito não está em `saldos_estoque` de nenhum dos dois, então o "saldo zero"
+ * não a vê. O rascunho não impede: o envio confere de novo que os dois estoques estão ativos.
+ */
+async function garantirSemTransferenciaPendente(tx: DbEmpresa, id: string): Promise<void> {
+  const [pendentes] = await tx
+    .select({ n: count() })
+    .from(transferenciasEstoque)
+    .where(
+      and(
+        or(eq(transferenciasEstoque.estoqueOrigemId, id), eq(transferenciasEstoque.estoqueDestinoId, id)),
+        inArray(transferenciasEstoque.status, ['em_transito', 'recebida_divergencia']),
+        isNull(transferenciasEstoque.excluidoEm),
+      ),
+    );
+  if ((pendentes?.n ?? 0) > 0) {
+    throw new ErroApi(
+      'REGRA_NEGOCIO',
+      'Para inativar, o estoque não pode ter transferência em trânsito nem com divergência a tratar: receba, trate ou cancele antes.',
+      { campos: { ativo: [`Há ${pendentes!.n} transferência(s) pendente(s) com este estoque`] } },
     );
   }
 }

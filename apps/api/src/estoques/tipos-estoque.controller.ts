@@ -6,7 +6,7 @@ import {
   type TipoEstoqueDetalhe,
   type TipoEstoqueOpcao,
 } from '@genesis/shared';
-import { and, asc, count, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
@@ -22,6 +22,7 @@ import {
   recebimentos,
   saldosEstoque,
   tiposEstoque,
+  transferenciasEstoque,
   usuarios,
 } from '../database/empresa/schema/index.js';
 import type { Servicos } from '../servicos.js';
@@ -36,13 +37,13 @@ type LinhaTipo = typeof tiposEstoque.$inferSelect;
  * Tipo de Estoque (ERP 13.6; MD 3.2.6, 7.4; decisão 152 do README): classifica o saldo dentro de um local (Disponível,
  * Avaria, Vencido…). Regras: nome único; exatamente um padrão, sempre vendável e ativo (marcar outro como padrão tira
  * o anterior na mesma transação); os tipos de sistema não se excluem, e o Disponível e o Vasilhame vazio têm o
- * `vendavel` travado (o Vasilhame vazio também não se inativa); inativar exige saldo zero em todos os estoques
- * e nenhum acerto em rascunho no tipo; tirar o `vendavel` também exige saldo zero. Mudar `vendavel` ou o padrão
- * manda `ressincronizar_fluxo 'estoque'` a todos os terminais ativos da empresa (MD 6.4 regra 3): o saldo que entra
- * no filtro do pull (só tipos vendáveis) não ganha versão nova e só o pull do cursor 0 o põe no espelho. A linha que
- * sai do filtro não sai do espelho: o PDV instalado não tem a sombra da SYNC 6.11 (apagar o que não voltou), por
- * isso o `vendavel` só sai com saldo zero, e a linha que fica no espelho vale 0. O `GET` da lista serve aos
- * seletores de qualquer usuário autenticado.
+ * `vendavel` travado (o Vasilhame vazio também não se inativa); inativar exige saldo zero em todos os estoques e
+ * nenhum acerto, recebimento ou transferência pendente no tipo; tirar o `vendavel` também exige saldo zero. Mudar
+ * `vendavel` ou o padrão manda `ressincronizar_fluxo 'estoque'` a todos os terminais ativos da empresa (MD 6.4 regra
+ * 3): o saldo que entra no filtro do pull (só tipos vendáveis) não ganha versão nova e só o pull do cursor 0 o põe no
+ * espelho. A linha que sai do filtro não sai do espelho: o PDV instalado não tem a sombra da SYNC 6.11 (apagar o que
+ * não voltou), por isso o `vendavel` só sai com saldo zero, e a linha que fica no espelho vale 0. O `GET` da lista
+ * serve aos seletores de qualquer usuário autenticado.
  */
 @Controller('tipos-estoque')
 export class TiposEstoqueController {
@@ -216,6 +217,19 @@ export class TiposEstoqueController {
             'O tipo de estoque já foi usado em recebimentos: inative em vez de excluir (o rascunho tem de ser ' +
               'movimentado ou excluído antes de inativar).',
           );
+        // A transferência também, em qualquer situação (F2-B23): o rascunho ainda vai lançar no tipo, e a em trânsito
+        // ainda entra no destino ou volta à origem nele.
+        const [transferencia] = await tx
+          .select({ id: transferenciasEstoque.id })
+          .from(transferenciasEstoque)
+          .where(and(eq(transferenciasEstoque.tipoEstoqueId, id), isNull(transferenciasEstoque.excluidoEm)))
+          .limit(1);
+        if (transferencia)
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            'O tipo de estoque já foi usado em transferências: inative em vez de excluir (o rascunho e a em ' +
+              'trânsito têm de ser enviados, recebidos, cancelados ou excluídos antes de inativar).',
+          );
         await tx
           .update(tiposEstoque)
           .set({ excluidoEm: new Date(), atualizadoPorId: sessao.usuarioId })
@@ -328,9 +342,10 @@ const usaTipo = (id: string) =>
   or(eq(acertosEstoque.tipoEstoqueId, id), eq(acertosEstoque.tipoEstoqueDestinoId, id));
 
 /**
- * Inativar só sem acerto em rascunho no tipo (origem ou destino da mudança de tipo) nem recebimento em rascunho com o
- * tipo de destino (F2-B14): o rascunho confere o tipo ao ser gravado, e efetivá-lo ou movimentá-lo depois lançaria
- * saldo no tipo inativo (a efetivação do acerto também recusa o tipo inativo, `exigirTipoEstoqueAtivo`).
+ * Inativar só sem acerto em rascunho no tipo (origem ou destino da mudança de tipo), sem recebimento em rascunho com o
+ * tipo de destino (F2-B14) e sem transferência pendente no tipo (F2-B23): o rascunho confere o tipo ao ser gravado, e
+ * efetivá-lo ou movimentá-lo depois lançaria saldo no tipo inativo (a efetivação do acerto também recusa o tipo
+ * inativo, `exigirTipoEstoqueAtivo`; o envio da transferência também).
  */
 async function garantirSemRascunho(tx: DbEmpresa, id: string): Promise<void> {
   const [rascunhos] = await tx
@@ -360,6 +375,27 @@ async function garantirSemRascunho(tx: DbEmpresa, id: string): Promise<void> {
       'Para inativar, o tipo de estoque não pode ter recebimento em rascunho: movimente, troque o tipo ou exclua o ' +
         'rascunho antes.',
       { campos: { ativo: [`Há ${receb!.n} recebimento(s) em rascunho neste tipo`] } },
+    );
+  }
+  // A transferência no tipo (F2-B23): o rascunho ainda vai lançar nele; a em trânsito ainda entra no destino (F2-B24)
+  // ou volta à origem no cancelamento, e a recebida com divergência ainda devolve a diferença — a mercadoria em trânsito
+  // não está em `saldos_estoque`, e o "saldo zero" não a vê.
+  const [transf] = await tx
+    .select({ n: count() })
+    .from(transferenciasEstoque)
+    .where(
+      and(
+        eq(transferenciasEstoque.tipoEstoqueId, id),
+        inArray(transferenciasEstoque.status, ['rascunho', 'em_transito', 'recebida_divergencia']),
+        isNull(transferenciasEstoque.excluidoEm),
+      ),
+    );
+  if ((transf?.n ?? 0) > 0) {
+    throw new ErroApi(
+      'REGRA_NEGOCIO',
+      'Para inativar, o tipo de estoque não pode ter transferência em rascunho, em trânsito ou com divergência a ' +
+        'tratar: envie, receba, cancele ou exclua antes.',
+      { campos: { ativo: [`Há ${transf!.n} transferência(s) pendente(s) neste tipo`] } },
     );
   }
 }

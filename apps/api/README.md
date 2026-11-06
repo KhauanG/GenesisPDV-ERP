@@ -107,7 +107,9 @@ ERP (prefixo `/api`, token `Authorization: Bearer`): `POST /auth/login`, `POST /
 `GET|PUT|DELETE /produtos/:id`, `GET /produtos/:id/saldos`, `GET|POST /grupos-preco-quantidade`,
 `GET|PUT|DELETE /grupos-preco-quantidade/:id`, `GET|POST /restricoes-horario-venda`,
 `GET|PUT|DELETE /restricoes-horario-venda/:id`, `GET|POST /acertos`, `GET|PUT|DELETE /acertos/:id`,
-`POST /acertos/:id/efetivar`, `POST /acertos/:id/estornar`, `GET /saldos-estoque`, `GET /saldos-estoque/itens`,
+`POST /acertos/:id/efetivar`, `POST /acertos/:id/estornar`, `GET|POST /transferencias`,
+`GET|PUT|DELETE /transferencias/:id`, `POST /transferencias/:id/enviar|cancelar`, `PUT /transferencias/:id/nfe-externa`,
+`GET /saldos-estoque`, `GET /saldos-estoque/itens`,
 `GET|POST /tipos-estoque`, `GET|PUT|DELETE /tipos-estoque/:id`, `GET /importacoes/produtos|clientes/modelo`, `POST /importacoes/produtos|clientes/previa`
 (multipart), `POST /importacoes/produtos|clientes/confirmar`, `GET /dashboard`, `GET /implantacao/prontidao`, `GET /ncms`, `GET /ncms/:codigo`,
 `GET /referencias/unidades|cfops`, `GET /referencias/ufs|municipios|paises`,
@@ -4092,6 +4094,101 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      travada) e o
      `transferencias.spec.ts` do shared (normalização e padrões, recusas e casos-limite de cada contrato, as transições e
      as regras da situação).
+171. **Transferência entre estoques: rascunho, enviar e cancelar** (Fase 2, F2-B23; ERP 13.7, 13.1.4; MD 3.7.6; SYNC
+     15.1; T20; D6 e D43 do roadmap; `src/transferencias/transferencias{,.controller}.ts` (novo módulo); as travas em
+     `estoques.controller.ts` e `tipos-estoque.controller.ts`). **Sem migração nova**: as tabelas, os triggers de etapa e
+     os contratos são do F2-B22 (decisão 170, migração `0025_transferencias`), e o seed já tinha `TRANSF_SAIDA` (−1) e
+     `TRANSF_RETORNO` (+1). Rotas: `GET|POST /transferencias`, `GET /transferencias/destinos`, `GET|PUT|DELETE
+     /transferencias/:id`, `POST /transferencias/:id/enviar|cancelar` e `PUT /transferencias/:id/nfe-externa`.
+     - **Acesso** (decisão 149): a transferência é **visível** para quem vê a origem **ou** o destino (o CD que
+       despacha e a loja que vai receber no F2-B24; fora dos dois, 404 como inexistente, também na listagem); gravar,
+       excluir, enviar, cancelar e anotar a NF-e exigem a **origem gravada** entre os estoques permitidos para
+       movimentar (403; na criação e na troca da origem, 403 em `estoqueOrigemId`), e o **destino não precisa** estar
+       permitido (o expedidor do CD despacha para a loja que não enxerga). O detalhe mostra o "Saldo na origem" (o da
+       linha origem × tipo; no item com lote, o do lote) só a quem vê a origem, e o custo do item só com
+       `produtos.ver_custo`. Permissões do catálogo: `transferencias.ver`, `.criar` (criar, alterar e excluir o
+       rascunho: não há `.editar`), `.enviar` (enviar e anotar a NF-e de fora) e `.cancelar`.
+     - **Seletor de destino** (`GET /transferencias/destinos`, `transferencias.criar`; `DestinoTransferenciaOpcao` do
+       shared): como o destino não precisa ser permitido e o `GET /estoques` só mostra os estoques visíveis (e exige
+       `estoques.ver`), a tela do rascunho (F2-B27) lê daqui **todo estoque vivo e ativo** da empresa, sem o filtro dos
+       permitidos — o expedidor do CD escolhe a Loja 2 que não enxerga, e a loja devolve os cascos ao CD —, com id,
+       código, nome, tipo e a loja do estoque (a de menor código; nula no CD). Só a identificação: sem saldo nem custo,
+       que continuam restritos aos estoques visíveis. A própria origem não sai da lista (a tela a esconde; o schema
+       recusa origem = destino).
+     - **Rascunho** (`transferencias.criar`): a origem existe, é permitida e está ativa; o destino existe e está ativo;
+       o tipo de estoque ativo (vazio = o padrão, como o recebimento); a data não futura no fuso da **loja do estoque de
+       origem** e, no estoque sem loja (o CD), no fuso da empresa (vazia = hoje nesse fuso); os itens com produto de
+       saldo próprio (combo, serviço e produzido não; "Com variações" também não e a `variacaoId` tem de vir vazia
+       enquanto as variações estão travadas, D43) e o lote do produto e da origem, ou sem estoque (`conferirLotesItens`,
+       a regra do motor). Os itens são gravados como no recebimento: mantido = mesmo id, produto **e lote** (só a
+       quantidade muda); trocar o produto ou o lote é excluir + inserir, para duas linhas que trocam de lote não
+       colidirem no `uq_itens_transferencia_produto` no meio da gravação; `qtd_itens` sai das linhas vivas. `PUT` com a
+       versão agregada (cabeçalho + itens, decisão 47; lida numa segunda instrução depois da trava, como o recebimento)
+       e `DELETE` (exclusão lógica, `?versao=` opcional) só no rascunho (422 depois; o trigger repete a regra). O
+       rascunho sem item é gravável, mas não se envia.
+     - **Enviar** (`POST :id/enviar`, `transferencias.enviar`; `travaVersao`): confere de novo os dois estoques vivos e
+       ativos e o tipo ativo (422 no campo, "troque … no rascunho ou reative"), os produtos e os lotes; trava as linhas
+       de saldo da origem uma vez cada, em `ordenarChaves`, e confere o saldo (SYNC 15.1: o ERP não deixa negativo,
+       salvo Master ou `estoque.permite_negativo_erp` da loja da origem — no CD, a da empresa —, como a Saída do
+       acerto, sem a pergunta de confirmação do estorno: é uma saída pedida, não um estorno): a linha soma todos os
+       itens do produto (422 em `itens.N.quantidade` com o saldo), e o item com lote também confere o saldo do lote.
+       Um `TRANSF_SAIDA` por item pelo `lancarDocumento`, em `now()` (F2-B4), **ao custo médio vigente** da linha (a
+       saída comum, ERP 13.1.4), com o lote informado ou, sem lote, dividido em **FEFO** pelo motor (F2-B6; um movimento
+       por lote, todos com o `documento_item_id` do item; o item com lote da mesma linha reserva o lote antes), com a
+       loja do estoque de origem (nula no CD) e a unidade do produto. Os movimentos passam pela `compensarDefinir` (a
+       saída lançada antes de um "Definir" com a contagem um pouco à frente é anulada, como no acerto e no
+       recebimento). O custo unitário de cada item (o do primeiro movimento: as partes FEFO saem pelo mesmo custo
+       médio) é gravado **antes** de a situação sair do rascunho (o trigger só libera os itens nele), e a transferência
+       passa a `em_transito` com quem e quando enviou. O destino não recebe nada até o F2-B24. **Idempotente** como o
+       movimentar do recebimento: a já enviada (em trânsito ou recebida) devolve o detalhe sem lançar nem conferir a
+       versão (o clique repetido, a resposta perdida e duas chamadas juntas — a trava do cabeçalho serializa e a
+       segunda relê a situação); a cancelada é 422. Auditoria `movimentar` ("Transferência Nº … enviada: itens,
+       movimentos e anulados por "Definir"") — o catálogo de ações não tem `enviar`, e criar uma ação nova exigiria
+       migração do `ck_auditoria_acao`.
+     - **Cancelar** (`POST :id/cancelar`, `transferencias.cancelar`, motivo obrigatório; `travaVersao`): do rascunho,
+       sem efeito no estoque; do trânsito, um **`TRANSF_RETORNO`** de cada `TRANSF_SAIDA` ainda não estornado, com
+       `estorno_de_id` = a saída (o `uq_movimentos_estoque_estorno` garante um estorno por movimento), no mesmo lote e
+       **ao custo gravado nela** (o estorno de saída do T20: o valor que saiu volta igual, e o custo médio volta ao de
+       antes quando nada entrou no meio), e um `ESTORNO_ACERTO` (sinal 0) de cada compensação que um "Definir" lançou
+       contra as saídas (`compensacoesDoDocumento`, como o estorno do recebimento, decisão 160): o documento volta a
+       não ter efeito nenhum. Sem regra de saldo negativo: o retorno é entrada e o estorno de cada compensação anula a
+       entrada dela na mesma linha e lote; os retornos vão antes na ordem do documento. A recebida (ou com
+       divergência) é 422 ("faça uma transferência no sentido inverso"; o retorno parcial do tratamento da divergência
+       do F2-B24 também usa o `estorno_de_id`), e a já cancelada também (como o estorno repetido). Auditoria `cancelar`
+       com o resumo e o motivo.
+     - **NF-e de fora** (`PUT :id/nfe-externa`, `nfeExternaTransferenciaSchema`; `transferencias.enviar` e a origem
+       permitida): anota a chave (DV conferido) e/ou o número e série em qualquer situação menos a cancelada (o trigger
+       repete a regra; no rascunho também vai pelo `PUT`). Só anota, sem SEFAZ (D6). Auditoria `editar` com o antes e o
+       depois.
+     - **Travas novas** (o "saldo zero" não vê a mercadoria em trânsito, que não está no `saldos_estoque` de nenhuma
+       das pontas): **inativar estoque** com transferência `em_transito` ou `recebida_divergencia` na origem ou no
+       destino é 422 em `ativo` (a em trânsito ainda entra no destino ou volta à origem; a divergência ainda devolve a
+       diferença); o rascunho não trava o estoque (o envio confere de novo). **Excluir estoque** usado em qualquer
+       transferência viva é 422 ("inative em vez de excluir"), como o tipo usado em recebimento. **Inativar tipo de
+       estoque** com transferência em rascunho, em trânsito ou com divergência no tipo é 422 (como o acerto e o
+       recebimento em rascunho), e **excluir** o tipo usado em qualquer transferência também.
+     - **Para o F2-B24** (não implementado aqui): `enviarTransferencia` é exportada para o modo de uma etapa chamá-la na
+       mesma transação; a entrada no destino deve repetir cada movimento da saída (lote e custo de cada parte FEFO, como
+       a perna de entrada da mudança de tipo). O lote preso ao estoque de origem (`produtos_lotes.estoque_id` = a origem)
+       não pode entrar no destino (MD 3.6.9; `ErroLoteInvalido`): o F2-B24 decide entre entrar sem lote ou no lote do
+       mesmo código do destino (ou sem estoque).
+     Testes: `transferencias.test.ts` (integração: o critério de pronto — 60 unidades do CD a R$ 4,70 de custo médio
+     com saldo 100 saem a R$ 4,70 com o item, o saldo e o destino conferidos, e o cancelamento devolve 60 a R$ 4,70 com
+     o custo médio igual —; o retorno ao custo da saída com o custo médio mudado no meio, (20 × 7 + 10 × 6) / 30; o envio
+     sem saldo recusado no item sem lançar nada e aceito com a chave da empresa e pelo Master; o envio com a versão velha
+     (409), repetido e simultâneo sem segunda saída; o lote de outro estoque recusado, o lote sem saldo recusado e a
+     divisão FEFO com o lote informado reservado (o lote informado é o que vence primeiro e o item sem lote vem antes
+     no documento: sem a reserva, a FEFO o esvaziaria), com o retorno de cada parte ao seu lote; o "Definir" com a contagem à
+     frente que anula a saída e o cancelamento com o `ESTORNO_ACERTO`, sem movimento contra o sinal do catálogo; o
+     cancelamento do rascunho e a recebida que não se cancela; o rascunho com o tipo e a data padrão, a alteração com o
+     item mantido, a versão, a exclusão e o envio sem item; as conferências do cabeçalho e dos itens; quem vê e quem
+     grava; o seletor de destino (a Loja 2 e o CD fora dos permitidos, o inativo de fora, 403 sem
+     `transferencias.criar`); a NF-e de fora; as travas do estoque e do tipo (a exclusão do tipo usado só num rascunho,
+     sem movimento nem acerto, recusada pela trava da transferência); o envio da Loja 1 disparado junto da venda do PDV
+     na Loja 1, 20 vezes, os dois terminando com o saldo certo e o saldo novo no pull do fluxo `estoque` — o envio e o
+     push pegam a 7300001 como primeira trava e rodam em série, então o teste não confere a ordem das travas de linha
+     (`ordenarChaves`), só que os dois convivem; os itens do rascunho vão fora da ordem crescente e a venda na inversa —;
+     e o `conferirRazaoDoBanco` no fim).
 
 ### Operação – tarefas em segundo plano (API)
 
