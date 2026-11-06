@@ -2491,7 +2491,10 @@ tipo do acerto).
 
 #### 3.7.6 `transferencias_estoque` e `itens_transferencia` (D, —)
 
-Transferência em **duas etapas** (enviada → recebida).
+Transferência em **duas etapas** (enviada → recebida). Fase 2, F2-B22: tabelas e contratos (migração
+`0025_transferencias`; README da API › decisão 170); F2-B23..B27: rascunho, envio, cancelamento, recebimento,
+divergência, sugestão de reposição, em trânsito e telas, sem migração nova. Nenhuma das duas desce ao PDV
+(`fn_versao_local`); os saldos que ela muda descem pelo fluxo `estoque`.
 
 `transferencias_estoque`:
 
@@ -2501,31 +2504,49 @@ Transferência em **duas etapas** (enviada → recebida).
 | `codigo` | `integer` | não | `nextval('seq_codigo_transferencias_estoque')` | |
 | `estoque_origem_id` | `uuid` | não | — | → `estoques` |
 | `estoque_destino_id` | `uuid` | não | — | → `estoques` |
-| `data` | `date` | não | `current_date` | Data de criação informada |
+| `tipo_estoque_id` | `uuid` | não | — | → `tipos_estoque`; o mesmo nas duas pontas (padrão = o tipo padrão, aplicado pela API; o Vasilhame vazio leva os cascos de volta ao CD) |
+| `data` | `date` | não | `current_date` | Data de criação informada (o razão lança no momento de cada etapa) |
 | `motivo` | `varchar(120)` | não | — | |
 | `observacoes` | `text` | sim | — | |
 | `status` | `varchar(22)` | não | `'rascunho'` | `rascunho`, `em_transito`, `recebida`, `recebida_divergencia`, `cancelada` |
 | `enviada_em` | `timestamptz` | sim | — | "Data transferência" (1ª etapa) |
-| `enviada_por_id` | `uuid` | sim | — | |
+| `enviada_por_id` | `uuid` | sim | — | → `usuarios` |
 | `recebida_em` | `timestamptz` | sim | — | 2ª etapa |
-| `recebida_por_id` | `uuid` | sim | — | |
+| `recebida_por_id` | `uuid` | sim | — | → `usuarios` |
 | `cancelada_em` | `timestamptz` | sim | — | |
-| `cancelada_por_id` | `uuid` | sim | — | |
-| `motivo_cancelamento` | `varchar(255)` | sim | — | |
-| `documento_fiscal_id` | `uuid` | sim | — | → `documentos_fiscais` (NF-e de transferência entre CNPJs) |
+| `cancelada_por_id` | `uuid` | sim | — | → `usuarios` |
+| `motivo_cancelamento` | `varchar(255)` | sim | — | Obrigatório na cancelada |
+| `documento_fiscal_id` | `uuid` | sim | — | `documentos_fiscais` (NF-e de transferência entre CNPJs, fase fiscal); **sem FK** e sempre nula até lá |
+| `nfe_externa_chave` | `varchar(44)` | sim | — | Chave da NF-e de transferência emitida por fora (Nuvem3/contador) até a fase fiscal (D6); opcional |
+| `nfe_externa_numero` | `varchar(20)` | sim | — | Número/série dessa NF-e, quando não se tem a chave; opcional |
 | `qtd_itens` | `integer` | não | `0` | |
 
 - `uq_transferencias_estoque_codigo`; `ix_transferencias_estoque_origem_status (estoque_origem_id, status)`;
   `ix_transferencias_estoque_destino_status (estoque_destino_id, status)`;
-  `ck_transferencias_estoque_estoques (estoque_origem_id <> estoque_destino_id)`; `ck_transferencias_estoque_status`.
+  `ck_transferencias_estoque_estoques (estoque_origem_id <> estoque_destino_id)`; `ck_transferencias_estoque_status`;
+  `ck_transferencias_estoque_etapas` (rascunho sem nenhuma etapa; envio em trânsito e depois; recebimento só nas duas
+  recebidas; cancelamento só na cancelada, com o motivo); `ck_transferencias_estoque_nfe_externa` (44 posições, o
+  formato da chave com o CNPJ alfanumérico; o DV é conferido pelo contrato).
+- Imutável fora de `rascunho` (`tg_transferencias_estoque_imutavel`, `fn_protege_imutavel` com as colunas das etapas
+  livres), e `tg_transferencias_estoque_etapa` confere as transições do ERP 13.7 (rascunho → em trânsito ou cancelada;
+  em trânsito → recebida, recebida com divergência ou cancelada; recebida com divergência → recebida; recebida e
+  cancelada são o fim) e em que etapa cada coluna muda: o envio só ao enviar, o recebimento só ao sair do trânsito, o
+  cancelamento só ao cancelar e a NF-e de fora em qualquer situação, menos na cancelada.
 
-`itens_transferencia`: CP, `transferencia_id uuid not null`, `sequencia integer not null`, `produto_id uuid not null`,
-`variacao_id uuid null`, `lote_id uuid null`, `quantidade_enviada numeric(15,3) not null`,
-`quantidade_recebida numeric(15,3) null`, `diferenca numeric(15,3) generated always as (quantidade_enviada - coalesce(quantidade_recebida, quantidade_enviada)) stored`,
-`tratamento_divergencia varchar(14) null` (`retorno_origem`, `perda`), `divergencia_tratada_em timestamptz null`,
+`itens_transferencia`: CP, `transferencia_id uuid not null → transferencias_estoque`, `sequencia integer not null`,
+`produto_id uuid not null → produtos`, `variacao_id uuid null → produtos_variacoes` (sempre nula enquanto as variações
+estão travadas, D43), `lote_id uuid null → produtos_lotes` (nulo = FEFO no envio, com o lote de cada parte nos
+movimentos), `quantidade_enviada numeric(15,3) not null`,
+`quantidade_recebida numeric(15,3) null`, `diferenca numeric(15,3) not null generated always as (quantidade_enviada - coalesce(quantidade_recebida, quantidade_enviada)) stored`
+(isenta no trigger de versão, como as colunas geradas da 0012),
+`tratamento_divergencia varchar(14) null` (`retorno_origem`, `perda`; F2-Q10 = D51), `divergencia_tratada_em timestamptz null`,
 `custo_unitario numeric(15,4) null` (custo médio da origem gravado no envio).
 `uq_itens_transferencia_sequencia (transferencia_id, sequencia)`;
-`ck_… (quantidade_enviada > 0 and (quantidade_recebida is null or quantidade_recebida between 0 and quantidade_enviada))`.
+`uq_itens_transferencia_produto unique nulls not distinct (transferencia_id, produto_id, variacao_id, lote_id) where excluido_em is null`;
+`ck_itens_transferencia_quantidades (quantidade_enviada > 0 and (quantidade_recebida is null or quantidade_recebida between 0 and quantidade_enviada))`;
+`ck_itens_transferencia_custo`; `ck_itens_transferencia_tratamento`; `ck_itens_transferencia_divergencia` (o tratamento
+só com diferença, e com a hora). `tg_itens_transferencia_etapa`: o item entra e sai só no rascunho; depois, só a
+quantidade recebida muda no trânsito e o tratamento, uma vez, na recebida com divergência.
 
 ---
 

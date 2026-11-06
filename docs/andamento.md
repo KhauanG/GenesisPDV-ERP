@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (repositório público no ar e produção implantada)._
+_Última atualização: 06/11/2026 (PR-6 iniciado: F2-B22 implementado, aguardando commit)._
 
 ## Repositório
 
@@ -50,15 +50,29 @@ _Última atualização: 06/11/2026 (repositório público no ar e produção imp
 | PR-3 inventário inicial e ajustes | B9–B12 | concluído (arquivo #18) |
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
-| **PR-6 transferências** | **B22+** | **próximo passo** (ver o plano) |
+| **PR-6 transferências** | **B22–B27** | **em andamento** no branch `claude/blissful-cray-cvroui` (abaixo) |
 | PR-7 em diante | | não iniciados |
+
+### PR-6 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B22 schema e contratos (migração `0025_transferencias`, `packages/shared/src/transferencias.ts`; README da API › decisão 170) | **implementado** (checks verdes; falta o commit do bloco) |
+| F2-B23 rascunho, enviar e cancelar | próximo |
+| F2-B24 receber, divergência e modo de uma etapa | não iniciado |
+| F2-B25 sugestão de reposição | não iniciado |
+| F2-B26 em trânsito, divergência a tratar e alerta | não iniciado |
+| F2-B27 telas e romaneio | não iniciado |
 
 ## Próximo passo
 
-1. Criar o branch do PR-6 a partir da `main` deste repositório e rodar o workflow `genesis-bloco` no F2-B22
-   (`docs/planos/fase2-plano.md`).
-2. Numeração das próximas decisões nos READMEs: **API 170**, **ERP 63**, **PDV 81** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D61**.
+1. Commitar o F2-B22 no branch `claude/blissful-cray-cvroui` e rodar o workflow `genesis-bloco` no F2-B23
+   (`docs/planos/fase2-plano.md`). O F2-B23 também deve: recusar inativar/excluir estoque com transferência em trânsito
+   (já no plano) e o tipo de estoque com transferência em rascunho ou em trânsito (como o recebimento em rascunho,
+   `tipos-estoque.controller.ts`), e expor a anotação da NF-e de fora (`nfeExternaTransferenciaSchema`).
+2. Numeração das próximas decisões nos READMEs: **API 171**, **ERP 63**, **PDV 81** (confira o último número no próprio
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D61** (a D51, F2-Q10, entrou na tabela como
+   "padrão até a confirmação do dono").
 
 ## Pendências e lembretes
 

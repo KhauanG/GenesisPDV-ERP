@@ -25,6 +25,8 @@ export const COLUNAS_ISENTAS_VERSAO: Readonly<Record<string, readonly string[]>>
   // Ordem de lançamento do razão (0016, F2-B2; `fn_versao_local`): o preenchimento dos movimentos antigos não é
   // mudança do fato. A tabela não desce ao PDV.
   movimentos_estoque: ['seq_lancamento'],
+  // Coluna gerada (0025, F2-B22): enviada − recebida do item da transferência.
+  itens_transferencia: ['diferenca'],
 };
 
 export const TABELAS_FN_VERSAO_LOCAL = [
@@ -68,6 +70,10 @@ export const TABELAS_FN_VERSAO_LOCAL = [
   'notas_entrada',
   'itens_nota_entrada',
   'notas_entrada_duplicatas',
+  // Fase 2: transferência entre estoques (MD 3.7.6, F2-B22), documento do ERP que não desce (—); os saldos descem
+  // pelo fluxo `estoque`
+  'transferencias_estoque',
+  'itens_transferencia',
 ] as const;
 
 /** Tabelas com bloco AU (`criado_por_id`, `atualizado_por_id` → usuarios). */
@@ -134,4 +140,5 @@ export const TABELAS_COM_AUTORIA = [
   // Fase 2
   'recebimentos',
   'notas_entrada',
+  'transferencias_estoque',
 ] as const;

@@ -4021,6 +4021,78 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      dividem — e os contratos de movimentar e estornar). As suítes do recebimento e da vinculação continuam verdes com a
      pergunta do preço de custo e o destino ativo movidos para o núcleo.
 
+170. **Transferência entre estoques: schema e contratos** (Fase 2, F2-B22; ERP 13.7, 13.6; MD 3.7.6; D6, D43 e D51 do
+     roadmap; `src/database/empresa/schema/estoque.ts`, migração `0025_transferencias`; contrato no shared
+     `transferencias.ts`). Primeiro bloco do PR-6 ("Transferência CD ⇄ loja"): só o schema e os contratos, **sem
+     endpoint** (rascunho, enviar e cancelar no F2-B23; receber, tratar divergência e o modo de uma etapa no F2-B24;
+     sugestão no F2-B25; em trânsito e alerta no F2-B26; telas no F2-B27). O que já existia e foi reaproveitado: os
+     tipos `TRANSF_SAIDA`/`TRANSF_ENTRADA`/`TRANSF_RETORNO` no seed, `documento_tipo = 'transferencia'` no razão, a
+     origem de acerto `perda_transferencia`, as permissões `transferencias.ver/criar/enviar/receber/cancelar`, a chave
+     `estoque.transferencia_recebimento_automatico` e o item de menu; não havia tabela nem código de transferência.
+     **Schema**: `transferencias_estoque` (CP, AU; `codigo` de `seq_codigo_transferencias_estoque`, criada antes da
+     tabela na mesma migração; origem ≠ destino; **`tipo_estoque_id` no cabeçalho**, o mesmo nas duas pontas, com o
+     padrão = o tipo padrão aplicado pela API, como no recebimento — o banco não tem default por subconsulta —, para o
+     Vasilhame vazio levar os cascos de volta ao CD; `data` do documento; motivo até 120; observações; situação
+     rascunho/em_transito/recebida/recebida_divergencia/cancelada; quem e quando enviou, recebeu e cancelou, com o motivo
+     do cancelamento; `documento_fiscal_id` nulo e **sem FK** até `documentos_fiscais` existir; `qtd_itens`) e
+     `itens_transferencia` (produto, `variacao_id` sempre nula enquanto as variações estão travadas — D43 —, `lote_id`
+     nulo = FEFO no envio, quantidade enviada e recebida, `diferenca` gerada = enviada − coalesce(recebida, enviada),
+     tratamento `retorno_origem`/`perda` com a hora e o `custo_unitario` do envio). **NF-e emitida por fora (D6,
+     decidida pelo dono)**: o CD e as lojas têm CNPJs próprios, e a transferência entre eles exige NF-e, que o Genesis
+     só emitirá na fase fiscal; até lá ela sai pelo Nuvem3/contador e a transferência **só anota** a chave
+     (`nfe_externa_chave`, `varchar(44)`, formato no CHECK e DV no contrato, com o CNPJ alfanumérico) e/ou o número e
+     série (`nfe_externa_numero`), opcionais, anotáveis também depois do envio (a nota costuma sair na expedição) e
+     travados na cancelada — nada se emite nem se consulta (sem SEFAZ). **CHECKs**: origem ≠ destino, situação
+     conhecida, situação × datas de cada etapa (`ck_transferencias_estoque_etapas`: rascunho sem etapa nenhuma; envio em
+     trânsito e depois; recebimento só nas duas recebidas; cancelamento só na cancelada, com o motivo), a forma da
+     chave, enviada > 0, recebida entre 0 e a enviada, custo ≥ 0, tratamento conhecido e só com diferença (recebida
+     gravada e menor que a enviada: sem o `is not null`, o `null < x` passaria no CHECK), com a hora. **Etapas no banco** (a última barreira; a API dos próximos blocos confere antes, com a
+     mensagem no campo): `tg_transferencias_estoque_imutavel` (`fn_protege_imutavel`: fora do rascunho só as colunas
+     do recebimento, do cancelamento e da NF-e de fora mudam, inclusive a exclusão lógica, que fica só no rascunho) e
+     `tg_transferencias_estoque_etapa` (as transições do diagrama do ERP 13.7 — rascunho → em trânsito ou cancelada; em
+     trânsito → recebida, recebida com divergência ou cancelada; recebida com divergência → recebida; **recebida e
+     cancelada são o fim**, a lição da 0024: sem isso, um update "descancelaria" sem lançar o `TRANSF_SAIDA` de novo —
+     e em que transição cada coluna muda; não se pula a 1ª etapa: o modo de uma etapa passa pelo trânsito na mesma
+     transação); `tg_itens_transferencia_etapa` (o item entra e sai só no rascunho, onde o envio grava o custo antes de
+     mudar a situação; no trânsito só a quantidade recebida muda — a conferência é gravada antes de a situação sair
+     do trânsito —; na recebida com divergência só o tratamento, **uma vez**; a recebida e a cancelada não mudam
+     mais). `DOCUMENTO_IMUTAVEL` (P0001) vira o 422 de sempre no filtro de erros. Um produto (e lote) por transferência:
+     `uq_itens_transferencia_produto` com `nulls not distinct`, como o acerto (sem lote é uma linha; cada lote, outra).
+     Índices: origem × situação e destino × situação (a listagem, o "em trânsito" do destino e o alerta do F2-B26) e um
+     por FK. **Versão**: `fn_versao_local` nas duas (não descem ao PDV; os saldos descem pelo fluxo `estoque`; o
+     `Esquema.g.cs` não muda e o `verificar:esquema-pdv` continua em dia), com a `diferenca` gerada isenta no item
+     (`fn_versao_local('diferenca')` e `COLUNAS_ISENTAS_VERSAO`, o padrão da 0012: o NEW da coluna gerada chega nulo no
+     BEFORE); autoria pelo `TABELAS_COM_AUTORIA`. **Contratos** (`transferencias.ts` do shared): o rascunho
+     (`criar`/`alterarTransferenciaSchema`: origem ≠ destino sem diferenciar maiúsculas, tipo e data vazios = o padrão
+     e hoje — quem aplica e confere o dia é a API —, motivo obrigatório até 120, a NF-e de fora, até **990 itens** — o
+     teto da NF-e, para a transferência entre CNPJs caber numa nota na fase fiscal —, quantidade > 0 com 3 casas
+     (ADR-05), o mesmo `id` ou o mesmo produto × lote duas vezes recusados), `excluir` (`?versao=` opcional),
+     `nfeExternaTransferenciaSchema` (anotar depois do envio), `enviar` (só a versão; o saldo da origem e o negativo
+     do Master/`estoque.permite_negativo_erp` são da API, SYNC 15.1), `receber` ("Receber tudo como enviado" **sem**
+     itens, ou a quantidade de **cada** item, ≥ 0 e sem repetir — a API recusará a conferência que deixa item de fora,
+     para o esquecido não virar "recebido como enviado" sem ninguém conferir), `tratarDivergencia` (por item, ao menos
+     um, sem repetir), `cancelar` (motivo obrigatório até 255), os filtros da listagem (Nº, origem, destino, situação e
+     o período pela data de criação ou de envio, com a data impossível em 422) e a consulta da sugestão de reposição
+     (`?origem&destino`, diferentes, e o tipo opcional), com as respostas (resumo, detalhe com o saldo na origem e o
+     custo nulo sem `produtos.ver_custo`, sugestão com o mínimo, o máximo, o em trânsito, a embalagem e os avisos) e os
+     rótulos. Regras puras: `TRANSICOES_TRANSFERENCIA`/`podeTransitarTransferencia` (iguais às do trigger),
+     `diferencaItemTransferenciaTexto` (a conta da coluna gerada) e `situacaoAposRecebimento`. **Padrão até a
+     confirmação do dono (F2-Q10 = D51)**: o tratamento "Baixar como perda" é o retorno da diferença à origem mais um
+     acerto de saída de origem `perda_transferencia` (motivo `MOTIVO_PERDA_TRANSFERENCIA`, "Perda em transferência"):
+     o saldo da origem fica igual e a perda fica registrada a custo, com os tipos de movimento que já existem (o
+     lançamento é do F2-B24). Testes: `migracao-transferencias.test.ts` (empresa nova e existente na 0024, com
+     cadastro, acerto e recebimento, terminam com a mesma estrutura — sequência, triggers, CHECKs e índices —, a
+     primeira transferência da existente é o Nº 1, a diferença gerada não gera versão no UPDATE sem mudança; os CHECKs
+     — origem = destino e recebida > enviada recusadas, enviada ≤ 0, custo negativo, tratamento sem diferença, sem
+     recebimento, sem hora ou desconhecido, produto repetido, chave fora do formato, situação × datas no UPDATE e no
+     INSERT, com cada cláusula sozinha: recebida sem a hora do recebimento, cancelada sem a hora do cancelamento e
+     recebimento fora da recebida, que o trigger de etapa aceita e só o CHECK recusa —; as etapas no banco — rascunho
+     editável, envio com o custo gravado antes, trânsito só com a recebida e a NF-e de fora, o item que não muda de
+     transferência, tratamento uma vez, recebida como fim; cancelamento do rascunho e do trânsito e a cancelada
+     travada) e o
+     `transferencias.spec.ts` do shared (normalização e padrões, recusas e casos-limite de cada contrato, as transições e
+     as regras da situação).
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

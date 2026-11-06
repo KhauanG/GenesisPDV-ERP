@@ -3301,8 +3301,13 @@ Colunas: **Nº** **(Novo)** (link), **Estoque Origem**, **Estoque Destino**, **D
 | `estoque_origem_id` | Estoque Origem | →`estoques` permitidos | S | |
 | `estoque_destino_id` | Destino | →`estoques` | S | ≠ origem; o destino não precisa ser permitido para quem envia |
 | `data` | Data | data | S | hoje |
+| `tipo_estoque_id` | Tipo de estoque **(Novo)** | →`tipos_estoque` ativos | S | padrão = o tipo padrão (Disponível); o mesmo na origem e no destino (ex.: Vasilhame vazio para os cascos voltarem ao CD) |
 | `motivo` | Motivo | texto(120) | S | ex.: "Reposição semanal" |
 | `observacoes` | Observações | texto | N | |
+| `nfe_externa_chave` / `nfe_externa_numero` | NF-e de transferência (emitida por fora) **(Novo)** | chave (44, com DV) / número e série | N | só anotação até a fase fiscal (D6): entre CNPJs diferentes a NF-e sai pelo Nuvem3/contador; anotável também depois do envio, menos na cancelada |
+
+Fase 2, F2-B22: schema (MD 3.7.6, migração `0025_transferencias`) e contratos (`packages/shared/src/transferencias.ts`);
+os endpoints e as telas entram nos F2-B23..B27 (README da API › decisão 170).
 
 Grade: **Produto**, **Variação**, **Lote** **(Novo)**, **Saldo na origem** **(Novo)**, **Quant** (enviada), **Qtd.
 recebida** **(Novo, etapa 2)**, **Diferença** **(Novo)**. Botão **Sugerir reposição (Novo)**: preenche a grade com
