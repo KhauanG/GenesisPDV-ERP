@@ -908,6 +908,19 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     `NotasEntradaItens.test.tsx` (o 422 com `itens.0.validade` e `itens.1.produtoId`: o alerta com "Item 7: …" e
     "Item 2: …" e as duas linhas destacadas).
 
+63. **Transferência: "Em trânsito" e "Divergência a tratar" no produto e nos saldos** (Fase 2, F2-B26; ERP 8.2.11,
+    16.4; README da API › decisão 174). O bloco **Estoque** do produto (`BlocoEstoque` em `FormularioProduto.tsx`) e a
+    tela **Saldos de estoque** (`paginas/estoques/Saldos.tsx`) ganharam a coluna **Em trânsito** (o enviado para o
+    estoque e ainda não recebido) e a **Divergência a tratar** (a diferença recebida a menor ainda sem tratamento, na
+    linha da **origem**, em laranja), com "—" quando zero (quase toda linha não tem pendência). No produto, a
+    "Divergência a tratar" só aparece quando alguma linha a tem; o "Em trânsito", sempre. A linha do estoque que ainda
+    não tem saldo lançado mas tem mercadoria a caminho vem da API com saldo zero (aparece no produto e na lista). Os
+    estoques permitidos e o tipo de estoque de cada linha são os da API (a tela não filtra de novo); o "Ajustar" continua
+    pelo saldo, sem contar o em trânsito. A chave `estoque.transferencia_alerta_dias` ("Alerta de transferência parada
+    (dias)", Configurações › Geral › Estoque, inteiro) entrou em `rotulos.ts`. Testes: `BlocosProduto.test.tsx` (60 a
+    caminho da Loja 2 sem saldo e 10 a tratar no CD; sem divergência, a coluna não aparece) e `Acertos.test.tsx` (o em
+    trânsito na linha da lista e as duas colunas).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) e ícone de tarefas no cabeçalho; avisos globais (certificado, PDV com pendências); exportação

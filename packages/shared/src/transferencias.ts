@@ -4,7 +4,7 @@
  * → recebida), ou cancelada. Este arquivo tem os contratos do rascunho, das etapas (enviar, receber, tratar a
  * divergência, cancelar), da NF-e emitida por fora, dos filtros, da sugestão de reposição e as respostas, com as
  * regras puras da situação. Os endpoints entram nos F2-B23 (rascunho, enviar, cancelar), F2-B24 (receber, tratar
- * divergência), F2-B25 (sugestão) e F2-B26 (em trânsito); as telas, no F2-B27.
+ * divergência), F2-B25 (sugestão) e F2-B26 (em trânsito, divergência a tratar e o alerta); as telas, no F2-B27.
  *
  * Quantidades na unidade do produto, com 3 casas (ADR-05); o custo, com 4 (`numeric(15,4)`).
  */
@@ -339,6 +339,24 @@ export function situacaoAposRecebimento(
     ? 'recebida_divergencia'
     : 'recebida';
 }
+
+// ---------------------------------------------------------------- Pendências e alerta (F2-B26)
+
+/**
+ * `estoque.transferencia_alerta_dias` (Fase 2, F2-B26; padrão aplicado sem pergunta, "divergência separada", plano da
+ * Fase 2): depois de quantos dias a transferência **em trânsito** (desde o envio) ou **recebida com divergência** sem
+ * tratar (desde o recebimento) gera o alerta `TRANSFERENCIA_PARADA`. Chave da empresa, inteiro de 1 a 365.
+ */
+export const CHAVE_TRANSFERENCIA_ALERTA_DIAS = 'estoque.transferencia_alerta_dias';
+export const TRANSFERENCIA_ALERTA_DIAS_PADRAO = 3;
+
+/**
+ * MD 3.1.8 (F2-B26; README da API › decisão 174): transferência parada há mais de `estoque.transferencia_alerta_dias`.
+ * Aviso, um aberto por transferência e situação (`transferencia_parada:<id>:<situação>`), no documento
+ * (`entidade = 'transferencias_estoque'`), na loja do destino (em trânsito: quem tem de receber) ou da origem (divergência
+ * a tratar: os movimentos do tratamento são na origem), nula no CD; fecha sozinho quando a transferência sai da situação.
+ */
+export const ALERTA_TRANSFERENCIA_PARADA = 'TRANSFERENCIA_PARADA';
 
 // ---------------------------------------------------------------- Listagem e detalhe
 

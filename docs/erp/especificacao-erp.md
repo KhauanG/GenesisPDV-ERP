@@ -1076,6 +1076,12 @@ recebidas), custo médio por estoque, data da última entrada e da última venda
 ajuste rápido (estoque, tipo de estoque, nova quantidade, motivo) que gera um `acertos_estoque` com
 `origem = 'cadastro_produto'` e o movimento `AJUSTE_CADASTRO` ("Atualização pelo cadastro de produtos").
 
+Em trânsito e divergência (Fase 2, F2-B26; README da API › decisão 174): cada linha estoque × tipo mostra o **Em
+trânsito** (enviado para o estoque pelas transferências em trânsito e ainda não recebido; a linha aparece mesmo sem
+saldo lançado, com saldo zero) e, quando houver, a **Divergência a tratar** (a diferença recebida a menor, ainda sem
+tratamento, das transferências que **saíram** do estoque: o retorno ou a perda são lançados na origem). As duas ficam
+fora do saldo; só dos estoques permitidos e no tipo de estoque de cada transferência.
+
 Regras do Ajustar (Fase 2, F2-B12; `POST /produtos/:id/ajustar-estoque`; README da API › decisão 157): é um
 **"Definir" de um item**, criado e efetivado na hora (13.1.5): o modal mostra o saldo atual do estoque × tipo e pede
 a **nova quantidade** (≥ 0) e a **hora da contagem** (padrão: agora, renovado a cada abertura; sem alterar, vale o
@@ -1588,6 +1594,7 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Permitir saldo negativo em documentos do ERP **(Novo)** | `estoque.permite_negativo_erp` | booleano | Não | N | N | 13.1.1 (vendas do PDV sempre são aceitas) |
 | Transferência com recebimento automático **(Novo)** | `estoque.transferencia_recebimento_automatico` | booleano | Não | N | N | 13.7 (envio já gera a entrada no destino) |
 | Sugestão de reposição arredonda para a embalagem de compra **(Novo)** | `estoque.reposicao_arredonda_embalagem` | booleano | Sim (D52, padrão até a confirmação do dono) | N | N | 13.7 "Sugerir reposição": a quantidade sobe ao fardo ou à caixa fechada (a embalagem de compra de maior fator), sem passar do saldo da origem; Não = em unidades |
+| Alerta de transferência parada (dias) **(Novo)** | `estoque.transferencia_alerta_dias` | inteiro 1–365 | 3 | N | N | 13.7 (Fase 2, F2-B26): a transferência em trânsito (desde o envio) ou com divergência sem tratar (desde o recebimento) há mais destes dias gera o alerta `TRANSFERENCIA_PARADA` |
 | Custo da NF-e inclui ICMS ST / IPI / frete e despesas **(Novo)** | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | booleano | Sim | N | N | composição do custo na importação de NF-e (13.4.1) |
 | Abater créditos de ICMS/PIS/COFINS do custo **(Novo)** | `estoque.custo_abate_creditos` | booleano | Não | N | N | só para regime normal (13.4.1; modelo 3.1.2) |
 | Compra atualiza o preço de custo do produto **(Novo)** | `estoque.compra_atualiza_preco_custo` | enum `sempre` / `perguntar` (ao movimentar) / `nunca` | `perguntar` (D49) | N | N | Fase 2, F2-B15; roadmap D49: o recebimento e a NF-e sempre atualizam o custo médio e o último custo; o preço de custo cadastrado à mão só muda conforme a chave (13.3) |
@@ -3350,6 +3357,14 @@ em trânsito para o destino** (enviado e não recebido): `saldo + em trânsito <
 maior fator) e, por fim, **nunca passa do saldo da origem**. Ex.: mínimo 24, máximo 72, saldo 10 e 12 em trânsito → 50,
 ou 60 com o fardo de 12. Saldos e em trânsito no tipo de estoque escolhido. O produto sem saldo na origem fica de fora,
 com aviso; o destino sem loja (o CD) não tem mínimo: sugestão vazia, com aviso (README da API › decisão 173).
+
+Fase 2, F2-B26 (API e ERP): **Em trânsito** (a enviada das transferências em trânsito, no destino) e **Divergência a
+tratar** (a diferença recebida a menor ainda sem tratamento, na origem; pendência separada, não conta como em trânsito)
+no bloco Estoque do produto (8.2.11) e nos Saldos de estoque (16.4). **Alerta** `TRANSFERENCIA_PARADA` (aviso) para a
+transferência em trânsito há mais de `estoque.transferencia_alerta_dias` (padrão 3) desde o envio, ou com divergência
+sem tratar há mais desses dias desde o recebimento: um por transferência e situação, na loja do destino (trânsito) ou
+da origem (divergência), verificado a cada hora e fechado sozinho no recebimento, no tratamento e no cancelamento
+(README da API › decisão 174).
 
 ```mermaid
 stateDiagram-v2

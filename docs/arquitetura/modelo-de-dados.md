@@ -805,6 +805,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `estoque.permite_negativo_erp` | bool | `false` | — | — | Novo |
 | `estoque.transferencia_recebimento_automatico` | bool | `false` | — | — | Novo |
 | `estoque.reposicao_arredonda_embalagem` | bool | `true` | — | — | Novo (Fase 2, F2-B25; roadmap D52, padrão até a confirmação do dono): a sugestão de reposição da transferência (ERP 13.7) sobe ao múltiplo da embalagem de compra de maior fator do produto (3.6.5, `usa_compra`, fator > 1), sem passar do saldo da origem; desligada, sai em unidades |
+| `estoque.transferencia_alerta_dias` | inteiro 1–365 | `3` | — | — | Novo (Fase 2, F2-B26; padrão aplicado sem pergunta no plano da Fase 2): a transferência em trânsito há mais destes dias desde o envio, ou recebida com divergência e com item sem tratamento há mais destes dias desde o recebimento, abre o alerta `TRANSFERENCIA_PARADA` (3.1.8) |
 | `estoque.custo_inclui_st`, `estoque.custo_inclui_ipi`, `estoque.custo_inclui_frete` | bool | `true` | — | — | Novo (custo da NF-e) |
 | `estoque.custo_abate_creditos` | bool | `false` | — | — | Novo (ERP 9.1, 13.4.1): abate créditos de ICMS/PIS/COFINS do custo; só para regime normal |
 | `estoque.compra_atualiza_preco_custo` | `sempre`/`perguntar`/`nunca` | `perguntar` | — | — | Novo (Fase 2, F2-B15; roadmap D49, decidida pelo dono): a compra (recebimento e NF-e) leva o custo ao `produtos.preco_custo` sempre, com a confirmação de quem movimenta, ou nunca; o custo médio, a última compra e o último custo do fornecedor mudam sempre (3.8.1) |
@@ -1113,6 +1114,12 @@ A fila técnica (ex.: pg-boss) usa schema próprio.
 
 - `uq_alertas_chave_deduplicacao (chave_deduplicacao) where resolvido_em is null and excluido_em is null`;
   `ix_alertas_loja_id_resolvido_em`.
+- Transferência parada (Fase 2, F2-B26; ERP 13.7): `TRANSFERENCIA_PARADA`, aviso, `entidade = 'transferencias_estoque'`,
+  `registro_id` = a transferência, chave `transferencia_parada:<id>:<situação>` (`em_transito` ou
+  `recebida_divergencia`), na loja do destino (trânsito) ou da origem (divergência), nula no CD, com a situação, os dias,
+  o prazo, as pontas e a quantidade pendente em `dados`; aberta pela varredura de hora em hora depois de
+  `estoque.transferencia_alerta_dias` e fechada sozinha quando a transferência sai da situação (README da API › decisão
+  174).
 - Relógio (sincronizacao.md 12.4, 21.3; Fase 1C, C16): `RELOGIO_SUSPEITO` por evento (`entidade = 'terminais'`,
   `registro_id` = o terminal; chave `relogio_suspeito:<terminal>:<motivo>` com `motivo` `futuro`, `passado` ou
   `regressao`, aviso, um aberto por terminal e motivo com `dados.ocorrencias` somadas; a regressão marcada pelo caixa

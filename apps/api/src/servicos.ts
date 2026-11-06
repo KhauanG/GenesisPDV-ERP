@@ -31,6 +31,7 @@ import { Importacoes } from './importacao/importacao.js';
 import { NotasEntrada } from './entradas/notas-entrada.js';
 import { CRON_EXPIRACAO_RELEVANCIA, ExpiracaoRelevancia } from './pessoas/expiracao-relevancia.js';
 import { VerificacaoRazao } from './estoques/verificacao-razao.js';
+import { AlertaTransferencias, CRON_ALERTA_TRANSFERENCIAS } from './transferencias/alertas.js';
 import { PoolsEmpresas } from './tenancy/pools-empresas.js';
 import { SaudeDetalhada } from './saude/saude-detalhada.js';
 import { ResolvedorEmpresas, type ExigenciaSchema } from './tenancy/resolvedor.js';
@@ -72,6 +73,7 @@ export interface Servicos {
   /** Expiração diária da relevância das pessoas no PDV (MD 3.5.4; C14). */
   expiracaoRelevancia: ExpiracaoRelevancia;
   verificacaoRazao: VerificacaoRazao;
+  alertaTransferencias: AlertaTransferencias;
   pull: PullSync;
   push: PushSync;
   heartbeat: HeartbeatSync;
@@ -183,6 +185,13 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
   );
   fila.agendar(FILAS.tarefasInterrompidas, CRON_TAREFAS_INTERROMPIDAS);
   fila.executarAoIniciar(FILAS.tarefasInterrompidas);
+  // F2-B26 (decisão 174): a transferência parada em trânsito ou com divergência a tratar além do prazo abre o alerta.
+  const alertaTransferencias = new AlertaTransferencias(controle, resolvedor, tenancy);
+  fila.registrar(
+    FILAS.alertaTransferencias,
+    trabalhoPorEmpresas(FILAS.alertaTransferencias, () => alertaTransferencias.executar()),
+  );
+  fila.agendar(FILAS.alertaTransferencias, CRON_ALERTA_TRANSFERENCIAS);
   // F2-B3 (decisão 147): só verifica o razão e abre o alerta; desligada sem `VERIFICACAO_RAZAO_CRON`, o que também
   // remove o agendamento gravado no pg-boss quando ela esteve ligada (senão o cron seguia criando jobs sem consumidor).
   const verificacaoRazao = new VerificacaoRazao(controle, resolvedor, tenancy);
@@ -216,6 +225,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     manutencaoTerminais,
     expiracaoRelevancia,
     verificacaoRazao,
+    alertaTransferencias,
     pull: new PullSync(tenancy),
     push: new PushSync(tenancy, {
       permissoes,

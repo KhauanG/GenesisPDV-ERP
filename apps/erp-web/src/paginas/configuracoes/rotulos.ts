@@ -108,6 +108,10 @@ export const ABA_GERAL: RotuloConfiguracao[] = [
         'Fardo ou caixa fechada de maior fator, sem passar do saldo da origem; desligada, sai em unidades',
     },
   ),
+  // F2-B26 (padrão aplicado sem pergunta, plano da Fase 2).
+  r('estoque.transferencia_alerta_dias', 'Alerta de transferência parada (dias)', 'int', 'Estoque', {
+    ajuda: 'Em trânsito desde o envio, ou recebida com divergência sem tratar desde o recebimento',
+  }),
   r('estoque.custo_inclui_st', 'Custo da NF-e inclui ICMS ST', 'bool', 'Estoque'),
   r('estoque.custo_inclui_ipi', 'Custo da NF-e inclui IPI', 'bool', 'Estoque'),
   r('estoque.custo_inclui_frete', 'Custo da NF-e inclui frete e despesas', 'bool', 'Estoque'),

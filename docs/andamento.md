@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B25 commitados)._
+_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B26 commitados)._
 
 ## Repositório
 
@@ -61,19 +61,18 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B25 commitados)._
 | F2-B23 rascunho, enviar e cancelar (`apps/api/src/transferencias/`, sem migração; travas de inativar/excluir estoque e tipo de estoque; NF-e de fora depois do envio; README da API › decisão 171) | **commitado** |
 | F2-B24 receber, divergência e modo de uma etapa (`apps/api/src/transferencias/recebimento.ts`, rotas `receber` e `tratar-divergencia`, sem migração; perda = retorno + acerto de Saída `perda_transferencia` que estorna o retorno (mesmo lote, custo do envio; efeito líquido zero) e não se estorna; lote preso à origem → lote do mesmo código e validade no destino; README da API › decisão 172; D61 padrão até a confirmação do dono) | **commitado** |
 | F2-B25 sugestão de reposição (`GET /transferencias/sugestao-reposicao`; `apps/api/src/transferencias/reposicao.ts` e `em-transito.ts` — a subconsulta do em trânsito que o F2-B26 reaproveita —, sem migração; chave `estoque.reposicao_arredonda_embalagem` = Sim, D52 padrão até a confirmação do dono; README da API › decisão 173) | **commitado** |
-| F2-B26 em trânsito, divergência a tratar e alerta | não iniciado |
+| F2-B26 em trânsito, divergência a tratar e alerta (`em-transito.ts`: `sqlDivergenciaATratar`, `sqlPendenciasTransferencia`, `sqlSaldosComPendencias`; `apps/api/src/transferencias/alertas.ts` e a fila `genesis-alerta-transferencias` a cada hora; colunas em `GET /produtos/:id/saldos`, `GET /saldos-estoque`, no bloco Estoque do produto e na tela Saldos; a divergência fica na origem, fora do em trânsito; chave `estoque.transferencia_alerta_dias` = 3, padrão aplicado sem pergunta; sem migração; README da API › decisão 174; README do ERP › decisão 63) | **commitado** |
 | F2-B27 telas e romaneio | não iniciado |
 
 ## Próximo passo
 
-1. Rodar o workflow `genesis-bloco` no F2-B26 ("em trânsito", "divergência a tratar" e o alerta;
-   branch `claude/blissful-cray-cvroui`, `docs/planos/fase2-plano.md`). A coluna "Em trânsito" usa o `sqlEmTransito`
-   de `apps/api/src/transferencias/em-transito.ts` (F2-B25); a divergência a tratar lê a `recebida_divergencia` que
-   o F2-B24 passou a gravar.
+1. Rodar o workflow `genesis-bloco` no F2-B27 (telas e romaneio; branch `claude/blissful-cray-cvroui`,
+   `docs/planos/fase2-plano.md`). A tela da transferência pode mostrar o alerta `TRANSFERENCIA_PARADA` aberto (README
+   da API › decisão 174).
 2. Perguntar ao dono no fechamento do PR-6: D51 (perda na transferência), D52 (a sugestão de reposição arredonda ao
    fardo) e D61 (quem trata a diferença, o modo de uma etapa sem o destino e o lote preso à origem), todas com o padrão
    aplicado.
-3. Numeração das próximas decisões nos READMEs: **API 174**, **ERP 63**, **PDV 81** (confira o último número no próprio
+3. Numeração das próximas decisões nos READMEs: **API 175**, **ERP 64**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D62**.
 
 ## Pendências e lembretes

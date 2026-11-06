@@ -25,10 +25,14 @@ export const ROTA_SALDOS = '/estoque/saldos';
 
 const reais = (v: string | null) => (v === null ? '—' : `R$ ${formatarDecimal(Number(v), 2)}`);
 const qtd = (v: string | null) => (v === null ? '—' : formatarDecimal(Number(v), 3));
+/** Em trânsito e divergência: zero é "—" (quase toda linha não tem pendência). */
+const pendencia = (v: string) => (Number(v) === 0 ? '—' : qtd(v));
 
 /**
- * Saldos de estoque – consulta simples (ERP 8.2.11; 16.4 sem o ajuste no clique, o "Em trânsito" e a data-base, que
- * chegam com o relatório Estoque Atual da Fase 2): saldo por estoque × tipo, custo médio, totais a custo e a venda.
+ * Saldos de estoque – consulta simples (ERP 8.2.11; 16.4 sem o ajuste no clique e a data-base, que chegam com o
+ * relatório Estoque Atual da Fase 2): saldo por estoque × tipo, custo médio, totais a custo e a venda. F2-B26: o "Em
+ * trânsito" (enviado para o estoque e ainda não recebido; a linha aparece também sem saldo lançado) e a "Divergência a
+ * tratar" (a diferença recebida a menor, na origem), no tipo de cada linha e só dos estoques permitidos (a API filtra).
  */
 export function ListaSaldos() {
   const pode = usePode();
@@ -135,6 +139,25 @@ export function ListaSaldos() {
               {qtd(s.quantidade)}
             </Text>
           ),
+        },
+        {
+          campo: 'emTransito',
+          rotulo: 'Em trânsito',
+          alinhamento: 'right',
+          formato: (s) => pendencia(s.emTransito),
+        },
+        {
+          campo: 'divergenciaATratar',
+          rotulo: 'Divergência a tratar',
+          alinhamento: 'right',
+          formato: (s) =>
+            Number(s.divergenciaATratar) === 0 ? (
+              '—'
+            ) : (
+              <Text span size="sm" c="orange">
+                {qtd(s.divergenciaATratar)}
+              </Text>
+            ),
         },
         { campo: 'unidadeSigla', rotulo: 'Un.', formato: (s) => s.unidadeSigla },
         {

@@ -480,6 +480,8 @@ describe('"Ajustar" do bloco Estoque (F2-B12; ERP 8.2.11)', () => {
         tipoEstoqueNome: 'Disponível',
         vendavel: true,
         quantidade,
+        emTransito: '0.000',
+        divergenciaATratar: '0.000',
         custoMedio: '2.0000',
         ultimaEntradaEm: null,
         ultimaSaidaEm: null,
@@ -526,6 +528,58 @@ describe('"Ajustar" do bloco Estoque (F2-B12; ERP 8.2.11)', () => {
           }
         : undefined,
   ];
+
+  it('"Em trânsito" e "Divergência a tratar" (F2-B26): 60 a caminho da Loja 2 sem saldo lançado e 10 a tratar no CD', async () => {
+    const usuario = userEvent.setup();
+    const LOJA2 = '0190a000-0000-7000-8000-0000000000e5';
+    const CD = '0190a000-0000-7000-8000-0000000000e6';
+    const base = saldos('40.000').saldos[0]!;
+    const comPendencias: SaldosProduto = {
+      ...saldos('0'),
+      saldos: [
+        { ...base, estoqueId: CD, estoqueNome: 'CD - Estoque Ice Beer', divergenciaATratar: '10.000' },
+        {
+          ...base,
+          estoqueId: LOJA2,
+          estoqueNome: 'Estoque Loja 2',
+          quantidade: '0.000',
+          emTransito: '60.000',
+          custoMedio: '0',
+        },
+      ],
+    };
+    simularApi(
+      ...rotasSessao({ permissoes: PERMISSOES, lojas: LOJAS }),
+      ...referencias([]),
+      ...rotasEstoque,
+      ({ url }) => (url.pathname === `/api/produtos/${ID}` ? { corpo: detalhe() } : undefined),
+      ({ url }) => (url.pathname === `/api/produtos/${ID}/saldos` ? { corpo: comPendencias } : undefined),
+    );
+    renderizar(`/produtos/${ID}`);
+    await usuario.click(await screen.findByRole('button', { name: /^Estoque/ }));
+    const loja2 = (await screen.findByText('Estoque Loja 2')).closest('tr')!;
+    const cd = screen.getByText('CD - Estoque Ice Beer').closest('tr')!;
+    expect(screen.getByRole('columnheader', { name: 'Em trânsito' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Divergência a tratar' })).toBeInTheDocument();
+    expect(within(loja2).getByTestId('em-transito')).toHaveTextContent('60');
+    expect(within(cd).getByTestId('em-transito')).toHaveTextContent('—');
+    expect(within(cd).getByText('10')).toBeInTheDocument();
+  }, 30_000);
+
+  it('sem divergência, a coluna "Divergência a tratar" não aparece; o "Em trânsito" sempre', async () => {
+    const usuario = userEvent.setup();
+    simularApi(
+      ...rotasSessao({ permissoes: PERMISSOES, lojas: LOJAS }),
+      ...referencias([]),
+      ...rotasEstoque,
+      ({ url }) => (url.pathname === `/api/produtos/${ID}` ? { corpo: detalhe() } : undefined),
+      ({ url }) => (url.pathname === `/api/produtos/${ID}/saldos` ? { corpo: saldos('4.000') } : undefined),
+    );
+    renderizar(`/produtos/${ID}`);
+    await usuario.click(await screen.findByRole('button', { name: /^Estoque/ }));
+    expect(await screen.findByRole('columnheader', { name: 'Em trânsito' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Divergência a tratar' })).toBeNull();
+  }, 30_000);
 
   it('ajusta a nova quantidade da Loja 1: um POST com estoque, tipo padrão e motivo (hora: a da API)', async () => {
     const usuario = userEvent.setup();

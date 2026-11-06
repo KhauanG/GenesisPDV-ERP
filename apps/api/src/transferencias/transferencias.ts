@@ -42,6 +42,7 @@ import {
 import { estoquePermitido } from '../estoques/permitidos.js';
 import { opcoesPorId } from '../produtos/consultas.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { resolverAlertasTransferencia } from './alertas.js';
 
 type Linha = Record<string, unknown>;
 
@@ -510,6 +511,8 @@ export async function cancelarTransferencia(
        set status = 'cancelada', cancelada_em = now(), cancelada_por_id = ${quem.usuarioId},
            motivo_cancelamento = ${quem.motivo.slice(0, 255)}, atualizado_por_id = ${quem.usuarioId}
      where id = ${t.id}`);
+  // F2-B26: o alerta do trânsito parado fecha no cancelamento.
+  await resolverAlertasTransferencia(tx, t.id);
   return { retornos, compensacoes };
 }
 

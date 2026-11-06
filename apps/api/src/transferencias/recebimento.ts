@@ -42,6 +42,7 @@ import { lancarPerdaTransferencia, lojaDoEstoque, type RetornoDaPerda } from '..
 import { compensarDefinir } from '../estoques/compensacao.js';
 import { lancarDocumento, type NovoMovimento } from '../estoques/movimentos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { resolverAlertasTransferencia } from './alertas.js';
 import type { TransferenciaATratar } from './transferencias.js';
 
 const lista = (ids: Iterable<string>) => `{${[...new Set([...ids].map((i) => i.toLowerCase()))].join(',')}}`;
@@ -357,6 +358,8 @@ export async function receberTransferencia(
        set status = ${status}, recebida_em = now(), recebida_por_id = ${quem.usuarioId},
            atualizado_por_id = ${quem.usuarioId}
      where id = ${t.id}`);
+  // F2-B26: o alerta do trânsito parado fecha no recebimento (a divergência, se houver, conta o prazo de agora).
+  await resolverAlertasTransferencia(tx, t.id);
   return {
     status,
     itens: itens.length,
@@ -540,10 +543,13 @@ export async function tratarDivergenciaTransferencia(
   const concluida = itens.every(
     (i) => !dec(i.diferenca).gt(0) || i.tratamento_divergencia || tratar.has(i.id),
   );
-  if (concluida)
+  if (concluida) {
     await tx.execute(sql`
       update transferencias_estoque set status = 'recebida', atualizado_por_id = ${quem.usuarioId}
        where id = ${t.id}`);
+    // F2-B26: o alerta da divergência parada fecha com o último item tratado.
+    await resolverAlertasTransferencia(tx, t.id);
+  }
   const tratados = [...tratar.values()];
   return {
     retornados: tratados.filter((x) => x === 'retorno_origem').length,

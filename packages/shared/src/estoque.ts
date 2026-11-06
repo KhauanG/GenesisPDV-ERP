@@ -1613,6 +1613,13 @@ export interface SaldoEstoqueLinha {
   codigoInterno: string | null;
   unidadeSigla: string;
   quantidade: string;
+  /** "Em trânsito" (F2-B26): enviado para o estoque × tipo e ainda não recebido; `'0'` sem nada a caminho. */
+  emTransito: string;
+  /**
+   * "Divergência a tratar" (F2-B26): a diferença recebida a menor, ainda não tratada, das transferências que saíram do
+   * estoque × tipo; pendência separada, fora do saldo e do em trânsito. `'0'` sem pendência.
+   */
+  divergenciaATratar: string;
   estoqueMinimo: string | null;
   /** `null` sem `produtos.ver_custo`. */
   custoMedio: string | null;

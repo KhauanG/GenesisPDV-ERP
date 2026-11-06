@@ -1111,6 +1111,17 @@ export interface SaldosProduto {
     tipoEstoqueNome: string;
     vendavel: boolean;
     quantidade: string;
+    /**
+     * "Em trânsito" (F2-B26): enviado para este estoque × tipo e ainda não recebido (as transferências `em_transito`).
+     * Não está em nenhum saldo; a linha aparece mesmo sem saldo lançado no destino. `'0'` sem nada a caminho.
+     */
+    emTransito: string;
+    /**
+     * "Divergência a tratar" (F2-B26): a diferença recebida a menor e ainda não tratada das transferências que saíram
+     * deste estoque × tipo (a origem: o retorno ou a perda são lançados nela). Pendência separada: não conta como em
+     * trânsito nem como saldo. `'0'` sem pendência.
+     */
+    divergenciaATratar: string;
     /** `null` sem `produtos.ver_custo`. */
     custoMedio: string | null;
     ultimaEntradaEm: string | null;

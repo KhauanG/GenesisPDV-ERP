@@ -71,6 +71,7 @@ import { ajustarEstoqueDoCadastro, resumoEfetivacao } from '../estoques/acertos.
 import { estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
 import { buscarOpcoes, detalheProduto, fornecedoresDoProduto, lotesDoProduto } from './consultas.js';
 import { ncmVigente } from './ncm.js';
 import {
@@ -386,7 +387,8 @@ export class ProdutosController {
   /**
    * Saldo por estoque e tipo (ERP 8.2.11, somente leitura) ou, no combo, os combos montáveis por estoque das lojas
    * (8.2.17), calculados na consulta. Também o saldo de cada lote (`saldos_lote`, 8.2.12; F2-B17). Só os estoques
-   * permitidos aparecem (decisão 149).
+   * permitidos aparecem (decisão 149). Com o "Em trânsito" e a "Divergência a tratar" das transferências (F2-B26;
+   * decisão 174).
    */
   @Permissao('produtos.ver')
   @Get(':id/saldos')
@@ -443,14 +445,23 @@ export class ProdutosController {
           })),
         };
       }
+      // F2-B26 (decisão 174): o "Em trânsito" (no destino) e a "Divergência a tratar" (na origem) de cada estoque ×
+      // tipo, somadas as variações como o saldo; a linha aparece também sem saldo lançado (`sqlSaldosComPendencias`).
       const { rows } = await db.execute<Record<string, unknown>>(sql`
+        with pd as (${sqlPendenciasTransferencia({ produtoIds: [id] })}),
+             pdt as (select estoque_id, tipo_estoque_id, sum(em_transito) as em_transito,
+                            sum(divergencia) as divergencia
+                       from pd group by estoque_id, tipo_estoque_id)
         select s.estoque_id, e.nome as estoque_nome, s.tipo_estoque_id, t.nome as tipo_nome, t.vendavel,
                sum(s.quantidade)::text as quantidade,
                case when sum(s.quantidade) > 0 then round(sum(s.custo_medio * greatest(s.quantidade, 0)) / nullif(sum(greatest(s.quantidade, 0)), 0), 4)::text end as custo_medio,
-               max(s.ultima_entrada_em) as ultima_entrada_em, max(s.ultima_saida_em) as ultima_saida_em
-          from saldos_estoque s
+               max(s.ultima_entrada_em) as ultima_entrada_em, max(s.ultima_saida_em) as ultima_saida_em,
+               coalesce(max(pdt.em_transito), 0)::numeric(15,3)::text as em_transito,
+               coalesce(max(pdt.divergencia), 0)::numeric(15,3)::text as divergencia
+          from (${sqlSaldosComPendencias({ produtoIds: [id] })}) s
           join estoques e on e.id = s.estoque_id
           join tipos_estoque t on t.id = s.tipo_estoque_id
+          left join pdt on pdt.estoque_id = s.estoque_id and pdt.tipo_estoque_id = s.tipo_estoque_id
          where s.produto_id = ${id} and ${visivel}
          group by s.estoque_id, e.nome, s.tipo_estoque_id, t.nome, t.vendavel
          order by e.nome, t.nome`);
@@ -483,6 +494,8 @@ export class ProdutosController {
           tipoEstoqueNome: r.tipo_nome as string,
           vendavel: r.vendavel as boolean,
           quantidade: r.quantidade as string,
+          emTransito: r.em_transito as string,
+          divergenciaATratar: r.divergencia as string,
           custoMedio: verCusto(sessao) ? ((r.custo_medio as string | null) ?? '0') : null,
           ultimaEntradaEm: iso(r.ultima_entrada_em),
           ultimaSaidaEm: iso(r.ultima_saida_em),

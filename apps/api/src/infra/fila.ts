@@ -2,7 +2,8 @@
  * Fila técnica de trabalhos em segundo plano (MD 3.1.8: "a fila técnica usa schema próprio"): pg-boss no banco de
  * controle, schema `pgboss`. Os trabalhos levam só ids (empresa, tarefa, mensagem); o conteúdo fica no banco da
  * empresa. Envia sempre depois do commit da transação que criou a linha (nenhuma E/S sob a trava, MD 1.5).
- * Trabalhos recorrentes (manutenção dos terminais, expiração da relevância das pessoas) usam o `schedule` do
+ * Trabalhos recorrentes (manutenção dos terminais, expiração da relevância das pessoas, alerta das transferências
+ * paradas) usam o `schedule` do
  * pg-boss: o cron fica no banco, então várias instâncias com trabalhador geram um job por ocorrência, não um por
  * instância. Pelo mesmo motivo, o opcional desligado por configuração (`VERIFICACAO_RAZAO_CRON` vazia) é
  * removido com `desagendar`: sem isso, o agendamento gravado quando esteve ligado seguia criando jobs que ninguém
@@ -29,6 +30,8 @@ export const FILAS = {
   verificacaoRazao: 'genesis-verificacao-razao',
   /** Varredura das `tarefas` interrompidas (decisão 150): no início da instância com trabalhador e a cada 2 min. */
   tarefasInterrompidas: 'genesis-tarefas-interrompidas',
+  /** Alerta da transferência parada em trânsito ou com divergência a tratar (F2-B26, decisão 174), a cada hora. */
+  alertaTransferencias: 'genesis-alerta-transferencias',
 } as const;
 export type NomeFila = (typeof FILAS)[keyof typeof FILAS];
 
@@ -46,6 +49,7 @@ export const OPCOES_FILAS: Record<NomeFila, typeof OPCOES_PADRAO> = {
   [FILAS.expiracaoRelevancia]: OPCOES_PADRAO,
   [FILAS.verificacaoRazao]: OPCOES_PADRAO,
   [FILAS.tarefasInterrompidas]: OPCOES_PADRAO,
+  [FILAS.alertaTransferencias]: OPCOES_PADRAO,
 };
 
 export type Trabalho = (dados: Record<string, unknown>, job: Job<Record<string, unknown>>) => Promise<void>;

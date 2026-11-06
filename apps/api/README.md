@@ -732,8 +732,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 70. **Saldos** (`GET /produtos/:id/saldos`, ERP 8.2.11): por estoque × tipo, custo médio ponderado pelas linhas com
     saldo positivo, últimas entrada/saída; estoques de lojas fora das permitidas não aparecem (decisão 51). Combo:
     combos montáveis por estoque das lojas ativas, com saldo só dos tipos vendáveis (`combosMontaveis` de
-    `@genesis/shared`). Saldo em trânsito entra com as transferências; o "Ajustar" rápido entrou na Fase 2 (F2-B12,
-    decisão 157).
+    `@genesis/shared`). Saldo em trânsito (e a divergência a tratar) entrou com as transferências (F2-B26, decisão
+    174); o "Ajustar" rápido entrou na Fase 2 (F2-B12, decisão 157).
 71. **Grupos de preço por quantidade** (ERP 8.10; MD 3.6.13): `produtos` do corpo é o conjunto completo dos membros
     (inserir/remover), conferido por tipo, sem fração e mesma unidade entre todos; produto de outro grupo → 409 com
     `detalhes.moverDeOutroGrupo` até vir `confirmarMover: true`. O produto também valida o vínculo pelo lado dele
@@ -4360,6 +4360,74 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        sem loja, a origem fora dos permitidos (403 em `estoqueOrigemId`), o destino que o usuário não vê (403 em
        `estoqueDestinoId`), sem `transferencias.criar` (403), origem = destino, parâmetro faltando ou malformado (422
        nos campos do rascunho) e destino inativo (422).
+174. **Transferência: "Em trânsito", "Divergência a tratar" e o alerta da transferência parada** (Fase 2, F2-B26; ERP
+     8.2.11, 13.7, 16.4; MD 3.1.2, 3.1.8; padrão "divergência separada" do plano da Fase 2, aplicado sem pergunta;
+     `src/transferencias/em-transito.ts` e `alertas.ts` (novo), as consultas de `GET /produtos/:id/saldos` e
+     `GET /saldos-estoque`, a fila `genesis-alerta-transferencias` em `src/infra/fila.ts` e `src/servicos.ts`, a chave em
+     `packages/shared/src/configuracoes.ts`). **Sem migração**: as tabelas e os índices são do F2-B22 (decisão 170), e a
+     chave nova não tem seed (só existe linha para o valor diferente do padrão, como a da decisão 173).
+     - **Em trânsito** (`sqlEmTransito`, o mesmo da sugestão de reposição, decisão 173): a soma das enviadas das
+       transferências `em_transito`, no estoque de **destino** × tipo da transferência. Fica fora de qualquer saldo
+       (ERP 13.7: "a quantidade não está em nenhum estoque").
+     - **Divergência a tratar** (`sqlDivergenciaATratar`): a soma de `itens_transferencia.diferenca` (enviada −
+       recebida) dos itens **sem tratamento** das transferências `recebida_divergencia`, uma pendência **separada**: não
+       conta como em trânsito nem como saldo, e a sugestão de reposição não a desconta. Fica no estoque de **origem** ×
+       tipo: o tratamento (decisão 172) lança tudo nela ("Retornar à origem" devolve a diferença ao saldo dela; "Baixar
+       como perda" devolve e baixa), e ao destino ela não chega mais (o em trânsito dele zerou no recebimento, e a
+       sugestão volta a pedir o que faltou). A diferença por item basta: a repartição pelas partes da saída (o lote de
+       cada uma) só importa para o próprio tratamento, que a refaz das saídas e da recebida gravada. Alternativa que o
+       dono pode pedir: mostrar a divergência também (ou só) no destino.
+     - **As colunas** (`emTransito` e `divergenciaATratar`, `numeric(15,3)` em texto, zero sem pendência, nos contratos
+       `SaldosProduto` e `SaldoEstoqueLinha` do shared): `sqlPendenciasTransferencia` junta as duas por estoque × tipo ×
+       produto × variação, e `sqlSaldosComPendencias` devolve as linhas de `saldos_estoque` **mais uma linha zerada**
+       para cada chave só com pendência — as 60 unidades a caminho de uma loja que nunca recebeu o produto aparecem nela
+       com saldo zero e "Em trânsito: 60" (o critério de pronto), no produto e na listagem, também no filtro do tipo de
+       estoque e com "Incluir produtos sem movimento". No produto, somadas as variações como o saldo (travadas, D43). Os
+       **estoques permitidos** (decisão 149) valem como no saldo: quem não vê o destino não vê o que está a caminho dele,
+       e quem não vê a origem não vê a divergência dela. As linhas zeradas entram na situação "Zerado" e não mudam os
+       totais (custo e venda são do saldo).
+     - **O alerta** `TRANSFERENCIA_PARADA` (aviso; `ALERTA_TRANSFERENCIA_PARADA` no shared): a transferência em trânsito
+       há mais de `estoque.transferencia_alerta_dias` (inteiro de 1 a 365, padrão **3**, chave da empresa: Configurações ›
+       Geral › Estoque) desde o envio, ou recebida com divergência e com item ainda sem tratamento há mais desses dias
+       desde o recebimento. Um aberto por transferência e situação (`transferencia_parada:<id>:<situação>`, o
+       `uq_alertas_chave_deduplicacao`), no documento (`entidade = 'transferencias_estoque'`), na loja do **destino** no
+       trânsito (quem tem de receber) e na da **origem** na divergência (onde o tratamento lança), nula no CD (a loja de
+       um estoque é a de menor código, `lojaDoEstoque`); `dados` com a situação, o Nº, os dias, o prazo, as pontas, o
+       tipo, os itens e a quantidade pendente. A varredura seguinte **atualiza** o aberto (título, mensagem, dias), sem
+       abrir outro. Fecha sozinho quando a transferência sai da situação: na própria transação do receber (o do
+       trânsito; a divergência, se houver, conta o prazo do recebimento), do último item tratado e do cancelar
+       (`resolverAlertasTransferencia`, com a resolução "Transferência recebida", "… recebida com divergência",
+       "Diferença tratada" ou "… cancelada") e, por garantia, na varredura seguinte (a transição feita por fora da API).
+       A varredura fecha também o aberto cuja transferência continua na situação mas voltou para dentro do prazo porque
+       a chave **aumentou** ("Prazo do alerta alterado"; sem isso ele ficaria congelado com os dias e o prazo antigos);
+       quando o prazo novo vence, abre outro. O rascunho não alerta. O painel mínimo do Dashboard (C14) mostra só os críticos com tela de decisão; este alerta
+       aparece no painel completo da Fase 5 e na tela de transferências (F2-B27).
+     - **A varredura** (`AlertaTransferencias`): a cada hora (`CRON_ALERTA_TRANSFERENCIAS = '23 * * * *'`, o `schedule`
+       do pg-boss, um job por ocorrência mesmo com várias instâncias), em cada empresa ativa ou suspensa (em manutenção
+       ou migrando fica para a próxima), uma transação curta por empresa, uma execução por vez (trava consultiva
+       `genesis:alerta_transferencias` no controle), por `trabalhoPorEmpresas` (a empresa com erro vai para o log e faz o
+       job falhar no fim). O prazo e os dias pelo relógio do banco (`now()`); a data na mensagem no fuso da loja do
+       alerta e, sem loja (o CD), no da empresa (ERP 1.5; `fusoDaEmpresa` de `src/comum/fuso.ts`). De hora em hora basta
+       para um prazo em dias, e o alerta não espera o dia seguinte. As transferências escolhidas são lidas com
+       `for share of t skip locked`: a que um receber, tratar ou cancelar está mudando (o controller a lê com
+       `for update`) fica para a próxima varredura, e a que mudou depois da foto do comando é relida pelo Postgres na
+       versão nova. Sem a trava, a varredura que leu a transferência ainda parada reabria o alerta que o recebimento
+       acabara de fechar (o índice parcial da chave já não acha o aberto, e o `insert` grava outro).
+     - **PDV:** nada muda (`alertas` e as transferências não descem; o `Esquema.g.cs` não muda).
+     - **Testes** (`test/integracao/transferencias-em-transito.test.ts`): o critério de pronto (60 enviados do CD para a
+       Loja 2 sem saldo lançado: a linha zerada com "Em trânsito: 60" no produto e na listagem; 2 dias não alertam; 4
+       dias abrem um alerta só, na Loja 2, com os dados; a varredura repetida o mantém com os dias atualizados); o
+       recebimento a menor (50 de 60: o trânsito zera, os 10 viram divergência a tratar no CD, fora do saldo; o alerta
+       do trânsito fecha no recebimento; o da divergência conta do recebimento, sem loja no CD, e fecha no tratamento,
+       com o CD de volta a 50); o rascunho antigo e a transferência dentro do prazo sem alerta; o cancelamento fechando
+       o alerta e tirando o trânsito; a chave com 1 dia; a varredura fechando o alerta da transição feita por fora; o
+       tipo de estoque (os cascos vazios a caminho do CD só no Vasilhame vazio, com e sem o filtro do tipo e com
+       "Incluir produtos sem movimento"); os estoques permitidos (quem só tem a Loja 1 não vê o trânsito da Loja 2 nem
+       a divergência do CD); o recebimento integral fechando o alerta com "Transferência recebida"; a data da mensagem
+       no fuso da empresa (Manaus, para o CD) e no da loja (Rio Branco, para a Loja 2), às 23:30 locais, que em
+       Brasília já seriam o dia seguinte; o prazo aumentado de 3 para 10 dias fechando o aberto e reabrindo aos 11; e a
+       varredura com a transferência travada por outra transação (que a cancela e fecha o alerta sem confirmar): não
+       espera nem reabre o alerta.
 
 ### Operação – tarefas em segundo plano (API)
 
