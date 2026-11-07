@@ -1036,7 +1036,49 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       a notificação e o link no painel), `Tarefas.test.tsx` (o intervalo da lista, o painel com cada situação, o vazio,
       quem não tem permissão — sem ícone e sem consulta — e a consulta que falha) e `http.test.ts` (o
       `baixarOuTarefa`). O relatório de teste só existe nos testes (nenhum relatório falso em produção); o e2e com um
-      relatório real fica para o F2-B31 (Estoque Atual).
+      relatório real fica para o F2-B31 (Estoque Atual; decisão 66).
+66. **Relatório Estoque Atual com o modal de ajuste** (Fase 2, F2-B31; ERP 16.4, 13.6, 13.1.5, 3.1, 3.5; README da
+    API › decisão 178; `src/paginas/relatorios/EstoqueAtual.tsx` (novo), `ModalAjustarEstoque` em
+    `src/paginas/produtos/BlocosProduto.tsx`, `menu.ts` (o item pronto), `rotas.tsx`; o primeiro relatório de verdade
+    no `<Relatorio>` da decisão 65). Rota `/relatorios/estoque-atual` (`relatorios.estoque_atual`).
+    - **Filtros** (gravados na URL pelo `<Relatorio>`, gerado só no Filtrar): Nome/código (nome, código interno ou
+      EAN), **Loja (estoque)** — começa no estoque da loja de contexto (ERP 3.1; sem ela, ou fora dos permitidos,
+      "Todas") e tem a opção **"Todas (soma dos permitidos)"** (`estoqueId=todas`, que a API lê como vazio) —, Marca,
+      Departamento (a categoria e as filhas, pelo caminho da árvore), Tipo de estoque, Estoque (situação do saldo:
+      Todos/Positivo/Zerado/Negativo/Abaixo do mínimo), Produtos (ativos/inativos/todos), **Vencendo em (dias)** e
+      **Saldo em (data-base)**; "Loja de treino" (sem/com/só) quando a empresa tem uma (`useFiltroTreino`, D39).
+    - **Colunas** (as do Nuvem3 e as novas): Ref. Interna, Produto (link para o cadastro), Preço Custo (custo médio),
+      Venda, Atacado, iFood, Est. Mínimo, Est. Atual (na data-base, "Saldo em dd/mm/aaaa"), Em trânsito, Divergência a
+      tratar (laranja; "—" sem pendência e na data-base), Vencendo (só com o filtro: a quantidade dos lotes e a
+      validade mais próxima), Custo total, Venda total, Unidade, Estoque e Tipo. As de custo só aparecem com
+      `produtos.ver_custo` (a API também as manda nulas). Cards e linha de totais do relatório inteiro (itens, custo
+      total, venda total; o "Saldo em" com a data-base), paginação por página no servidor (`paginacao: 'pagina'`), e o
+      Exportar com Excel/CSV pela API (`exportarPelaApi('estoque-atual')`: até 50 mil linhas baixa, acima vira tarefa
+      no ícone Tarefas), PDF e Imprimir.
+    - **Ajuste no clique do saldo** (com `estoque_acertos.criar`): o saldo é um botão ("Ajustar o saldo de <produto>
+      em <estoque> (<tipo>)") que abre o **mesmo** `ModalAjustarEstoque` do "Ajustar" do produto (decisão 54), agora
+      com opções: o estoque da linha fixo (`estoqueFixo`), o tipo da linha (`tipoInicial`, trocável), o nome do
+      produto, os rótulos "Gravar"/"Fechar" (ERP 16.4) e o envio para `POST /relatorios/estoque-atual/ajustar`
+      (origem `relatorio_estoque`). O "Saldo atual" de cada tipo vem do próprio relatório filtrado no produto e no
+      estoque, então acompanha a troca do tipo; a hora da contagem segue a regra do modal (sem mexer, vai vazia e vale
+      o instante da gravação). Depois de gravar, a notificação "Acerto Nº … efetivado" e o relatório consultado de
+      novo. Não abre no **"Todas"** (a soma não é de um estoque; a dica pede para escolher a loja), na
+      **data-base** (é o saldo de outro dia, ERP 16.4 "sem ajuste nesse modo") nem no **tipo de estoque inativo** (a
+      API recusa acerto nele; a dica "Tipo de estoque inativo: reative o tipo para ajustar"). E o modal, se ainda
+      receber um `tipoInicial` inativo, avisa e deixa o tipo vazio até o usuário escolher (antes caía calado no
+      padrão, e o "Saldo atual" e o ajuste eram de outro tipo). Nos filtros **Zerado** e **Abaixo do mínimo** vêm
+      também os produtos sem movimento no estoque (saldo 0, decisão 178 da API): o clique lança a contagem inicial.
+      O "mover entre tipos" continua pelo acerto "Mudar tipo" (13.5).
+    - Testes: `EstoqueAtual.test.tsx` (as colunas e os filtros mandados à API; sem "Ver custo" sem as colunas de
+      custo e com o "Todas" como padrão sem loja de contexto; o clique no saldo com o modal, o "Saldo atual" da
+      consulta do produto acompanhando a troca para Avaria, o corpo do ajuste e a tabela consultada de novo (contando
+      só as consultas sem `produtoId`, as da tabela); o tipo inativo sem o clique e o modal com o tipo inicial
+      inativo, que pede o tipo; a data-base e o "Todas" sem o clique; a coluna do "Vencendo"), o
+      `BlocosProduto.test.tsx` de sempre (o "Ajustar" do produto com o modal generalizado) e o e2e
+      `e2e/fluxo-estoque-atual.spec.ts` (também o e2e da casca da decisão 65 com um relatório de verdade: o filtro da
+      marca, 20 por página e a página 2 com o total da API, a data-base de ontem, o ajuste no clique de 15 para 12, o
+      acerto "Relatório Estoque Atual" na lista e o Excel que vira tarefa com o link no aviso e no ícone Tarefas; o
+      servidor do e2e baixa na hora só até 10 linhas, `E2E_EXPORTACAO_NA_HORA`).
 
 ## O que ainda não foi feito (Fase 0)
 

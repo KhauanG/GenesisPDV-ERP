@@ -67,7 +67,7 @@ import {
   produtosRelacionados,
   unidadesMedida,
 } from '../database/empresa/schema/index.js';
-import { ajustarEstoqueDoCadastro, resumoEfetivacao } from '../estoques/acertos.js';
+import { ajustarEstoqueDefinir, resumoEfetivacao } from '../estoques/acertos.js';
 import { estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -523,7 +523,7 @@ export class ProdutosController {
     const dados = validar(ajusteEstoqueProdutoSchema, corpo);
     return this.s.tenancy.cx().transacao(
       async (tx) => {
-        const { resultado, lojaId } = await ajustarEstoqueDoCadastro(tx, sessao, id, dados);
+        const { resultado, lojaId } = await ajustarEstoqueDefinir(tx, sessao, id, dados);
         const origem = origemDaRequisicao(req);
         await this.s.auditoria.registrar(tx, origem, {
           acao: 'criar',

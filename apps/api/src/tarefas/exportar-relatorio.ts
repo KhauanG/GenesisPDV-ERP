@@ -57,10 +57,10 @@ export const FOLGA_ENVIO_BYTES = 1024 * 1024;
 const RETENCAO_DIAS = 7;
 
 /**
- * Um relatório exportável. `F` é a saída do zod dos filtros; `L` é a linha como o `pg` a devolve (numeric e bigint
- * chegam como texto: a coluna converte).
+ * Um relatório exportável. `E` é a saída do zod dos filtros e `F`, os filtros preparados (`preparar`; sem ele, os
+ * mesmos); `L` é a linha como o `pg` a devolve (numeric e bigint chegam como texto: a coluna converte).
  */
-export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<string, unknown>> {
+export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<string, unknown>, E = F> {
   /** Chave na rota (`GET /relatorios/<chave>/exportar`) e em `tarefas.parametros.relatorio`. */
   chave: string;
   /** Base do nome: `Relatorio_Movimentacao_Estoque` → `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`. */
@@ -74,7 +74,13 @@ export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<strin
    * Filtros da query (sem `formato`). A entrada crua vai para `tarefas.parametros` e é validada de novo na execução,
    * então o schema tem de aceitar a própria entrada (strings da query).
    */
-  filtros: z.ZodType<F>;
+  filtros: z.ZodType<E>;
+  /**
+   * Opcional (F2-B31, decisão 178): completa os filtros validados com o que a consulta precisa ler do banco antes
+   * (ex.: o fuso da empresa como literal, que o planejador usa nas estimativas) e confere o que depende do banco
+   * (ex.: a data-base não futura). Roda no pedido e de novo na execução da tarefa.
+   */
+  preparar?(db: DbEmpresa, sessao: SessaoErp, filtros: E): Promise<F>;
   /** Colunas na ordem do arquivo; as `custo: true` saem sem `produtos.ver_custo`. */
   colunas(sessao: SessaoErp, filtros: F): ColunaExportacao<L>[];
   /**
@@ -82,6 +88,11 @@ export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<strin
    * permitidos). Só leitura.
    */
   consulta(sessao: SessaoErp, filtros: F): SQL;
+  /**
+   * Lê o cursor com `set local jit = off` (F2-B31, decisão 178): a consulta com muitas CTEs e subconsultas tem custo
+   * estimado alto e o PostgreSQL gasta mais compilando o JIT do que executando (1,5 s de 1,8 s no Estoque Atual).
+   */
+  semJit?: boolean;
   /** Total de linhas (decide entre baixar na hora e a tarefa, e dá o progresso); padrão: `count(*)` da consulta. */
   contar?(db: DbEmpresa, sessao: SessaoErp, filtros: F): Promise<number>;
 }
@@ -180,6 +191,7 @@ export async function lerPorCursor<L>(
   consulta: SQL,
   porLote: number,
   aoLote: (lote: L[]) => Promise<void> | void,
+  opcoes: { semJit?: boolean } = {},
 ): Promise<void> {
   // A sessão derrubada pelo banco com a conexão parada chega como `error` no cliente emprestado, que o pool só escuta
   // depois de devolvido: sem ouvinte, derrubaria o processo. A consulta seguinte falha, e o pool descarta a conexão.
@@ -189,6 +201,7 @@ export async function lerPorCursor<L>(
     await cliente.query('begin isolation level repeatable read read only');
     try {
       await cliente.query(`set local idle_in_transaction_session_timeout = '${INATIVIDADE_CURSOR}'`);
+      if (opcoes.semJit) await cliente.query('set local jit = off');
       for await (const lote of lotesPorCursor<L>(cliente, consulta, porLote)) await aoLote(lote);
       await cliente.query('commit');
     } catch (e) {
@@ -212,7 +225,7 @@ export class ExportacaoRelatorios {
     });
   }
 
-  registrar<F, L>(provedor: ProvedorRelatorio<F, L>): void {
+  registrar<F, L, E>(provedor: ProvedorRelatorio<F, L, E>): void {
     if (this.provedores.has(provedor.chave)) throw new Error(`Relatório já registrado: ${provedor.chave}`);
     this.provedores.set(provedor.chave, provedor as unknown as ProvedorRelatorio<unknown, unknown>);
   }
@@ -225,6 +238,17 @@ export class ExportacaoRelatorios {
     const p = this.provedores.get(chave);
     if (!p) throw ErroApi.naoEncontrado('Relatório não encontrado.');
     return p;
+  }
+
+  /** Os filtros validados, preparados pelo provedor quando ele tem o `preparar`. */
+  private async filtrosPreparados(
+    provedor: ProvedorRelatorio<unknown, unknown>,
+    sessao: SessaoErp,
+    filtros: unknown,
+  ): Promise<unknown> {
+    const preparar = provedor.preparar;
+    if (!preparar) return filtros;
+    return this.d.tenancy.cx().consulta((db) => preparar.call(provedor, db, sessao, filtros));
   }
 
   private garantirAcesso(sessao: SessaoErp, provedor: ProvedorRelatorio<unknown, unknown>): void {
@@ -263,8 +287,8 @@ export class ExportacaoRelatorios {
     this.garantirAcesso(sessao, provedor);
     const { formato: formatoBruto, ...entrada } = query;
     const formato = validar(z.enum(FORMATOS_EXPORTACAO).default('xlsx'), formatoBruto);
-    const filtros = validar(provedor.filtros, entrada);
     const cx = this.d.tenancy.cx();
+    const filtros = await this.filtrosPreparados(provedor, sessao, validar(provedor.filtros, entrada));
     const total = await cx.consulta((db) => this.contar(db, sessao, provedor, filtros));
     const limiteTarefa = this.opcoes.limiteTarefa ?? LIMITE_EXPORTACAO_TAREFA;
     if (total > limiteTarefa) {
@@ -336,9 +360,15 @@ export class ExportacaoRelatorios {
     const cx = this.d.tenancy.cx();
     const linhas = await cx.consulta(async (_db, cliente) => {
       const todas: unknown[] = [];
-      await lerPorCursor<unknown>(cliente, provedor.consulta(sessao, filtros), this.linhasPorLote, (lote) => {
-        todas.push(...lote);
-      });
+      await lerPorCursor<unknown>(
+        cliente,
+        provedor.consulta(sessao, filtros),
+        this.linhasPorLote,
+        (lote) => {
+          todas.push(...lote);
+        },
+        { semJit: provedor.semJit },
+      );
       return todas;
     });
     await cx.transacao((tx) =>
@@ -369,7 +399,7 @@ export class ExportacaoRelatorios {
       sessaoDaTarefa(db, this.d.tenancy, this.d.permissoes, e.tarefa.usuarioId, e.tarefa.id),
     );
     this.garantirAcesso(sessao, provedor);
-    const filtros = validar(provedor.filtros, p.filtros);
+    const filtros = await this.filtrosPreparados(provedor, sessao, validar(provedor.filtros, p.filtros));
     const colunas = colunasVisiveis(provedor.colunas(sessao, filtros), sessao);
     const tipoMime = TIPOS_EXPORTACAO[p.formato];
     const chave = chaveArquivo(cx.contexto.codigo, 'relatorios', p.formato);
@@ -432,6 +462,7 @@ export class ExportacaoRelatorios {
                 );
               }
             },
+            { semJit: provedor.semJit },
           ),
         );
         await e.progresso(96, 'Finalizando o arquivo');

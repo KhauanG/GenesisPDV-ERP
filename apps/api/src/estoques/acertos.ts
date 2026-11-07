@@ -389,18 +389,20 @@ export async function conferirCabecalhoAcerto(
 /**
  * "Ajustar" do bloco Estoque do produto (ERP 8.2.11; F2-B12; README da API › decisão 157): cria e efetiva, na
  * transação de quem chama (com `travaVersao`), um "Definir" de um item com a origem `cadastro_produto`
- * (`AJUSTE_CADASTRO`), na hora da contagem informada (padrão: agora) e com as mesmas regras do Definir da tela: o
- * estoque permitido para movimentar e ativo, o tipo de estoque ativo, a diferença descontando os movimentos
+ * (`AJUSTE_CADASTRO`) — ou `relatorio_estoque` (`AJUSTE_RELATORIO`), o modal do Estoque Atual (ERP 16.4; F2-B31;
+ * decisão 178), o mesmo núcleo —, na hora da contagem informada (padrão: agora) e com as mesmas regras do Definir da
+ * tela: o estoque permitido para movimentar e ativo, o tipo de estoque ativo, a diferença descontando os movimentos
  * posteriores à contagem (13.1.5), a compensação das vendas tardias (F2-B4) e a regra do saldo negativo
  * (`estoque.permite_negativo_erp` da loja do estoque, ou Master). O produto sem saldo próprio (combo, serviço e o
  * produzido, que baixa os insumos da ficha técnica: decisão 91) e o que não controla estoque são recusados antes,
  * com a mensagem no topo do modal. Devolve o acerto e a loja (para a auditoria de quem chama).
  */
-export async function ajustarEstoqueDoCadastro(
+export async function ajustarEstoqueDefinir(
   tx: DbEmpresa,
   sessao: SessaoErp,
   produtoId: string,
   dados: AjusteEstoqueProduto,
+  origem: Extract<OrigemAcerto, 'cadastro_produto' | 'relatorio_estoque'> = 'cadastro_produto',
 ): Promise<{ resultado: ResultadoAjusteProduto; lojaId: string | null }> {
   const { rows } = await tx.execute<{ tipo: string; controla_estoque: boolean; nome: string }>(sql`
     select tipo, controla_estoque, nome from produtos where id = ${produtoId} and excluido_em is null`);
@@ -443,7 +445,7 @@ export async function ajustarEstoqueDoCadastro(
       motivo: dados.motivo,
       responsavelId: cab.responsavelId,
       observacoes: dados.observacoes,
-      origem: 'cadastro_produto',
+      origem,
       criadoPorId: sessao.usuarioId,
       atualizadoPorId: sessao.usuarioId,
     })
@@ -462,7 +464,7 @@ export async function ajustarEstoqueDoCadastro(
     (await lerConfiguracao<boolean>(tx, 'estoque.permite_negativo_erp', cab.lojaId)) === true;
   const r = await efetivarAcerto(
     tx,
-    { ...acerto, origem: 'cadastro_produto', dataContagem },
+    { ...acerto, origem, dataContagem },
     { usuarioId: sessao.usuarioId, permiteNegativo },
   );
   const { rows: item } = await tx.execute<{ d: string }>(sql`

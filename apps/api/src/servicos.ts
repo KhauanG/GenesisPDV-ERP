@@ -17,6 +17,7 @@ import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
 import { AtivacaoTerminais } from './sync/ativacao.js';
 import { CRON_TAREFAS_INTERROMPIDAS, VarreduraTarefasInterrompidas } from './tarefas/interrompidas.js';
 import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
+import { provedorEstoqueAtual } from './relatorios/estoque-atual.js';
 import { TarefasSegundoPlano } from './tarefas/tarefas.js';
 import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
@@ -168,6 +169,8 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
   });
   const notasEntrada = new NotasEntrada({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   const exportacoes = new ExportacaoRelatorios({ tenancy, tarefas, armazenamento, auditoria, permissoes });
+  // Os relatórios exportáveis pela rota comum (F2-B29): o Estoque Atual (F2-B31, decisão 178).
+  exportacoes.registrar(provedorEstoqueAtual());
   const terminalAuth = new AutenticacaoTerminal(controle, resolvedor);
   const ativacao = new AtivacaoTerminais(controle, resolvedor, tenancy, auditoria, cifra);
   const manutencaoTerminais = new ManutencaoTerminais(controle, resolvedor, tenancy, auditoria, ativacao);

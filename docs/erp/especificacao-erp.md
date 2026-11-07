@@ -4194,6 +4194,34 @@ com auditoria por produto.
 | Exportação | Excel (como no Nuvem3) e PDF |
 | Data-base **(Novo)** | opcional "Saldo em <data>": recalcula pelo razão (soma dos movimentos com `data_movimento` ≤ data); sem ajuste nesse modo |
 
+Fase 2, F2-B31 (README da API › decisão 178; README do ERP › decisão 66): `GET /relatorios/estoque-atual`
+(paginado no servidor, com o total e os totais do relatório inteiro) e a exportação pela rota comum `GET
+/relatorios/estoque-atual/exportar` (F2-B29: até 50 mil linhas baixa na hora, acima vira tarefa). Uma linha por
+estoque × tipo de estoque × produto. **Loja**: começa no estoque da loja de contexto; **"Todas"** é uma linha por
+produto × tipo com a soma dos estoques **permitidos** (custo médio = média ponderada pelos saldos positivos; custo e
+venda totais = a soma das linhas, cada uma ao preço da loja do seu estoque; a Venda mostrada é o preço do produto),
+sem a loja de treino por padrão (D39; filtro "Loja de treino" quando a empresa tem uma; o estoque de treino
+escolhido aparece). **Departamento** traz as categorias filhas. **Vencendo em N dias** (Novo): só os produtos com lote
+de validade até hoje + N (inclusive os já vencidos) com saldo no estoque × tipo, com a quantidade desses lotes e a
+validade mais próxima; não combina com a data-base. **Zerado e Abaixo do mínimo** trazem também o produto que
+controla estoque e **nunca teve movimento** no estoque (no tipo escolhido, ou em nenhum tipo), com saldo 0 no tipo do
+filtro ou no padrão, como o "incluir sem movimento" dos Saldos de estoque (8.2.11): a cerveja recém-cadastrada com
+mínimo e ainda não recebida é a mais abaixo do mínimo, e o clique no saldo lança a contagem inicial; no "Todas", só o
+produto sem linha em nenhum dos estoques. **Data-base**: o saldo no fim do dia (fuso da empresa), pela
+projeção menos o razão depois da data quando a data está na metade recente da história dos estoques e pela soma até
+a data na antiga (o mesmo resultado; decisão 176); o custo médio é o do último movimento da linha até a data pela
+ordem de lançamento, antes do primeiro movimento com data depois dela (a venda offline sincronizada tarde, o
+cancelamento e o "Definir" retroativo não trazem para a data o custo das compras posteriores); "Em
+trânsito" e "Divergência a tratar" ficam vazios (só existem os de hoje); data futura é recusada. As colunas de custo
+(e a ordenação por custo) exigem `produtos.ver_custo`, também no arquivo. **Modal de ajuste**: o mesmo do "Ajustar"
+do produto (8.2.11) com o estoque da linha fixo — tipo de estoque (o da linha), nova quantidade, motivo e hora da
+contagem (padrão: agora) —, que cria e efetiva um "Definir" de um item com a origem `relatorio_estoque`
+(`AJUSTE_RELATORIO`), com a diferença na hora da contagem e a compensação das vendas tardias (13.1.5) e o estoque
+permitido para movimentar; `POST /relatorios/estoque-atual/ajustar` exige `relatorios.estoque_atual` e
+`estoque_acertos.criar`. O modal não abre no "Todas" (a soma não é de um estoque), na data-base nem no tipo de
+estoque inativo (não recebe acerto; a dica pede para reativá-lo). O "mover entre
+tipos" continua pelo acerto "Mudar tipo" (13.5): o modal só define o saldo de um tipo.
+
 ### 16.5 Movimentação de Estoque [P2]
 
 **Rota**: `/relatorios/movimentacao-estoque` · **Permissão**: `relatorios.movimentacao_estoque` (custo exige `produtos.ver_custo`).

@@ -79,6 +79,7 @@ curl -X POST localhost:3000/api/auth/login -H 'content-type: application/json' \
 | `test:limpar`                                                                                                                         | Remove bancos e roles de teste (integração e e2e do PDV) deixados por execuções interrompidas (só os sem conexão ativa)                                                                             |
 | `carga:razao [--movimentos=4000000] [--produtos=2000] [--manter] [--so-massa] [--saida=arq.json]`                                      | Fora do CI: massa de 1 ano do razão (3 lojas, CD, Treino) num banco descartável, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois dos índices da 0026 e o heap do replay; apaga os bancos no fim (decisão 176) |
 | `carga:exportacao [--movimentos=1000000] [--produtos=2000] [--saida=arq.json]` | Fora do CI: a massa do `carga:razao` num banco descartável e a exportação do razão inteiro em tarefa (`.xlsx` e `.csv`), com o tempo, o pico de heap do processo e a conferência das linhas do arquivo; apaga os bancos no fim (decisão 177) |
+| `carga:estoque-atual [--movimentos=4000000] [--produtos=2000] [--saida=arq.json]` | Fora do CI: a massa do `carga:razao` num banco descartável e o relatório Estoque Atual pela rota ("Todas" e uma loja, agora e na data-base pelos dois caminhos, a exportação na hora), o pior de 3 abaixo de 3 s; apaga os bancos no fim (decisão 178) |
 | `db:migrate:controle`                                                                                                                 | Cria o `genesis_control` se não existir, aplica as migrações e o seed mínimo do controle                                                                                                            |
 | `db:migrate:empresas [--empresas=100001,100002] [--lote=4] [--parar-no-primeiro-erro]`                                                | Migra todas as empresas `ativa`/`suspensa`: canário primeiro, depois as demais; reaplica referências, catálogo de permissões e seed idempotente; sai com código 1 se alguma falhar                  |
 | `db:referencias [--empresas=…]`                                                                                                       | Recarrega referências nacionais, catálogo de permissões e seed em todas as empresas                                                                                                                 |
@@ -113,6 +114,7 @@ ERP (prefixo `/api`, token `Authorization: Bearer`): `POST /auth/login`, `POST /
 `GET|PUT|DELETE /transferencias/:id`, `POST /transferencias/:id/enviar|receber|tratar-divergencia|cancelar`,
 `PUT /transferencias/:id/nfe-externa`,
 `GET /saldos-estoque`, `GET /saldos-estoque/itens`,
+`GET /relatorios/estoque-atual`, `POST /relatorios/estoque-atual/ajustar`, `GET /relatorios/:relatorio/exportar`,
 `GET|POST /tipos-estoque`, `GET|PUT|DELETE /tipos-estoque/:id`, `GET /importacoes/produtos|clientes/modelo`, `POST /importacoes/produtos|clientes/previa`
 (multipart), `POST /importacoes/produtos|clientes/confirmar`, `GET /dashboard`, `GET /implantacao/prontidao`, `GET /ncms`, `GET /ncms/:codigo`,
 `GET /referencias/unidades|cfops`, `GET /referencias/ufs|municipios|paises`,
@@ -781,7 +783,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 77. **Saldos** (`GET /saldos-estoque`, ERP 8.2.11/16.4 simplificado): por estoque × tipo, filtros de situação do saldo
     (positivo, zerado, negativo, abaixo do mínimo da loja do estoque) e "incluir sem movimento"; totais de custo e
     venda na mesma consulta; custo só com `produtos.ver_custo`. `GET /saldos-estoque/itens` alimenta a coluna "Saldo
-    atual" da grade do acerto. O ajuste no clique, "Em trânsito" e a data-base ficam com o relatório Estoque Atual.
+    atual" da grade do acerto. O ajuste no clique, "Em trânsito" e a data-base ficam com o relatório Estoque Atual
+    (o "Em trânsito" chegou aqui também no F2-B26, decisão 174; o relatório, no F2-B31, decisão 178).
 78. **Importação** (ERP 8.6, 23.14): `previa` (multipart `arquivo` + opções, até 10 MB, xlsx ou csv com `;`/`,`/tab
     detectado e UTF-8 ou Windows-1252) valida **todas** as linhas sem gravar e guarda a planilha no armazenamento
     (`arquivos`, categoria `planilha_importacao`, retenção 30 dias); `confirmar` só aceita a planilha enviada pelo
@@ -3099,7 +3102,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      total sem percentual do setor contado vazio) e `importacao.spec.ts` do shared.
 
 157. **Formulário do produto: "Ajustar", relacionados e categorias em árvore** (Fase 2, F2-B12; ERP 8.2.7, 8.2.8,
-     8.2.11; `POST /produtos/:id/ajustar-estoque` em `src/produtos/produtos.controller.ts`, `ajustarEstoqueDoCadastro`
+     8.2.11; `POST /produtos/:id/ajustar-estoque` em `src/produtos/produtos.controller.ts`, `ajustarEstoqueDefinir` (antes `ajustarEstoqueDoCadastro`; desde o F2-B31 também o do Estoque Atual, decisão 178)
      e `conferirCabecalhoAcerto` em `src/estoques/acertos.ts`, `gravarRelacionados` em `src/produtos/gravacao.ts`;
      `ajusteEstoqueProdutoSchema` no shared `estoque.ts`, `relacionadoSchema` no `produtos.ts`; sem migração:
      `produtos_relacionados` existe desde a 1A e já desce ao PDV no fluxo de catálogo). **"Ajustar"**
@@ -4745,6 +4748,121 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        lote só termina quando o destino esvazia; no `.xlsx`, com a entrada do zip esvaziada — 10 mil linhas por lote,
        quebra sem a correção), o destino destruído rejeitando, o encanamento do exceljs e o corte do custo;
        `src/tarefas/tarefas.spec.ts`: a validade do link (`validadeDownloadS`).
+
+178. **Relatório Estoque Atual com o modal de ajuste** (Fase 2, F2-B31; ERP 16.4, 13.6, 13.1.5, 3.5; D39; decisões 157,
+     174, 176 e 177; `src/relatorios/estoque-atual.ts` (novo), `src/relatorios/relatorios.controller.ts`,
+     `ajustarEstoqueDefinir` em `src/estoques/acertos.ts`, `src/tarefas/exportar-relatorio.ts` (`preparar` e
+     `semJit` no provedor), `src/servicos.ts` (o provedor registrado), `packages/shared/src/relatorios.ts` (novo);
+     `test/carga/estoque-atual.ts` (novo, `pnpm --filter api carga:estoque-atual`); **sem migração** (usa os índices
+     da 0026); o PDV não muda (o ajuste é um acerto, e o saldo desce no fluxo `estoque` como qualquer outro)).
+     - **`GET /relatorios/estoque-atual`** (`relatorios.estoque_atual`; `consultaEstoqueAtualSchema`): uma linha por
+       estoque × tipo de estoque × produto (× variação, nula enquanto travadas, D43) com Ref. interna, marca,
+       unidade, saldo, mínimo (o da loja do estoque), custo médio e custo total (só com `produtos.ver_custo`; a
+       ordenação por custo sem ela é recusada), Venda (o preço da loja do estoque, ou o do produto), Atacado, iFood e
+       venda total, o "Em trânsito" e a "Divergência a tratar" (as subconsultas do F2-B26, `em-transito.ts`, as
+       mesmas do `/saldos-estoque`, com a linha zerada da chave que só tem pendência). Filtros: nome/código interno/
+       EAN, **marca**, **departamento** (a categoria e as filhas, pelo `caminho` da árvore, como a listagem de
+       produtos), estoque, tipo de estoque, situação do saldo, produtos ativos/inativos/todos, `produtoId`, `treino`,
+       **`vencendoEmDias`** e **`dataBase`**. Paginado no servidor (`pagina`/`tamanho`), com o **total e os totais do
+       relatório inteiro na mesma ida ao banco** (funções de janela `count(*) over ()`/`sum(...) over ()`; só a
+       página além do fim conta à parte).
+     - **"Todas"** (`estoqueId` vazio ou `todas`): uma linha por produto × variação × tipo com a **soma dos estoques
+       permitidos** (decisão 149: o estoquista da Loja 1 vê só ela); custo e venda totais = a soma das linhas (cada
+       uma ao preço da loja do seu estoque); o custo médio da soma é a média ponderada pelos saldos positivos (sem
+       saldo positivo, o maior custo médio das linhas); o mínimo é a soma dos mínimos. A **loja de treino** fica de
+       fora por padrão (D39; `treino` = `excluir`/`incluir`/`somente`, como nas consultas de vendas); o estoque de
+       treino escolhido aparece.
+     - **"Vencendo em N dias"** (0 a 3650): só as linhas com lote de validade até hoje + N (no fuso da empresa;
+       inclusive os já vencidos, que são os mais urgentes) e saldo de lote positivo (`saldos_lote`), com a quantidade
+       desses lotes e a validade mais próxima (`vencendo`). Não combina com a data-base (422 no campo): os lotes são
+       os de hoje.
+     - **Data-base "Saldo em <data>"** (até hoje; futura → 422): o saldo no fim do dia (`data_movimento` antes da
+       meia-noite seguinte no fuso da empresa), pelo caminho que a decisão 176 mediu: **a projeção menos o razão
+       depois da data** quando a data está na metade recente da história dos estoques escolhidos (o meio entre o
+       primeiro movimento deles e agora) e **a soma do razão até a data** na metade antiga. A escolha fica no próprio
+       SQL (um filtro de uma vez só; o ramo que não vale nem roda), então a tela e a exportação em tarefa calculam
+       igual, e os dois ramos dão o mesmo resultado (o teste confere os dois em cada data). Na projeção, a linha que
+       só nasceu depois da data fica de fora (zerada nela e sem movimento até ela), como na soma. O **custo médio da
+       data** é o `custo_medio_posterior` do último movimento da linha **pela ordem de lançamento** (`seq_lancamento`,
+       a da cadeia do custo, `ix_movimentos_estoque_linha_seq`) com data até ela e lançado antes do primeiro movimento
+       da linha com data depois dela (um passo à frente no `ix_movimentos_estoque_linha_data`); sem movimento depois,
+       o último lançado. Pela data só (como era na primeira versão do bloco), o movimento lançado depois com data no
+       passado — a venda do PDV offline sincronizada tarde (`dataMovimento` = `finalizada_em`), o cancelamento, o
+       "Definir" retroativo — trazia para a data o custo das entradas posteriores, porque a saída grava o custo
+       vigente no lançamento (a venda do dia 05 sincronizada no dia 07, depois da NF-e do dia 06, mostrava no "Saldo
+       em 05" o custo da NF-e). **Limitação aceita**: o "primeiro depois" é o primeiro pela data, não pelo lançamento
+       (pelo lançamento, a metade antiga leria de novo toda a parte da linha até a data); só erra com dois lançamentos
+       retroativos cruzados (um com data depois da data-base lançado depois de outro ainda mais novo, e um com data
+       até ela lançado entre os dois), e aí o custo é o do estado do razão logo antes do primeiro deles. A quantidade
+       não depende da ordem (é soma). As duas buscas repetem na ordem todas as colunas do índice porque o planejador
+       não trata o `variacao_id is null` como igualdade e, só com a data, lia a história inteira de cada linha e
+       ordenava (medido: **20 s** com 4 milhões); a CTE das linhas é `materialized` (no "Todas" o custo é usado três
+       vezes, e a CTE embutida repetia a busca). "Em trânsito" e "Divergência a tratar" ficam nulos (só existem os de
+       hoje). O ajuste não abre nesse modo (ERP 16.4).
+     - **Sem movimento** (situação do saldo **"Zerado"** e **"Abaixo do mínimo"**, os filtros em que o saldo 0 conta):
+       o produto que controla estoque e não tem linha no estoque (no tipo do filtro, ou em nenhum tipo) entra com
+       saldo 0, custo 0 e o tipo do filtro ou o padrão, uma linha por estoque, como o `incluirSemMovimento` do
+       `/saldos-estoque` — a cerveja recém-cadastrada com mínimo de 24 e ainda não recebida é a mais abaixo do
+       mínimo, e o clique no saldo lança a contagem inicial. No "Todas", só o produto sem linha em nenhum dos
+       estoques escolhidos (soma dos mínimos de todos): o que tem linha em algum continua a soma das linhas, igual em
+       qualquer filtro. Nas outras situações não entra (seria o catálogo inteiro em cada estoque); na data-base vale
+       igual (saldo 0 na data, sem pendências).
+     - **O fuso como parâmetro e o JIT desligado** (achados da carga): com o fuso numa subconsulta (`fusoDaEmpresa`)
+       o fim do dia é um valor que o planejador não conhece; ele estimava um terço do razão "depois da data" e varria
+       o `linha_data` inteiro de cada estoque em vez do `estoque_data` (0,7 s em vez de 0,2 s). Agora
+       `prepararFiltrosEstoqueAtual` lê o fuso antes (com a conferência da data futura) e ele vai como parâmetro. E a
+       consulta, com muitas CTEs e subconsultas, tem custo estimado alto: com o `jit` ligado (o padrão do PostgreSQL),
+       ele gastava **~1,5 s compilando** de 1,8 s no total; a página roda numa transação `read only` com `set local jit
+       = off`, e o provedor da exportação ganhou `semJit` (o cursor do F2-B29 faz o mesmo `set local`) e `preparar`
+       (completa os filtros com o que a consulta lê do banco antes; roda no pedido e de novo na execução da tarefa) —
+       os dois opcionais, para os próximos relatórios (B32/B33).
+     - **Exportação** pela rota comum (decisão 177): o provedor `estoque-atual` (`Relatorio_Estoque_Atual_…`; a
+       permissão do relatório; auditoria `exportar` em `saldos_estoque`, "Relatórios › Estoque Atual"), com as
+       colunas da tela (a do saldo vira "Saldo em dd/mm/aaaa" na data-base; sem "Em trânsito"/"Divergência" nela; as
+       do "Vencendo" só com o filtro) e a **mesma consulta** com a sessão do momento: na tarefa, os estoques
+       permitidos e o "Ver custo" são os de agora (`sessaoDaTarefa`), e as colunas de custo saem sem ele.
+     - **Modal de ajuste** (`POST /relatorios/estoque-atual/ajustar`, `relatorios.estoque_atual` **e**
+       `estoque_acertos.criar`; `ajusteEstoqueRelatorioSchema` = o do "Ajustar" do produto com o `produtoId`): o
+       **mesmo núcleo** do "Ajustar" do produto (decisão 157) — `ajustarEstoqueDoCadastro` virou
+       `ajustarEstoqueDefinir(tx, sessao, produtoId, dados, origem)` com a origem `cadastro_produto` (padrão) ou
+       `relatorio_estoque` —: cria e efetiva na mesma transação (`travaVersao`) um "Definir" de um item com a origem
+       `relatorio_estoque`, que a efetivação já traduz em **`AJUSTE_RELATORIO`** (`tipoMovimentoAcerto`; a origem
+       estava no enum, no `ck_acertos_estoque_origem` e no seed desde a Fase 1, sem uso), na hora da contagem
+       informada (padrão: o instante da requisição), com a diferença descontando os movimentos posteriores à contagem
+       e a compensação das vendas offline anteriores a ela que chegarem depois (13.1.5), a regra do saldo negativo do
+       acerto (o "Definir" não pede quantidade negativa) e o estoque permitido para **movimentar** (403 no campo). Os
+       produtos sem saldo próprio e os que não controlam estoque são recusados como no produto. O acerto aparece na
+       lista de acertos com a origem "Relatório Estoque Atual"; a auditoria (criar + efetivar) vai no acerto com a
+       localização "Relatórios › Estoque Atual". Mover saldo entre tipos continua pelo acerto "Mudar tipo" (13.5).
+     - **Carga** (`pnpm --filter api carga:estoque-atual`, fora do CI, ~7 min aqui, quase tudo gerando a massa; a
+       massa do F2-B28 com **4 milhões de movimentos**, 12.157 linhas de saldo, pela rota de verdade com a API no
+       mesmo processo; a primeira página de 50 com o total e os totais; o pior de 3; apaga os bancos no fim). O meio da
+       história anda com o relógio (a massa tem datas fixas, 01/11/2025 a 01/11/2026), então as datas-base saem do
+       meio real (uma entre ele e o fim da massa, uma no primeiro terço da história) e a carga confere antes de medir
+       que cada data-base vai mesmo pelo caminho do rótulo (a coluna `recente` de `sqlEstoqueAtual`), senão falha.
+       Medido em 07/11/2026, já com o custo da data pela ordem de lançamento e o "sem movimento" (meio em 05/05/2026):
+       "Todas" agora (3.040 linhas) **131 ms**; Loja 1 agora (2.454) **50 ms**; "Todas" com a data-base de ontem, pela
+       projeção, **300 ms**; em 03/08/2026 (metade recente, três meses antes do fim da massa), pela projeção,
+       **1,38 s**; em 04/03/2026 (primeiro terço), pela soma até a data, **1,78 s** no "Todas" e **713 ms** na Loja 1;
+       "abaixo do mínimo" ordenado por venda total **97 ms** (a massa não tem mínimo nem produto sem movimento: mede só
+       a ordenação e o filtro); a exportação na hora em CSV do "Todas" com a data-base de ontem (3.040 linhas)
+       **688 ms**. Critério de pronto (< 3 s): ok em todos. Na primeira medição (custo pela data só, a data recente um
+       mês antes do fim e a antiga oito meses antes): 140 ms, 47 ms, 196 ms, 857 ms, 1,55 s, 510 ms, 79 ms e 343 ms. O
+       caso mais lento é a soma até a data no "Todas" (lê a parte antiga do razão de todos os estoques); fica abaixo do
+       limite, e a regra da metade garante que nenhuma data lê mais da metade da história.
+     - **Testes**: `test/integracao/relatorio-estoque-atual.test.ts` (as colunas, os totais e o custo só com "Ver
+       custo"; marca e departamento com as filhas; o "Todas" só com os permitidos e a loja de treino fora/dentro/só;
+       o "Vencendo"; a "Divergência a tratar" de uma transferência recebida com menos itens na linha da origem e
+       somada no "Todas"; o produto sem movimento no "Zerado" e no "Abaixo do mínimo" (por estoque, no tipo escolhido,
+       na data-base e no "Todas"; o que não controla estoque fora; some depois da primeira entrada); a data-base de 4
+       dias atrás a hoje igual ao saldo da época pelos dois caminhos (forçados com o fuso da empresa, a expressão da
+       produção), o custo médio da época, o "Definir" retroativo lançado depois de uma compra (o custo da data é o de
+       antes dela), o "Todas" na data-base com dois estoques (a soma e a média ponderada do custo da época), a escolha
+       pela metade e a data futura; o ajuste com a origem e o movimento, na lista de acertos, na
+       auditoria e no pull do PDV; a venda offline anterior à hora do ajuste compensada; as permissões e o contrato;
+       a exportação na hora em CSV e em tarefa em `.xlsx` sem o custo e só com o estoque permitido; o razão idêntico
+       no fim), `relatorios.spec.ts` no shared e o `produto-formulario.test.ts` de sempre (o "Ajustar" do produto
+       pelo núcleo renomeado). O ERP é a decisão 66 do README do ERP.
 
 ### Operação – tarefas em segundo plano (API)
 

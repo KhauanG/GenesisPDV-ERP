@@ -37,6 +37,7 @@ import { FormularioProduto } from './paginas/produtos/FormularioProduto';
 import { FormularioGrupoPreco, ListaGruposPreco } from './paginas/produtos/GruposPreco';
 import { ListaProdutos } from './paginas/produtos/ListaProdutos';
 import { FormularioRestricaoHorario, ListaRestricoesHorario } from './paginas/produtos/RestricoesHorario';
+import { EstoqueAtual, ROTA_ESTOQUE_ATUAL } from './paginas/relatorios/EstoqueAtual';
 import { FormularioUsuario } from './paginas/usuarios/FormularioUsuario';
 import { DetalheFechamentoCaixa, ListaFechamentosCaixa } from './paginas/vendas/FechamentosCaixa';
 import {
@@ -305,6 +306,14 @@ export const rotas: RouteObject[] = [
                 element: (
                   <ExigePermissao permissao="transferencias.ver">
                     <RomaneioTransferenciaImpressao />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_ESTOQUE_ATUAL,
+                element: (
+                  <ExigePermissao permissao="relatorios.estoque_atual">
+                    <EstoqueAtual />
                   </ExigePermissao>
                 ),
               },

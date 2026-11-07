@@ -22,6 +22,7 @@ export * from './plataforma.js';
 export * from './precos.js';
 export * from './produtos.js';
 export * from './recebimentos.js';
+export * from './relatorios.js';
 export * from './sync/contratos.js';
 export * from './sync/eventos.js';
 export * from './tarefas.js';

@@ -47,6 +47,9 @@ const config = carregarConfiguracao({
   TENANCY_CACHE_MS: '0',
 });
 const servicos = criarServicos(config, { executadoPor: 'e2e' });
+// A exportação de relatório baixa na hora só até `E2E_EXPORTACAO_NA_HORA` linhas (padrão 10; em produção, 50 mil):
+// acima vira tarefa, e o e2e do Estoque Atual percorre o ícone Tarefas com poucas linhas (F2-B31).
+servicos.exportacoes.opcoes.limiteNaHora = Number(process.env.E2E_EXPORTACAO_NA_HORA ?? 10);
 await servicos.armazenamento.garantirBucket();
 await seedControle(servicos.controle, servicos.servidores);
 
