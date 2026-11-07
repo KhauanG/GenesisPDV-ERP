@@ -113,6 +113,8 @@ export interface ConfigRelatorio<T> {
   exportar?: (params: Record<string, string>, formato: FormatoExportacao) => Promise<RespostaExportacao>;
   /** Gráfico opcional abaixo dos cards. */
   grafico?: (resultado: ResultadoRelatorio<T>) => ReactNode;
+  /** Nota sobre os números (ex.: o saldo recalculado da Movimentação), acima da tabela; também na impressão. */
+  nota?: ReactNode;
   /** Relatório leve: gera ao abrir. Os demais só geram depois do Filtrar (ou com filtros na URL). */
   gerarAoAbrir?: boolean;
 }
@@ -293,7 +295,14 @@ export function Relatorio<T>({ config }: { config: ConfigRelatorio<T> }) {
     .map((f) => {
       const v = aplicados[f.campo];
       if (!v) return null;
-      const rotulo = f.opcoes?.find((o) => o.value === v)?.label ?? v;
+      const rotulo =
+        f.descrever?.(v) ??
+        (f.tipo === 'multisselecao'
+          ? v
+              .split(',')
+              .map((x) => f.opcoes?.find((o) => o.value === x)?.label ?? x)
+              .join(', ')
+          : (f.opcoes?.find((o) => o.value === v)?.label ?? v));
       return `${f.rotulo}: ${rotulo}`;
     })
     .filter(Boolean)
@@ -495,6 +504,11 @@ export function Relatorio<T>({ config }: { config: ConfigRelatorio<T> }) {
             </SimpleGrid>
           )}
           {config.grafico?.(dados)}
+          {config.nota && (
+            <Text size="xs" c="dimmed" data-testid="nota-relatorio">
+              {config.nota}
+            </Text>
+          )}
           {config.selecao && selecionadas.size > 0 && (
             <Paper p="xs" className="nao-imprimir" withBorder>
               <Group gap="sm" wrap="wrap" aria-label="Linhas selecionadas" role="toolbar">

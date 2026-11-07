@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   ajusteEstoqueRelatorioSchema,
   consultaEstoqueAtualSchema,
+  consultaMovimentacaoEstoqueSchema,
   filtrosEstoqueAtualSchema,
+  filtrosMovimentacaoEstoqueSchema,
 } from './relatorios.js';
 
 const ID = '0190a000-0000-7000-8000-000000000401';
@@ -50,5 +52,57 @@ describe('filtros do Estoque Atual (ERP 16.4; F2-B31)', () => {
     expect(
       ajusteEstoqueRelatorioSchema.safeParse({ estoqueId: ID, quantidade: '1', motivo: 'x' }).success,
     ).toBe(false);
+  });
+});
+
+describe('filtros da Movimentação de Estoque (ERP 16.5; F2-B32)', () => {
+  const base = { estoqueId: ID, dataInicial: '2026-11-01', dataFinal: '2026-11-07' };
+  const erros = (v: Record<string, unknown>) => {
+    const r = consultaMovimentacaoEstoqueSchema.safeParse(v);
+    return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+  };
+
+  it('local e período obrigatórios; a página padrão é de 50, sem cursor', () => {
+    expect(consultaMovimentacaoEstoqueSchema.parse(base)).toEqual({ ...base, tamanho: 50 });
+    expect(erros({ dataInicial: '2026-11-01', dataFinal: '2026-11-07' })).toEqual(['estoqueId']);
+    expect(erros({ estoqueId: ID, dataInicial: '', dataFinal: '2026-11-07' })).toEqual(['dataInicial']);
+    expect(erros({ ...base, tamanho: '1000' })).toEqual(['tamanho']);
+    expect(consultaMovimentacaoEstoqueSchema.parse({ ...base, tamanho: '20', cursor: 'abc' })).toMatchObject({
+      tamanho: 20,
+      cursor: 'abc',
+    });
+  });
+
+  it('o período vai até 366 dias contando as pontas, e o final não vem antes do inicial', () => {
+    expect(erros({ ...base, dataInicial: '2025-11-07', dataFinal: '2026-11-07' })).toEqual([]);
+    expect(erros({ ...base, dataInicial: '2025-11-06', dataFinal: '2026-11-07' })).toEqual(['dataFinal']);
+    // 2028 é bissexto: de 01/01 a 31/12 são 366 dias.
+    expect(erros({ ...base, dataInicial: '2028-01-01', dataFinal: '2028-12-31' })).toEqual([]);
+    expect(erros({ ...base, dataInicial: '2026-11-08' })).toEqual(['dataFinal']);
+    expect(erros({ ...base, dataFinal: '2026-02-30' })).toEqual(['dataFinal']);
+  });
+
+  it('tipos de movimento em vírgulas ou repetidos, sem vazios nem repetição', () => {
+    expect(
+      filtrosMovimentacaoEstoqueSchema.parse({ ...base, tiposMovimento: 'RECEB_NFE, VENDA_PDV,,RECEB_NFE' }),
+    ).toMatchObject({ tiposMovimento: ['RECEB_NFE', 'VENDA_PDV'] });
+    expect(
+      filtrosMovimentacaoEstoqueSchema.parse({ ...base, tiposMovimento: ['RECEB_NFE', 'ACERTO_SAIDA'] })
+        .tiposMovimento,
+    ).toEqual(['RECEB_NFE', 'ACERTO_SAIDA']);
+    expect(
+      filtrosMovimentacaoEstoqueSchema.parse({ ...base, tiposMovimento: '' }).tiposMovimento,
+    ).toBeUndefined();
+    expect(erros({ ...base, tiposMovimento: "VENDA'; drop" })).toEqual(['tiposMovimento.0']);
+  });
+
+  it('o número do documento pede o tipo, e só os tipos com número', () => {
+    expect(erros({ ...base, documentoTipo: 'venda', documentoNumero: '1-0042' })).toEqual([]);
+    expect(erros({ ...base, documentoNumero: '42' })).toEqual(['documentoTipo']);
+    expect(erros({ ...base, documentoTipo: 'vasilhame', documentoNumero: '42' })).toEqual([
+      'documentoNumero',
+    ]);
+    expect(erros({ ...base, documentoTipo: 'vasilhame' })).toEqual([]);
+    expect(erros({ ...base, documentoTipo: 'outro' })).toEqual(['documentoTipo']);
   });
 });

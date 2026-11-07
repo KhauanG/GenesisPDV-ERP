@@ -14,8 +14,10 @@ import {
 import {
   ajusteEstoqueRelatorioSchema,
   consultaEstoqueAtualSchema,
+  consultaMovimentacaoEstoqueSchema,
   type ExportacaoEmTarefa,
   type RespostaEstoqueAtual,
+  type RespostaMovimentacaoEstoque,
   type ResultadoAjusteProduto,
 } from '@genesis/shared';
 import type { Response } from 'express';
@@ -27,9 +29,11 @@ import { validar } from '../comum/zod.js';
 import { ajustarEstoqueDefinir, resumoEfetivacao } from '../estoques/acertos.js';
 import type { Servicos } from '../servicos.js';
 import { LOCALIZACAO_ESTOQUE_ATUAL, paginaEstoqueAtual } from './estoque-atual.js';
+import { paginaMovimentacao } from './movimentacao.js';
 
 /**
- * Relatórios (ERP 16): o Estoque Atual com o modal de ajuste (16.4; F2-B31, README da API › decisão 178) e a
+ * Relatórios (ERP 16): o Estoque Atual com o modal de ajuste (16.4; F2-B31, README da API › decisão 178), a
+ * Movimentação de Estoque analítica (16.5; F2-B32, decisão 179) e a
  * exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
  * `ExportacaoRelatorios` (`chave` do provedor). Até `LIMITE_EXPORTACAO` linhas responde o arquivo (`200`); acima,
  * `202` com a tarefa (`ExportacaoEmTarefa`), que o ERP acompanha no ícone Tarefas. A permissão do relatório é
@@ -94,6 +98,20 @@ export class RelatoriosController {
       },
       { travaVersao: true },
     );
+  }
+
+  /**
+   * Movimentação de Estoque, visão analítica (ERP 16.5): a página depois do `cursor`, com o `proximoCursor` (sem
+   * total). O custo só sai com `produtos.ver_custo`; o local tem de estar entre os estoques permitidos.
+   */
+  @Permissao('relatorios.movimentacao_estoque')
+  @Get('movimentacao-estoque')
+  async movimentacaoEstoque(
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<RespostaMovimentacaoEstoque> {
+    const q = validar(consultaMovimentacaoEstoqueSchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaMovimentacao(db, sessao, q));
   }
 
   @Permissao('relatorios.exportar')

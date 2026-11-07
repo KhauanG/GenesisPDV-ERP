@@ -4254,6 +4254,24 @@ Custo das saídas, **Data da última compra** e **Último custo** (último `RECE
 
 Exportação: `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`, com as colunas da visão escolhida.
 
+Fase 2, F2-B32 (README da API › decisão 179; README do ERP › decisão 67): a **visão analítica** em `GET
+/relatorios/movimentacao-estoque`, **paginada por cursor** `(data_movimento, id)` (Próxima/Anterior, sem total nem
+número de páginas; 20 a 50 por página). Local e período obrigatórios (dias de calendário no fuso da empresa; até 366
+dias contando as pontas; padrão na tela: do primeiro dia do mês até hoje, no estoque ativo da loja de contexto; a lista
+tem também os locais inativos, marcados, para o histórico de um local desativado); o local fora dos estoques
+permitidos é recusado. **Tipo de movimento** em multisseleção (`GET /referencias/tipos-movimento-estoque`);
+**Documento** pelo tipo e, opcional, o número da coluna Documento (o número da venda, o código do acerto, do
+recebimento e da transferência, o Nº da NF-e do fornecedor; troca e vasilhame só pelo tipo); **Pessoa** =
+`movimentos_estoque.pessoa_id` (o fornecedor do recebimento e da nota; o cliente da venda, da troca, dos cascos
+devolvidos avulsos e da compensação de uma venda), e a coluna Cliente/Fornecedor mostra a pessoa sempre que o
+movimento tem uma. A quantidade e os saldos estão na unidade do produto (coluna **Unidade**); `sigla` (a unidade do
+documento, como no Nuvem3) vai na coluna **Unid. do documento** com o fator (ex.: "CX ×12": 2 CX entram como 24). **EstoqueAnterior/EstoqueAtual** são recalculados na ordem de `data_movimento` pela
+soma do razão da linha de saldo antes do movimento (também com filtros: o saldo é o da linha de saldo, não o do filtro),
+fecham com `saldos_estoque` e vêm com os gravados no lançamento ao lado; quando diferem (venda offline sincronizada
+tarde, "Definir" na hora da contagem), a tela mostra a nota e os gravados. `idmovimentacaoestoque` é o `id` (o movimento
+não tem código legível próprio; o número que se reconhece é o do documento). Custo só com `produtos.ver_custo`. A visão
+sintética, a exportação e o "Ver movimentação" chegam no F2-B33.
+
 ### 16.6 Financeiro geral
 
 **Rota**: `/relatorios/financeiro-geral` · **Permissão**: `relatorios.financeiro_geral`.

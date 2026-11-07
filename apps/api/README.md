@@ -4863,6 +4863,109 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        a exportação na hora em CSV e em tarefa em `.xlsx` sem o custo e só com o estoque permitido; o razão idêntico
        no fim), `relatorios.spec.ts` no shared e o `produto-formulario.test.ts` de sempre (o "Ajustar" do produto
        pelo núcleo renomeado). O ERP é a decisão 66 do README do ERP.
+179. **Relatório Movimentação de Estoque, visão analítica** (Fase 2, F2-B32; ERP 16.5; MD 3.7.1–3.7.3; decisões 176,
+     177 e 178; `src/relatorios/movimentacao.ts` (novo), `src/relatorios/relatorios.controller.ts`,
+     `src/referencias/referencias.controller.ts` (`GET /referencias/tipos-movimento-estoque`),
+     `packages/shared/src/relatorios.ts`; `test/carga/movimentacao.ts` (novo, `pnpm --filter api carga:movimentacao`);
+     **sem migração** (usa os dois índices da 0026); o PDV não muda (`movimentos_estoque` não desce)).
+     - **`GET /relatorios/movimentacao-estoque`** (`relatorios.movimentacao_estoque`;
+       `consultaMovimentacaoEstoqueSchema`): um movimento do razão por linha. **Local de estoque** e **período**
+       obrigatórios — `dataInicial`/`dataFinal` em dias de calendário no fuso da empresa (do começo do dia inicial
+       ao começo do dia seguinte ao final), até **366 dias contando as pontas** (`MAXIMO_DIAS_MOVIMENTACAO`; de
+       07/11 a 07/11 do ano seguinte passa, 367 é 422 no campo), o final não antes do inicial. Filtros opcionais:
+       `produtoId`, **`tiposMovimento`** (multisseleção: `A,B` ou o parâmetro repetido; o código desconhecido é 422),
+       `usuarioId`, `pessoaId` (`movimentos_estoque.pessoa_id`, em qualquer documento: o fornecedor do recebimento e
+       da nota; o cliente da venda, da troca, da devolução avulsa de cascos — `documento_tipo = 'vasilhame'` — e da
+       compensação, que herda a pessoa da venda compensada),
+       `documentoTipo` e `documentoNumero` (o número da coluna Documento: o `numero_exibicao` da venda, o `codigo` do
+       acerto, do recebimento e da transferência, o **Nº da NF-e** do fornecedor na nota de entrada; sem tipo, ou num
+       tipo sem número — troca e vasilhame —, 422; o número que não é inteiro num documento de código numérico não
+       acha nada, sem erro do banco). O local fora dos **estoques permitidos** é 403 (decisão 149; conferido antes de
+       procurar o local, então quem não o vê não descobre se existe), e a consulta repete o filtro da sessão (para o
+       provedor da exportação do F2-B33, que roda com a sessão do momento). Treino: o local é escolhido, então o de
+       treino aparece quando escolhido (como no Estoque Atual, D39).
+     - **Paginação por cursor** `(data_movimento, id)`, sem total nem página (um ano de uma loja passa de 1,6 milhão
+       de movimentos): `tamanho` (20, 25, 35 ou 50; padrão 50) e o `cursor` opaco da resposta (`proximoCursor`;
+       `null` na última). A página lê `tamanho + 1` movimentos do `ix_movimentos_estoque_estoque_data (estoque_id,
+       data_movimento, id)` depois do cursor, na ordem e sem ordenar (o a mais diz se há próxima e não volta). O
+       cursor é o base64url de `<data em UTC com os microssegundos>|<id>` do último movimento da página: a data vai em
+       texto com os microssegundos do banco (`to_char(... 'US')`), porque o `Date` do JavaScript perderia os
+       microssegundos e o movimento do mesmo milissegundo seria repetido ou pulado; vários movimentos no mesmo instante
+       (um acerto de 25 itens grava todos com a mesma `data_movimento`) se desempatam pelo `id`. O cursor inválido é
+       422 no campo ("volte para a primeira página"). O movimento lançado durante a leitura com data já passada (a
+       venda offline que chega) não desloca as páginas: só aparece se cair depois do cursor.
+     - **Saldo anterior e posterior recalculados na ordem de `data_movimento`** (ERP 16.5: "recalculados na ordem de
+       `data_movimento`"), não os gravados (que seguem a ordem de lançamento): o saldo anterior de um movimento é a
+       soma do razão da sua linha de saldo (estoque × produto × variação × tipo) antes dele pela chave `(data_movimento,
+       id)`, e o posterior, o anterior mais a quantidade. Na página, cada movimento lê só a **parte** do razão da
+       linha **entre o movimento anterior da mesma linha na página e ele** (para o primeiro da linha, a história antes
+       dele; `lag` na janela da linha), pelo `ix_movimentos_estoque_linha_data (…, data_movimento, id) include
+       (quantidade)` **só pelo índice**, com as duas pontas como condição do índice (`(data_movimento, id) > (anterior)`
+       e `< (ele)`; sem anterior, `-infinity` e o uuid zero, para não virar um `or` que o índice não usa). As partes não
+       se sobrepõem; a janela soma as partes e as quantidades da página antes do movimento. Assim cada linha de saldo
+       lê a sua história **uma vez** por página, e não uma vez por movimento (o produto mais vendido de uma loja tem
+       135 mil movimentos num ano). Com filtro de tipo, usuário, pessoa ou documento, as partes incluem os movimentos
+       que o filtro esconde: o saldo continua o **da linha de saldo**, não o do filtro (a compra no meio das vendas
+       mostra o estoque de verdade antes dela). A variação nula vai pelo `is null` e a outra pela igualdade (o
+       `is not distinct from` não é condição do índice; decisão 178). A mesma conta serve à leitura inteira da
+       exportação do F2-B33 (lá sem o limite; as partes continuam disjuntas).
+     - **O gravado vai junto** (`saldoAnteriorGravado`/`saldoPosteriorGravado`): o recalculado difere do gravado quando
+       um lançamento tem data no passado — a venda offline sincronizada tarde (`data_movimento` = `finalizada_em`), o
+       "Definir" na hora da contagem, a compensação —; o ERP mostra a nota e os gravados no ícone. O recalculado
+       **fecha com `saldos_estoque`**: com o período até hoje, o saldo posterior do último movimento de cada linha é a
+       projeção (o teste confere em todas as linhas).
+     - **Colunas** (compatíveis com o export do Nuvem3 na MD 3.7.2): `CodigoInterno`/`NomeProduto` (com o código do
+       produto), `EstoqueAnterior`/`QtdMovimentada`/`EstoqueAtual` (os recalculados), `DataHora` (ISO com os
+       microssegundos), `Usuario`, `TipoMovimento` (código e nome), **`idmovimentacaoestoquetipo`** (o
+       `tipos_movimento_estoque.id_nuvem3`, nulo quando não confirmado: no levantamento só o 28 das transferências),
+       `Estoque` e `nomeLoja` (a loja do documento), `idmovimentacaoestoque` (o `id`; o movimento não tem código
+       legível próprio, o número que a pessoa reconhece é o do documento), `idvenda` (o `documento.id` da venda) e
+       `PessoaVenda` (o cliente), **`fornecedornf`** (o fornecedor do recebimento ou da nota, que no Nuvem3 vinha
+       vazio), `sigla` (a unidade do documento; sem ela, a do produto) e `nomeVariacao`; mais o tipo de estoque, a
+       **`unidadeBase`** (a sigla do produto: a unidade da quantidade e dos saldos, que estão sempre na unidade base,
+       MD 3.7.2) e o **`fator`** do documento (o recebimento de 2 CX com fator 12 grava 24 com `sigla` = CX: sem os
+       dois, a tela leria 24 caixas), a observação, **`CustoUnitario`/`CustoTotal`** gravados no movimento (só com
+       `produtos.ver_custo`: sem ela as duas vêm nulas, nem saem do banco) e o **Documento** (tipo, id para o link e o número). Os nomes do local, do
+       produto e da pessoa escolhidos voltam em `referencias` (o seletor reaberto pelo link mostra o nome). **A
+       pessoa sai sempre que o movimento tem `pessoa_id`** (o filtro Pessoa acha o movimento em qualquer documento, e a
+       coluna mostra quem ele achou): em `fornecedor` no recebimento e na nota, em `pessoaVenda` nos demais (a
+       devolução avulsa de cascos e o `ACERTO_COMPENSACAO` saíam com "—" no filtro de um cliente). A constante da
+       localização da auditoria fica para o F2-B33, com o provedor da exportação que a usa.
+     - **`prepararFiltrosMovimentacao`** (uma ida ao banco antes da página; servirá de `preparar` ao provedor do
+       F2-B33): o fuso da empresa como **parâmetro** (decisão 178: com o fuso numa subconsulta o planejador não conhece
+       o começo e o fim do período), a existência do local, os tipos de movimento e os nomes de `referencias`. A
+       página roda numa transação `read only` com `set local jit = off` (as subconsultas do saldo têm custo estimado
+       alto; decisão 178).
+     - **`GET /referencias/tipos-movimento-estoque`** (qualquer usuário autenticado, como as outras referências):
+       código, nome, sinal, documento, `idNuvem3` e ativo, inclusive os inativos (o razão antigo ainda os tem), para a
+       multisseleção do ERP.
+     - **Carga** (`pnpm --filter api carga:movimentacao`, fora do CI; ~8 min aqui, quase tudo gerando a massa do
+       F2-B28 com **4 milhões de movimentos**; pela rota de verdade com a API no mesmo processo; páginas de 50; o pior
+       de 3; apaga os bancos no fim). 12 meses (01/11/2025 a 31/10/2026) da Loja 1 (1,62 milhão de movimentos; o
+       produto mais movimentado com 135.532): **1ª página 40 ms**; **página do meio pelo cursor 98 ms**; **última
+       página 170 ms** (o saldo anterior lê a história mais longa); só as compras 29 ms; o produto mais movimentado
+       27 ms; um fornecedor 51 ms; o operador com menos movimentos 23 ms. Critério de pronto (< 5 s): ok em todos.
+       **EXPLAIN (ANALYZE, BUFFERS)** registrado pela carga (`resultado.explain`, o melhor de 3, com o JIT
+       desligado): 1ª página 1,8 ms e 509 páginas de 8 kB (Index Scan `ix_movimentos_estoque_estoque_data` 51 linhas
+       ← Index Only Scan `ix_movimentos_estoque_linha_data` para o saldo); página do meio 94 ms e 6.396 páginas
+       (o mesmo caminho; o `linha_data` lê 236 mil entradas: a história das linhas da página antes delas, só pelo
+       índice); o produto mais movimentado 3,7 ms e 2.551 páginas. O frio não foi medido neste bloco: a página do meio toca
+       ~6.400 páginas (~50 MB), e a decisão 176 mediu ~8.300 páginas do mesmo índice em 152 ms com o cache frio.
+     - **Testes**: `test/integracao/relatorio-movimentacao.test.ts` (a ordem e o cursor sem repetir nem pular, com 25
+       movimentos no mesmo instante atravessando a página; o saldo que fecha com `saldos_estoque` em todas as linhas e
+       encadeia na ordem da data; o "Definir" com a hora da contagem antes de três lançamentos e lançado depois deles,
+       com o gravado diferente do recalculado; o período que começa do saldo de antes dele; a linha de saldo que
+       atravessa a página — o primeiro movimento dela na 2ª página soma desde o começo, não desde o cursor —, sem e
+       com filtro; o filtro que esconde um movimento entre dois da página — o recebimento entre a entrada e a saída
+       no filtro "Acerto" — sem mudar o saldo; a venda pelo `/sync` com o cliente, chegada depois de um "Definir" de
+       contagem posterior — o `numero_exibicao` na coluna e no filtro por texto, o recalculado diferente do gravado e
+       a compensação com o nome do cliente no filtro Pessoa —; o recebimento com fator 12 em `unidadeBase`/`fator`;
+       os filtros de tipos — em vírgulas e repetido —, documento com número, pessoa, usuário e produto com o saldo da
+       linha de saldo; o
+       fornecedor, o documento e o `id_nuvem3`; o custo só com "Ver custo"; o estoque fora dos permitidos e sem a
+       permissão do relatório; a validação do período, do cursor, dos tipos e do documento; o razão idêntico no fim) e
+       `relatorios.spec.ts` no shared. O ERP é a decisão 67 do README do ERP. A sintética, a exportação de 12 meses
+       em tarefa e o "Ver movimentação" ficam no F2-B33.
 
 ### Operação – tarefas em segundo plano (API)
 

@@ -4,6 +4,7 @@ import {
   type CfopOpcao,
   type EnderecoCep,
   type NcmOpcao,
+  type TipoMovimentoEstoqueOpcao,
   type UnidadeMedida,
 } from '@genesis/shared';
 import { and, asc, eq, ilike, isNull, like, sql } from 'drizzle-orm';
@@ -12,7 +13,15 @@ import { contem } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
-import { cfops, municipios, ncms, paises, ufs, unidadesMedida } from '../database/empresa/schema/index.js';
+import {
+  cfops,
+  municipios,
+  ncms,
+  paises,
+  tiposMovimentoEstoque,
+  ufs,
+  unidadesMedida,
+} from '../database/empresa/schema/index.js';
 import type { Servicos } from '../servicos.js';
 
 const filtroMunicipios = z.object({
@@ -110,6 +119,29 @@ export class ReferenciasController {
         .where(and(isNull(unidadesMedida.excluidoEm), eq(unidadesMedida.ativo, true)))
         .orderBy(asc(unidadesMedida.sigla)),
     );
+  }
+
+  /**
+   * Tipos de movimento de estoque (ERP 13.1.3; MD 3.7.1, seed 7.3), inclusive os inativos (o razão antigo ainda os
+   * tem): a multisseleção da Movimentação (16.5; F2-B32), na ordem do nome.
+   */
+  @Get('referencias/tipos-movimento-estoque')
+  async tiposMovimentoEstoque(): Promise<TipoMovimentoEstoqueOpcao[]> {
+    const linhas = await this.s.tenancy.cx().consulta((db) =>
+      db
+        .select({
+          codigo: tiposMovimentoEstoque.codigo,
+          nome: tiposMovimentoEstoque.nome,
+          sinal: tiposMovimentoEstoque.sinal,
+          documentoTipo: tiposMovimentoEstoque.documentoTipo,
+          idNuvem3: tiposMovimentoEstoque.idNuvem3,
+          ativo: tiposMovimentoEstoque.ativo,
+        })
+        .from(tiposMovimentoEstoque)
+        .where(isNull(tiposMovimentoEstoque.excluidoEm))
+        .orderBy(asc(tiposMovimentoEstoque.nome)),
+    );
+    return linhas.map((t) => ({ ...t, sinal: t.sinal as -1 | 0 | 1 }));
   }
 
   /** CFOPs de saída (ERP 8.2.15): `prefixo=5` (dentro do estado) ou `6` (fora). */

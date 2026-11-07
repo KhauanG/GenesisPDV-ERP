@@ -1079,6 +1079,46 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       marca, 20 por página e a página 2 com o total da API, a data-base de ontem, o ajuste no clique de 15 para 12, o
       acerto "Relatório Estoque Atual" na lista e o Excel que vira tarefa com o link no aviso e no ícone Tarefas; o
       servidor do e2e baixa na hora só até 10 linhas, `E2E_EXPORTACAO_NA_HORA`).
+67. **Relatório Movimentação de Estoque, visão analítica** (Fase 2, F2-B32; ERP 16.5, 3.1, 3.5; README da API ›
+    decisão 179; `src/paginas/relatorios/MovimentacaoEstoque.tsx` (novo), `src/componentes/listagem/Listagem.tsx`
+    (os filtros `multisselecao` e `componente`), `src/componentes/relatorio/Relatorio.tsx` (a `nota` e os filtros
+    usados das multisseleções), `menu.ts` (o item pronto), `rotas.tsx`). Rota `/relatorios/movimentacao-estoque`
+    (`relatorios.movimentacao_estoque`).
+    - **Filtros** (na URL, gerado só no Filtrar): **Local de estoque** (obrigatório, sem "Todas": começa no estoque
+      ativo da loja de contexto, ERP 3.1; sem ela, no primeiro ativo permitido; a lista traz também os inativos,
+      marcados "(inativo)", para o histórico de um local desativado — a API aceita o inativo, só recusa o excluído), **Data inicial** e **Data final** (padrão: do
+      primeiro dia do mês até hoje, no fuso da empresa; a API recusa mais de 366 dias), **Tipos de movimento**
+      (multisseleção das referências, `tiposMovimento=A,B`), **Produto** (o `<SeletorProduto>`, com `produtos.ver`),
+      **Usuário** (com `usuarios.ver`, como o "Operador" das vendas), **Documento** (o tipo) e **Nº do documento**, e
+      **Pessoa (cliente ou fornecedor)** (o `<SeletorPessoa>`, com `pessoas.ver`). Os seletores reabertos pelo link
+      mostram o nome pelas `referencias` da resposta.
+    - **Dois tipos novos de filtro** no `FiltroListagem` (servem a listagens e relatórios): `multisselecao` (o
+      `MultiSelect` do Mantine, o valor em vírgulas) e `componente` (o campo desenhado por `renderizar`, para os
+      seletores com busca no servidor; `descrever` dá o texto dos "Filtros" da impressão). O `<Relatorio>` ganhou a
+      `nota` (o texto pequeno acima da tabela, também na impressão).
+    - **Colunas** (as do export do Nuvem3 e as novas): Data/hora, Ref. Interna, Produto (link para o cadastro; com a
+      variação quando houver), Tipo de movimento (com o tipo do Nuvem3 na dica quando confirmado), Tipo de estoque,
+      Est. anterior, Qtd. movimentada (verde/vermelha, com o sinal), Est. atual, **Unidade** (a do produto: a da
+      quantidade e dos saldos, sempre na unidade base), **Unid. do documento** (a `sigla` do Nuvem3 com o fator quando
+      não é 1, ex.: "CX ×12" — 2 CX entram como +24; a nota também explica), Custo unit. e Custo total
+      (só com `produtos.ver_custo`; a API também as manda nulas), **Documento** (o rótulo com o número — "Venda
+      1-0042", "Acerto Nº 5", "Recebimento Nº 7", "NF-e 1234", "Transferência Nº 3" — e o link para a tela dele
+      com a permissão de vê-la), Cliente/Fornecedor (a pessoa do movimento sempre que há: também a devolução de
+      cascos e a compensação de uma venda, as que o filtro Pessoa acha), Usuário e Loja.
+    - **Saldo recalculado**: a nota explica que Est. anterior e Est. atual seguem a ordem da data e hora de cada
+      movimento e podem diferir do gravado no lançamento; quando diferem, o ícone laranja ao lado do saldo mostra os
+      gravados na dica (a venda offline que chegou depois, o "Definir" na hora da contagem).
+    - **Paginação por cursor** (`paginacao: 'cursor'`, decisão 65): Próxima/Anterior com o `proximoCursor` da API,
+      "Página N" sem total (um ano de uma loja passa de um milhão de movimentos), 20/25/35/50 por página (padrão 50).
+      O Exportar tem por enquanto só PDF e Imprimir (a página aberta): o Excel/CSV de 12 meses, em tarefa, é do
+      F2-B33, com a visão sintética e o link "Ver movimentação" no produto e no Estoque Atual. O item do menu já fica
+      pronto, porque a tela abre (a rota "Em construção" daria conflito com a rota de verdade).
+    - Testes: `MovimentacaoEstoque.test.tsx` (as colunas, o custo, o documento com o link e os filtros da URL
+      mandados à API sem página; sem "Ver custo" sem as colunas de custo, o ícone do gravado diferente e o documento
+      sem link sem a permissão; Próxima/Anterior pelo cursor; o padrão do mês e do primeiro local ativo, só depois do
+      Filtrar, e o inativo marcado que se escolhe à mão; o estoque da loja de contexto como padrão; a unidade do
+      produto ao lado da quantidade e a do documento com o fator; a multisseleção marcada que manda os códigos e os
+      "Filtros" da impressão com os nomes dos tipos e o `descrever` do produto e da pessoa).
 
 ## O que ainda não foi feito (Fase 0)
 
