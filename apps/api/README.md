@@ -77,6 +77,7 @@ curl -X POST localhost:3000/api/auth/login -H 'content-type: application/json' \
 | `typecheck`, `test`, `test:unit`, `test:integracao`                                                                                   | Verificação de tipos; todos os testes; só unitários (sem banco); só integração (PostgreSQL)                                                                                                         |
 | `test:sync-triggers`                                                                                                                  | Toda tabela do registro de fluxos (`src/sync/fluxos.ts`) tem `tg_<tabela>_versao` com `fn_versao` e `ix_<tabela>_versao` (MD 1.5)                                                                   |
 | `test:limpar`                                                                                                                         | Remove bancos e roles de teste (integração e e2e do PDV) deixados por execuções interrompidas (só os sem conexão ativa)                                                                             |
+| `carga:razao [--movimentos=4000000] [--produtos=2000] [--manter] [--so-massa] [--saida=arq.json]`                                      | Fora do CI: massa de 1 ano do razão (3 lojas, CD, Treino) num banco descartável, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois dos índices da 0026 e o heap do replay; apaga os bancos no fim (decisão 176) |
 | `db:migrate:controle`                                                                                                                 | Cria o `genesis_control` se não existir, aplica as migrações e o seed mínimo do controle                                                                                                            |
 | `db:migrate:empresas [--empresas=100001,100002] [--lote=4] [--parar-no-primeiro-erro]`                                                | Migra todas as empresas `ativa`/`suspensa`: canário primeiro, depois as demais; reaplica referências, catálogo de permissões e seed idempotente; sai com código 1 se alguma falhar                  |
 | `db:referencias [--empresas=…]`                                                                                                       | Recarrega referências nacionais, catálogo de permissões e seed em todas as empresas                                                                                                                 |
@@ -196,6 +197,7 @@ compilados na mesma imagem (`node dist/cli/<comando>.js`, pelo `implantar.sh tar
   `create index concurrently`) vai em `PREPARACOES_MIGRACAO_EMPRESA` (`src/database/migracoes/preparacoes-empresa.ts`):
   o executor o roda fora de transação, na mesma conexão, logo antes da migração da tag, só se ela ainda vai ser
   aplicada. Tem de ser idempotente. Quem aplica o journal à mão num banco com dados passa as preparações (decisão 146).
+  Hoje: o preenchimento da `seq_lancamento` antes da 0017 (decisão 146) e os índices do razão antes da 0026 (decisão 176).
   O que ela tem a contar volta como `RelatoPreparacao` (`avisos` e `dados`): o `MigradorEmpresas` põe os avisos no
   resultado da empresa (terminal do `db:migrate:empresas`, modal e log do "Aplicar") e o relato em
   `auditoria_plataforma` (`migracao_preparada`, com a empresa), porque a segunda passada já não acha o que relatar.
@@ -4482,6 +4484,121 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        de cada um (o Master também com o inativo marcado; sem `transferencias.ver`, 403), `origemPermitida` e
        `destinoPermitido` no detalhe de cada um, o conferente recebendo tudo como enviado, e o rascunho com a origem
        inativada depois, ainda da origem e excluído.
+
+176. **Desempenho do razão: massa de carga, planos de consulta, os índices da 0026 e "sem particionamento na Fase
+     2"** (Fase 2, F2-B28; MD 3.7.2; implantação de 03/11/2026, 2 GB; `test/carga/massa-razao.ts` (novo),
+     `src/estoques/indices-razao.ts` (novo), `drizzle/empresa/0026_indices_razao.sql`, `PREPARACOES_MIGRACAO_EMPRESA`).
+     Medido **antes** de escrever os relatórios do PR-7 (F2-B29 a F2-B33), para que eles já nasçam com os índices.
+     O PDV não muda (`movimentos_estoque` não desce; `Esquema.g.cs` igual).
+     - **Massa** (`pnpm --filter api carga:razao`, fora do CI): ambiente descartável no PostgreSQL de `DATABASE_URL`
+       (o dos testes de integração), uma empresa com 3 lojas, o CD (estoque `deposito` sem loja) e a Treino, 2.000
+       produtos e **4 milhões de movimentos em 12 meses** (01/11/2025 a 01/11/2026), em ordem de lançamento, pela
+       regra do motor (`aplicarMovimentoNoSaldo`, a do replay) e gravados em lotes de 5.000 por `unnest` (o COPY
+       pediria outro pacote); a projeção é a do fim de cada linha, e o replay do recalcular no fim confere as duas
+       (**0 divergência**: a massa é um razão válido). Determinística (`--semente`). Mistura: VENDA_PDV 92% (cupons de
+       1 a 4 itens, popularidade de Zipf, 1% offline tardia até 48 h), TRANSF_SAIDA e TRANSF_ENTRADA 2,4% cada (a
+       reposição da loja pelo CD), CANC_VENDA_PDV 0,7% (estorno ao custo da venda), RECEB_NFE 0,6%, ACERTO_DEFINIR
+       0,5% (com o inventário inicial de cada estoque), ACERTO_ENTRADA/SAÍDA 0,6%, RECEB_MANUAL 0,3%,
+       ACERTO_COMPENSACAO 0,3%; por estoque: Loja 1 1,62 M, Loja 2 1,28 M, Loja 3 0,93 M, CD 0,11 M, Treino 0,06 M;
+       12.157 linhas de saldo. Tabela de 1.077 MB; os índices que ela já tinha somam de ~2,5 a ~3,2 GB, conforme a execução (o inchaço dos índices varia com a ordem das gravações). Gera em ~7 min; a execução
+       inteira (roteiro antes e depois, candidato descartado, replay) leva ~20 min e **apaga os bancos no fim**
+       (`--manter` ou `--so-massa` os deixam; `test:limpar` apaga).
+     - **Como foi medido**: PostgreSQL 16 local (4 CPUs, 15 GB, `shared_buffers` 128 MB e `work_mem` 4 MB, os padrões),
+       `EXPLAIN (ANALYZE, BUFFERS)`, o melhor de 3 ("quente": tudo no cache do Linux) e as **páginas** de 8 kB que a
+       consulta toca (cache + disco). Em produção (Cloud SQL PG 18 com 2 GB) a tabela e os índices de um ano
+       (~4,2 GB) não cabem na memória, então o número que importa é o de páginas e o **frio**: o PostgreSQL
+       reiniciado e o cache do Linux esvaziado antes de cada consulta (pior caso, medido à mão com o mesmo SQL do
+       roteiro). A exportação é lida de verdade por um cursor do servidor (`declare` + `fetch 10000`), como no
+       F2-B29: o planejador otimiza o cursor para a primeira fração.
+     - **Resultado** (12 meses; "todas as lojas" = as 3 lojas e o CD, sem a Treino; quente antes → depois; frio
+       antes → depois; páginas antes → depois):
+
+       | Consulta (bloco que a usa) | Quente | Frio | Páginas | Plano depois |
+       |---|---:|---:|---:|---|
+       | Analítica, 1ª página de 101 de uma loja (B32) | 389 → 0,1 ms | 699 → 3 ms | 138.009 → 99 | Index Scan `estoque_data` |
+       | Analítica, página do meio pelo cursor (B32) | 315 → 0,1 ms | 608 → 1 ms | 137.949 → 19 | Index Scan `estoque_data` |
+       | Analítica, só as compras (B32) | 99 → 5 ms | — | 34.173 → 3.933 | Index Scan `estoque_data` |
+       | Analítica, um produto (B32) | 0,5 → 0,5 ms | — | 457 → 457 | Index Scan `linha_data` + top-N |
+       | Saldo anterior das linhas da página (B32, "por janela") | 1.019 → 83 ms | 2.977 → 152 ms | 375.346 → 8.340 | Index Only Scan `linha_data` |
+       | Sintética de uma loja (B33) | 745 → 728 ms | 1.017 ms | 137.991 | Seq Scan + agregação |
+       | Saldo numa data-base (ontem), soma até a data (B31) | 769 → 985 ms | 1.060 → 1.277 ms | 137.931 → 95.839 | Index Only Scan `linha_data` |
+       | Saldo numa data-base (ontem), projeção − razão depois da data (B31) | 12 → 11 ms | 30 ms | 717 → 740 | Bitmap `estoque_data` |
+       | Idem, data-base 6 meses atrás (B31) | 905 → 683 ms | — | 75.458 → 84.576 | Index Only Scan `linha_data` |
+       | Última compra até o fim do período, uma loja / o CD (B33) | 108 / 35 ms | 1.322 ms (loja) | 34.173 / 11.805 | `ix_..._tipo_movimento` |
+       | Detalhe do acerto de 2.000 itens | 0,8 ms | — | 71 | `ix_..._documento` |
+       | Exportação de 12 meses de uma loja por cursor, 1,62 M linhas (B29/B33) | 1ª página 1.183 → 107 ms; total 6,9 → 6,4 s | — | — | o cursor deixa de ordenar 1,6 M linhas (Sort em disco) e lê o índice |
+       | Replay do recalcular, 1ª página de 10 mil | 18 → 13 ms | — | 9.897 → 9.902 | — |
+
+     - **Os dois índices da 0026** (`INDICES_RAZAO`): (1) `ix_movimentos_estoque_estoque_data (estoque_id,
+       data_movimento, id)` — a Movimentação de um local por período na ordem do cursor e a exportação em streaming;
+       225 MB por 4 M de movimentos, 3,8 s para criar aqui; também no schema Drizzle. (2)
+       `ix_movimentos_estoque_linha_data (estoque_id, produto_id, variacao_id, tipo_estoque_id, data_movimento, id)
+       include (quantidade)` — o saldo de cada linha até um ponto do cursor **só pelo índice**: é o "saldo anterior
+       recalculado por janela" da página da Movimentação, que sem ele lê a história inteira de cada linha da página na
+       tabela (3 s com o cache frio, e a página tem de abrir em menos de 1 s); 434 MB, 7,3 s para criar aqui. Fica
+       **fora do schema Drizzle** (o Drizzle 0.45 não declara `include`), como o BRIN e os únicos parciais desta
+       tabela. O `id` no índice é necessário: sem ele o desempate do cursor `(data_movimento, id) <= (…)` volta à
+       tabela (medido: 2,3 s com o cache frio).
+     - **Descartados pela medição**: o parcial `(estoque_id, produto_id, data_movimento desc) where tipo_movimento in
+       ('RECEB_MANUAL','RECEB_NFE')` (2 MB) — o CD cai de 35 para 5,5 ms, mas a loja fica igual (108 ms quente,
+       1,3 s frio: o planejador continua no `ix_movimentos_estoque_tipo_movimento`, que já separa as compras), e a
+       última compra é uma coluna da sintética, que roda em tarefa (B33); a medição repete em `CANDIDATOS_DESCARTADOS`.
+       Nenhum índice para a sintética e o saldo numa data-base pela soma: varrem a história do local (1,6 M a 3,9 M
+       linhas) e ficam em ~0,7–1 s quente e ~1–1,3 s frio, dentro do critério; um índice de cobertura para elas teria o
+       tamanho da tabela.
+     - **Critério de pronto** (com 4 milhões): a página de 12 meses de uma loja abre em **0,1 ms** quente e **3 ms**
+       frio (com o saldo anterior das linhas dela, 83 ms e 152 ms: < 1 s); o saldo numa data-base de todas as lojas sai
+       em **0,8–1,0 s** pela soma até a data (1,1–1,3 s frio) e em **11 ms** pela projeção menos o razão depois da data
+       (ontem): < 3 s; o recalcular da empresa inteira (`verificarSaldos`, 4 M de movimentos, 12.157 linhas, 89 s) fica
+       com o **pico de heap em 348 MB** (< 512 MB; RSS 537 MB) — o heap não cresce com o razão (páginas de 10 mil,
+       decisão 147), só o tempo.
+     - **`concurrently` fora da transação**: o executor (`aplicarMigracoes`) roda cada migração **dentro de uma
+       transação** (`begin` … `commit`, com `lock_timeout`), e `create index concurrently` não roda em transação. Segue
+       o padrão da 0017 (decisão 146): a preparação da tag `0026_indices_razao` (`garantirIndicesRazao`) cria os dois
+       com `concurrently` antes do `begin` da migração — as vendas do PDV continuam gravando; o inválido de um
+       `concurrently` interrompido é apagado e refeito; idempotente. Isso vale para todo caminho do executor, inclusive o
+       provisionamento da empresa nova (com a tabela vazia). A `.sql` só cria quando o journal é aplicado sem as
+       preparações, num bloco `do $$` que consulta o `pg_class` e roda o `create index` só se o nome não existir (e
+       refaz o inválido). Não usa o `create index if not exists` solto: ele pega a trava SHARE da tabela (que barra as
+       gravações) **antes** de ver que o índice existe, e na empresa existente a migração entraria na fila das vendas
+       até o `lock_timeout` (10 s) e falharia; com os índices da preparação prontos o bloco não pega trava nenhuma em
+       `movimentos_estoque`. O teste `migracao-indices-razao` aplica o journal sem as preparações e compara o
+       `pg_get_indexdef` com o da empresa provisionada, refaz um inválido pela `.sql` e reaplica a 0026 com uma
+       gravação aberta na tabela. Relato a quem migra (`relatoIndicesRazao`: os índices criados e o tempo, em
+       `auditoria_plataforma` `migracao_preparada`) só numa empresa com movimentos.
+     - **Produção** (Cloud SQL PG 18, 2 GB): a criação lê a tabela duas vezes (`concurrently`) e espera as transações
+       abertas; aqui foram 3,8 s + 7,3 s para 4 M de movimentos, e a empresa de hoje tem bem menos (o piloto é recente):
+       segundos, sem trava de escrita. Disco: +~660 MB por 4 M de movimentos (~+20% sobre os
+       índices que a tabela já tinha). Gravação: 100 mil movimentos num `insert` levaram ~10,3 s sem os dois, ~10,6 s só
+       com o primeiro e ~12,4 s com os dois (medida ruidosa, ~0,02 ms a mais por movimento; a venda do PDV grava
+       poucos movimentos por evento).
+     - **Para os blocos seguintes**: B32 pagina por `(data_movimento, id)` com `estoque_id` e o período (o
+       `ix_..._estoque_data` dá a ordem sem ordenar, inclusive com o filtro de tipos) e calcula o saldo anterior de cada
+       linha da página com a soma até o cursor pela chave da linha (o `linha_data`, só pelo índice); B29/B33 leem por
+       cursor do servidor (`declare`/`fetch`), que usa o mesmo índice; B31 calcula o saldo numa data-base pela
+       **projeção menos o razão depois da data** quando a data está na metade recente da história (11 ms ontem, 0,7 s seis
+       meses atrás) e pela soma até a data na metade antiga — os dois só leem a parte menor da história (o resultado é o
+       mesmo enquanto a projeção bate com o razão, que o recalcular confere). O `ix_movimentos_estoque_estoque_produto_data`
+       ficou quase coberto pelo `linha_data` (o planejador já prefere o novo na analítica de um produto): candidato a
+       remover depois dos relatórios, medindo (fora deste bloco).
+     - **Sem particionamento na Fase 2.** Com 4 milhões (um ano das 3 lojas) todas as consultas dos relatórios ficam
+       dentro dos critérios, e particionar `movimentos_estoque` mexe nas chaves: no PostgreSQL a tabela particionada só
+       aceita chave primária e índice único que contenham a coluna de partição (`data_movimento`), então a `pk(id)`, o
+       `uq_movimentos_estoque_idempotencia`, o `uq_..._compensacao` e o `uq_..._estorno` e as FKs que apontam para o
+       movimento (`estorno_de_id`, `compensa_movimento_id`) teriam de mudar, com o motor e o PDV dependendo da
+       idempotência. **Gatilho para particionar** (o primeiro que disparar; anual por `data_movimento`, MD 3.7.2): (1)
+       `movimentos_estoque` passar de **20 milhões** de linhas (~5 anos no ritmo de hoje); (2) em produção, o saldo
+       numa data-base de todas as lojas pela soma passar de **3 s**, ou a sintética de 12 meses de uma loja passar de
+       **5 s** (`EXPLAIN (ANALYZE, BUFFERS)` do roteiro da massa) — antes de particionar, a primeira resposta para esses
+       dois é um **fechamento mensal de saldos** por linha, que corta a história lida sem mexer nas chaves; (3) o replay do
+       recalcular da empresa inteira passar de **15 min** (89 s a 4 M; cresce linear). A massa de carga refaz a medição
+       (`--movimentos=20000000` simula ~5 anos; ~4,2 GB de disco, tabela e índices, por 4 M).
+     - **Testes**: `test/integracao/migracao-indices-razao.test.ts` — empresa nova e existente (esquema da 0025 com
+       10 mil movimentos) terminam com os mesmos dois índices válidos (definição lida do catálogo); na existente eles
+       vieram da preparação, com o relato; o inválido é refeito e a segunda passada só confere; a Movimentação sai do
+       `estoque_data` sem `Sort` e o saldo da linha até o cursor sai em `Index Only Scan` do `linha_data`. O
+       `seq-lancamento.test.ts` passou a filtrar o relato da 0017 (a 0026 também relata numa empresa com movimentos). A
+       carga com os tempos é a desta decisão (reproduzível pela semente; os tempos variam com a máquina).
 
 ### Operação – tarefas em segundo plano (API)
 

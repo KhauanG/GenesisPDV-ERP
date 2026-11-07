@@ -460,7 +460,7 @@ MD 3.6, 3.7, 3.8 · ERP 8 (completo), 9.8 (conversão), 10.3.2 (certificado), 13
 | Modelo de produto grande (variações, complementos; kit, ficha técnica e vasilhame já na Fase 1) | Entregar por blocos do acordeão; variações e complementos por último |
 | Variedade de XML de NF-e e regras da SEFAZ (consumo indevido do DF-e) | Biblioteca de XMLs reais de teste; respeitar `proxima_consulta_em` (MD 3.8.4) |
 | Custo médio incorreto contamina lucro e relatórios | Testes de propriedade sobre o razão; custo gravado em cada movimento permite auditoria |
-| Volume do razão (milhões de linhas por ano) | Índices do MD 3.7.2, relatórios paginados no servidor, particionamento planejado |
+| Volume do razão (milhões de linhas por ano) | Índices do MD 3.7.2 (com os da 0026, medidos com 4 milhões de movimentos no F2-B28), relatórios paginados no servidor; sem particionamento na Fase 2, com os gatilhos para particionar no README da API › decisão 176 |
 
 ---
 

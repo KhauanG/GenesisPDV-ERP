@@ -2396,6 +2396,10 @@ Um movimento de um produto num estoque. Imutável (`fn_protege_imutavel` sem col
   `ix_movimentos_estoque_estoque_produto_data (estoque_id, produto_id, variacao_id, data_movimento)`;
   `ix_movimentos_estoque_linha_seq (estoque_id, produto_id, variacao_id, tipo_estoque_id, seq_lancamento)` (cursor do
   replay por linha; migrações 0016/0017);
+  `ix_movimentos_estoque_estoque_data (estoque_id, data_movimento, id)` (Movimentação de um local por período, na ordem
+  do cursor, e a exportação em streaming) e `ix_movimentos_estoque_linha_data (estoque_id, produto_id, variacao_id,
+  tipo_estoque_id, data_movimento, id) include (quantidade)` (saldo de cada linha até um ponto do cursor, só pelo
+  índice) — migração 0026, medidos com 4 milhões de movimentos (README da API › decisão 176);
   `ix_movimentos_estoque_documento (documento_tipo, documento_id)`; `ix_movimentos_estoque_data_movimento` (BRIN);
   `ix_movimentos_estoque_tipo_movimento`; FKs em todas as colunas `_id` (exceto `evento_id`, `documento_*`).
 - CHECKs: `ck_movimentos_estoque_quantidade (quantidade <> 0)`; `ck_movimentos_estoque_fator (fator > 0)`;
@@ -2403,7 +2407,8 @@ Um movimento de um produto num estoque. Imutável (`fn_protege_imutavel` sem col
   `ck_movimentos_estoque_documento_tipo (documento_tipo in ('venda','troca','acerto','recebimento','nota_entrada','transferencia','vasilhame'))`;
   `ck_movimentos_estoque_saldo (saldo_posterior = saldo_anterior + quantidade)`.
 - O sinal é validado contra `tipos_movimento_estoque.sinal` pela API. Volume esperado (3 lojas): ~3–4 milhões de linhas
-  por ano; particionamento anual por `data_movimento` quando passar de 20 milhões.
+  por ano; **sem particionamento na Fase 2** (medido com a massa de carga do F2-B28): particionamento anual por
+  `data_movimento` quando passar de 20 milhões ou quando os gatilhos medidos da decisão 176 do README da API dispararem.
 
 #### 3.7.3 `saldos_estoque` (P, ↓ estoque da loja)
 

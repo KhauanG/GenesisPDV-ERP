@@ -333,7 +333,10 @@ describe('quebra só na emenda com os lançados depois da 0016 (F2-B2)', () => {
     const relatos: RelatoPreparacao[] = [];
     const r = await aplicarMigracoes(b.c, migracoes, {
       preparacoes: PREPARACOES_MIGRACAO_EMPRESA,
-      ganchos: { aoPreparar: async (_m, relato) => void relatos.push(relato) },
+      // Só o da 0017: a preparação da 0026 (índice do razão, decisão 176) também relata nesta empresa com movimentos.
+      ganchos: {
+        aoPreparar: async (m, relato) => void (m.tag === '0017_movimentos_seq_b' && relatos.push(relato)),
+      },
     });
     expect(r.aplicadas).toEqual(['0017_movimentos_seq_b', ...posteriores]);
     // O relatório do preenchimento chega a quem migra (o `MigradorEmpresas` o põe no resultado e na auditoria).

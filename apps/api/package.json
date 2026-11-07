@@ -24,6 +24,7 @@
     "db:particoes": "tsx src/cli/particoes.ts",
     "db:preencher-seq-lancamento": "tsx src/cli/preencher-seq-lancamento.ts",
     "db:recalcular-saldos": "tsx src/cli/recalcular-saldos.ts",
+    "carga:razao": "node --expose-gc --import tsx test/carga/massa-razao.ts",
     "empresa:criar": "tsx src/cli/empresa-criar.ts",
     "empresa:provisionamento": "tsx src/cli/empresa-provisionamento.ts",
     "admin:criar": "tsx src/cli/admin-criar.ts",

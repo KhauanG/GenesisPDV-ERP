@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (PR-6 juntado na `main` com os PRs #1 e #2 do Dependabot; aguardando a implantação do dono; PR-7 em andamento)._
+_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 em andamento: F2-B28 commitado)._
 
 ## Repositório
 
@@ -20,9 +20,10 @@ _Última atualização: 06/11/2026 (PR-6 juntado na `main` com os PRs #1 e #2 do
 
 ## Em produção
 
-- **ERP/API:** a `main` deste repositório (commit `a66397f`), implantada em 06/11/2026 16:27 UTC pela "Implantação"
-  daqui (a primeira com a chave SSH nova). Migrações de empresa até a **0024** (notas de entrada). Saúde:
-  https://erp.grupoicebeer.com.br/saude.
+- **ERP/API:** a `main` deste repositório (commit `45b07ec`: PR-6 transferências e os PRs #1 e #2 do Dependabot),
+  implantada pelo dono em 06/11/2026 23:35 UTC pela "Implantação" (CI verde; imagens montadas com
+  `setup-buildx-action` v4.4.1 e `build-push-action` v7.4.0). Migrações de empresa até a **0025** (transferências).
+  Saúde: https://erp.grupoicebeer.com.br/saude.
 - **PDV na página de download:** **0.10.0** (release `pdv-v0.10.0` deste repositório, publicado em 06/11/2026 16:19
   UTC): Central do PDV (engrenagem ⚙) e saúde do terminal no ERP.
 - Também em produção: a NF-e de fornecedor (F2-B18..B21), o diagnóstico de queda da API (README da API › decisão 166)
@@ -50,7 +51,7 @@ _Última atualização: 06/11/2026 (PR-6 juntado na `main` com os PRs #1 e #2 do
 | PR-3 inventário inicial e ajustes | B9–B12 | concluído (arquivo #18) |
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
-| PR-6 transferências | B22–B27 | concluído (#4, juntado em 06/11/2026 com a liberação do dono); **falta implantar** (migração **0025**) |
+| PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | **PR-7 relatórios de estoque** | **B28–B33** | **em andamento** (branch `claude/blissful-cray-cvroui`, recomeçado da `main` com o PR-6) |
 | PR-8 em diante | | não iniciados |
 
@@ -65,15 +66,27 @@ _Última atualização: 06/11/2026 (PR-6 juntado na `main` com os PRs #1 e #2 do
 | F2-B26 em trânsito, divergência a tratar e alerta (`em-transito.ts`: `sqlDivergenciaATratar`, `sqlPendenciasTransferencia`, `sqlSaldosComPendencias`; `apps/api/src/transferencias/alertas.ts` e a fila `genesis-alerta-transferencias` a cada hora; colunas em `GET /produtos/:id/saldos`, `GET /saldos-estoque`, no bloco Estoque do produto e na tela Saldos; a divergência fica na origem, fora do em trânsito; chave `estoque.transferencia_alerta_dias` = 3, padrão aplicado sem pergunta; sem migração; README da API › decisão 174; README do ERP › decisão 63) | **commitado** |
 | F2-B27 telas e romaneio (`apps/erp-web/src/paginas/estoques/Transferencias.tsx`, `transferenciaItens.ts` e `TransferenciasRomaneio.tsx`, rotas e menu; `GradeItens` com `linhasFixas`; na API, `GET /transferencias/dados-produtos`, `GET /transferencias/:id/romaneio`, a embalagem de compra nos itens e o alerta `TRANSFERENCIA_PARADA` aberto no detalhe — `apps/api/src/transferencias/romaneio.ts`; sem migração, PDV sem mudança; e2e `apps/erp-web/e2e/fluxo-transferencia.spec.ts` rodado localmente: verde; README da API › decisão 175; README do ERP › decisão 64) | **commitado** |
 
+### PR-7 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B28 desempenho do razão (massa de carga `apps/api/test/carga/massa-razao.ts` — `pnpm --filter api carga:razao`, fora do CI: 4 milhões de movimentos em 12 meses, 3 lojas, CD e Treino, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois e o heap do replay, apaga os bancos no fim; migração **`0026_indices_razao`** com `ix_movimentos_estoque_estoque_data (estoque_id, data_movimento, id)` e `ix_movimentos_estoque_linha_data (… tipo_estoque_id, data_movimento, id) include (quantidade)`, criados com `concurrently` pela preparação da tag (`apps/api/src/estoques/indices-razao.ts`); parcial de compras descartado; página de 12 meses de uma loja 0,1 ms quente / 3 ms frio, saldo numa data-base de todas as lojas 0,8–1,3 s, recalcular com pico de heap 348 MB; sem particionamento na Fase 2, com os gatilhos; PDV sem mudança; README da API › decisão 176) | **commitado** |
+| F2-B29 exportação em tarefa, em streaming | a fazer |
+| F2-B30 `<Relatorio>` paginado no servidor e ícone Tarefas | a fazer |
+| F2-B31 Estoque Atual com modal de ajuste | a fazer |
+| F2-B32 Movimentação analítica | a fazer |
+| F2-B33 Movimentação sintética, exportação e "Ver movimentação" | a fazer |
+
 ## Próximo passo
 
-1. **Implantar o PR-6 (dono):** workflow **Implantação** na `main` (commit `45b07ec` ou mais novo), aprovando o
-   environment `producao`. Leva a migração de empresa **0025** (transferências). Depois, em Usuários › Estoques
-   permitidos, liberar o CD **e as lojas que ele abastece** para quem monta as cargas: a sugestão de reposição exige o
-   destino permitido (D62 (2)). O PDV não muda (nenhum release novo).
-2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): workflow `genesis-bloco` bloco a bloco, a partir do F2-B28
-   (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui`.
-3. Numeração das próximas decisões nos READMEs: **API 176**, **ERP 65**, **PDV 81** (confira o último número no próprio
+1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
+   abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
+2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): workflow `genesis-bloco` bloco a bloco, no branch
+   `claude/blissful-cray-cvroui`; F2-B28 commitado (migração **0026**), próximo o **F2-B29**
+   (`docs/planos/fase2-plano.md`). Na implantação do PR-7, a 0026 cria os dois índices do razão com `concurrently`
+   (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo, sem pegar
+   trava na tabela.
+3. Numeração das próximas decisões nos READMEs: **API 177**, **ERP 65**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
