@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 em andamento: F2-B28 commitado)._
+_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 em andamento: F2-B28 e F2-B29 commitados)._
 
 ## Repositório
 
@@ -71,7 +71,7 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 | Bloco | Situação |
 |---|---|
 | F2-B28 desempenho do razão (massa de carga `apps/api/test/carga/massa-razao.ts` — `pnpm --filter api carga:razao`, fora do CI: 4 milhões de movimentos em 12 meses, 3 lojas, CD e Treino, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois e o heap do replay, apaga os bancos no fim; migração **`0026_indices_razao`** com `ix_movimentos_estoque_estoque_data (estoque_id, data_movimento, id)` e `ix_movimentos_estoque_linha_data (… tipo_estoque_id, data_movimento, id) include (quantidade)`, criados com `concurrently` pela preparação da tag (`apps/api/src/estoques/indices-razao.ts`); parcial de compras descartado; página de 12 meses de uma loja 0,1 ms quente / 3 ms frio, saldo numa data-base de todas as lojas 0,8–1,3 s, recalcular com pico de heap 348 MB; sem particionamento na Fase 2, com os gatilhos; PDV sem mudança; README da API › decisão 176) | **commitado** |
-| F2-B29 exportação em tarefa, em streaming | a fazer |
+| F2-B29 exportação em tarefa, em streaming (`apps/api/src/tarefas/exportar-relatorio.ts` — um provedor por relatório, `GET /relatorios/:relatorio/exportar` em `apps/api/src/relatorios/relatorios.controller.ts`: até 50 mil linhas baixa na hora, acima `202` com a tarefa `exportar_relatorio`, teto de 5 milhões; cursor do servidor, `.xlsx` pelo exceljs 4.4.0 `WorkbookWriter` (versão exata; aba nova a cada 1.048.575 linhas) ou `.csv`, multipart de 8 MiB enquanto escreve (`ArmazenamentoObjetos.gravarFluxo`) com a pressão de volta também na entrada do zip do exceljs; `arquivos` `planilha_exportacao` com 7 dias, auditoria `exportar`; `relatorios.exportar` + a do relatório, custo sem `produtos.ver_custo`; semáforo `EXPORTACAO_CONCORRENCIA` = 2 (mínimo 2) em toda geração de arquivo; o link do `GET /tarefas` não passa da retenção do arquivo (`downloadExpirado`); limite de inatividade no cliente S3 (`ARMAZENAMENTO_INATIVIDADE_MS`, 2 min) e `idle_in_transaction_session_timeout` na transação do cursor; **sem migração** (a categoria já estava no CHECK); carga `pnpm --filter api carga:exportacao` fora do CI: 1 milhão de linhas em `.xlsx` 48 s com pico de heap 116 MB e em `.csv` 15–16 s com 165–179 MB (< 300 MB); os relatórios que a usam são do F2-B31..B33; PDV sem mudança; README da API › decisão 177) | **commitado** |
 | F2-B30 `<Relatorio>` paginado no servidor e ícone Tarefas | a fazer |
 | F2-B31 Estoque Atual com modal de ajuste | a fazer |
 | F2-B32 Movimentação analítica | a fazer |
@@ -82,11 +82,11 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
 2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): workflow `genesis-bloco` bloco a bloco, no branch
-   `claude/blissful-cray-cvroui`; F2-B28 commitado (migração **0026**), próximo o **F2-B29**
-   (`docs/planos/fase2-plano.md`). Na implantação do PR-7, a 0026 cria os dois índices do razão com `concurrently`
+   `claude/blissful-cray-cvroui`; F2-B28 commitado (migração **0026**), F2-B29 implementado (sem migração), próximo
+   o **F2-B30** (`docs/planos/fase2-plano.md`). Na implantação do PR-7, a 0026 cria os dois índices do razão com `concurrently`
    (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo, sem pegar
    trava na tabela.
-3. Numeração das próximas decisões nos READMEs: **API 177**, **ERP 65**, **PDV 81** (confira o último número no próprio
+3. Numeração das próximas decisões nos READMEs: **API 178**, **ERP 65**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
@@ -109,5 +109,8 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
   `processo`; o `implantar.sh` guarda o log da API em `/opt/genesis/logs` (`implantar.sh logs`). Na próxima queda:
   `infra/producao/README.md` › A API reiniciou sozinha.
 - **Cloud SQL:** converter o trial antes de 26/11/2026.
+- **Bucket (dono, com o PR-7):** acrescentar a regra de ciclo de vida que aborta envio em partes incompleto
+  (`AbortIncompleteMultipartUpload`, 1 dia) junto das regras de `backups/` (`infra/producao/README.md` › Pendências): a
+  exportação de relatório em tarefa (F2-B29) envia em partes, e um reinício no meio deixa o envio aberto no bucket.
 - **G7 review** (achados menores da aba Sincronização da Central): conferir se algum ficou de fora antes de mexer de
   novo na Central.

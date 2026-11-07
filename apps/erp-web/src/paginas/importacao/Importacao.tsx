@@ -54,6 +54,8 @@ interface Tarefa {
   resultado: ResultadoImportacao | null;
   erro: string | null;
   download: string | null;
+  /** O relatório passou da retenção: não se baixa mais (o `download` vem `null`). */
+  downloadExpirado?: boolean;
 }
 
 const ROTULOS_ACAO: Record<AcaoLinhaImportacao, { rotulo: string; cor: string }> = {
@@ -501,6 +503,11 @@ export function Importacao({ tipoInicial = 'produtos' }: { tipoInicial?: TipoImp
                       Baixar relatório de inconsistências
                     </Button>
                   </Group>
+                )}
+                {t.downloadExpirado && (
+                  <Text size="sm" c="dimmed">
+                    O relatório de inconsistências expirou e não pode mais ser baixado.
+                  </Text>
                 )}
               </>
             )}

@@ -16,6 +16,7 @@ import { EnviadorEmail } from './infra/email.js';
 import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
 import { AtivacaoTerminais } from './sync/ativacao.js';
 import { CRON_TAREFAS_INTERROMPIDAS, VarreduraTarefasInterrompidas } from './tarefas/interrompidas.js';
+import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
 import { TarefasSegundoPlano } from './tarefas/tarefas.js';
 import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
@@ -90,6 +91,11 @@ export interface Servicos {
   importacoes: Importacoes;
   /** NF-e de fornecedor por XML (ERP 13.4; F2-B19): upload, fornecedor pelo emitente e a tarefa do lote grande. */
   notasEntrada: NotasEntrada;
+  /**
+   * Exportação de relatório (F2-B29, decisão 177): na hora até 50 mil linhas, em tarefa por streaming acima; cada
+   * relatório registra o seu provedor.
+   */
+  exportacoes: ExportacaoRelatorios;
   /** `GET /api/saude/detalhada` (Implantação do piloto, I1b). */
   saudeDetalhada: SaudeDetalhada;
   fechar(): Promise<void>;
@@ -161,6 +167,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     permissoes,
   });
   const notasEntrada = new NotasEntrada({ tenancy, tarefas, armazenamento, auditoria, permissoes });
+  const exportacoes = new ExportacaoRelatorios({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   const terminalAuth = new AutenticacaoTerminal(controle, resolvedor);
   const ativacao = new AtivacaoTerminais(controle, resolvedor, tenancy, auditoria, cifra);
   const manutencaoTerminais = new ManutencaoTerminais(controle, resolvedor, tenancy, auditoria, ativacao);
@@ -247,6 +254,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     custoCombos,
     importacoes,
     notasEntrada,
+    exportacoes,
     saudeDetalhada: new SaudeDetalhada(config, controle, resolvedor, tenancy, armazenamento),
     async fechar() {
       await fila.parar();

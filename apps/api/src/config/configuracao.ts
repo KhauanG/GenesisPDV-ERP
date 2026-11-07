@@ -116,6 +116,11 @@ const esquema = z
     ARMAZENAMENTO_CHAVE_ACESSO: z.string().optional(),
     ARMAZENAMENTO_CHAVE_SECRETA: z.string().optional(),
     ARMAZENAMENTO_CAMINHO: booleano.default(true),
+    /**
+     * Inatividade máxima (ms) da conexão de um pedido ao armazenamento: passou sem nenhum byte indo ou vindo, o pedido
+     * falha (e o SDK repete). Sem isso uma parte do envio pendurada na rede esperaria para sempre (decisão 177).
+     */
+    ARMAZENAMENTO_INATIVIDADE_MS: z.coerce.number().int().min(100).default(120_000),
     /** Esta instância também executa a fila (tarefas em segundo plano e e-mails); `false` = só enfileira. */
     FILA_TRABALHADOR: booleano.default(true),
     /**
@@ -232,6 +237,8 @@ export interface Configuracao {
     chaveAcesso: string | null;
     chaveSecreta: string | null;
     estiloCaminho: boolean;
+    /** Inatividade máxima da conexão de um pedido (`ARMAZENAMENTO_INATIVIDADE_MS`). */
+    inatividadeMs: number;
   };
   fila: {
     trabalhador: boolean;
@@ -318,6 +325,7 @@ export function carregarConfiguracao(env: Record<string, string | undefined> = p
       chaveAcesso: v.ARMAZENAMENTO_CHAVE_ACESSO ?? (ehLocal(v.AMBIENTE) ? 'genesis' : null),
       chaveSecreta: v.ARMAZENAMENTO_CHAVE_SECRETA ?? (ehLocal(v.AMBIENTE) ? 'genesis_dev_minio' : null),
       estiloCaminho: v.ARMAZENAMENTO_CAMINHO,
+      inatividadeMs: v.ARMAZENAMENTO_INATIVIDADE_MS,
     },
     fila: { trabalhador: v.FILA_TRABALHADOR, verificacaoRazaoCron: v.VERIFICACAO_RAZAO_CRON || null },
     versao: v.GENESIS_VERSAO,

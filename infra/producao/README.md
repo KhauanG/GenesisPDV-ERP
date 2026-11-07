@@ -987,5 +987,11 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   estilos inline; a URL assinada do armazenamento é de outro domínio).
 - Converter a instância de teste grátis do Cloud SQL em paga antes do fim do período de teste (~03/12/2026) e, nela,
   ligar backups automáticos e PITR (aí o dump do I1b vira a segunda cópia, fora do Cloud SQL).
+- Regra de ciclo de vida do bucket `{"action": {"type": "AbortIncompleteMultipartUpload"}, "condition": {"age": 1}}`
+  (pôr no mesmo arquivo das regras de `backups/`, acima): a exportação de relatório em tarefa envia o arquivo em
+  partes (README da API › decisão 177), e o processo que reinicia no meio deixa o envio aberto, cobrando, até ser
+  abortado. Também falta apagar os arquivos com `retencao_ate` vencida (exportações, 7 dias; relatório da importação,
+  30): hoje ninguém os apaga. O sistema já não os oferece (o `GET /tarefas` não assina link além da retenção e
+  mostra o arquivo como expirado), mas o objeto continua no bucket, ocupando espaço.
 - Configurar o Hermes com as regras de [Monitoramento](#monitoramento-hermes-i1b) (fora deste repositório) e, se
   quiser um segundo olhar independente, um monitor externo simples do `/saude` (VG 13).

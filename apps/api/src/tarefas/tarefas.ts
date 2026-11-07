@@ -64,6 +64,21 @@ export async function sessaoDaTarefa(
   };
 }
 
+/** Validade máxima de uma URL assinada (a assinatura do S3, SigV4, aceita até 7 dias). */
+export const VALIDADE_MAXIMA_DOWNLOAD_S = 7 * 86_400;
+
+/**
+ * Validade do link do arquivo de uma tarefa (ERP 3.6, "link expira em 7 dias"): 7 dias, sem passar do fim do dia
+ * `retencao_ate` (em UTC, como ele é gravado). `null` = a retenção já venceu: o arquivo não se baixa mais, mesmo que o
+ * objeto ainda esteja no bucket (apagá-lo é a pendência do `infra/producao/README.md`). Sem retenção, 7 dias.
+ * Assim cada `GET /tarefas` assina um link novo, mas nenhum vale além da retenção.
+ */
+export function validadeDownloadS(retencaoAte: string | null, agora = Date.now()): number | null {
+  if (!retencaoAte) return VALIDADE_MAXIMA_DOWNLOAD_S;
+  const restante = Math.floor((Date.parse(`${retencaoAte}T00:00:00Z`) + 86_400_000 - agora) / 1000);
+  return restante > 0 ? Math.min(VALIDADE_MAXIMA_DOWNLOAD_S, restante) : null;
+}
+
 export interface OpcoesTarefas {
   /** Intervalo do último sinal (padrão `SINAL_TAREFA_MS`; o teste usa um curto). */
   sinalMs?: number;
@@ -299,11 +314,19 @@ export class TarefasSegundoPlano {
     return marcadas;
   }
 
-  /** Tarefas do usuário (ícone "Tarefas" do cabeçalho, ERP 3.6), com link de download assinado (7 dias). */
+  /**
+   * Tarefas do usuário (ícone "Tarefas" do cabeçalho, ERP 3.6), com link de download assinado: 7 dias, sem passar da
+   * retenção do arquivo (`validadeDownloadS`). Retenção vencida → `download: null` e `downloadExpirado: true`.
+   */
   async doUsuario(usuarioId: string, tarefaId?: string) {
     const linhas = await this.tenancy.cx().consulta((db) =>
       db
-        .select({ t: tarefas, chave: arquivos.chaveArmazenamento, nome: arquivos.nomeOriginal })
+        .select({
+          t: tarefas,
+          chave: arquivos.chaveArmazenamento,
+          nome: arquivos.nomeOriginal,
+          retencaoAte: arquivos.retencaoAte,
+        })
         .from(tarefas)
         .leftJoin(arquivos, eq(arquivos.id, tarefas.arquivoId))
         .where(and(eq(tarefas.usuarioId, usuarioId), tarefaId ? eq(tarefas.id, tarefaId) : undefined))
@@ -314,23 +337,25 @@ export class TarefasSegundoPlano {
     return {
       pendentes,
       itens: await Promise.all(
-        linhas.map(async ({ t, chave, nome }) => ({
-          id: t.id,
-          tipo: t.tipo,
-          status: t.status,
-          progressoPct: t.progressoPct,
-          mensagem: t.mensagem,
-          resultado: t.resultado,
-          erro: t.erro,
-          criadoEm: t.criadoEm.toISOString(),
-          concluidaEm: t.concluidaEm?.toISOString() ?? null,
-          download: chave
-            ? await this.armazenamento.urlDownload(chave, {
-                nomeArquivo: nome ?? undefined,
-                validadeS: 7 * 86_400,
-              })
-            : null,
-        })),
+        linhas.map(async ({ t, chave, nome, retencaoAte }) => {
+          const validadeS = chave ? validadeDownloadS(retencaoAte) : null;
+          return {
+            id: t.id,
+            tipo: t.tipo,
+            status: t.status,
+            progressoPct: t.progressoPct,
+            mensagem: t.mensagem,
+            resultado: t.resultado,
+            erro: t.erro,
+            criadoEm: t.criadoEm.toISOString(),
+            concluidaEm: t.concluidaEm?.toISOString() ?? null,
+            download:
+              chave && validadeS
+                ? await this.armazenamento.urlDownload(chave, { nomeArquivo: nome ?? undefined, validadeS })
+                : null,
+            downloadExpirado: !!chave && validadeS === null,
+          };
+        }),
       ),
     };
   }

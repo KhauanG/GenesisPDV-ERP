@@ -1081,7 +1081,7 @@ A fila técnica (ex.: pg-boss) usa schema próprio.
 | Coluna | Tipo | Nulo | Padrão | Descrição |
 |---|---|---|---|---|
 | `id`, `criado_em`, `atualizado_em` | | | | |
-| `tipo` | `varchar(40)` | não | — | `exportar_produtos`, `exportar_clientes`, `importar_produtos`, `importar_clientes`, `download_xml`, `recalcular_saldos`, `exportar_listagem`, … |
+| `tipo` | `varchar(40)` | não | — | `exportar_produtos`, `exportar_clientes`, `importar_produtos`, `importar_clientes`, `download_xml`, `recalcular_saldos`, `exportar_listagem`, `exportar_relatorio` (Fase 2, F2-B29: exportação de relatório acima de 50.000 linhas, em streaming; o arquivo vai para `arquivos` com a categoria `planilha_exportacao` e a retenção de 7 dias), … |
 | `status` | `varchar(12)` | não | `'na_fila'` | `na_fila`, `executando`, `concluida`, `falhou`, `cancelada` |
 | `parametros` | `jsonb` | não | `'{}'` | |
 | `progresso_pct` | `smallint` | não | `0` | 0–100 |

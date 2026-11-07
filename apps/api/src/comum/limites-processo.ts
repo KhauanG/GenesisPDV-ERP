@@ -10,7 +10,7 @@ export class Semaforo {
   private emUso = 0;
   private readonly fila: (() => void)[] = [];
 
-  constructor(private readonly limite: number) {}
+  constructor(readonly limite: number) {}
 
   async executar<T>(fn: () => Promise<T>): Promise<T> {
     const liberar = await this.adquirir();

@@ -56,7 +56,37 @@ export const exportacaoQuerySchema = z.object({
 });
 
 /**
- * Teto da exportação síncrona. Acima de `LIMITE_TODOS` o ERP 3.1 prevê gerar o arquivo em segundo plano (3.6); até
- * a central de tarefas chegar ao cabeçalho, a exportação responde na hora até este limite.
+ * Teto da exportação síncrona (ERP 3.5: "relatórios que passam de 50.000 linhas rodam como tarefa"). As listagens
+ * (produtos, pessoas, usuários) recusam acima dele; a exportação de relatório (F2-B29, README da API › decisão 177)
+ * baixa na hora até ele e vira tarefa `exportar_relatorio` acima.
  */
 export const LIMITE_EXPORTACAO = 50_000;
+
+/**
+ * Teto da exportação de relatório em tarefa (F2-B29): acima disto a API pede para refinar os filtros. O `.xlsx` tem
+ * até 1.048.575 linhas de dados por aba, então os 5 milhões saem em 5 abas (o `.csv` não tem limite de linhas).
+ */
+export const LIMITE_EXPORTACAO_TAREFA = 5_000_000;
+
+/** Tipo da tarefa da exportação de relatório (ícone Tarefas, ERP 3.6). */
+export const TAREFA_EXPORTAR_RELATORIO = 'exportar_relatorio';
+
+/** Resposta `202` da exportação que virou tarefa: o ERP acompanha em `GET /tarefas/:id` e baixa pelo link dela. */
+export const exportacaoEmTarefaSchema = z.object({
+  tarefaId: z.uuid(),
+  /** Linhas contadas no pedido (a leitura pode achar um pouco mais ou menos se o razão mudar no meio). */
+  linhas: z.number().int().min(0),
+});
+export type ExportacaoEmTarefa = z.infer<typeof exportacaoEmTarefaSchema>;
+
+/** `tarefas.resultado` da exportação de relatório concluída. */
+export const resultadoExportacaoRelatorioSchema = z.object({
+  relatorio: z.string(),
+  formato: z.enum(FORMATOS_EXPORTACAO),
+  linhas: z.number().int().min(0),
+  /** Abas do `.xlsx` (1 no `.csv`). */
+  abas: z.number().int().min(1),
+  tamanhoBytes: z.number().int().min(0),
+  nomeArquivo: z.string(),
+});
+export type ResultadoExportacaoRelatorio = z.infer<typeof resultadoExportacaoRelatorioSchema>;

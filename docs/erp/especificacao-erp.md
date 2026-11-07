@@ -389,7 +389,7 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 | Resultado | Cards de resumo (quando houver), tabela, gráfico (quando houver) |
 | Exportar | **Excel (.xlsx)**, **PDF** (layout de impressão com cabeçalho da empresa, filtros usados, data/hora e usuário) e **Imprimir** |
 | Lojas | Sempre limitado às lojas permitidas do usuário |
-| Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6) |
+| Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6). Na Fase 2 (F2-B29) a regra é só pelo número de linhas, contado no pedido (o tempo não se sabe antes de rodar): até 50.000 o arquivo baixa na hora; acima, a exportação vira a tarefa `exportar_relatorio` (`GET /api/relatorios/<nome>/exportar?formato=xlsx\|csv` responde `202` com a tarefa), que gera o `.xlsx` (ou o `.csv`) em streaming e deixa o link no ícone Tarefas; acima de 5.000.000 de linhas pede para refinar os filtros. O `.xlsx` passa para uma aba nova a cada 1.048.575 linhas (o limite do Excel). Exportar exige `relatorios.exportar` e a permissão do relatório; sem `produtos.ver_custo` as colunas de custo não saem |
 | Leitura | Consultas de relatório podem usar réplica de leitura do PostgreSQL quando existir |
 
 ### 3.6 Tarefas em segundo plano
@@ -397,7 +397,8 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 Importações, exportações grandes, relatórios pesados, download de XML e consulta à SEFAZ viram uma **tarefa**
 (`tarefas`, modelo 3.1.8: `tipo`, `status` `na_fila`/`executando`/`concluida`/`falhou`/`cancelada`, `progresso_pct`,
 `arquivo_id` do resultado, `erro`, `usuario_id`, `iniciada_em`, `concluida_em`). O cabeçalho do ERP tem o ícone **Tarefas** com contador; o usuário recebe
-notificação ao concluir e baixa o arquivo (link expira em 7 dias).
+notificação ao concluir e baixa o arquivo (link expira em 7 dias e nunca vale além da retenção do arquivo; passada a
+retenção, a tarefa mostra o arquivo como expirado).
 
 ### 3.7 Impressão
 

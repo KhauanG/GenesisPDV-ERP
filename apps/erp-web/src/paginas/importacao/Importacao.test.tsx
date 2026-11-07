@@ -495,7 +495,9 @@ describe('Importação com "Atualizar estoque" no CD (F2-B11)', () => {
                 progressoPct: 100,
                 mensagem: null,
                 erro: null,
+                // O relatório passou da retenção: a API não assina mais o link.
                 download: null,
+                downloadExpirado: true,
                 resultado: {
                   tipo: 'produtos',
                   criados: 0,
@@ -544,5 +546,9 @@ describe('Importação com "Atualizar estoque" no CD (F2-B11)', () => {
       '/estoque/acertos/a2',
     );
     expect(within(resultado).getByText(/Estoque definido pelos/)).toBeInTheDocument();
+    expect(within(resultado).getByText(/O relatório de inconsistências expirou/)).toBeInTheDocument();
+    expect(
+      within(resultado).queryByRole('link', { name: 'Baixar relatório de inconsistências' }),
+    ).not.toBeInTheDocument();
   });
 });

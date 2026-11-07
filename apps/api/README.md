@@ -78,6 +78,7 @@ curl -X POST localhost:3000/api/auth/login -H 'content-type: application/json' \
 | `test:sync-triggers`                                                                                                                  | Toda tabela do registro de fluxos (`src/sync/fluxos.ts`) tem `tg_<tabela>_versao` com `fn_versao` e `ix_<tabela>_versao` (MD 1.5)                                                                   |
 | `test:limpar`                                                                                                                         | Remove bancos e roles de teste (integração e e2e do PDV) deixados por execuções interrompidas (só os sem conexão ativa)                                                                             |
 | `carga:razao [--movimentos=4000000] [--produtos=2000] [--manter] [--so-massa] [--saida=arq.json]`                                      | Fora do CI: massa de 1 ano do razão (3 lojas, CD, Treino) num banco descartável, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois dos índices da 0026 e o heap do replay; apaga os bancos no fim (decisão 176) |
+| `carga:exportacao [--movimentos=1000000] [--produtos=2000] [--saida=arq.json]` | Fora do CI: a massa do `carga:razao` num banco descartável e a exportação do razão inteiro em tarefa (`.xlsx` e `.csv`), com o tempo, o pico de heap do processo e a conferência das linhas do arquivo; apaga os bancos no fim (decisão 177) |
 | `db:migrate:controle`                                                                                                                 | Cria o `genesis_control` se não existir, aplica as migrações e o seed mínimo do controle                                                                                                            |
 | `db:migrate:empresas [--empresas=100001,100002] [--lote=4] [--parar-no-primeiro-erro]`                                                | Migra todas as empresas `ativa`/`suspensa`: canário primeiro, depois as demais; reaplica referências, catálogo de permissões e seed idempotente; sai com código 1 se alguma falhar                  |
 | `db:referencias [--empresas=…]`                                                                                                       | Recarrega referências nacionais, catálogo de permissões e seed em todas as empresas                                                                                                                 |
@@ -153,6 +154,8 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `FILA_TRABALHADOR`                                                                                | `true`                                                          | Esta instância executa a fila (tarefas e e-mails); `false` só enfileira                                                                                                                                                              |
 | `VERIFICACAO_RAZAO_CRON` | vazia (desligada) | Cron (UTC, 5 campos) da verificação periódica do razão de estoque: só confere e abre o alerta `RAZAO_SALDO_DIVERGENTE`; corrigir é o `db:recalcular-saldos --corrigir`. Cron inválido recusa a subida; esvaziar desliga e remove o agendamento já gravado no pg-boss (decisão 147) |
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
+| `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
+| `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
@@ -326,6 +329,7 @@ tempos e contagens; a planilha e o estado com os códigos nunca saem da pasta te
 | @aws-sdk/client-s3 / s3-request-presigner | 3.1160.0                | S3 e URL assinada; checksums "flexíveis" só quando exigidos (compatível com MinIO/RustFS)                                                                           |
 | nodemailer / smtp-server (testes)         | 10.3.1 / 3.21.3         | e-mail transacional                                                                                                                                                 |
 | write-excel-file                          | 4.1.1                   | xlsx do "Exportar" das listagens (só depende do `fflate`); o `xlsx` (SheetJS) do npm está parado na 0.18 e o `exceljs` arrasta dependências antigas                 |
+| exceljs | 4.4.0 (exata) | só o `WorkbookWriter` em streaming da exportação de relatório em tarefa (F2-B29, decisão 177); MIT, 23 MB e ~120 pacotes transitivos (archiver, unzipper, jszip, fast-csv…: a parte de leitura vem junto e fica sem uso; a transitiva mais nova é de 07/10/2026, mais de duas semanas); o alerta moderado do `uuid@8` (GHSA-w5hq-g745-h8pq, `v3`/`v5`/`v6` com `buf`) não se aplica: o exceljs só chama `v4`. O síncrono continua no `write-excel-file` |
 | read-excel-file | 9.3.10 | leitura do xlsx da importação (mesmo autor do `write-excel-file`, só `fflate` + parser SAX); a 9.3.14 é de 29/10/2026 (menos de duas semanas) |
 | fast-xml-parser | 5.11.2 | XML da NF-e de fornecedor (F2-B18, decisão 163), com `processEntities: false` e `maxNestedTags`; a 5.12.0 é de 03/11/2026 (menos de duas semanas) |
 | xml-crypto / @xmldom/xmldom | 6.4.0 / 0.8.15 | conferência da assinatura XMLDSig da NF-e (decisão 163); o `@xmldom/xmldom` fixado na mesma versão que o `xml-crypto` usa, para o nó passado a `loadSignature` ser do mesmo DOM |
@@ -4599,6 +4603,144 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `estoque_data` sem `Sort` e o saldo da linha até o cursor sai em `Index Only Scan` do `linha_data`. O
        `seq-lancamento.test.ts` passou a filtrar o relato da 0017 (a 0026 também relata numa empresa com movimentos). A
        carga com os tempos é a desta decisão (reproduzível pela semente; os tempos variam com a máquina).
+
+177. **Exportação de relatório em tarefa, em streaming** (Fase 2, F2-B29; ERP 3.5, 3.6; MD 3.1.6, 3.1.8; decisão 93;
+     `src/tarefas/exportar-relatorio.ts` (novo), `src/comum/exportacao.ts`, `src/infra/armazenamento.ts`
+     (`gravarFluxo`), `src/relatorios/relatorios.controller.ts` (novo), `packages/shared/src/paginacao.ts`;
+     `test/carga/exportacao-razao.ts` (novo); **sem migração**: a categoria `planilha_exportacao` já está no
+     `ck_arquivos_categoria` desde a 0001 e a `tarefas` já tinha tudo). A infraestrutura comum que os relatórios do
+     F2-B31 a F2-B33 vão usar; nenhum relatório de verdade a usa ainda (o PDV não muda).
+     - **Provedor por relatório** (`ProvedorRelatorio`, registrado em `servicos.exportacoes.registrar`): `chave` (a
+       rota `GET /relatorios/<chave>/exportar?formato=xlsx|csv&<filtros>`), `nomeArquivo` (`Relatorio_…`; o arquivo sai
+       `Relatorio_…_DD_MM_AAAA_HH_MM.xlsx` por `nomeArquivoExportacao`), `permissao` do relatório, `entidade` e
+       `localizacao` da auditoria, os `filtros` (zod; a entrada crua vai para `tarefas.parametros` e é validada de novo
+       na execução), as `colunas` (`ColunaExportacao`, com `custo: true` nas de custo) e a `consulta` (o SQL inteiro,
+       com a ordem estável e o filtro dos estoques/lojas permitidos da sessão). `contar` é opcional: o padrão é
+       `count(*)` da consulta embrulhada, que mantém as junções e a ordenação (0,6 s para 1 milhão com duas junções);
+       os relatórios grandes do B32/B33 devem dar o seu, só na tabela do razão.
+     - **Regra comum** (`ExportacaoRelatorios.exportar`): exige `relatorios.exportar` (`@Permissao` da rota e de novo
+       no provedor) **e** a permissão do relatório (403 com as que faltam); valida os filtros (422); conta; até
+       `LIMITE_EXPORTACAO` (50.000, ERP 3.5) baixa na hora pelo `write-excel-file` de sempre (`200`, as linhas lidas
+       pelo mesmo cursor, auditoria `exportar` no download); acima, cria a tarefa **`exportar_relatorio`**
+       (`TAREFA_EXPORTAR_RELATORIO` no shared) e responde **`202`** com `{ tarefaId, linhas }`
+       (`exportacaoEmTarefaSchema`), que o ERP acompanha em `GET /tarefas/:id` (o ícone Tarefas é do F2-B30). O critério
+       é só o número de linhas (o "ou 30 s" do ERP 3.5 não se sabe antes de rodar). **Teto numérico**: acima de
+       `LIMITE_EXPORTACAO_TAREFA` (5 milhões) a API pede para refinar os filtros (422) — o `.xlsx` tem até 1.048.575
+       linhas de dados por aba (`LINHAS_POR_ABA_XLSX`): passou, o arquivo continua numa aba nova "Relatório (2)" com o
+       cabeçalho (5 milhões = 5 abas; o `.csv` não tem limite). Sem `produtos.ver_custo`, as colunas `custo` saem do
+       arquivo (`colunasVisiveis`), no download na hora e na tarefa. **Teto por usuário**: no máximo 2 exportações em
+       tarefa na fila ou executando (`EXPORTACOES_PENDENTES_POR_USUARIO`; 422 "Você já tem 2 exportação(ões) em
+       andamento…"): a fila roda uma tarefa por vez, e sem o teto um usuário enfileiraria horas de exportação na
+       frente das importações e dos outros (teto "macio": dois pedidos no mesmo instante podem passar juntos).
+     - **Executor**: a sessão de quem pediu com o acesso **do momento** (`sessaoDaTarefa`): quem perdeu a permissão ou o
+       estoque entre o pedido e a execução não exporta com o acesso antigo (as colunas de custo também são decididas
+       aí). Lê a consulta por um **cursor do servidor** (`declare … no scroll cursor` + `fetch 10000`, num instantâneo
+       `repeatable read read only`, `lerPorCursor` sobre `lotesPorCursor` — o mesmo embrulho na exportação na hora e
+       na tarefa, para as duas lerem com as mesmas regras): o `declare` aceita os `$n` do protocolo estendido (o roteiro da
+       massa usava literais; os parâmetros funcionam no 16 e no 18), e o planejador otimiza o cursor para a primeira
+       fração, o que no razão é o `ix_movimentos_estoque_estoque_data` sem ordenar (decisão 176). Cada lote vai para o
+       escritor (`abrirEscritorPlanilha`): o `.xlsx` pelo `WorkbookWriter` do **exceljs 4.4.0** (versão exata; strings em
+       linha, sem a tabela de strings compartilhadas, que cresceria com o arquivo; cabeçalho em negrito e congelado),
+       o `.csv` com as regras do síncrono reaproveitadas (`textoCsv`: proteção contra fórmula com o apóstrofo, BOM,
+       `;`, vírgula decimal; datas `dd/mm/aaaa hh:mm` na hora de Brasília, `horaDeParede`, também no `.xlsx`). Texto que
+       começa com `=` no `.xlsx` é célula de texto, nunca fórmula (como no `write-excel-file`; teste). O progresso
+       (`progresso_pct` até 95, "N de M linhas") usa o total contado no pedido.
+     - **Envio em multipart enquanto escreve** (`ArmazenamentoObjetos.gravarFluxo`): junta 8 MiB
+       (`TAMANHO_PARTE_BYTES`; o S3, o MinIO e o XML API do Google Cloud Storage, o de produção, pedem ≥ 5 MiB por
+       parte menos a última) e envia uma parte por vez com os comandos do `@aws-sdk/client-s3` que já estava (sem o
+       `@aws-sdk/lib-storage`); o arquivo menor que uma parte vai num `PutObject` só; o sha256 é calculado no caminho
+       (no multipart ele fica só em `arquivos`, não nos metadados do objeto); falhou → `AbortMultipartUpload`. O envio
+       que falha destrói a saída e a tarefa falha com "O arquivo não pôde ser gravado no armazenamento: …"; o gerador
+       que falha destrói a saída com o erro dele. **Parte pendurada**: o `S3Client` não tinha limite de tempo nenhum
+       (no `@smithy/node-http-handler` 4.14 os três valem 0), e uma parte presa numa conexão meio aberta deixaria o
+       gerador parado na pressão de volta com a transação do cursor aberta ("idle in transaction": travas de leitura
+       no razão, que fariam a migração do próximo deploy cair no `lock_timeout`, o horizonte do vacuum preso, uma
+       conexão do pool, uma vaga do semáforo e a fila inteira, com o sinal em dia). Agora o cliente tem limite de
+       **inatividade** (`socketTimeout` = `ARMAZENAMENTO_INATIVIDADE_MS`, 2 min; nenhum byte indo ou vindo — o envio
+       lento que anda continua) e 10 s para conectar: a parte parada falha, o SDK repete (3 tentativas), o envio é
+       abortado e o gerador sai com `rollback`. Defesa no banco: a transação do cursor leva
+       `set local idle_in_transaction_session_timeout = '10min'` (o cliente escuta o `error` da sessão derrubada
+       enquanto está emprestado; sem ouvinte, derrubaria o processo). Processo que morre no meio deixa um multipart aberto no bucket: a
+       regra de ciclo de vida "AbortIncompleteMultipartUpload" (o GCS tem) os limpa — a configurar junto das regras
+       de `backups/` (`infra/producao/README.md`, Pendências). Tarefa interrompida: "Nenhum arquivo foi gerado: peça a
+       exportação de novo." (decisão 150).
+     - **Pressão de volta** (o ponto que a medição achou): entre o gerador e o envio há um `PassThrough` de 1 MiB; o
+       gerador só lê o próximo lote quando ele tem folga (`folga`), então o envio lento segura a leitura do banco. No
+       `.xlsx` isso não bastava: o exceljs escreve a aba num `StreamBuf` que o archiver embrulha num `PassThrough` do
+       `readable-stream` 2 sem respeitar o `write() === false`, e o deflate precisa de uma volta do laço de eventos
+       por pedaço de 64 KiB enquanto gerar 10 mil linhas segura o laço por ~0,3 s. Resultado, medido: a planilha quase
+       inteira sem comprimir (**339 a 370 MB fora do heap** com 1 milhão de linhas, mesmo com o envio rápido) ficava
+       na memória esperando o deflate. A `folga` passou a esperar também essa entrada do zip esvaziar
+       (`entradaDoZip`, que lê o encanamento interno do exceljs 4.4.0; o `exportacao.spec.ts` quebra se uma versão nova
+       o mudar): fora do heap caiu para ~20 MB no gerador isolado, sem perder velocidade. A espera escuta o `error` e
+       o `close` do destino (um `destroy(erro)` sem ouvinte derrubaria o processo), e o `fechar` do `.xlsx` também
+       (`aoTerminarOuFalhar`): o `WorkbookWriter.commit` espera o `finish` do destino, e com o envio caído depois da
+       última linha a tarefa ficava "executando" para sempre, com o sinal em dia (achado na suíte inteira; teste
+       unitário). A rejeição do envio é tratada assim que ele começa (sem isso, o envio que falha enquanto o gerador
+       espera o banco seria um `unhandledRejection`, que encerra o processo, decisão 166).
+     - **Concorrência** (decisão 93): `semaforoExportacao` (`EXPORTACAO_CONCORRENCIA`, 2) agora vale para a geração
+       de **todo** arquivo de exportação — a das listagens (`arquivoExportacao`), o relatório da importação
+       (`gerarArquivoPlanilha`, as duas pelo mesmo `gerarConteudo`) e a tarefa (que segura a vaga do começo ao fim,
+       por minutos). A fila `genesis-tarefa` roda uma tarefa por vez por processo e o **mínimo é 2** (um valor menor
+       no ambiente vale 2: com 1, toda exportação na hora e o modelo de importação esperariam a tarefa acabar, com a
+       requisição pendurada), então sempre sobra vaga para quem baixa na hora. O cursor segura uma conexão do pool
+       da empresa durante a leitura (1 milhão: ~48 s no `.xlsx`, ~16 s no `.csv`) num instantâneo só de leitura, sem
+       trava de versão (MD 1.5 fala da transação que segura a trava); o fechamento do zip e o fim do envio vêm depois
+       de soltar a conexão.
+     - **Resultado** em `arquivos` (`planilha_exportacao`, `entidade = 'tarefas'`, `registro_id` = a tarefa,
+       `retencao_ate` = hoje + 7 dias, UTC) e `tarefas.resultado`
+       (`resultadoExportacaoRelatorioSchema`: relatório, formato, linhas, abas, tamanho, nome do arquivo). A
+       auditoria `exportar` vai na mesma transação do `arquivos` (a tarefa que falha não exportou nada), com a origem
+       da requisição guardada nos parâmetros (IP, user agent, requisição), os filtros, as linhas, a tarefa e o arquivo.
+     - **Link do `GET /tarefas` dentro da retenção** (ERP 3.6, "link expira em 7 dias"): o `doUsuario` assinava um link
+       novo de 7 dias a cada consulta, sem olhar `arquivos.retencao_ate`, e ninguém apaga o objeto — a exportação do
+       dia 1 ainda baixava no dia 30, com o custo de um mês atrás, mesmo depois de a pessoa perder
+       `produtos.ver_custo` ou o estoque. Agora a validade é `validadeDownloadS`: 7 dias, sem passar do fim do dia
+       `retencao_ate` (UTC); vencida → `download: null` e **`downloadExpirado: true`** (campo novo da resposta; o
+       ERP da importação mostra "O relatório de inconsistências expirou…"). Vale para todo arquivo de tarefa (o
+       relatório da importação, 30 dias); arquivo sem retenção continua com 7 dias. O objeto ainda fica no bucket
+       até a limpeza (`infra/producao/README.md`, Pendências), mas não se baixa mais pelo sistema.
+     - **exceljs** (versões escolhidas): MIT, 23 MB e ~120 pacotes transitivos (a parte de leitura — unzipper, jszip,
+       fast-csv — vem junto e fica sem uso); o `uuid@8` que ele traz tem um alerta moderado (GHSA-w5hq-g745-h8pq, só
+       `v3`/`v5`/`v6` com `buf`) que não se aplica (o exceljs só chama `v4`). Era o que o plano pedia; um gerador de
+       `.xlsx` próprio (zip com `node:zlib` e `zlib.crc32`) seria ~200 linhas sem dependência e fica como alternativa se
+       o exceljs der trabalho.
+     - **Carga de 1 milhão de linhas** (`pnpm --filter api carga:exportacao`, fora do CI, ~3 min; a massa do F2-B28 por
+       `gerarMassa` — o `massa-razao.ts` passou a ser importável, sem rodar o roteiro — com 1 milhão de movimentos e
+       2.000 produtos, o razão inteiro pelo provedor de exemplo, pela rota de verdade, com a API, a fila e o S3 em
+       memória no mesmo processo, `--max-old-space-size=1536` como em produção; PostgreSQL 16 local, 4 CPUs; apaga os
+       bancos no fim): **`.xlsx`** 1.000.000 de linhas em 1 aba, 58,2 MB, 8 partes, **45–48 s** (~21 a 22 mil
+       linhas/s), **pico de heap 115–116 MB** (85 MB no início; três execuções), fora do heap 135 MB (o arquivo inteiro
+       guardado pelo S3 em memória entra na conta; sem ele, 10,5 MB); **`.csv`** 81,8 MB, 10 partes, **13–16 s** (~63
+       a 75 mil linhas/s), **pico de heap 165–179 MB** (89 MB no início; o `.csv` gera mais lixo de texto por segundo,
+       e o pico é o heap com o lixo ainda não coletado), fora do heap 255 MB (idem: o S3 em memória guarda as partes e
+       o arquivo; sem ele, ~0). O arquivo abre e tem o total de linhas (o `.xlsx` relido pelo leitor em streaming do
+       exceljs). Critério de pronto (< 300 MB de heap): ok. A contagem do pedido levou 0,5–0,8 s. Sem a correção da
+       pressão de volta, o `.xlsx` deixava ~340 MB fora do heap — e o heap não acusa: a carga reprova também pelo
+       fora do heap sem as duas cópias do S3 em memória (as partes e o objeto montado) acima de 100 MB
+       (`LIMITE_EXTERNO_MB`; com a correção tirada, deu 180 MB e reprovou).
+     - **Testes**: `test/integracao/exportacao-relatorio.test.ts` (no CI, com a massa pequena — 6 mil movimentos —, o
+       S3 em memória com multipart e limites pequenos: na hora até 1.000, lotes de 500, abas de 2.500, partes de
+       64 KiB): o `.xlsx` em tarefa (202, `concluida`, as abas com o cabeçalho, o total, as datas e números como
+       células, a ordem do cursor, o link de 7 dias, `arquivos` com o sha256 e o tamanho do que se baixa, a auditoria) e
+       **o streaming**: a primeira parte do multipart chegou ao S3 antes de a última linha ser escrita, e nada ficou
+       aberto no bucket; o `.csv` (BOM, `;`, vírgula decimal, uma linha por movimento); o filtro do provedor na tarefa;
+       no limite baixa na hora (200, `write-excel-file`, auditoria sem tarefa); 404 do relatório desconhecido e 422 do
+       filtro inválido; a terceira exportação em andamento do mesmo usuário (422; a na hora passa); 403 sem
+       `relatorios.exportar` (Estoquista) e sem a permissão do relatório (Financeiro); sem
+       `produtos.ver_custo` as colunas de custo saem e os estoques permitidos limitam as linhas; o teto (422); a parte
+       que falha no meio (`.csv` e `.xlsx`): multipart abortado, tarefa `falhou` com a mensagem, nada em `arquivos` nem
+       na auditoria; a parte **pendurada** (o S3 em memória recebe e não responde; inatividade de 3 s no teste):
+       tarefa `falhou`, multipart abortado e nenhuma sessão "idle in transaction" no banco; o link sem passar da
+       retenção (vencida → `download: null`, `downloadExpirado`; no último dia, no máximo até o fim dele); o acesso
+       do momento na execução (a tarefa de quem não tem `relatorios.exportar` falha sem gravar; a de quem trocou de
+       estoque traz só as linhas do estoque de agora); o semáforo (com as vagas ocupadas a tarefa fica em "Aguardando
+       a vez" e segue quando uma abre); a retenção conferida contra o dia de antes e o de depois do pedido (meia-noite
+       UTC no meio); e o `gravarFluxo` pequeno num PUT só. Unitários (`src/comum/exportacao.spec.ts`): as abas acima do
+       teto, `=1+1` como texto, a data na hora de Brasília, Sim/Não, o `.csv` igual ao síncrono, a pressão de volta (o
+       lote só termina quando o destino esvazia; no `.xlsx`, com a entrada do zip esvaziada — 10 mil linhas por lote,
+       quebra sem a correção), o destino destruído rejeitando, o encanamento do exceljs e o corte do custo;
+       `src/tarefas/tarefas.spec.ts`: a validade do link (`validadeDownloadS`).
 
 ### Operação – tarefas em segundo plano (API)
 

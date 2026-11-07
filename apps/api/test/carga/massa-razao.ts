@@ -17,9 +17,14 @@
  *
  * Opções: `--movimentos=4000000`, `--produtos=2000`, `--semente=28`, `--manter`, `--so-massa` (só gera e mantém),
  * `--saida=resultado.json`.
+ *
+ * A geração também serve a outros testes (`gerarMassa`): a carga da exportação em streaming (F2-B29,
+ * `exportacao-razao.ts`) e a integração `exportacao-relatorio.test.ts`, com uma massa pequena. Importado, o arquivo não
+ * roda o roteiro (só quando é o script chamado).
  */
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { aplicarMovimentoNoSaldo, movimentoGravadoNoSaldo, movimentoDeCompra } from '@genesis/shared';
 import type pg from 'pg';
 import { uuidv7 } from 'uuidv7';
@@ -36,9 +41,10 @@ const argumentos = new Map(
   }),
 );
 const numero = (nome: string, padrao: number) => Number(argumentos.get(nome) ?? padrao);
-const TOTAL = numero('movimentos', 4_000_000);
-const PRODUTOS = numero('produtos', 2000);
-const SEMENTE = numero('semente', 28);
+// `let`: `gerarMassa` troca os três (outro teste com outra massa).
+let TOTAL = numero('movimentos', 4_000_000);
+let PRODUTOS = numero('produtos', 2000);
+let SEMENTE = numero('semente', 28);
 /** Só gera a massa e deixa os bancos (para medir à mão, por exemplo com o cache frio). */
 const SO_MASSA = argumentos.has('so-massa');
 const MANTER = SO_MASSA || argumentos.has('manter');
@@ -94,7 +100,7 @@ const acumular = (pesos: readonly number[]) => {
 
 // ---------------------------------------------------------------- Cadastro
 
-interface Estoque {
+export interface Estoque {
   id: string;
   lojaId: string | null;
   nome: string;
@@ -102,7 +108,7 @@ interface Estoque {
   operadores: string[];
 }
 
-interface Cadastro {
+export interface Cadastro {
   estoques: Estoque[];
   produtos: { id: string; custo: number; fornecedor: string }[];
   padrao: string;
@@ -611,6 +617,28 @@ async function gravarProjecao(c: pg.Client, g: Gerador, produtos: Cadastro['prod
   }
 }
 
+/**
+ * Só a massa (cadastro, movimentos e a projeção, com o `vacuum analyze`) na empresa de `banco`, pela conexão `c`, para
+ * outro teste: com a mesma semente e o mesmo total sai a mesma massa do roteiro.
+ */
+export async function gerarMassa(
+  banco: string,
+  c: pg.Client,
+  opcoes: { movimentos: number; produtos?: number; semente?: number; aoProgredir?: (n: number) => void },
+): Promise<{ cadastro: Cadastro; movimentos: number; linhasSaldo: number }> {
+  TOTAL = opcoes.movimentos;
+  PRODUTOS = opcoes.produtos ?? PRODUTOS;
+  SEMENTE = opcoes.semente ?? SEMENTE;
+  estadoSorteio = SEMENTE >>> 0;
+  const cadastro = await cadastrar(banco, c);
+  const g = new Gerador(cadastro, gravador(c, cadastro.produtos));
+  await g.gerar(opcoes.aoProgredir ?? (() => undefined));
+  await gravarProjecao(c, g, cadastro.produtos);
+  await c.query('vacuum (analyze) movimentos_estoque');
+  await c.query('vacuum (analyze) saldos_estoque');
+  return { cadastro, movimentos: g.total, linhasSaldo: g.linhas.size };
+}
+
 // ---------------------------------------------------------------- Roteiro de EXPLAIN
 
 interface Parametros {
@@ -1067,11 +1095,14 @@ async function principal(): Promise<void> {
   }
 }
 
-try {
-  await principal();
-} catch (e) {
-  console.error(e);
-  process.exitCode = 1;
+// Só quando é o script chamado (`pnpm --filter api carga:razao`); importado (`gerarMassa`), não roda nada.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    await principal();
+  } catch (e) {
+    console.error(e);
+    process.exitCode = 1;
+  }
+  // Com `--manter` o ambiente não é fechado (a trava da faixa e os pools ficariam segurando o processo).
+  process.exit(process.exitCode ?? 0);
 }
-// Com `--manter` o ambiente não é fechado (a trava da faixa e os pools ficariam segurando o processo).
-process.exit(process.exitCode ?? 0);
