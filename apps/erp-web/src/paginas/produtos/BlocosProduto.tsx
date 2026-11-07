@@ -12,6 +12,7 @@ import {
   TIPOS_RELACAO_PRODUTO,
   ajusteEstoqueProdutoSchema,
   criarCategoriaSchema,
+  type AjusteEstoqueProduto,
   markupPct,
   montarArvoreCategorias,
   type CategoriaArvore,
@@ -489,17 +490,46 @@ function agoraLocal(): string {
  * O modal fica montado dentro do bloco Estoque (só `aberto` muda): a hora é renovada a cada abertura e, se o usuário
  * não mexer nela, o corpo vai **sem** `dataContagem`, e a API usa o instante da requisição. Mandar a hora da tela
  * (cortada no minuto, ou a da abertura) faria as vendas feitas entre ela e o clique serem descontadas da contagem.
+ *
+ * O modal de ajuste do relatório Estoque Atual (ERP 16.4; F2-B31; README do ERP › decisão 66) é este mesmo, com o
+ * estoque da linha fixo (`estoqueFixo`), o tipo da linha, o nome do produto e o envio para
+ * `POST /relatorios/estoque-atual/ajustar` (origem `relatorio_estoque`, AJUSTE_RELATORIO): o núcleo do "Definir" é
+ * um só, na tela e na API.
  */
 export function ModalAjustarEstoque({
   aberto,
   produtoId,
   saldos,
   aoFechar,
+  estoqueFixo,
+  tipoInicial,
+  nomeProduto,
+  enviar,
+  aoAjustar,
+  titulo = 'Ajustar estoque',
+  rotuloGravar = 'Ajustar',
+  rotuloFechar = 'Cancelar',
 }: {
   aberto: boolean;
   produtoId: string;
-  saldos: SaldosProduto['saldos'];
+  saldos: ReadonlyArray<Pick<SaldosProduto['saldos'][number], 'estoqueId' | 'tipoEstoqueId' | 'quantidade'>>;
   aoFechar: () => void;
+  /** Estoque fixo (o da linha do relatório): sem o seletor. */
+  estoqueFixo?: { id: string; nome: string };
+  /**
+   * Tipo de estoque ao abrir (padrão: o tipo padrão, Disponível). Se ele estiver inativo, o modal avisa e pede o tipo
+   * (não troca calado pelo padrão: o ajuste e o "Saldo atual" seriam de outro tipo que não o da linha clicada).
+   */
+  tipoInicial?: string | null;
+  /** Nome do produto no topo do modal (o relatório; no formulário o produto já está na tela). */
+  nomeProduto?: string;
+  /** Envio do ajuste (padrão: o "Ajustar" do produto, `POST /produtos/:id/ajustar-estoque`). */
+  enviar?: (corpo: AjusteEstoqueProduto) => Promise<ResultadoAjusteProduto>;
+  /** Depois de gravar (padrão: recarrega os saldos do produto). */
+  aoAjustar?: (r: ResultadoAjusteProduto) => Promise<unknown> | void;
+  titulo?: string;
+  rotuloGravar?: string;
+  rotuloFechar?: string;
 }) {
   const cliente = useQueryClient();
   const estoques = useQuery({
@@ -509,7 +539,7 @@ export function ModalAjustarEstoque({
         `/estoques${query({ situacao: 'ativos', tamanho: 'todos', ordenar: 'nome:asc' })}`,
       ),
     staleTime: 60_000,
-    enabled: aberto,
+    enabled: aberto && !estoqueFixo,
   });
   const tipos = useQuery({
     queryKey: ['opcoes', 'tipos-estoque'],
@@ -537,13 +567,21 @@ export function ModalAjustarEstoque({
   }
   const listaEstoques = estoques.data?.itens ?? [];
   const tiposAtivos = (tipos.data ?? []).filter((t) => t.ativo);
-  // Padrões: o estoque do primeiro saldo que está entre as opções (os saldos trazem também estoque inativo, que o
-  // Select não lista e a API recusa), ou o único permitido; e o tipo padrão (Disponível).
+  // Padrões: o estoque fixo, ou o do primeiro saldo que está entre as opções (os saldos trazem também estoque
+  // inativo, que o Select não lista e a API recusa), ou o único permitido; e o tipo inicial (ativo) ou o padrão. O
+  // tipo inicial inativo não cai no padrão: fica sem tipo até o usuário escolher.
+  const tipoInicialInativo =
+    !!tipoInicial && tipos.isSuccess && !tiposAtivos.some((t) => t.id === tipoInicial);
   const estoque =
+    estoqueFixo?.id ??
     estoqueId ??
     saldos.find((s) => listaEstoques.some((e) => e.id === s.estoqueId))?.estoqueId ??
     (listaEstoques.length === 1 ? listaEstoques[0]!.id : null);
-  const tipo = tipoId ?? tiposAtivos.find((t) => t.padrao)?.id ?? null;
+  const tipo =
+    tipoId ??
+    (tipoInicial && tiposAtivos.some((t) => t.id === tipoInicial) ? tipoInicial : null) ??
+    (tipoInicialInativo ? null : tiposAtivos.find((t) => t.padrao)?.id) ??
+    null;
   const atual = saldos.find((s) => s.estoqueId === estoque && s.tipoEstoqueId === tipo)?.quantidade ?? '0';
   const fechar = () => {
     setEstoqueId(null);
@@ -555,6 +593,8 @@ export function ModalAjustarEstoque({
     aoFechar();
   };
   const ajustar = async () => {
+    // Sem tipo, a API usaria o padrão: com o da linha inativo, o tipo tem de ser escolhido.
+    if (tipoInicialInativo && !tipo) return setErros({ tipoEstoqueId: 'Escolha o tipo de estoque' });
     const data = new Date(dataContagem);
     const r = ajusteEstoqueProdutoSchema.safeParse({
       estoqueId: estoque ?? '',
@@ -571,8 +611,11 @@ export function ModalAjustarEstoque({
     if (!r.success) return setErros(errosDoZod(r.error));
     setSalvando(true);
     try {
-      const res = await apiErp.post<ResultadoAjusteProduto>(`/produtos/${produtoId}/ajustar-estoque`, r.data);
-      await cliente.invalidateQueries({ queryKey: ['produtos', produtoId, 'saldos'] });
+      const res = enviar
+        ? await enviar(r.data)
+        : await apiErp.post<ResultadoAjusteProduto>(`/produtos/${produtoId}/ajustar-estoque`, r.data);
+      if (aoAjustar) await aoAjustar(res);
+      else await cliente.invalidateQueries({ queryKey: ['produtos', produtoId, 'saldos'] });
       const dif = Number(res.diferenca);
       notifications.show({
         color: 'green',
@@ -590,19 +633,35 @@ export function ModalAjustarEstoque({
     }
   };
   return (
-    <Modal opened={aberto} onClose={fechar} title="Ajustar estoque">
+    <Modal opened={aberto} onClose={fechar} title={titulo}>
       <Stack>
         {erros._ && <Alert color="red">{erros._}</Alert>}
-        <Select
-          label="Estoque"
-          required
-          allowDeselect={false}
-          data={listaEstoques.map((e) => ({ value: e.id, label: e.nome }))}
-          value={estoque}
-          error={erros.estoqueId}
-          onChange={setEstoqueId}
-          comboboxProps={{ withinPortal: true }}
-        />
+        {tipoInicialInativo && (
+          <Alert color="yellow" data-testid="tipo-inicial-inativo">
+            O tipo de estoque desta linha está inativo e não recebe ajuste: escolha o tipo abaixo.
+          </Alert>
+        )}
+        {nomeProduto && <TextInput label="Produto" value={nomeProduto} readOnly variant="filled" />}
+        {estoqueFixo ? (
+          <TextInput
+            label="Estoque"
+            value={estoqueFixo.nome}
+            readOnly
+            variant="filled"
+            error={erros.estoqueId}
+          />
+        ) : (
+          <Select
+            label="Estoque"
+            required
+            allowDeselect={false}
+            data={listaEstoques.map((e) => ({ value: e.id, label: e.nome }))}
+            value={estoque}
+            error={erros.estoqueId}
+            onChange={setEstoqueId}
+            comboboxProps={{ withinPortal: true }}
+          />
+        )}
         <Select
           label="Tipo de estoque"
           required
@@ -653,10 +712,10 @@ export function ModalAjustarEstoque({
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={fechar}>
-            Cancelar
+            {rotuloFechar}
           </Button>
           <Button loading={salvando} onClick={() => void ajustar()}>
-            Ajustar
+            {rotuloGravar}
           </Button>
         </Group>
       </Stack>

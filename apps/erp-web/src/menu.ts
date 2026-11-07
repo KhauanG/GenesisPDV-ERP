@@ -299,8 +299,10 @@ export const MENU: GrupoMenu[] = [
       rel('Produtos', 'Produtos geral', 'produtos-geral', 'Fase 2'),
       rel('Produtos', 'Histórico de produtos', 'historico-produtos', 'Fase 2'),
       rel('Produtos', 'NCMs inválidos', 'ncm-invalidos', 'Fase 2'),
-      rel('Estoque', 'Estoque Atual', 'estoque-atual', 'Fase 2'),
-      rel('Estoque', 'Movimentação', 'movimentacao-estoque', 'Fase 2'),
+      // F2-B31 (README do ERP › decisão 66).
+      { ...rel('Estoque', 'Estoque Atual', 'estoque-atual', 'Fase 2'), pronto: true },
+      // F2-B32 e F2-B33 (README do ERP › decisões 67 e 68): analítica, sintética, exportação e "Ver movimentação".
+      { ...rel('Estoque', 'Movimentação', 'movimentacao-estoque', 'Fase 2'), pronto: true },
       rel('Financeiro', 'Financeiro geral', 'financeiro-geral', 'Fase 5'),
       rel('Financeiro', 'Fechamento de caixa', 'fechamento-caixa', 'Fase 5'),
       rel('Financeiro', 'Sangria/Reforço', 'sangria-reforco', 'Fase 5'),

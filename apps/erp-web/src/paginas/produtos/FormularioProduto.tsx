@@ -77,6 +77,7 @@ import { FormularioEntidade } from '../../componentes/FormularioEntidade';
 import { SeletorProduto } from '../../componentes/seletores/SeletorProduto';
 import { formatarDataHora } from '../../util/formato';
 import { NaoEncontrado } from '../Erros';
+import { linkVerMovimentacao } from '../relatorios/MovimentacaoEstoque';
 import {
   BlocoCategorias,
   BlocoFornecedores,
@@ -1727,7 +1728,9 @@ function BlocoLojas({ form }: { form: Form }) {
  * Estoque (ERP 8.2.11): saldo por estoque × tipo, com o "Ajustar" (F2-B12; `estoque_acertos.criar`) para quem tem
  * saldo próprio; no combo, os combos montáveis por estoque (8.2.17). F2-B26: o "Em trânsito" (enviado para o estoque e
  * ainda não recebido) e, só quando houver, a "Divergência a tratar" (a diferença recebida a menor que voltará à origem
- * ou será baixada como perda), dos estoques permitidos e no tipo de cada linha (a API já filtra).
+ * ou será baixada como perda), dos estoques permitidos e no tipo de cada linha (a API já filtra). F2-B33: "Ver
+ * movimentação" em cada linha (com `relatorios.movimentacao_estoque`) abre a Movimentação analítica do produto no
+ * estoque, nos últimos 30 dias.
  */
 function BlocoEstoque({
   produtoId,
@@ -1743,6 +1746,7 @@ function BlocoEstoque({
   tipoGravado: TipoProduto;
 }) {
   const pode = usePode();
+  const verMovimentacao = pode('relatorios.movimentacao_estoque');
   const [ajustando, setAjustando] = useState(false);
   const r = useQuery({
     queryKey: ['produtos', produtoId, 'saldos'],
@@ -1840,6 +1844,7 @@ function BlocoEstoque({
             {verCusto && <Table.Th ta="right">Custo médio</Table.Th>}
             <Table.Th>Última entrada</Table.Th>
             <Table.Th>Última saída</Table.Th>
+            {verMovimentacao && <Table.Th>Movimentação</Table.Th>}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -1866,6 +1871,18 @@ function BlocoEstoque({
               {verCusto && <Table.Td ta="right">{reais(Number(s.custoMedio))}</Table.Td>}
               <Table.Td>{formatarDataHora(s.ultimaEntradaEm)}</Table.Td>
               <Table.Td>{formatarDataHora(s.ultimaSaidaEm)}</Table.Td>
+              {verMovimentacao && (
+                <Table.Td>
+                  <Anchor
+                    component={Link}
+                    to={linkVerMovimentacao({ estoqueId: s.estoqueId, produtoId })}
+                    size="sm"
+                    aria-label={`Ver movimentação em ${s.estoqueNome} (${s.tipoEstoqueNome})`}
+                  >
+                    Ver movimentação
+                  </Anchor>
+                </Table.Td>
+              )}
             </Table.Tr>
           ))}
         </Table.Tbody>

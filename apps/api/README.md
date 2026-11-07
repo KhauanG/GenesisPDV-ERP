@@ -77,6 +77,9 @@ curl -X POST localhost:3000/api/auth/login -H 'content-type: application/json' \
 | `typecheck`, `test`, `test:unit`, `test:integracao`                                                                                   | Verificação de tipos; todos os testes; só unitários (sem banco); só integração (PostgreSQL)                                                                                                         |
 | `test:sync-triggers`                                                                                                                  | Toda tabela do registro de fluxos (`src/sync/fluxos.ts`) tem `tg_<tabela>_versao` com `fn_versao` e `ix_<tabela>_versao` (MD 1.5)                                                                   |
 | `test:limpar`                                                                                                                         | Remove bancos e roles de teste (integração e e2e do PDV) deixados por execuções interrompidas (só os sem conexão ativa)                                                                             |
+| `carga:razao [--movimentos=4000000] [--produtos=2000] [--manter] [--so-massa] [--saida=arq.json]`                                      | Fora do CI: massa de 1 ano do razão (3 lojas, CD, Treino) num banco descartável, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois dos índices da 0026 e o heap do replay; apaga os bancos no fim (decisão 176) |
+| `carga:exportacao [--movimentos=1000000] [--produtos=2000] [--saida=arq.json]` | Fora do CI: a massa do `carga:razao` num banco descartável e a exportação do razão inteiro em tarefa (`.xlsx` e `.csv`), com o tempo, o pico de heap do processo e a conferência das linhas do arquivo; apaga os bancos no fim (decisão 177) |
+| `carga:estoque-atual [--movimentos=4000000] [--produtos=2000] [--saida=arq.json]` | Fora do CI: a massa do `carga:razao` num banco descartável e o relatório Estoque Atual pela rota ("Todas" e uma loja, agora e na data-base pelos dois caminhos, a exportação na hora), o pior de 3 abaixo de 3 s; apaga os bancos no fim (decisão 178) |
 | `db:migrate:controle`                                                                                                                 | Cria o `genesis_control` se não existir, aplica as migrações e o seed mínimo do controle                                                                                                            |
 | `db:migrate:empresas [--empresas=100001,100002] [--lote=4] [--parar-no-primeiro-erro]`                                                | Migra todas as empresas `ativa`/`suspensa`: canário primeiro, depois as demais; reaplica referências, catálogo de permissões e seed idempotente; sai com código 1 se alguma falhar                  |
 | `db:referencias [--empresas=…]`                                                                                                       | Recarrega referências nacionais, catálogo de permissões e seed em todas as empresas                                                                                                                 |
@@ -111,6 +114,7 @@ ERP (prefixo `/api`, token `Authorization: Bearer`): `POST /auth/login`, `POST /
 `GET|PUT|DELETE /transferencias/:id`, `POST /transferencias/:id/enviar|receber|tratar-divergencia|cancelar`,
 `PUT /transferencias/:id/nfe-externa`,
 `GET /saldos-estoque`, `GET /saldos-estoque/itens`,
+`GET /relatorios/estoque-atual`, `POST /relatorios/estoque-atual/ajustar`, `GET /relatorios/:relatorio/exportar`,
 `GET|POST /tipos-estoque`, `GET|PUT|DELETE /tipos-estoque/:id`, `GET /importacoes/produtos|clientes/modelo`, `POST /importacoes/produtos|clientes/previa`
 (multipart), `POST /importacoes/produtos|clientes/confirmar`, `GET /dashboard`, `GET /implantacao/prontidao`, `GET /ncms`, `GET /ncms/:codigo`,
 `GET /referencias/unidades|cfops`, `GET /referencias/ufs|municipios|paises`,
@@ -152,6 +156,8 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `FILA_TRABALHADOR`                                                                                | `true`                                                          | Esta instância executa a fila (tarefas e e-mails); `false` só enfileira                                                                                                                                                              |
 | `VERIFICACAO_RAZAO_CRON` | vazia (desligada) | Cron (UTC, 5 campos) da verificação periódica do razão de estoque: só confere e abre o alerta `RAZAO_SALDO_DIVERGENTE`; corrigir é o `db:recalcular-saldos --corrigir`. Cron inválido recusa a subida; esvaziar desliga e remove o agendamento já gravado no pg-boss (decisão 147) |
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
+| `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
+| `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
@@ -196,6 +202,7 @@ compilados na mesma imagem (`node dist/cli/<comando>.js`, pelo `implantar.sh tar
   `create index concurrently`) vai em `PREPARACOES_MIGRACAO_EMPRESA` (`src/database/migracoes/preparacoes-empresa.ts`):
   o executor o roda fora de transação, na mesma conexão, logo antes da migração da tag, só se ela ainda vai ser
   aplicada. Tem de ser idempotente. Quem aplica o journal à mão num banco com dados passa as preparações (decisão 146).
+  Hoje: o preenchimento da `seq_lancamento` antes da 0017 (decisão 146) e os índices do razão antes da 0026 (decisão 176).
   O que ela tem a contar volta como `RelatoPreparacao` (`avisos` e `dados`): o `MigradorEmpresas` põe os avisos no
   resultado da empresa (terminal do `db:migrate:empresas`, modal e log do "Aplicar") e o relato em
   `auditoria_plataforma` (`migracao_preparada`, com a empresa), porque a segunda passada já não acha o que relatar.
@@ -324,6 +331,7 @@ tempos e contagens; a planilha e o estado com os códigos nunca saem da pasta te
 | @aws-sdk/client-s3 / s3-request-presigner | 3.1160.0                | S3 e URL assinada; checksums "flexíveis" só quando exigidos (compatível com MinIO/RustFS)                                                                           |
 | nodemailer / smtp-server (testes)         | 10.3.1 / 3.21.3         | e-mail transacional                                                                                                                                                 |
 | write-excel-file                          | 4.1.1                   | xlsx do "Exportar" das listagens (só depende do `fflate`); o `xlsx` (SheetJS) do npm está parado na 0.18 e o `exceljs` arrasta dependências antigas                 |
+| exceljs | 4.4.0 (exata) | só o `WorkbookWriter` em streaming da exportação de relatório em tarefa (F2-B29, decisão 177); MIT, 23 MB e ~120 pacotes transitivos (archiver, unzipper, jszip, fast-csv…: a parte de leitura vem junto e fica sem uso; a transitiva mais nova é de 07/10/2026, mais de duas semanas); o alerta moderado do `uuid@8` (GHSA-w5hq-g745-h8pq, `v3`/`v5`/`v6` com `buf`) não se aplica: o exceljs só chama `v4`. O síncrono continua no `write-excel-file` |
 | read-excel-file | 9.3.10 | leitura do xlsx da importação (mesmo autor do `write-excel-file`, só `fflate` + parser SAX); a 9.3.14 é de 29/10/2026 (menos de duas semanas) |
 | fast-xml-parser | 5.11.2 | XML da NF-e de fornecedor (F2-B18, decisão 163), com `processEntities: false` e `maxNestedTags`; a 5.12.0 é de 03/11/2026 (menos de duas semanas) |
 | xml-crypto / @xmldom/xmldom | 6.4.0 / 0.8.15 | conferência da assinatura XMLDSig da NF-e (decisão 163); o `@xmldom/xmldom` fixado na mesma versão que o `xml-crypto` usa, para o nó passado a `loadSignature` ser do mesmo DOM |
@@ -775,7 +783,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 77. **Saldos** (`GET /saldos-estoque`, ERP 8.2.11/16.4 simplificado): por estoque × tipo, filtros de situação do saldo
     (positivo, zerado, negativo, abaixo do mínimo da loja do estoque) e "incluir sem movimento"; totais de custo e
     venda na mesma consulta; custo só com `produtos.ver_custo`. `GET /saldos-estoque/itens` alimenta a coluna "Saldo
-    atual" da grade do acerto. O ajuste no clique, "Em trânsito" e a data-base ficam com o relatório Estoque Atual.
+    atual" da grade do acerto. O ajuste no clique, "Em trânsito" e a data-base ficam com o relatório Estoque Atual
+    (o "Em trânsito" chegou aqui também no F2-B26, decisão 174; o relatório, no F2-B31, decisão 178).
 78. **Importação** (ERP 8.6, 23.14): `previa` (multipart `arquivo` + opções, até 10 MB, xlsx ou csv com `;`/`,`/tab
     detectado e UTF-8 ou Windows-1252) valida **todas** as linhas sem gravar e guarda a planilha no armazenamento
     (`arquivos`, categoria `planilha_importacao`, retenção 30 dias); `confirmar` só aceita a planilha enviada pelo
@@ -3093,7 +3102,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      total sem percentual do setor contado vazio) e `importacao.spec.ts` do shared.
 
 157. **Formulário do produto: "Ajustar", relacionados e categorias em árvore** (Fase 2, F2-B12; ERP 8.2.7, 8.2.8,
-     8.2.11; `POST /produtos/:id/ajustar-estoque` em `src/produtos/produtos.controller.ts`, `ajustarEstoqueDoCadastro`
+     8.2.11; `POST /produtos/:id/ajustar-estoque` em `src/produtos/produtos.controller.ts`, `ajustarEstoqueDefinir` (antes `ajustarEstoqueDoCadastro`; desde o F2-B31 também o do Estoque Atual, decisão 178)
      e `conferirCabecalhoAcerto` em `src/estoques/acertos.ts`, `gravarRelacionados` em `src/produtos/gravacao.ts`;
      `ajusteEstoqueProdutoSchema` no shared `estoque.ts`, `relacionadoSchema` no `produtos.ts`; sem migração:
      `produtos_relacionados` existe desde a 1A e já desce ao PDV no fluxo de catálogo). **"Ajustar"**
@@ -4482,6 +4491,576 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        de cada um (o Master também com o inativo marcado; sem `transferencias.ver`, 403), `origemPermitida` e
        `destinoPermitido` no detalhe de cada um, o conferente recebendo tudo como enviado, e o rascunho com a origem
        inativada depois, ainda da origem e excluído.
+
+176. **Desempenho do razão: massa de carga, planos de consulta, os índices da 0026 e "sem particionamento na Fase
+     2"** (Fase 2, F2-B28; MD 3.7.2; implantação de 03/11/2026, 2 GB; `test/carga/massa-razao.ts` (novo),
+     `src/estoques/indices-razao.ts` (novo), `drizzle/empresa/0026_indices_razao.sql`, `PREPARACOES_MIGRACAO_EMPRESA`).
+     Medido **antes** de escrever os relatórios do PR-7 (F2-B29 a F2-B33), para que eles já nasçam com os índices.
+     O PDV não muda (`movimentos_estoque` não desce; `Esquema.g.cs` igual).
+     - **Massa** (`pnpm --filter api carga:razao`, fora do CI): ambiente descartável no PostgreSQL de `DATABASE_URL`
+       (o dos testes de integração), uma empresa com 3 lojas, o CD (estoque `deposito` sem loja) e a Treino, 2.000
+       produtos e **4 milhões de movimentos em 12 meses** (01/11/2025 a 01/11/2026), em ordem de lançamento, pela
+       regra do motor (`aplicarMovimentoNoSaldo`, a do replay) e gravados em lotes de 5.000 por `unnest` (o COPY
+       pediria outro pacote); a projeção é a do fim de cada linha, e o replay do recalcular no fim confere as duas
+       (**0 divergência**: a massa é um razão válido). Determinística (`--semente`). Mistura: VENDA_PDV 92% (cupons de
+       1 a 4 itens, popularidade de Zipf, 1% offline tardia até 48 h), TRANSF_SAIDA e TRANSF_ENTRADA 2,4% cada (a
+       reposição da loja pelo CD), CANC_VENDA_PDV 0,7% (estorno ao custo da venda), RECEB_NFE 0,6%, ACERTO_DEFINIR
+       0,5% (com o inventário inicial de cada estoque), ACERTO_ENTRADA/SAÍDA 0,6%, RECEB_MANUAL 0,3%,
+       ACERTO_COMPENSACAO 0,3%; por estoque: Loja 1 1,62 M, Loja 2 1,28 M, Loja 3 0,93 M, CD 0,11 M, Treino 0,06 M;
+       12.157 linhas de saldo. Tabela de 1.077 MB; os índices que ela já tinha somam de ~2,5 a ~3,2 GB, conforme a execução (o inchaço dos índices varia com a ordem das gravações). Gera em ~7 min; a execução
+       inteira (roteiro antes e depois, candidato descartado, replay) leva ~20 min e **apaga os bancos no fim**
+       (`--manter` ou `--so-massa` os deixam; `test:limpar` apaga).
+     - **Como foi medido**: PostgreSQL 16 local (4 CPUs, 15 GB, `shared_buffers` 128 MB e `work_mem` 4 MB, os padrões),
+       `EXPLAIN (ANALYZE, BUFFERS)`, o melhor de 3 ("quente": tudo no cache do Linux) e as **páginas** de 8 kB que a
+       consulta toca (cache + disco). Em produção (Cloud SQL PG 18 com 2 GB) a tabela e os índices de um ano
+       (~4,2 GB) não cabem na memória, então o número que importa é o de páginas e o **frio**: o PostgreSQL
+       reiniciado e o cache do Linux esvaziado antes de cada consulta (pior caso, medido à mão com o mesmo SQL do
+       roteiro). A exportação é lida de verdade por um cursor do servidor (`declare` + `fetch 10000`), como no
+       F2-B29: o planejador otimiza o cursor para a primeira fração.
+     - **Resultado** (12 meses; "todas as lojas" = as 3 lojas e o CD, sem a Treino; quente antes → depois; frio
+       antes → depois; páginas antes → depois):
+
+       | Consulta (bloco que a usa) | Quente | Frio | Páginas | Plano depois |
+       |---|---:|---:|---:|---|
+       | Analítica, 1ª página de 101 de uma loja (B32) | 389 → 0,1 ms | 699 → 3 ms | 138.009 → 99 | Index Scan `estoque_data` |
+       | Analítica, página do meio pelo cursor (B32) | 315 → 0,1 ms | 608 → 1 ms | 137.949 → 19 | Index Scan `estoque_data` |
+       | Analítica, só as compras (B32) | 99 → 5 ms | — | 34.173 → 3.933 | Index Scan `estoque_data` |
+       | Analítica, um produto (B32) | 0,5 → 0,5 ms | — | 457 → 457 | Index Scan `linha_data` + top-N |
+       | Saldo anterior das linhas da página (B32, "por janela") | 1.019 → 83 ms | 2.977 → 152 ms | 375.346 → 8.340 | Index Only Scan `linha_data` |
+       | Sintética de uma loja (B33) | 745 → 728 ms | 1.017 ms | 137.991 | Seq Scan + agregação |
+       | Saldo numa data-base (ontem), soma até a data (B31) | 769 → 985 ms | 1.060 → 1.277 ms | 137.931 → 95.839 | Index Only Scan `linha_data` |
+       | Saldo numa data-base (ontem), projeção − razão depois da data (B31) | 12 → 11 ms | 30 ms | 717 → 740 | Bitmap `estoque_data` |
+       | Idem, data-base 6 meses atrás (B31) | 905 → 683 ms | — | 75.458 → 84.576 | Index Only Scan `linha_data` |
+       | Última compra até o fim do período, uma loja / o CD (B33) | 108 / 35 ms | 1.322 ms (loja) | 34.173 / 11.805 | `ix_..._tipo_movimento` |
+       | Detalhe do acerto de 2.000 itens | 0,8 ms | — | 71 | `ix_..._documento` |
+       | Exportação de 12 meses de uma loja por cursor, 1,62 M linhas (B29/B33) | 1ª página 1.183 → 107 ms; total 6,9 → 6,4 s | — | — | o cursor deixa de ordenar 1,6 M linhas (Sort em disco) e lê o índice |
+       | Replay do recalcular, 1ª página de 10 mil | 18 → 13 ms | — | 9.897 → 9.902 | — |
+
+     - **Os dois índices da 0026** (`INDICES_RAZAO`): (1) `ix_movimentos_estoque_estoque_data (estoque_id,
+       data_movimento, id)` — a Movimentação de um local por período na ordem do cursor e a exportação em streaming;
+       225 MB por 4 M de movimentos, 3,8 s para criar aqui; também no schema Drizzle. (2)
+       `ix_movimentos_estoque_linha_data (estoque_id, produto_id, variacao_id, tipo_estoque_id, data_movimento, id)
+       include (quantidade)` — o saldo de cada linha até um ponto do cursor **só pelo índice**: é o "saldo anterior
+       recalculado por janela" da página da Movimentação, que sem ele lê a história inteira de cada linha da página na
+       tabela (3 s com o cache frio, e a página tem de abrir em menos de 1 s); 434 MB, 7,3 s para criar aqui. Fica
+       **fora do schema Drizzle** (o Drizzle 0.45 não declara `include`), como o BRIN e os únicos parciais desta
+       tabela. O `id` no índice é necessário: sem ele o desempate do cursor `(data_movimento, id) <= (…)` volta à
+       tabela (medido: 2,3 s com o cache frio).
+     - **Descartados pela medição**: o parcial `(estoque_id, produto_id, data_movimento desc) where tipo_movimento in
+       ('RECEB_MANUAL','RECEB_NFE')` (2 MB) — o CD cai de 35 para 5,5 ms, mas a loja fica igual (108 ms quente,
+       1,3 s frio: o planejador continua no `ix_movimentos_estoque_tipo_movimento`, que já separa as compras), e a
+       última compra é uma coluna da sintética, que roda em tarefa (B33); a medição repete em `CANDIDATOS_DESCARTADOS`.
+       Nenhum índice para a sintética e o saldo numa data-base pela soma: varrem a história do local (1,6 M a 3,9 M
+       linhas) e ficam em ~0,7–1 s quente e ~1–1,3 s frio, dentro do critério; um índice de cobertura para elas teria o
+       tamanho da tabela.
+     - **Critério de pronto** (com 4 milhões): a página de 12 meses de uma loja abre em **0,1 ms** quente e **3 ms**
+       frio (com o saldo anterior das linhas dela, 83 ms e 152 ms: < 1 s); o saldo numa data-base de todas as lojas sai
+       em **0,8–1,0 s** pela soma até a data (1,1–1,3 s frio) e em **11 ms** pela projeção menos o razão depois da data
+       (ontem): < 3 s; o recalcular da empresa inteira (`verificarSaldos`, 4 M de movimentos, 12.157 linhas, 89 s) fica
+       com o **pico de heap em 348 MB** (< 512 MB; RSS 537 MB) — o heap não cresce com o razão (páginas de 10 mil,
+       decisão 147), só o tempo.
+     - **`concurrently` fora da transação**: o executor (`aplicarMigracoes`) roda cada migração **dentro de uma
+       transação** (`begin` … `commit`, com `lock_timeout`), e `create index concurrently` não roda em transação. Segue
+       o padrão da 0017 (decisão 146): a preparação da tag `0026_indices_razao` (`garantirIndicesRazao`) cria os dois
+       com `concurrently` antes do `begin` da migração — as vendas do PDV continuam gravando; o inválido de um
+       `concurrently` interrompido é apagado e refeito; idempotente. Isso vale para todo caminho do executor, inclusive o
+       provisionamento da empresa nova (com a tabela vazia). A `.sql` só cria quando o journal é aplicado sem as
+       preparações, num bloco `do $$` que consulta o `pg_class` e roda o `create index` só se o nome não existir (e
+       refaz o inválido). Não usa o `create index if not exists` solto: ele pega a trava SHARE da tabela (que barra as
+       gravações) **antes** de ver que o índice existe, e na empresa existente a migração entraria na fila das vendas
+       até o `lock_timeout` (10 s) e falharia; com os índices da preparação prontos o bloco não pega trava nenhuma em
+       `movimentos_estoque`. O teste `migracao-indices-razao` aplica o journal sem as preparações e compara o
+       `pg_get_indexdef` com o da empresa provisionada, refaz um inválido pela `.sql` e reaplica a 0026 com uma
+       gravação aberta na tabela. Relato a quem migra (`relatoIndicesRazao`: os índices criados e o tempo, em
+       `auditoria_plataforma` `migracao_preparada`) só numa empresa com movimentos.
+     - **Produção** (Cloud SQL PG 18, 2 GB): a criação lê a tabela duas vezes (`concurrently`) e espera as transações
+       abertas; aqui foram 3,8 s + 7,3 s para 4 M de movimentos, e a empresa de hoje tem bem menos (o piloto é recente):
+       segundos, sem trava de escrita. Disco: +~660 MB por 4 M de movimentos (~+20% sobre os
+       índices que a tabela já tinha). Gravação: 100 mil movimentos num `insert` levaram ~10,3 s sem os dois, ~10,6 s só
+       com o primeiro e ~12,4 s com os dois (medida ruidosa, ~0,02 ms a mais por movimento; a venda do PDV grava
+       poucos movimentos por evento).
+     - **Para os blocos seguintes**: B32 pagina por `(data_movimento, id)` com `estoque_id` e o período (o
+       `ix_..._estoque_data` dá a ordem sem ordenar, inclusive com o filtro de tipos) e calcula o saldo anterior de cada
+       linha da página com a soma até o cursor pela chave da linha (o `linha_data`, só pelo índice); B29/B33 leem por
+       cursor do servidor (`declare`/`fetch`), que usa o mesmo índice; B31 calcula o saldo numa data-base pela
+       **projeção menos o razão depois da data** quando a data está na metade recente da história (11 ms ontem, 0,7 s seis
+       meses atrás) e pela soma até a data na metade antiga — os dois só leem a parte menor da história (o resultado é o
+       mesmo enquanto a projeção bate com o razão, que o recalcular confere). O `ix_movimentos_estoque_estoque_produto_data`
+       ficou quase coberto pelo `linha_data` (o planejador já prefere o novo na analítica de um produto): candidato a
+       remover depois dos relatórios, medindo (fora deste bloco).
+     - **Sem particionamento na Fase 2.** Com 4 milhões (um ano das 3 lojas) todas as consultas dos relatórios ficam
+       dentro dos critérios, e particionar `movimentos_estoque` mexe nas chaves: no PostgreSQL a tabela particionada só
+       aceita chave primária e índice único que contenham a coluna de partição (`data_movimento`), então a `pk(id)`, o
+       `uq_movimentos_estoque_idempotencia`, o `uq_..._compensacao` e o `uq_..._estorno` e as FKs que apontam para o
+       movimento (`estorno_de_id`, `compensa_movimento_id`) teriam de mudar, com o motor e o PDV dependendo da
+       idempotência. **Gatilho para particionar** (o primeiro que disparar; anual por `data_movimento`, MD 3.7.2): (1)
+       `movimentos_estoque` passar de **20 milhões** de linhas (~5 anos no ritmo de hoje); (2) em produção, o saldo
+       numa data-base de todas as lojas pela soma passar de **3 s**, ou a sintética de 12 meses de uma loja passar de
+       **5 s** (`EXPLAIN (ANALYZE, BUFFERS)` do roteiro da massa) — antes de particionar, a primeira resposta para esses
+       dois é um **fechamento mensal de saldos** por linha, que corta a história lida sem mexer nas chaves; (3) o replay do
+       recalcular da empresa inteira passar de **15 min** (89 s a 4 M; cresce linear). A massa de carga refaz a medição
+       (`--movimentos=20000000` simula ~5 anos; ~4,2 GB de disco, tabela e índices, por 4 M).
+     - **Testes**: `test/integracao/migracao-indices-razao.test.ts` — empresa nova e existente (esquema da 0025 com
+       10 mil movimentos) terminam com os mesmos dois índices válidos (definição lida do catálogo); na existente eles
+       vieram da preparação, com o relato; o inválido é refeito e a segunda passada só confere; a Movimentação sai do
+       `estoque_data` sem `Sort` e o saldo da linha até o cursor sai em `Index Only Scan` do `linha_data`. O
+       `seq-lancamento.test.ts` passou a filtrar o relato da 0017 (a 0026 também relata numa empresa com movimentos). A
+       carga com os tempos é a desta decisão (reproduzível pela semente; os tempos variam com a máquina).
+
+177. **Exportação de relatório em tarefa, em streaming** (Fase 2, F2-B29; ERP 3.5, 3.6; MD 3.1.6, 3.1.8; decisão 93;
+     `src/tarefas/exportar-relatorio.ts` (novo), `src/comum/exportacao.ts`, `src/infra/armazenamento.ts`
+     (`gravarFluxo`), `src/relatorios/relatorios.controller.ts` (novo), `packages/shared/src/paginacao.ts`;
+     `test/carga/exportacao-razao.ts` (novo); **sem migração**: a categoria `planilha_exportacao` já está no
+     `ck_arquivos_categoria` desde a 0001 e a `tarefas` já tinha tudo). A infraestrutura comum que os relatórios do
+     F2-B31 a F2-B33 vão usar; nenhum relatório de verdade a usa ainda (o PDV não muda).
+     - **Provedor por relatório** (`ProvedorRelatorio`, registrado em `servicos.exportacoes.registrar`): `chave` (a
+       rota `GET /relatorios/<chave>/exportar?formato=xlsx|csv&<filtros>`), `nomeArquivo` (`Relatorio_…`; o arquivo sai
+       `Relatorio_…_DD_MM_AAAA_HH_MM.xlsx` por `nomeArquivoExportacao`), `permissao` do relatório, `entidade` e
+       `localizacao` da auditoria, os `filtros` (zod; a entrada crua vai para `tarefas.parametros` e é validada de novo
+       na execução), as `colunas` (`ColunaExportacao`, com `custo: true` nas de custo) e a `consulta` (o SQL inteiro,
+       com a ordem estável e o filtro dos estoques/lojas permitidos da sessão). `contar` é opcional: o padrão é
+       `count(*)` da consulta embrulhada, que mantém as junções e a ordenação (0,6 s para 1 milhão com duas junções);
+       os relatórios grandes do B32/B33 devem dar o seu, só na tabela do razão.
+     - **Regra comum** (`ExportacaoRelatorios.exportar`): exige `relatorios.exportar` (`@Permissao` da rota e de novo
+       no provedor) **e** a permissão do relatório (403 com as que faltam); valida os filtros (422); conta; até
+       `LIMITE_EXPORTACAO` (50.000, ERP 3.5) baixa na hora pelo `write-excel-file` de sempre (`200`, as linhas lidas
+       pelo mesmo cursor, auditoria `exportar` no download); acima, cria a tarefa **`exportar_relatorio`**
+       (`TAREFA_EXPORTAR_RELATORIO` no shared) e responde **`202`** com `{ tarefaId, linhas }`
+       (`exportacaoEmTarefaSchema`), que o ERP acompanha em `GET /tarefas/:id` (o ícone Tarefas é do F2-B30). O critério
+       é só o número de linhas (o "ou 30 s" do ERP 3.5 não se sabe antes de rodar). **Teto numérico**: acima de
+       `LIMITE_EXPORTACAO_TAREFA` (5 milhões) a API pede para refinar os filtros (422) — o `.xlsx` tem até 1.048.575
+       linhas de dados por aba (`LINHAS_POR_ABA_XLSX`): passou, o arquivo continua numa aba nova "Relatório (2)" com o
+       cabeçalho (5 milhões = 5 abas; o `.csv` não tem limite). Sem `produtos.ver_custo`, as colunas `custo` saem do
+       arquivo (`colunasVisiveis`), no download na hora e na tarefa. **Teto por usuário**: no máximo 2 exportações em
+       tarefa na fila ou executando (`EXPORTACOES_PENDENTES_POR_USUARIO`; 422 "Você já tem 2 exportação(ões) em
+       andamento…"): a fila roda uma tarefa por vez, e sem o teto um usuário enfileiraria horas de exportação na
+       frente das importações e dos outros (teto "macio": dois pedidos no mesmo instante podem passar juntos).
+     - **Executor**: a sessão de quem pediu com o acesso **do momento** (`sessaoDaTarefa`): quem perdeu a permissão ou o
+       estoque entre o pedido e a execução não exporta com o acesso antigo (as colunas de custo também são decididas
+       aí). Lê a consulta por um **cursor do servidor** (`declare … no scroll cursor` + `fetch 10000`, num instantâneo
+       `repeatable read read only`, `lerPorCursor` sobre `lotesPorCursor` — o mesmo embrulho na exportação na hora e
+       na tarefa, para as duas lerem com as mesmas regras): o `declare` aceita os `$n` do protocolo estendido (o roteiro da
+       massa usava literais; os parâmetros funcionam no 16 e no 18), e o planejador otimiza o cursor para a primeira
+       fração, o que no razão é o `ix_movimentos_estoque_estoque_data` sem ordenar (decisão 176). Cada lote vai para o
+       escritor (`abrirEscritorPlanilha`): o `.xlsx` pelo `WorkbookWriter` do **exceljs 4.4.0** (versão exata; strings em
+       linha, sem a tabela de strings compartilhadas, que cresceria com o arquivo; cabeçalho em negrito e congelado),
+       o `.csv` com as regras do síncrono reaproveitadas (`textoCsv`: proteção contra fórmula com o apóstrofo, BOM,
+       `;`, vírgula decimal; datas `dd/mm/aaaa hh:mm` na hora de Brasília, `horaDeParede`, também no `.xlsx`). Texto que
+       começa com `=` no `.xlsx` é célula de texto, nunca fórmula (como no `write-excel-file`; teste). O progresso
+       (`progresso_pct` até 95, "N de M linhas") usa o total contado no pedido.
+     - **Envio em multipart enquanto escreve** (`ArmazenamentoObjetos.gravarFluxo`): junta 8 MiB
+       (`TAMANHO_PARTE_BYTES`; o S3, o MinIO e o XML API do Google Cloud Storage, o de produção, pedem ≥ 5 MiB por
+       parte menos a última) e envia uma parte por vez com os comandos do `@aws-sdk/client-s3` que já estava (sem o
+       `@aws-sdk/lib-storage`); o arquivo menor que uma parte vai num `PutObject` só; o sha256 é calculado no caminho
+       (no multipart ele fica só em `arquivos`, não nos metadados do objeto); falhou → `AbortMultipartUpload`. O envio
+       que falha destrói a saída e a tarefa falha com "O arquivo não pôde ser gravado no armazenamento: …"; o gerador
+       que falha destrói a saída com o erro dele. Só o executor destrói a saída: o envio a lê pelo
+       `saida.iterator({ destroyOnReturn: false })`, porque o `for await` que sai com erro a destruiria na hora com um
+       `AbortError` ("The operation was aborted"), antes do `AbortMultipartUpload`, e o gerador parado na folga saía
+       com essa mensagem crua no lugar da do armazenamento (teste com a folga pequena e o aborto atrasado no S3 em
+       memória). **Parte pendurada**: o `S3Client` não tinha limite de tempo nenhum
+       (no `@smithy/node-http-handler` 4.14 os três valem 0), e uma parte presa numa conexão meio aberta deixaria o
+       gerador parado na pressão de volta com a transação do cursor aberta ("idle in transaction": travas de leitura
+       no razão, que fariam a migração do próximo deploy cair no `lock_timeout`, o horizonte do vacuum preso, uma
+       conexão do pool, uma vaga do semáforo e a fila inteira, com o sinal em dia). Agora o cliente tem limite de
+       **inatividade** (`socketTimeout` = `ARMAZENAMENTO_INATIVIDADE_MS`, 2 min; nenhum byte indo ou vindo — o envio
+       lento que anda continua) e 10 s para conectar: a parte parada falha, o SDK repete (3 tentativas), o envio é
+       abortado e o gerador sai com `rollback`. Defesa no banco: a transação do cursor leva
+       `set local idle_in_transaction_session_timeout = '10min'` (o cliente escuta o `error` da sessão derrubada
+       enquanto está emprestado; sem ouvinte, derrubaria o processo). Processo que morre no meio deixa um multipart aberto no bucket: a
+       regra de ciclo de vida "AbortIncompleteMultipartUpload" (o GCS tem) os limpa — a configurar junto das regras
+       de `backups/` (`infra/producao/README.md`, Pendências). Tarefa interrompida: "Nenhum arquivo foi gerado: peça a
+       exportação de novo." (decisão 150).
+     - **Pressão de volta** (o ponto que a medição achou): entre o gerador e o envio há um `PassThrough` de 1 MiB; o
+       gerador só lê o próximo lote quando ele tem folga (`folga`), então o envio lento segura a leitura do banco. No
+       `.xlsx` isso não bastava: o exceljs escreve a aba num `StreamBuf` que o archiver embrulha num `PassThrough` do
+       `readable-stream` 2 sem respeitar o `write() === false`, e o deflate precisa de uma volta do laço de eventos
+       por pedaço de 64 KiB enquanto gerar 10 mil linhas segura o laço por ~0,3 s. Resultado, medido: a planilha quase
+       inteira sem comprimir (**339 a 370 MB fora do heap** com 1 milhão de linhas, mesmo com o envio rápido) ficava
+       na memória esperando o deflate. A `folga` passou a esperar também essa entrada do zip esvaziar
+       (`entradaDoZip`, que lê o encanamento interno do exceljs 4.4.0; o `exportacao.spec.ts` quebra se uma versão nova
+       o mudar): fora do heap caiu para ~20 MB no gerador isolado, sem perder velocidade. A espera escuta o `error` e
+       o `close` do destino (um `destroy(erro)` sem ouvinte derrubaria o processo), e o `fechar` do `.xlsx` também
+       (`aoTerminarOuFalhar`): o `WorkbookWriter.commit` espera o `finish` do destino, e com o envio caído depois da
+       última linha a tarefa ficava "executando" para sempre, com o sinal em dia (achado na suíte inteira; teste
+       unitário). A rejeição do envio é tratada assim que ele começa (sem isso, o envio que falha enquanto o gerador
+       espera o banco seria um `unhandledRejection`, que encerra o processo, decisão 166).
+     - **Concorrência** (decisão 93): `semaforoExportacao` (`EXPORTACAO_CONCORRENCIA`, 2) agora vale para a geração
+       de **todo** arquivo de exportação — a das listagens (`arquivoExportacao`), o relatório da importação
+       (`gerarArquivoPlanilha`, as duas pelo mesmo `gerarConteudo`) e a tarefa (que segura a vaga do começo ao fim,
+       por minutos). A fila `genesis-tarefa` roda uma tarefa por vez por processo e o **mínimo é 2** (um valor menor
+       no ambiente vale 2: com 1, toda exportação na hora e o modelo de importação esperariam a tarefa acabar, com a
+       requisição pendurada), então sempre sobra vaga para quem baixa na hora. O cursor segura uma conexão do pool
+       da empresa durante a leitura (1 milhão: ~48 s no `.xlsx`, ~16 s no `.csv`) num instantâneo só de leitura, sem
+       trava de versão (MD 1.5 fala da transação que segura a trava); o fechamento do zip e o fim do envio vêm depois
+       de soltar a conexão.
+     - **Resultado** em `arquivos` (`planilha_exportacao`, `entidade = 'tarefas'`, `registro_id` = a tarefa,
+       `retencao_ate` = hoje + 7 dias, UTC) e `tarefas.resultado`
+       (`resultadoExportacaoRelatorioSchema`: relatório, formato, linhas, abas, tamanho, nome do arquivo). A
+       auditoria `exportar` vai na mesma transação do `arquivos` (a tarefa que falha não exportou nada), com a origem
+       da requisição guardada nos parâmetros (IP, user agent, requisição), os filtros, as linhas, a tarefa e o arquivo.
+     - **Link do `GET /tarefas` dentro da retenção** (ERP 3.6, "link expira em 7 dias"): o `doUsuario` assinava um link
+       novo de 7 dias a cada consulta, sem olhar `arquivos.retencao_ate`, e ninguém apaga o objeto — a exportação do
+       dia 1 ainda baixava no dia 30, com o custo de um mês atrás, mesmo depois de a pessoa perder
+       `produtos.ver_custo` ou o estoque. Agora a validade é `validadeDownloadS`: 7 dias, sem passar do fim do dia
+       `retencao_ate` (UTC); vencida → `download: null` e **`downloadExpirado: true`** (campo novo da resposta; o
+       ERP da importação mostra "O relatório de inconsistências expirou…"). Vale para todo arquivo de tarefa (o
+       relatório da importação, 30 dias); arquivo sem retenção continua com 7 dias. O objeto ainda fica no bucket
+       até a limpeza (`infra/producao/README.md`, Pendências), mas não se baixa mais pelo sistema.
+     - **exceljs** (versões escolhidas): MIT, 23 MB e ~120 pacotes transitivos (a parte de leitura — unzipper, jszip,
+       fast-csv — vem junto e fica sem uso); o `uuid@8` que ele traz tem um alerta moderado (GHSA-w5hq-g745-h8pq, só
+       `v3`/`v5`/`v6` com `buf`) que não se aplica (o exceljs só chama `v4`). Era o que o plano pedia; um gerador de
+       `.xlsx` próprio (zip com `node:zlib` e `zlib.crc32`) seria ~200 linhas sem dependência e fica como alternativa se
+       o exceljs der trabalho.
+     - **Carga de 1 milhão de linhas** (`pnpm --filter api carga:exportacao`, fora do CI, ~3 min; a massa do F2-B28 por
+       `gerarMassa` — o `massa-razao.ts` passou a ser importável, sem rodar o roteiro — com 1 milhão de movimentos e
+       2.000 produtos, o razão inteiro pelo provedor de exemplo, pela rota de verdade, com a API, a fila e o S3 em
+       memória no mesmo processo, `--max-old-space-size=1536` como em produção; PostgreSQL 16 local, 4 CPUs; apaga os
+       bancos no fim): **`.xlsx`** 1.000.000 de linhas em 1 aba, 58,2 MB, 8 partes, **45–48 s** (~21 a 22 mil
+       linhas/s), **pico de heap 115–116 MB** (85 MB no início; três execuções), fora do heap 135 MB (o arquivo inteiro
+       guardado pelo S3 em memória entra na conta; sem ele, 10,5 MB); **`.csv`** 81,8 MB, 10 partes, **13–16 s** (~63
+       a 75 mil linhas/s), **pico de heap 165–179 MB** (89 MB no início; o `.csv` gera mais lixo de texto por segundo,
+       e o pico é o heap com o lixo ainda não coletado), fora do heap 255 MB (idem: o S3 em memória guarda as partes e
+       o arquivo; sem ele, ~0). O arquivo abre e tem o total de linhas (o `.xlsx` relido pelo leitor em streaming do
+       exceljs). Critério de pronto (< 300 MB de heap): ok. A contagem do pedido levou 0,5–0,8 s. Sem a correção da
+       pressão de volta, o `.xlsx` deixava ~340 MB fora do heap — e o heap não acusa: a carga reprova também pelo
+       fora do heap sem as duas cópias do S3 em memória (as partes e o objeto montado) acima de 100 MB
+       (`LIMITE_EXTERNO_MB`; com a correção tirada, deu 180 MB e reprovou).
+     - **Testes**: `test/integracao/exportacao-relatorio.test.ts` (no CI, com a massa pequena — 6 mil movimentos —, o
+       S3 em memória com multipart e limites pequenos: na hora até 1.000, lotes de 500, abas de 2.500, partes de
+       64 KiB): o `.xlsx` em tarefa (202, `concluida`, as abas com o cabeçalho, o total, as datas e números como
+       células, a ordem do cursor, o link de 7 dias, `arquivos` com o sha256 e o tamanho do que se baixa, a auditoria) e
+       **o streaming**: a primeira parte do multipart chegou ao S3 antes de a última linha ser escrita, e nada ficou
+       aberto no bucket; o `.csv` (BOM, `;`, vírgula decimal, uma linha por movimento); o filtro do provedor na tarefa;
+       no limite baixa na hora (200, `write-excel-file`, auditoria sem tarefa); 404 do relatório desconhecido e 422 do
+       filtro inválido; a terceira exportação em andamento do mesmo usuário (422; a na hora passa); 403 sem
+       `relatorios.exportar` (Estoquista) e sem a permissão do relatório (Financeiro); sem
+       `produtos.ver_custo` as colunas de custo saem e os estoques permitidos limitam as linhas; o teto (422); a parte
+       que falha no meio (`.csv` e `.xlsx`): multipart abortado, tarefa `falhou` com a mensagem, nada em `arquivos` nem
+       na auditoria; a parte **pendurada** (o S3 em memória recebe e não responde; inatividade de 3 s no teste):
+       tarefa `falhou`, multipart abortado e nenhuma sessão "idle in transaction" no banco; o link sem passar da
+       retenção (vencida → `download: null`, `downloadExpirado`; no último dia, no máximo até o fim dele); o acesso
+       do momento na execução (a tarefa de quem não tem `relatorios.exportar` falha sem gravar; a de quem trocou de
+       estoque traz só as linhas do estoque de agora); o semáforo (com as vagas ocupadas a tarefa fica em "Aguardando
+       a vez" e segue quando uma abre); a retenção conferida contra o dia de antes e o de depois do pedido (meia-noite
+       UTC no meio); e o `gravarFluxo` pequeno num PUT só. Unitários (`src/comum/exportacao.spec.ts`): as abas acima do
+       teto, `=1+1` como texto, a data na hora de Brasília, Sim/Não, o `.csv` igual ao síncrono, a pressão de volta (o
+       lote só termina quando o destino esvazia; no `.xlsx`, com a entrada do zip esvaziada — 10 mil linhas por lote,
+       quebra sem a correção), o destino destruído rejeitando, o encanamento do exceljs e o corte do custo;
+       `src/tarefas/tarefas.spec.ts`: a validade do link (`validadeDownloadS`).
+
+178. **Relatório Estoque Atual com o modal de ajuste** (Fase 2, F2-B31; ERP 16.4, 13.6, 13.1.5, 3.5; D39; decisões 157,
+     174, 176 e 177; `src/relatorios/estoque-atual.ts` (novo), `src/relatorios/relatorios.controller.ts`,
+     `ajustarEstoqueDefinir` em `src/estoques/acertos.ts`, `src/tarefas/exportar-relatorio.ts` (`preparar` e
+     `semJit` no provedor), `src/servicos.ts` (o provedor registrado), `packages/shared/src/relatorios.ts` (novo);
+     `test/carga/estoque-atual.ts` (novo, `pnpm --filter api carga:estoque-atual`); **sem migração** (usa os índices
+     da 0026); o PDV não muda (o ajuste é um acerto, e o saldo desce no fluxo `estoque` como qualquer outro)).
+     - **`GET /relatorios/estoque-atual`** (`relatorios.estoque_atual`; `consultaEstoqueAtualSchema`): uma linha por
+       estoque × tipo de estoque × produto (× variação, nula enquanto travadas, D43) com Ref. interna, marca,
+       unidade, saldo, mínimo (o da loja do estoque), custo médio e custo total (só com `produtos.ver_custo`; a
+       ordenação por custo sem ela é recusada), Venda (o preço da loja do estoque, ou o do produto), Atacado, iFood e
+       venda total, o "Em trânsito" e a "Divergência a tratar" (as subconsultas do F2-B26, `em-transito.ts`, as
+       mesmas do `/saldos-estoque`, com a linha zerada da chave que só tem pendência). Filtros: nome/código interno/
+       EAN, **marca**, **departamento** (a categoria e as filhas, pelo `caminho` da árvore, como a listagem de
+       produtos), estoque, tipo de estoque, situação do saldo, produtos ativos/inativos/todos, `produtoId`, `treino`,
+       **`vencendoEmDias`** e **`dataBase`**. Paginado no servidor (`pagina`/`tamanho`), com o **total e os totais do
+       relatório inteiro na mesma ida ao banco** (funções de janela `count(*) over ()`/`sum(...) over ()`; só a
+       página além do fim conta à parte).
+     - **"Todas"** (`estoqueId` vazio ou `todas`): uma linha por produto × variação × tipo com a **soma dos estoques
+       permitidos** (decisão 149: o estoquista da Loja 1 vê só ela); custo e venda totais = a soma das linhas (cada
+       uma ao preço da loja do seu estoque); o custo médio da soma é a média ponderada pelos saldos positivos (sem
+       saldo positivo, o maior custo médio das linhas); o mínimo é a soma dos mínimos. A **loja de treino** fica de
+       fora por padrão (D39; `treino` = `excluir`/`incluir`/`somente`, como nas consultas de vendas); o estoque de
+       treino escolhido aparece.
+     - **"Vencendo em N dias"** (0 a 3650): só as linhas com lote de validade até hoje + N (no fuso da empresa;
+       inclusive os já vencidos, que são os mais urgentes) e saldo de lote positivo (`saldos_lote`), com a quantidade
+       desses lotes e a validade mais próxima (`vencendo`). Não combina com a data-base (422 no campo): os lotes são
+       os de hoje.
+     - **Data-base "Saldo em <data>"** (até hoje; futura → 422): o saldo no fim do dia (`data_movimento` antes da
+       meia-noite seguinte no fuso da empresa), pelo caminho que a decisão 176 mediu: **a projeção menos o razão
+       depois da data** quando a data está na metade recente da história dos estoques escolhidos (o meio entre o
+       primeiro movimento deles e agora) e **a soma do razão até a data** na metade antiga. A escolha fica no próprio
+       SQL (um filtro de uma vez só; o ramo que não vale nem roda), então a tela e a exportação em tarefa calculam
+       igual, e os dois ramos dão o mesmo resultado (o teste confere os dois em cada data). Na projeção, a linha que
+       só nasceu depois da data fica de fora (zerada nela e sem movimento até ela), como na soma. O **custo médio da
+       data** é o `custo_medio_posterior` do último movimento da linha **pela ordem de lançamento** (`seq_lancamento`,
+       a da cadeia do custo, `ix_movimentos_estoque_linha_seq`) com data até ela e lançado antes do primeiro movimento
+       da linha com data depois dela (um passo à frente no `ix_movimentos_estoque_linha_data`); sem movimento depois,
+       o último lançado. Pela data só (como era na primeira versão do bloco), o movimento lançado depois com data no
+       passado — a venda do PDV offline sincronizada tarde (`dataMovimento` = `finalizada_em`), o cancelamento, o
+       "Definir" retroativo — trazia para a data o custo das entradas posteriores, porque a saída grava o custo
+       vigente no lançamento (a venda do dia 05 sincronizada no dia 07, depois da NF-e do dia 06, mostrava no "Saldo
+       em 05" o custo da NF-e). **Limitação aceita**: o "primeiro depois" é o primeiro pela data, não pelo lançamento
+       (pelo lançamento, a metade antiga leria de novo toda a parte da linha até a data); só erra com dois lançamentos
+       retroativos cruzados (um com data depois da data-base lançado depois de outro ainda mais novo, e um com data
+       até ela lançado entre os dois), e aí o custo é o do estado do razão logo antes do primeiro deles. A quantidade
+       não depende da ordem (é soma). As duas buscas repetem na ordem todas as colunas do índice porque o planejador
+       não trata o `variacao_id is null` como igualdade e, só com a data, lia a história inteira de cada linha e
+       ordenava (medido: **20 s** com 4 milhões); a CTE das linhas é `materialized` (no "Todas" o custo é usado três
+       vezes, e a CTE embutida repetia a busca). "Em trânsito" e "Divergência a tratar" ficam nulos (só existem os de
+       hoje). O ajuste não abre nesse modo (ERP 16.4).
+     - **Sem movimento** (situação do saldo **"Zerado"** e **"Abaixo do mínimo"**, os filtros em que o saldo 0 conta):
+       o produto que controla estoque e não tem linha no estoque (no tipo do filtro, ou em nenhum tipo) entra com
+       saldo 0, custo 0 e o tipo do filtro ou o padrão, uma linha por estoque, como o `incluirSemMovimento` do
+       `/saldos-estoque` — a cerveja recém-cadastrada com mínimo de 24 e ainda não recebida é a mais abaixo do
+       mínimo, e o clique no saldo lança a contagem inicial. No "Todas", só o produto sem linha em nenhum dos
+       estoques escolhidos (soma dos mínimos de todos): o que tem linha em algum continua a soma das linhas, igual em
+       qualquer filtro. Nas outras situações não entra (seria o catálogo inteiro em cada estoque); na data-base vale
+       igual (saldo 0 na data, sem pendências).
+     - **O fuso como parâmetro e o JIT desligado** (achados da carga): com o fuso numa subconsulta (`fusoDaEmpresa`)
+       o fim do dia é um valor que o planejador não conhece; ele estimava um terço do razão "depois da data" e varria
+       o `linha_data` inteiro de cada estoque em vez do `estoque_data` (0,7 s em vez de 0,2 s). Agora
+       `prepararFiltrosEstoqueAtual` lê o fuso antes (com a conferência da data futura) e ele vai como parâmetro. E a
+       consulta, com muitas CTEs e subconsultas, tem custo estimado alto: com o `jit` ligado (o padrão do PostgreSQL),
+       ele gastava **~1,5 s compilando** de 1,8 s no total; a página roda numa transação `read only` com `set local jit
+       = off`, e o provedor da exportação ganhou `semJit` (o cursor do F2-B29 faz o mesmo `set local`) e `preparar`
+       (completa os filtros com o que a consulta lê do banco antes; roda no pedido e de novo na execução da tarefa) —
+       os dois opcionais, para os próximos relatórios (B32/B33).
+     - **Exportação** pela rota comum (decisão 177): o provedor `estoque-atual` (`Relatorio_Estoque_Atual_…`; a
+       permissão do relatório; auditoria `exportar` em `saldos_estoque`, "Relatórios › Estoque Atual"), com as
+       colunas da tela (a do saldo vira "Saldo em dd/mm/aaaa" na data-base; sem "Em trânsito"/"Divergência" nela; as
+       do "Vencendo" só com o filtro) e a **mesma consulta** com a sessão do momento: na tarefa, os estoques
+       permitidos e o "Ver custo" são os de agora (`sessaoDaTarefa`), e as colunas de custo saem sem ele.
+     - **Modal de ajuste** (`POST /relatorios/estoque-atual/ajustar`, `relatorios.estoque_atual` **e**
+       `estoque_acertos.criar`; `ajusteEstoqueRelatorioSchema` = o do "Ajustar" do produto com o `produtoId`): o
+       **mesmo núcleo** do "Ajustar" do produto (decisão 157) — `ajustarEstoqueDoCadastro` virou
+       `ajustarEstoqueDefinir(tx, sessao, produtoId, dados, origem)` com a origem `cadastro_produto` (padrão) ou
+       `relatorio_estoque` —: cria e efetiva na mesma transação (`travaVersao`) um "Definir" de um item com a origem
+       `relatorio_estoque`, que a efetivação já traduz em **`AJUSTE_RELATORIO`** (`tipoMovimentoAcerto`; a origem
+       estava no enum, no `ck_acertos_estoque_origem` e no seed desde a Fase 1, sem uso), na hora da contagem
+       informada (padrão: o instante da requisição), com a diferença descontando os movimentos posteriores à contagem
+       e a compensação das vendas offline anteriores a ela que chegarem depois (13.1.5), a regra do saldo negativo do
+       acerto (o "Definir" não pede quantidade negativa) e o estoque permitido para **movimentar** (403 no campo). Os
+       produtos sem saldo próprio e os que não controlam estoque são recusados como no produto. O acerto aparece na
+       lista de acertos com a origem "Relatório Estoque Atual"; a auditoria (criar + efetivar) vai no acerto com a
+       localização "Relatórios › Estoque Atual". Mover saldo entre tipos continua pelo acerto "Mudar tipo" (13.5).
+     - **Carga** (`pnpm --filter api carga:estoque-atual`, fora do CI, ~7 min aqui, quase tudo gerando a massa; a
+       massa do F2-B28 com **4 milhões de movimentos**, 12.157 linhas de saldo, pela rota de verdade com a API no
+       mesmo processo; a primeira página de 50 com o total e os totais; o pior de 3; apaga os bancos no fim). O meio da
+       história anda com o relógio (a massa tem datas fixas, 01/11/2025 a 01/11/2026), então as datas-base saem do
+       meio real (uma entre ele e o fim da massa, uma no primeiro terço da história) e a carga confere antes de medir
+       que cada data-base vai mesmo pelo caminho do rótulo (a coluna `recente` de `sqlEstoqueAtual`), senão falha.
+       Medido em 07/11/2026, já com o custo da data pela ordem de lançamento e o "sem movimento" (meio em 05/05/2026):
+       "Todas" agora (3.040 linhas) **131 ms**; Loja 1 agora (2.454) **50 ms**; "Todas" com a data-base de ontem, pela
+       projeção, **300 ms**; em 03/08/2026 (metade recente, três meses antes do fim da massa), pela projeção,
+       **1,38 s**; em 04/03/2026 (primeiro terço), pela soma até a data, **1,78 s** no "Todas" e **713 ms** na Loja 1;
+       "abaixo do mínimo" ordenado por venda total **97 ms** (a massa não tem mínimo nem produto sem movimento: mede só
+       a ordenação e o filtro); a exportação na hora em CSV do "Todas" com a data-base de ontem (3.040 linhas)
+       **688 ms**. Critério de pronto (< 3 s): ok em todos. Na primeira medição (custo pela data só, a data recente um
+       mês antes do fim e a antiga oito meses antes): 140 ms, 47 ms, 196 ms, 857 ms, 1,55 s, 510 ms, 79 ms e 343 ms. O
+       caso mais lento é a soma até a data no "Todas" (lê a parte antiga do razão de todos os estoques); fica abaixo do
+       limite, e a regra da metade garante que nenhuma data lê mais da metade da história.
+     - **Testes**: `test/integracao/relatorio-estoque-atual.test.ts` (as colunas, os totais e o custo só com "Ver
+       custo"; marca e departamento com as filhas; o "Todas" só com os permitidos e a loja de treino fora/dentro/só;
+       o "Vencendo"; a "Divergência a tratar" de uma transferência recebida com menos itens na linha da origem e
+       somada no "Todas"; o produto sem movimento no "Zerado" e no "Abaixo do mínimo" (por estoque, no tipo escolhido,
+       na data-base e no "Todas"; o que não controla estoque fora; some depois da primeira entrada); a data-base de 4
+       dias atrás a hoje igual ao saldo da época pelos dois caminhos (forçados com o fuso da empresa, a expressão da
+       produção), o custo médio da época, o "Definir" retroativo lançado depois de uma compra (o custo da data é o de
+       antes dela), o "Todas" na data-base com dois estoques (a soma e a média ponderada do custo da época), a escolha
+       pela metade e a data futura; o ajuste com a origem e o movimento, na lista de acertos, na
+       auditoria e no pull do PDV; a venda offline anterior à hora do ajuste compensada; as permissões e o contrato;
+       a exportação na hora em CSV e em tarefa em `.xlsx` sem o custo e só com o estoque permitido; o razão idêntico
+       no fim), `relatorios.spec.ts` no shared e o `produto-formulario.test.ts` de sempre (o "Ajustar" do produto
+       pelo núcleo renomeado). O ERP é a decisão 66 do README do ERP.
+179. **Relatório Movimentação de Estoque, visão analítica** (Fase 2, F2-B32; ERP 16.5; MD 3.7.1–3.7.3; decisões 176,
+     177 e 178; `src/relatorios/movimentacao.ts` (novo), `src/relatorios/relatorios.controller.ts`,
+     `src/referencias/referencias.controller.ts` (`GET /referencias/tipos-movimento-estoque`),
+     `packages/shared/src/relatorios.ts`; `test/carga/movimentacao.ts` (novo, `pnpm --filter api carga:movimentacao`);
+     **sem migração** (usa os dois índices da 0026); o PDV não muda (`movimentos_estoque` não desce)).
+     - **`GET /relatorios/movimentacao-estoque`** (`relatorios.movimentacao_estoque`;
+       `consultaMovimentacaoEstoqueSchema`): um movimento do razão por linha. **Local de estoque** e **período**
+       obrigatórios — `dataInicial`/`dataFinal` em dias de calendário no fuso da empresa (do começo do dia inicial
+       ao começo do dia seguinte ao final), até **366 dias contando as pontas** (`MAXIMO_DIAS_MOVIMENTACAO`; de
+       07/11 a 07/11 do ano seguinte passa, 367 é 422 no campo), o final não antes do inicial. Filtros opcionais:
+       `produtoId`, **`tiposMovimento`** (multisseleção: `A,B` ou o parâmetro repetido; o código desconhecido é 422),
+       `usuarioId`, `pessoaId` (`movimentos_estoque.pessoa_id`, em qualquer documento: o fornecedor do recebimento e
+       da nota; o cliente da venda, da troca, da devolução avulsa de cascos — `documento_tipo = 'vasilhame'` — e da
+       compensação, que herda a pessoa da venda compensada),
+       `documentoTipo` e `documentoNumero` (o número da coluna Documento: o `numero_exibicao` da venda, o `codigo` do
+       acerto, do recebimento e da transferência, o **Nº da NF-e** do fornecedor na nota de entrada; sem tipo, ou num
+       tipo sem número — troca e vasilhame —, 422; o número que não é inteiro num documento de código numérico não
+       acha nada, sem erro do banco). O local fora dos **estoques permitidos** é 403 (decisão 149; conferido antes de
+       procurar o local, então quem não o vê não descobre se existe), e a consulta repete o filtro da sessão (para o
+       provedor da exportação do F2-B33, que roda com a sessão do momento). Treino: o local é escolhido, então o de
+       treino aparece quando escolhido (como no Estoque Atual, D39).
+     - **Paginação por cursor** `(data_movimento, id)`, sem total nem página (um ano de uma loja passa de 1,6 milhão
+       de movimentos): `tamanho` (20, 25, 35 ou 50; padrão 50) e o `cursor` opaco da resposta (`proximoCursor`;
+       `null` na última). A página lê `tamanho + 1` movimentos do `ix_movimentos_estoque_estoque_data (estoque_id,
+       data_movimento, id)` depois do cursor, na ordem e sem ordenar (o a mais diz se há próxima e não volta). O
+       cursor é o base64url de `<data em UTC com os microssegundos>|<id>` do último movimento da página: a data vai em
+       texto com os microssegundos do banco (`to_char(... 'US')`), porque o `Date` do JavaScript perderia os
+       microssegundos e o movimento do mesmo milissegundo seria repetido ou pulado; vários movimentos no mesmo instante
+       (um acerto de 25 itens grava todos com a mesma `data_movimento`) se desempatam pelo `id`. O cursor inválido é
+       422 no campo ("volte para a primeira página"). O movimento lançado durante a leitura com data já passada (a
+       venda offline que chega) não desloca as páginas: só aparece se cair depois do cursor.
+     - **Saldo anterior e posterior recalculados na ordem de `data_movimento`** (ERP 16.5: "recalculados na ordem de
+       `data_movimento`"), não os gravados (que seguem a ordem de lançamento): o saldo anterior de um movimento é a
+       soma do razão da sua linha de saldo (estoque × produto × variação × tipo) antes dele pela chave `(data_movimento,
+       id)`, e o posterior, o anterior mais a quantidade. Na página, cada movimento lê só a **parte** do razão da
+       linha **entre o movimento anterior da mesma linha na página e ele** (para o primeiro da linha, a história antes
+       dele; `lag` na janela da linha), pelo `ix_movimentos_estoque_linha_data (…, data_movimento, id) include
+       (quantidade)` **só pelo índice**, com as duas pontas como condição do índice (`(data_movimento, id) > (anterior)`
+       e `< (ele)`; sem anterior, `-infinity` e o uuid zero, para não virar um `or` que o índice não usa). As partes não
+       se sobrepõem; a janela soma as partes e as quantidades da página antes do movimento. Assim cada linha de saldo
+       lê a sua história **uma vez** por página, e não uma vez por movimento (o produto mais vendido de uma loja tem
+       135 mil movimentos num ano). Com filtro de tipo, usuário, pessoa ou documento, as partes incluem os movimentos
+       que o filtro esconde: o saldo continua o **da linha de saldo**, não o do filtro (a compra no meio das vendas
+       mostra o estoque de verdade antes dela). A variação nula vai pelo `is null` e a outra pela igualdade (o
+       `is not distinct from` não é condição do índice; decisão 178). A mesma conta serve à leitura inteira da
+       exportação do F2-B33 (lá sem o limite; as partes continuam disjuntas).
+     - **O gravado vai junto** (`saldoAnteriorGravado`/`saldoPosteriorGravado`): o recalculado difere do gravado quando
+       um lançamento tem data no passado — a venda offline sincronizada tarde (`data_movimento` = `finalizada_em`), o
+       "Definir" na hora da contagem, a compensação —; o ERP mostra a nota e os gravados no ícone. O recalculado
+       **fecha com `saldos_estoque`**: com o período até hoje, o saldo posterior do último movimento de cada linha é a
+       projeção (o teste confere em todas as linhas).
+     - **Colunas** (compatíveis com o export do Nuvem3 na MD 3.7.2): `CodigoInterno`/`NomeProduto` (com o código do
+       produto), `EstoqueAnterior`/`QtdMovimentada`/`EstoqueAtual` (os recalculados), `DataHora` (ISO com os
+       microssegundos), `Usuario`, `TipoMovimento` (código e nome), **`idmovimentacaoestoquetipo`** (o
+       `tipos_movimento_estoque.id_nuvem3`, nulo quando não confirmado: no levantamento só o 28 das transferências),
+       `Estoque` e `nomeLoja` (a loja do documento), `idmovimentacaoestoque` (o `id`; o movimento não tem código
+       legível próprio, o número que a pessoa reconhece é o do documento), `idvenda` (o `documento.id` da venda) e
+       `PessoaVenda` (o cliente), **`fornecedornf`** (o fornecedor do recebimento ou da nota, que no Nuvem3 vinha
+       vazio), `sigla` (a unidade do documento; sem ela, a do produto) e `nomeVariacao`; mais o tipo de estoque, a
+       **`unidadeBase`** (a sigla do produto: a unidade da quantidade e dos saldos, que estão sempre na unidade base,
+       MD 3.7.2) e o **`fator`** do documento (o recebimento de 2 CX com fator 12 grava 24 com `sigla` = CX: sem os
+       dois, a tela leria 24 caixas), a observação, **`CustoUnitario`/`CustoTotal`** gravados no movimento (só com
+       `produtos.ver_custo`: sem ela as duas vêm nulas, nem saem do banco) e o **Documento** (tipo, id para o link e o número). Os nomes do local, do
+       produto e da pessoa escolhidos voltam em `referencias` (o seletor reaberto pelo link mostra o nome). **A
+       pessoa sai sempre que o movimento tem `pessoa_id`** (o filtro Pessoa acha o movimento em qualquer documento, e a
+       coluna mostra quem ele achou): em `fornecedor` no recebimento e na nota, em `pessoaVenda` nos demais (a
+       devolução avulsa de cascos e o `ACERTO_COMPENSACAO` saíam com "—" no filtro de um cliente). A constante da
+       localização da auditoria fica para o F2-B33, com o provedor da exportação que a usa.
+     - **`prepararFiltrosMovimentacao`** (uma ida ao banco antes da página; servirá de `preparar` ao provedor do
+       F2-B33): o fuso da empresa como **parâmetro** (decisão 178: com o fuso numa subconsulta o planejador não conhece
+       o começo e o fim do período), a existência do local, os tipos de movimento e os nomes de `referencias`. A
+       página roda numa transação `read only` com `set local jit = off` (as subconsultas do saldo têm custo estimado
+       alto; decisão 178).
+     - **`GET /referencias/tipos-movimento-estoque`** (qualquer usuário autenticado, como as outras referências):
+       código, nome, sinal, documento, `idNuvem3` e ativo, inclusive os inativos (o razão antigo ainda os tem), para a
+       multisseleção do ERP.
+     - **Carga** (`pnpm --filter api carga:movimentacao`, fora do CI; ~8 min aqui, quase tudo gerando a massa do
+       F2-B28 com **4 milhões de movimentos**; pela rota de verdade com a API no mesmo processo; páginas de 50; o pior
+       de 3; apaga os bancos no fim). 12 meses (01/11/2025 a 31/10/2026) da Loja 1 (1,62 milhão de movimentos; o
+       produto mais movimentado com 135.532): **1ª página 40 ms**; **página do meio pelo cursor 98 ms**; **última
+       página 170 ms** (o saldo anterior lê a história mais longa); só as compras 29 ms; o produto mais movimentado
+       27 ms; um fornecedor 51 ms; o operador com menos movimentos 23 ms. Critério de pronto (< 5 s): ok em todos.
+       **EXPLAIN (ANALYZE, BUFFERS)** registrado pela carga (`resultado.explain`, o melhor de 3, com o JIT
+       desligado): 1ª página 1,8 ms e 509 páginas de 8 kB (Index Scan `ix_movimentos_estoque_estoque_data` 51 linhas
+       ← Index Only Scan `ix_movimentos_estoque_linha_data` para o saldo); página do meio 94 ms e 6.396 páginas
+       (o mesmo caminho; o `linha_data` lê 236 mil entradas: a história das linhas da página antes delas, só pelo
+       índice); o produto mais movimentado 3,7 ms e 2.551 páginas. O frio não foi medido neste bloco: a página do meio toca
+       ~6.400 páginas (~50 MB), e a decisão 176 mediu ~8.300 páginas do mesmo índice em 152 ms com o cache frio.
+     - **Testes**: `test/integracao/relatorio-movimentacao.test.ts` (a ordem e o cursor sem repetir nem pular, com 25
+       movimentos no mesmo instante atravessando a página; o saldo que fecha com `saldos_estoque` em todas as linhas e
+       encadeia na ordem da data; o "Definir" com a hora da contagem antes de três lançamentos e lançado depois deles,
+       com o gravado diferente do recalculado; o período que começa do saldo de antes dele; a linha de saldo que
+       atravessa a página — o primeiro movimento dela na 2ª página soma desde o começo, não desde o cursor —, sem e
+       com filtro; o filtro que esconde um movimento entre dois da página — o recebimento entre a entrada e a saída
+       no filtro "Acerto" — sem mudar o saldo; a venda pelo `/sync` com o cliente, chegada depois de um "Definir" de
+       contagem posterior — o `numero_exibicao` na coluna e no filtro por texto, o recalculado diferente do gravado e
+       a compensação com o nome do cliente no filtro Pessoa —; o recebimento com fator 12 em `unidadeBase`/`fator`;
+       os filtros de tipos — em vírgulas e repetido —, documento com número, pessoa, usuário e produto com o saldo da
+       linha de saldo; o
+       fornecedor, o documento e o `id_nuvem3`; o custo só com "Ver custo"; o estoque fora dos permitidos e sem a
+       permissão do relatório; a validação do período, do cursor, dos tipos e do documento; o razão idêntico no fim) e
+       `relatorios.spec.ts` no shared. O ERP é a decisão 67 do README do ERP. A sintética, a exportação de 12 meses
+       em tarefa e o "Ver movimentação" ficaram no F2-B33 (decisão 180, que também tirou da página sem filtro de
+       movimento as buscas da parte do saldo que é sempre vazia).
+
+180. **Movimentação de Estoque: visão sintética, exportação das duas visões em tarefa e a parte vazia do saldo**
+     (Fase 2, F2-B33; ERP 16.5, 3.5, 3.6, 8.2.11; MD 3.7.2, 3.7.3; decisões 176, 177, 179 e 151;
+     `src/relatorios/movimentacao.ts`, `src/relatorios/relatorios.controller.ts`, `src/servicos.ts`,
+     `packages/shared/src/relatorios.ts`; `test/carga/movimentacao-exportacao.ts` (novo, `pnpm --filter api
+     carga:movimentacao-exportacao`); **sem migração** (os índices da 0026 e o `ix_movimentos_estoque_tipo_movimento`
+     que já existia); o PDV não muda (`movimentos_estoque` não desce)).
+     - **`GET /relatorios/movimentacao-estoque/sintetica`** (`relatorios.movimentacao_estoque`;
+       `consultaMovimentacaoSinteticaSchema`: os filtros da analítica, `pagina` e `tamanho` 20/25/35/50, padrão 50):
+       uma linha por **linha de saldo do local** (produto × variação × tipo de estoque) com movimento no período nos
+       filtros, na ordem do nome do produto (sem acento e sem caixa; desempate pelos ids, a ordem estável que o cursor
+       da exportação lê), com o **total** e os **custos do relatório inteiro** pela janela (`count(*) over ()`), numa
+       transação só de leitura com o JIT desligado, como a analítica; a página além do fim conta à parte (como o
+       Estoque Atual). Paginada por página e não por cursor: são milhares de linhas numa loja (as linhas de saldo com
+       movimento), não milhões, e a agregação do período tem de rodar inteira de qualquer jeito.
+     - **Consulta** (`sqlMovimentacaoSintetica`): as condições saem de `condicoesMovimentacao`, a mesma da analítica,
+       em três partes — `local` (o local, os estoques permitidos da sessão, o produto: escolhem as linhas de saldo),
+       `periodo` e `filtro` (tipos, usuário, pessoa, documento: escolhem os movimentos). **Uma passada pelo período**
+       do local agrega, por linha, a soma de **todos** os movimentos (`no_periodo`) e, com `filter (where <filtro>)`,
+       a contagem, as entradas, as saídas (sem o sinal) e o custo gravado (`custo_total`, que é sempre positivo) das
+       entradas e das saídas; a linha sem movimento filtrado sai (`having`). **Saldo inicial** = a soma do razão da linha
+       antes do começo do período (`sqlSaldoAntes`, só pelo `ix_movimentos_estoque_linha_data`, a variação nula pelo
+       `is null`), e o **final** = inicial + `no_periodo`: os saldos da linha de saldo no começo e no fim do período,
+       com ou sem filtro. **Sem filtro de movimento** a sintética **fecha com a analítica** em tudo: o inicial é o
+       "Est. anterior" recalculado do primeiro movimento da linha, o final o "Est. atual" do último (teste: em todas as
+       linhas, inclusive com saldo inicial diferente de zero e em dois tipos de estoque do mesmo produto). **Com filtro
+       de movimento** fecham só as entradas, as saídas, os movimentos e os custos (teste: as somas da analítica com o
+       mesmo filtro); os saldos não, e de propósito: o "Est. anterior" do primeiro movimento filtrado na analítica já
+       inclui os movimentos escondidos do começo do período (a regra da decisão 179), e o da sintética é o do começo do
+       período. Por isso, com filtro, o final deixa de ser inicial + entradas − saídas (a nota da tela diz).
+     - **Última compra** (`compras`): o último `RECEB_MANUAL`/`RECEB_NFE` de entrada que não é estorno (a regra do
+       `movimentoDeCompra` do F2-B6, decisão 151) do produto × variação **no local**, pela `data_movimento` antes do fim
+       do período, em **qualquer tipo de estoque** e **fora dos filtros de movimento** (o filtro "Acerto" não apaga a
+       última compra), com a data e o `custo_unitario` dela (o custo só com `produtos.ver_custo`; a data sai sempre).
+       Um `distinct on` pelo `ix_movimentos_estoque_tipo_movimento` (decisão 176: 108 ms numa loja com 4 milhões; o
+       índice parcial das compras foi descartado lá), juntado à linha pelo `coalesce` da variação com o uuid zero (a
+       igualdade que o hash usa). **Não reaproveita `saldos_estoque.ultima_compra_em`/`ultimo_custo_compra`** (F2-B6):
+       elas são a última compra **lançada** (a ordem de lançamento), de hoje e por tipo de estoque; o relatório pede a
+       última pela data até o fim de um período que pode estar no passado (a nota mais antiga movimentada depois teria
+       a data dela no saldo). A NF-e entra com `data_movimento` = o início da movimentação (F2-B4), então a "última
+       compra" da sintética é a do dia em que a nota foi movimentada, não o da emissão (o vínculo com o fornecedor guarda
+       a emissão).
+     - **Exportação** (`provedorMovimentacao`, chave `movimentacao-estoque`, registrado em `servicos.exportacoes`):
+       `GET /relatorios/movimentacao-estoque/exportar?visao=analitica|sintetica&formato=xlsx|csv&<filtros>`
+       (`exportacaoMovimentacaoEstoqueSchema`: os filtros e a `visao`, padrão a analítica; a entrada crua vai para
+       `tarefas.parametros` e é validada de novo na execução). Arquivo `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM`;
+       auditoria `exportar` em `movimentos_estoque`, localização "Relatórios › Movimentação de Estoque". O `preparar` é
+       o `prepararFiltrosMovimentacao` (o fuso como parâmetro; o local fora dos permitidos **agora** é 403 também na
+       execução da tarefa, com a sessão do momento) e `semJit`. Colunas da **analítica**: as da tela na ordem do export
+       do Nuvem3 (Data/hora, Ref. Interna, Código, Produto, Variação, Tipo de movimento, Tipo de estoque, Est. anterior,
+       Qtd. movimentada, Est. atual, Unidade, Unid. do documento, Fator, Custo unit. e Custo total marcados como custo,
+       Documento e Nº do documento, Cliente, Fornecedor, Usuário, Estoque, Loja, Observação) e no fim os gravados no
+       lançamento e os ids do Nuvem3 (`idmovimentacaoestoquetipo`, `idmovimentacaoestoque`, `idvenda`). Da
+       **sintética**: as da tela, com a Data da última compra e o Último custo (custo). A consulta é a da tela sem a
+       página (a analítica inteira na ordem `(data_movimento, id)`, que o cursor do servidor lê; a sintética na ordem
+       do nome).
+     - **Contagem própria e barata** (`contar`, como a decisão 177 recomenda): `sqlContagemMovimentacao` conta **só na
+       tabela do razão** — a analítica, os movimentos do período nos filtros (sem as junções, o saldo de cada
+       movimento e a ordenação que o `count(*)` da consulta embrulhada faria); a sintética, as linhas de saldo
+       distintas com movimento filtrado.
+     - **A parte vazia do saldo** (`sqlParteAnterior(semFiltro)`, muda a analítica da decisão 179): sem filtro de
+       movimento, a parte do razão entre dois movimentos da mesma linha na página é sempre vazia — todo movimento do
+       local no trecho da página está nela, e o produto filtrado é o da linha —, então só o primeiro de cada linha da
+       página lê o índice (`case when p.ant_id is null`). Na página de 50 é pouco; na exportação da analítica inteira
+       são duas buscas no índice a menos por movimento (1,6 milhão numa loja). Com filtro continua lendo (a compra no
+       meio das vendas escondidas).
+     - **Carga** (`pnpm --filter api carga:movimentacao-exportacao`, fora do CI; a massa do F2-B28 com 4 milhões de
+       movimentos, pela rota de verdade com a API, a fila e o S3 em memória no mesmo processo; apaga os bancos no fim):
+       ~14 min aqui (7,7 min gerando a massa; rodada em primeiro plano, sem nada em paralelo). 12 meses (01/11/2025 a
+       31/10/2026) da Loja 1 (**1.620.913** movimentos; **2.454** linhas na sintética). **Sintética** pela rota, o pior
+       de 3: 1ª página **968 ms**, última página 932 ms, só as compras 1.012 ms, outubro (o saldo inicial lê 11 meses de
+       história) 358 ms, o CD 451 ms — critério (< 5 s, o gatilho da decisão 176): ok. **EXPLAIN (ANALYZE, BUFFERS)**
+       (o melhor de 3, JIT desligado): 12 meses 928 ms, 172.712 páginas de 8 kB e 10.733 temporárias (Seq Scan do
+       razão com 1,62 M linhas do local ← agregação; `ix_..._tipo_movimento` 13.605 compras; o saldo antes do período
+       não lê nada: a massa começa nele); outubro 305 ms, 47.833 páginas (Bitmap do período, 137 mil linhas; o
+       saldo inicial só pelo `linha_data`, e só nas 50 linhas da página: o PostgreSQL deixa a subconsulta cara para
+       depois do `limit`, e na exportação inteira são 719 entradas do índice por linha, ~0,4 ms cada). **Contagem
+       própria** dos 12 meses: analítica 237 ms (1.620.913), sintética 430 ms (2.454). **Exportação da sintética** dos
+       12 meses na hora: 2,7 s, 2.454 linhas conferidas no arquivo. **Exportação da analítica dos 12 meses em tarefa**
+       (`.xlsx`, `202` → tarefa → link): **247 s**, 1.620.913 linhas conferidas no arquivo (lido em streaming), em 2
+       abas, 225 MB; **pico de heap 224 MB** (de 89 MB; critério < 300 MB), fora do heap sem o S3 em memória 6 MB, RSS
+       de pico 901 MB (o S3 em memória guarda o arquivo duas vezes no mesmo processo). O ritmo, ~6.600 linhas/s, é o
+       da escrita do `.xlsx` (28 colunas; ~185 mil células/s, o mesmo da decisão 177 com 9 colunas): a leitura da
+       analítica inteira pelo cursor faz ~48 mil linhas/s (medido com 300 mil movimentos, 120 mil da loja em 2,5 s).
+     - **Testes**: `test/integracao/relatorio-movimentacao-sintetica.test.ts` (com a fila e o S3 em memória: cada linha
+       da sintética fecha com a analítica — saldos, entradas, saídas, movimentos e custos — e o final é a projeção; a
+       última compra do `RECEB_NFE` da NF-e importada e movimentada, a do recebimento manual no período que termina
+       antes da nota, nenhuma para o produto comprado só em outro local nem para o acerto de entrada; o período só de
+       hoje com o saldo inicial de antes; o filtro de compras com os saldos da linha e as somas da analítica, produto e
+       fornecedor; a página com o total, a ordem pelo nome, os totais de custo e a página além do fim; sem "Ver custo"
+       sem os custos e com a data; 403 fora dos permitidos; 422 do período; a exportação na hora das duas visões com o
+       nome, as colunas, a ordem da analítica e o corte do custo, 403 e 422 da visão; os 12 meses (366 dias) das duas
+       visões **em tarefa** com o limite da hora pequeno, o arquivo inteiro e a auditoria com a visão; o razão idêntico
+       no fim) e `relatorios.spec.ts` no shared. O ERP é a decisão 68 do README do ERP.
 
 ### Operação – tarefas em segundo plano (API)
 

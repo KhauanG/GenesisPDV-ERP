@@ -30,6 +30,7 @@ import { GruposPrecoController } from './produtos/grupos-preco.controller.js';
 import { ProdutosController } from './produtos/produtos.controller.js';
 import { RestricoesHorarioController } from './produtos/restricoes-horario.controller.js';
 import { ReferenciasController } from './referencias/referencias.controller.js';
+import { RelatoriosController } from './relatorios/relatorios.controller.js';
 import { PerfisController } from './perfis/perfis.controller.js';
 import { PlataformaAuthController } from './plataforma/plataforma-auth.controller.js';
 import { PlataformaEmpresasController } from './plataforma/plataforma-empresas.controller.js';
@@ -111,6 +112,7 @@ export class AppModule {
         PlataformaEmpresasController,
         TerminaisController,
         EventosRecebidosController,
+        RelatoriosController,
         TarefasController,
         ImportacoesController,
         DashboardController,

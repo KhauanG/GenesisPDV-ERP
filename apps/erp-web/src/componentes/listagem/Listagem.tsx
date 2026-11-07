@@ -8,6 +8,7 @@ import {
   Card,
   Group,
   Menu,
+  MultiSelect,
   Paper,
   Select,
   SimpleGrid,
@@ -65,7 +66,11 @@ export interface OpcaoFiltro {
 export interface FiltroListagem {
   campo: string;
   rotulo: string;
-  tipo: 'texto' | 'numero' | 'selecao' | 'loja' | 'data';
+  /**
+   * `multisselecao`: as opções marcadas numa lista separada por vírgula (`tiposMovimento=A,B`). `componente`: o campo
+   * desenhado por `renderizar` (ex.: os seletores com busca no servidor), com o valor em texto como os demais.
+   */
+  tipo: 'texto' | 'numero' | 'selecao' | 'loja' | 'data' | 'multisselecao' | 'componente';
   opcoes?: OpcaoFiltro[];
   /** Valor quando o filtro não está na URL. Filtros `loja` usam a loja de contexto do cabeçalho (ERP 3.1). */
   padrao?: string;
@@ -78,6 +83,14 @@ export interface FiltroListagem {
   oculto?: boolean;
   /** Texto do aviso do filtro oculto ativo (padrão: "Filtrando por {rotulo}"). */
   rotuloOculto?: string;
+  /** `componente`: o campo do filtro (o rótulo vem em `filtro.rotulo`). */
+  renderizar?: (props: {
+    filtro: FiltroListagem;
+    valor: string;
+    aoMudar: (valor: string) => void;
+  }) => ReactNode;
+  /** O valor como aparece nos filtros usados da impressão (padrão: o rótulo da opção, ou o próprio valor). */
+  descrever?: (valor: string) => string;
 }
 
 export interface ColunaListagem<T> {
@@ -657,6 +670,22 @@ export function CampoFiltro({
   valor: string;
   aoMudar: (valor: string) => void;
 }) {
+  if (filtro.tipo === 'componente' && filtro.renderizar)
+    return <>{filtro.renderizar({ filtro, valor, aoMudar })}</>;
+  if (filtro.tipo === 'multisselecao') {
+    return (
+      <MultiSelect
+        label={filtro.rotulo}
+        placeholder={valor ? undefined : (filtro.placeholder ?? 'Todos')}
+        data={filtro.opcoes ?? []}
+        value={valor ? valor.split(',') : []}
+        clearable
+        searchable
+        onChange={(v) => aoMudar(v.join(','))}
+        comboboxProps={{ withinPortal: true }}
+      />
+    );
+  }
   if (filtro.tipo === 'selecao' || filtro.tipo === 'loja') {
     return (
       <Select

@@ -37,6 +37,7 @@ import { Link, NavLink as RouterNavLink, Outlet, useLocation } from 'react-route
 import { useEu, useSessao } from '../auth/sessao';
 import { localizarRota, menuVisivel, type GrupoMenu } from '../menu';
 import { SeletorLoja } from '../componentes/seletores/SeletorLoja';
+import { IconeTarefas } from '../componentes/tarefas/IconeTarefas';
 import { ProvedorLojaContexto, useLojaContexto } from './lojaContexto';
 
 const ICONES: Record<GrupoMenu['icone'], typeof IconHome> = {
@@ -52,7 +53,10 @@ const ICONES: Record<GrupoMenu['icone'], typeof IconHome> = {
 
 const AMBIENTE = import.meta.env.VITE_AMBIENTE;
 
-/** Estrutura da página do ERP (ERP 5.1): cabeçalho, menu lateral recolhível, trilha e conteúdo. */
+/**
+ * Estrutura da página do ERP (ERP 5.1): cabeçalho (com o ícone Tarefas, ERP 3.6), menu lateral recolhível, trilha e
+ * conteúdo.
+ */
 export function Layout() {
   const eu = useEu();
   return (
@@ -111,6 +115,7 @@ function Estrutura() {
           </Group>
           <Group gap="sm" wrap="nowrap">
             <LojaDeContexto />
+            <IconeTarefas />
             <AlternarTema />
             <MenuUsuario />
           </Group>

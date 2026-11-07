@@ -20,7 +20,6 @@ import {
   FileInput,
   Group,
   Paper,
-  Progress,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -31,7 +30,7 @@ import {
 } from '@mantine/core';
 import { useDocumentTitle } from '@mantine/hooks';
 import { IconCheck, IconDownload, IconFileSpreadsheet, IconUpload } from '@tabler/icons-react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { apiErp } from '../../api/clientes';
@@ -39,22 +38,14 @@ import { ErroRequisicao, query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
 import { CampoDataHora } from '../../componentes/campos/CamposData';
 import { SeletorLoja } from '../../componentes/seletores/SeletorLoja';
+import { AndamentoTarefa, DownloadTarefa } from '../../componentes/tarefas/AndamentoTarefa';
+import { CHAVE_LISTA_TAREFAS, useTarefa } from '../../componentes/tarefas/tarefas';
 import { useLojaContexto } from '../../layout/lojaContexto';
 import { salvarArquivo } from '../../util/arquivos';
 import { formatarInteiro } from '../../util/formato';
 import { ROTA_ACERTOS } from '../estoques/Acertos';
 
 export const ROTA_IMPORTACAO = '/produtos/importacao';
-
-interface Tarefa {
-  id: string;
-  status: 'na_fila' | 'executando' | 'concluida' | 'falhou';
-  progressoPct: number;
-  mensagem: string | null;
-  resultado: ResultadoImportacao | null;
-  erro: string | null;
-  download: string | null;
-}
 
 const ROTULOS_ACAO: Record<AcaoLinhaImportacao, { rotulo: string; cor: string }> = {
   criar: { rotulo: 'Criar', cor: 'green' },
@@ -94,11 +85,13 @@ function atalhosContagem() {
  * Importação de produtos e clientes por planilha (ERP 8.6, 23.14): aceita o nosso layout (8.5) e as colunas das
  * exportações do Nuvem3. Fluxo: planilha → pré-visualização (todas as linhas validadas) → Confirmar → tarefa em
  * segundo plano com o resultado e o relatório de inconsistências para download. Produto existente mostra o que muda
- * campo a campo ("O que muda"); linha igual ao cadastro fica "Sem alteração" e não é gravada.
+ * campo a campo ("O que muda"); linha igual ao cadastro fica "Sem alteração" e não é gravada. O andamento é o
+ * componente comum das tarefas (`AndamentoTarefa`, F2-B30), e a mesma tarefa aparece no ícone Tarefas do cabeçalho.
  */
 export function Importacao({ tipoInicial = 'produtos' }: { tipoInicial?: TipoImportacao }) {
   useDocumentTitle('Importação · GenesisPDV');
   const pode = usePode();
+  const queryClient = useQueryClient();
   const { lojaId: lojaContexto } = useLojaContexto();
   const tiposPermitidos = (['produtos', 'clientes'] as const).filter((t) =>
     pode(t === 'produtos' ? 'produtos.importar' : 'pessoas.importar'),
@@ -169,15 +162,13 @@ export function Importacao({ tipoInicial = 'produtos' }: { tipoInicial?: TipoImp
         arquivoId: previa!.arquivoId,
         ...corpoOpcoes(),
       }),
-    onSuccess: (r) => setTarefaId(r.tarefaId),
+    onSuccess: (r) => {
+      setTarefaId(r.tarefaId);
+      // O ícone Tarefas passa a contar (e acompanhar) a importação.
+      void queryClient.invalidateQueries({ queryKey: CHAVE_LISTA_TAREFAS });
+    },
   });
-  const tarefa = useQuery({
-    queryKey: ['tarefas', tarefaId],
-    queryFn: () => apiErp.get<Tarefa>(`/tarefas/${tarefaId}`),
-    enabled: !!tarefaId,
-    refetchInterval: (q) =>
-      q.state.data && ['concluida', 'falhou'].includes(q.state.data.status) ? false : 1000,
-  });
+  const tarefa = useTarefa<ResultadoImportacao>(tarefaId);
 
   const erroEnvio = enviar.error ?? confirmar.error ?? modelo.error;
   const grande = arquivo && arquivo.size > LIMITE_ARQUIVO_IMPORTACAO;
@@ -448,62 +439,52 @@ export function Importacao({ tipoInicial = 'produtos' }: { tipoInicial?: TipoImp
             <Title order={3} size="h4">
               Importação em segundo plano
             </Title>
-            {(!t || t.status === 'na_fila' || t.status === 'executando') && (
-              <>
-                <Progress value={t?.progressoPct ?? 0} animated aria-label="Progresso da importação" />
-                <Text size="sm" c="dimmed">
-                  {t?.mensagem ?? 'Na fila…'} Você pode sair desta tela: a importação continua.
-                </Text>
-              </>
-            )}
-            {t?.status === 'falhou' && (
-              <Alert color="red" role="alert" title="A importação falhou">
-                {t.erro}
-              </Alert>
-            )}
-            {t?.status === 'concluida' && t.resultado && (
-              <>
-                <Alert color="green" title="Importação concluída">
-                  {formatarInteiro(t.resultado.criados)} criado(s), {formatarInteiro(t.resultado.atualizados)}{' '}
-                  atualizado(s), {formatarInteiro(t.resultado.inativados ?? 0)} inativado(s),{' '}
-                  {formatarInteiro(t.resultado.semAlteracao ?? 0)} sem alteração,{' '}
-                  {formatarInteiro(t.resultado.comErro)} com erro e {formatarInteiro(t.resultado.comAviso)}{' '}
-                  com inconsistência.
-                  {t.resultado.acertoId && (
-                    <>
-                      {' '}
-                      Estoque definido pelo{(t.resultado.acertos?.length ?? 1) > 1 ? 's' : ''}{' '}
-                      {(
-                        t.resultado.acertos ?? [
-                          { id: t.resultado.acertoId, codigo: t.resultado.acertoCodigo ?? 0 },
-                        ]
-                      ).map((a, i) => (
-                        <span key={a.id}>
-                          {i > 0 && ', '}
-                          <Anchor component={Link} to={`${ROTA_ACERTOS}/${a.id}`}>
-                            acerto Nº {a.codigo}
-                          </Anchor>
-                        </span>
-                      ))}
-                      . A aba &quot;Conferência&quot; do acerto mostra a diferença a custo e se a contagem
-                      ficou dentro da tolerância.
-                    </>
-                  )}
-                </Alert>
-                {t.download && (
-                  <Group>
-                    <Button
-                      component="a"
-                      href={t.download}
-                      variant="default"
-                      leftSection={<IconDownload size={16} />}
-                    >
-                      Baixar relatório de inconsistências
-                    </Button>
-                  </Group>
-                )}
-              </>
-            )}
+            <AndamentoTarefa
+              tarefa={t}
+              erroConsulta={tarefa.error}
+              aoTentarNovamente={() => void tarefa.refetch()}
+              tentando={tarefa.isFetching}
+              rotulo="importação"
+              aviso="Você pode sair desta tela: a importação continua (acompanhe pelo ícone Tarefas)."
+            >
+              {t?.resultado && (
+                <>
+                  <Alert color="green" title="Importação concluída">
+                    {formatarInteiro(t.resultado.criados)} criado(s),{' '}
+                    {formatarInteiro(t.resultado.atualizados)} atualizado(s),{' '}
+                    {formatarInteiro(t.resultado.inativados ?? 0)} inativado(s),{' '}
+                    {formatarInteiro(t.resultado.semAlteracao ?? 0)} sem alteração,{' '}
+                    {formatarInteiro(t.resultado.comErro)} com erro e {formatarInteiro(t.resultado.comAviso)}{' '}
+                    com inconsistência.
+                    {t.resultado.acertoId && (
+                      <>
+                        {' '}
+                        Estoque definido pelo{(t.resultado.acertos?.length ?? 1) > 1 ? 's' : ''}{' '}
+                        {(
+                          t.resultado.acertos ?? [
+                            { id: t.resultado.acertoId, codigo: t.resultado.acertoCodigo ?? 0 },
+                          ]
+                        ).map((a, i) => (
+                          <span key={a.id}>
+                            {i > 0 && ', '}
+                            <Anchor component={Link} to={`${ROTA_ACERTOS}/${a.id}`}>
+                              acerto Nº {a.codigo}
+                            </Anchor>
+                          </span>
+                        ))}
+                        . A aba &quot;Conferência&quot; do acerto mostra a diferença a custo e se a contagem
+                        ficou dentro da tolerância.
+                      </>
+                    )}
+                  </Alert>
+                  <DownloadTarefa
+                    tarefa={t}
+                    rotulo="Baixar relatório de inconsistências"
+                    rotuloExpirado="O relatório de inconsistências expirou e não pode mais ser baixado."
+                  />
+                </>
+              )}
+            </AndamentoTarefa>
           </Stack>
         </Paper>
       )}

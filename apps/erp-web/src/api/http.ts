@@ -1,4 +1,4 @@
-import type { ErroApi } from '@genesis/shared';
+import type { ErroApi, ExportacaoEmTarefa } from '@genesis/shared';
 
 /** Erro de uma chamada à API, já no envelope padrão `{ codigo, mensagem, campos }` (ERP 1.8). */
 export class ErroRequisicao extends Error {
@@ -46,6 +46,8 @@ export interface OpcoesRequisicao {
   sinal?: AbortSignal;
   /** Resposta como arquivo (`Blob` + nome do `Content-Disposition`) em vez de JSON. */
   binario?: boolean;
+  /** Com `binario`: o `202` (a exportação que virou tarefa, F2-B29) volta como o JSON dela, não como arquivo. */
+  aceitaTarefa?: boolean;
 }
 
 export interface ArquivoBaixado {
@@ -185,6 +187,7 @@ export function criarCliente(opcoes: OpcoesCliente) {
       if (res.status === 401 && repetida) ouvintes.aoExpirar?.();
       throw erro;
     }
+    if (op.binario && op.aceitaTarefa && res.status === 202) return (await res.json()) as T;
     if (op.binario) {
       const nome = nomeDoArquivo(
         res.headers.get('Content-Disposition'),
@@ -213,6 +216,16 @@ export function criarCliente(opcoes: OpcoesCliente) {
     /** GET de um arquivo (exportações): mesma autenticação e renovação das demais chamadas. */
     baixar: (caminho: string, op?: Omit<OpcoesRequisicao, 'binario'>) =>
       requisitar<ArquivoBaixado>('GET', caminho, undefined, { ...op, binario: true }),
+    /**
+     * GET da exportação de relatório (ERP 3.5; F2-B29): o arquivo, quando a API responde na hora (`200`), ou a tarefa
+     * (`202 { tarefaId, linhas }`), que o ícone Tarefas acompanha.
+     */
+    baixarOuTarefa: (caminho: string, op?: Omit<OpcoesRequisicao, 'binario' | 'aceitaTarefa'>) =>
+      requisitar<ArquivoBaixado | ExportacaoEmTarefa>('GET', caminho, undefined, {
+        ...op,
+        binario: true,
+        aceitaTarefa: true,
+      }),
     renovar,
     definirSessao,
     limpar,

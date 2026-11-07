@@ -156,6 +156,11 @@ export const movimentosEstoque = pgTable(
       t.tipoEstoqueId,
       t.seqLancamento,
     ),
+    // Movimentação de um local por período, na ordem do cursor (F2-B28, README da API › decisão 176). Em empresa
+    // existente nasce com `concurrently` na preparação da 0026 (`estoques/indices-razao.ts`), que também cria o
+    // `ix_movimentos_estoque_linha_data (… data_movimento, id) include (quantidade)`, só na migração (sem `include`
+    // no Drizzle).
+    index('ix_movimentos_estoque_estoque_data').on(t.estoqueId, t.dataMovimento, t.id),
     index('ix_movimentos_estoque_documento').on(t.documentoTipo, t.documentoId),
     index('ix_movimentos_estoque_tipo_movimento').on(t.tipoMovimento),
     index('ix_movimentos_estoque_loja_id').on(t.lojaId),

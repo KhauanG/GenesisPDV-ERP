@@ -2,6 +2,7 @@ import type { Dashboard as DadosDashboard, PreviaImportacao } from '@genesis/sha
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CHAVE_TAREFAS } from '../../componentes/tarefas/tarefas';
 import { renderizarComSessao, rotasSessao, simularApi } from '../../teste/utilidades';
 import { Dashboard } from '../Dashboard';
 import { Importacao } from './Importacao';
@@ -72,7 +73,8 @@ const PREVIA: PreviaImportacao = {
 describe('Importação por planilha (ERP 8.6)', () => {
   it('pré-visualiza com as opções, mostra as inconsistências e acompanha a tarefa até o relatório', async () => {
     const usuario = userEvent.setup();
-    let consultas = 0;
+    // A tarefa responde "executando" até o teste mandar terminar (sem esperar o intervalo da consulta no relógio).
+    let terminou = false;
     const { chamadas } = simularApi(
       ...rotasSessao({
         permissoes: [
@@ -94,43 +96,41 @@ describe('Importação por planilha (ERP 8.6)', () => {
           : undefined,
       ({ url }) => {
         if (url.pathname !== `/api/tarefas/${TAREFA}`) return undefined;
-        consultas++;
         return {
-          corpo:
-            consultas < 2
-              ? {
-                  id: TAREFA,
-                  status: 'executando',
-                  progressoPct: 40,
-                  mensagem: 'Linha 1 de 3',
-                  resultado: null,
-                  erro: null,
-                  download: null,
-                }
-              : {
-                  id: TAREFA,
-                  status: 'concluida',
-                  progressoPct: 100,
-                  mensagem: null,
-                  erro: null,
-                  download: 'http://s3/relatorio.xlsx',
-                  resultado: {
-                    tipo: 'produtos',
-                    criados: 1,
-                    atualizados: 1,
-                    inativados: 0,
-                    semAlteracao: 1,
-                    comErro: 1,
-                    comAviso: 2,
-                    porAviso: { sem_preco: 1, ncm_invalido: 1 },
-                    acertoId: 'a1',
-                    acertoCodigo: 12,
-                  },
+          corpo: !terminou
+            ? {
+                id: TAREFA,
+                status: 'executando',
+                progressoPct: 40,
+                mensagem: 'Linha 1 de 3',
+                resultado: null,
+                erro: null,
+                download: null,
+              }
+            : {
+                id: TAREFA,
+                status: 'concluida',
+                progressoPct: 100,
+                mensagem: null,
+                erro: null,
+                download: 'http://s3/relatorio.xlsx',
+                resultado: {
+                  tipo: 'produtos',
+                  criados: 1,
+                  atualizados: 1,
+                  inativados: 0,
+                  semAlteracao: 1,
+                  comErro: 1,
+                  comAviso: 2,
+                  porAviso: { sem_preco: 1, ncm_invalido: 1 },
+                  acertoId: 'a1',
+                  acertoCodigo: 12,
                 },
+              },
         };
       },
     );
-    const { container } = renderizarComSessao(<Importacao />, '/produtos/importacao');
+    const { container, queryClient } = renderizarComSessao(<Importacao />, '/produtos/importacao');
     expect(await screen.findByRole('heading', { name: 'Importação' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByLabelText(/^Loja/)[0]).toBeInTheDocument());
     // Loja escolhida no seletor (sem loja de contexto).
@@ -199,9 +199,11 @@ describe('Importação por planilha (ERP 8.6)', () => {
     expect(enviada.getTime()).toBeLessThan(hoje.getTime());
     expect(hoje.getTime() - enviada.getTime()).toBeLessThanOrEqual(2 * 86_400_000);
     const resultado = await screen.findByTestId('resultado-importacao');
-    expect(
-      await within(resultado).findByText(/Importação concluída/, {}, { timeout: 4000 }),
-    ).toBeInTheDocument();
+    // Enquanto roda: o andamento da tarefa. A próxima consulta (que o intervalo faria) já acha a tarefa concluída.
+    expect(await within(resultado).findByText(/Linha 1 de 3/)).toBeInTheDocument();
+    terminou = true;
+    await queryClient.invalidateQueries({ queryKey: CHAVE_TAREFAS });
+    expect(await within(resultado).findByText(/Importação concluída/)).toBeInTheDocument();
     expect(
       within(resultado).getByText(
         /1 criado\(s\), 1 atualizado\(s\), 0 inativado\(s\), 1 sem alteração, 1 com erro/,
@@ -495,7 +497,9 @@ describe('Importação com "Atualizar estoque" no CD (F2-B11)', () => {
                 progressoPct: 100,
                 mensagem: null,
                 erro: null,
+                // O relatório passou da retenção: a API não assina mais o link.
                 download: null,
+                downloadExpirado: true,
                 resultado: {
                   tipo: 'produtos',
                   criados: 0,
@@ -544,5 +548,9 @@ describe('Importação com "Atualizar estoque" no CD (F2-B11)', () => {
       '/estoque/acertos/a2',
     );
     expect(within(resultado).getByText(/Estoque definido pelos/)).toBeInTheDocument();
+    expect(within(resultado).getByText(/O relatório de inconsistências expirou/)).toBeInTheDocument();
+    expect(
+      within(resultado).queryByRole('link', { name: 'Baixar relatório de inconsistências' }),
+    ).not.toBeInTheDocument();
   });
 });
