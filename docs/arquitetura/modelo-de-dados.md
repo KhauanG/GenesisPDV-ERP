@@ -2423,7 +2423,7 @@ Um movimento de um produto num estoque. Imutável (`fn_protege_imutavel` sem col
 | `custo_medio` | `numeric(15,4)` | não | `0` | Custo médio ponderado desta linha de saldo; mudança de tipo de estoque leva o custo da origem |
 | `ultima_entrada_em` | `timestamptz` | sim | — | |
 | `ultima_saida_em` | `timestamptz` | sim | — | |
-| `ultima_compra_em` | `timestamptz` | sim | — | Último recebimento/NF-e (relatório de movimentação): a data da última entrada de compra lançada (`RECEB_MANUAL`, `RECEB_NFE`; o estorno não a volta), gravada pelo motor e refeita pelo replay (F2-B6) |
+| `ultima_compra_em` | `timestamptz` | sim | — | Último recebimento/NF-e: a data da última entrada de compra lançada (`RECEB_MANUAL`, `RECEB_NFE`; o estorno não a volta), gravada pelo motor e refeita pelo replay (F2-B6). A sintética da Movimentação (ERP 16.5, F2-B33) não a usa: lá a última compra é a última pela data até o fim do período, lida do razão |
 | `ultimo_custo_compra` | `numeric(15,4)` | sim | — | |
 | `ultimo_movimento_id` | `uuid` | sim | — | → `movimentos_estoque` |
 

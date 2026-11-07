@@ -2,8 +2,9 @@
  * Relatórios de estoque (ERP 16.4; Fase 2, F2-B31): o **Estoque Atual** — saldo por estoque × tipo × produto com o
  * custo, as pendências da transferência, o "Vencendo em N dias" pelos lotes, o "Todas" (a soma dos estoques
  * permitidos) e a data-base "Saldo em <data>" pelo razão — e o modal de ajuste no clique do saldo (um "Definir" de um
- * item, origem `relatorio_estoque`, movimento `AJUSTE_RELATORIO`); e a **Movimentação de Estoque** (ERP 16.5; F2-B32): a
- * visão analítica, um movimento por linha, paginada por cursor.
+ * item, origem `relatorio_estoque`, movimento `AJUSTE_RELATORIO`); e a **Movimentação de Estoque** (ERP 16.5): a
+ * visão analítica, um movimento por linha, paginada por cursor (F2-B32), e a sintética por produto, com a última compra,
+ * paginada por página, e a exportação das duas (F2-B33).
  */
 import { z } from 'zod';
 import { ajusteEstoqueProdutoSchema, SITUACOES_SALDO } from './estoque.js';
@@ -138,7 +139,7 @@ export type AjusteEstoqueRelatorio = z.output<typeof ajusteEstoqueRelatorioSchem
 
 // ---------------------------------------------------------------- Movimentação de Estoque (ERP 16.5; F2-B32)
 
-/** Chave do relatório (rota `GET /relatorios/movimentacao-estoque` e, no F2-B33, a da exportação). */
+/** Chave do relatório (rota `GET /relatorios/movimentacao-estoque` e a da exportação, `…/exportar`). */
 export const RELATORIO_MOVIMENTACAO_ESTOQUE = 'movimentacao-estoque';
 
 /** Maior período da Movimentação (ERP 16.5: "máx. 366 dias", contando os dois dias das pontas). */
@@ -258,9 +259,34 @@ function regrasMovimentacao(
     });
 }
 
-/** Os filtros sem a página: os da exportação (F2-B33; `tarefas.parametros` guarda a entrada crua). */
+/** Os filtros sem a página (os das duas visões; a exportação acrescenta a `visao`). */
 export const filtrosMovimentacaoEstoqueSchema = z.object(camposMovimentacao).superRefine(regrasMovimentacao);
 export type FiltrosMovimentacaoEstoque = z.output<typeof filtrosMovimentacaoEstoqueSchema>;
+
+/**
+ * Visões da Movimentação (ERP 16.5): a **analítica** (um movimento por linha) e a **sintética por produto** (uma linha
+ * por produto × variação × tipo de estoque, com o saldo inicial e o final, as entradas e as saídas, os custos e a última
+ * compra; F2-B33).
+ */
+export const VISOES_MOVIMENTACAO = ['analitica', 'sintetica'] as const;
+export type VisaoMovimentacao = (typeof VISOES_MOVIMENTACAO)[number];
+export const ROTULOS_VISAO_MOVIMENTACAO: Record<VisaoMovimentacao, string> = {
+  analitica: 'Analítica (um movimento por linha)',
+  sintetica: 'Sintética por produto',
+};
+
+/**
+ * Filtros da exportação (`GET /relatorios/movimentacao-estoque/exportar`, F2-B33): os da tela e a **visão** (padrão:
+ * a analítica), que escolhe as colunas e a consulta. `tarefas.parametros` guarda a entrada crua (validada de novo na
+ * execução).
+ */
+export const exportacaoMovimentacaoEstoqueSchema = z
+  .object({
+    ...camposMovimentacao,
+    visao: z.preprocess(vazioIndefinido, z.enum(VISOES_MOVIMENTACAO).default('analitica')),
+  })
+  .superRefine(regrasMovimentacao);
+export type FiltrosExportacaoMovimentacao = z.output<typeof exportacaoMovimentacaoEstoqueSchema>;
 
 /**
  * `GET /relatorios/movimentacao-estoque`: os filtros, o `tamanho` (os da página, `TAMANHOS_PAGINA`) e o `cursor`
@@ -360,4 +386,81 @@ export interface RespostaMovimentacaoEstoque {
     produto: { id: string; codigo: number; nome: string } | null;
     pessoa: { id: string; codigo: number; nome: string } | null;
   };
+}
+
+/**
+ * `GET /relatorios/movimentacao-estoque/sintetica` (F2-B33): os filtros da Movimentação e a página (`pagina`, `tamanho`
+ * de `TAMANHOS_PAGINA`, padrão 50). Paginada por página com o total: a visão tem uma linha por produto × variação × tipo
+ * com movimento no período (milhares numa loja, não milhões), e o total e os totais saem na mesma ida ao banco.
+ */
+export const consultaMovimentacaoSinteticaSchema = z
+  .object({
+    ...camposMovimentacao,
+    pagina: z.preprocess(vazioIndefinido, z.coerce.number().int().min(1).default(1)),
+    tamanho: z.preprocess(
+      vazioIndefinido,
+      z.coerce
+        .number()
+        .int()
+        .refine((t) => (TAMANHOS_PAGINA as readonly number[]).includes(t), {
+          message: `Tamanho de página inválido (${TAMANHOS_PAGINA.join(', ')})`,
+        })
+        .default(TAMANHO_PADRAO_MOVIMENTACAO),
+    ),
+  })
+  .superRefine(regrasMovimentacao);
+export type ConsultaMovimentacaoSintetica = z.output<typeof consultaMovimentacaoSinteticaSchema>;
+
+/**
+ * Uma linha da visão sintética (ERP 16.5, "Sintética por produto"): a linha de saldo (produto × variação × tipo de
+ * estoque) do local com movimento no período (nos filtros). O saldo inicial é a soma do razão da linha antes do começo
+ * do período e o final a soma até o fim, com ou sem filtro; as entradas e as saídas, as somas das quantidades positivas
+ * e das negativas. **Sem filtro de movimento, fecha com a analítica**: o saldo inicial é o `saldoAnterior` do primeiro
+ * movimento da linha no período e o final o `saldoPosterior` do último. Com filtro de tipo, usuário, documento ou
+ * pessoa, as entradas, as saídas, os movimentos e os custos são só os dos movimentos filtrados (e fecham com a analítica
+ * filtrada), mas os saldos continuam os do começo e do fim do período: não são o `saldoAnterior` do primeiro movimento
+ * filtrado nem o `saldoPosterior` do último (estes incluem os movimentos escondidos), e o final deixa de ser o inicial
+ * + entradas − saídas.
+ */
+export interface LinhaMovimentacaoSintetica {
+  /** `produtoId:variacaoId:tipoEstoqueId`. */
+  chave: string;
+  produtoId: string;
+  produtoCodigo: number;
+  codigoInterno: string | null;
+  produtoNome: string;
+  variacaoId: string | null;
+  variacaoNome: string | null;
+  tipoEstoqueId: string;
+  tipoEstoqueNome: string;
+  /** A sigla da unidade do produto (a das quantidades e dos saldos). */
+  unidadeBase: string;
+  saldoInicial: string;
+  /** Soma das entradas (quantidades positivas), na unidade base. */
+  entradas: string;
+  /** Soma das saídas **sem o sinal** (as quantidades negativas): 3 saídas de 2 são `6.000`. */
+  saidas: string;
+  saldoFinal: string;
+  /** Movimentos da linha no período (nos filtros). */
+  movimentos: number;
+  /** Σ `custo_total` das entradas e das saídas (o custo gravado, sem sinal); `null` sem `produtos.ver_custo`. */
+  custoEntradas: string | null;
+  custoSaidas: string | null;
+  /**
+   * A última compra do produto (e da variação) **no local** até o fim do período: o último `RECEB_MANUAL` ou
+   * `RECEB_NFE` (entrada, não estorno) pela data do movimento, em qualquer tipo de estoque e fora dos filtros. A data
+   * (ISO) e o custo unitário dela (`null` sem `produtos.ver_custo`); `null` sem compra até lá.
+   */
+  ultimaCompraEm: string | null;
+  ultimoCusto: string | null;
+}
+
+export interface RespostaMovimentacaoSintetica {
+  itens: LinhaMovimentacaoSintetica[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+  /** Os custos do relatório inteiro (não da página); `null` sem `produtos.ver_custo`. */
+  totais: { custoEntradas: string; custoSaidas: string } | null;
+  referencias: RespostaMovimentacaoEstoque['referencias'];
 }

@@ -4965,7 +4965,102 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        fornecedor, o documento e o `id_nuvem3`; o custo só com "Ver custo"; o estoque fora dos permitidos e sem a
        permissão do relatório; a validação do período, do cursor, dos tipos e do documento; o razão idêntico no fim) e
        `relatorios.spec.ts` no shared. O ERP é a decisão 67 do README do ERP. A sintética, a exportação de 12 meses
-       em tarefa e o "Ver movimentação" ficam no F2-B33.
+       em tarefa e o "Ver movimentação" ficaram no F2-B33 (decisão 180, que também tirou da página sem filtro de
+       movimento as buscas da parte do saldo que é sempre vazia).
+
+180. **Movimentação de Estoque: visão sintética, exportação das duas visões em tarefa e a parte vazia do saldo**
+     (Fase 2, F2-B33; ERP 16.5, 3.5, 3.6, 8.2.11; MD 3.7.2, 3.7.3; decisões 176, 177, 179 e 151;
+     `src/relatorios/movimentacao.ts`, `src/relatorios/relatorios.controller.ts`, `src/servicos.ts`,
+     `packages/shared/src/relatorios.ts`; `test/carga/movimentacao-exportacao.ts` (novo, `pnpm --filter api
+     carga:movimentacao-exportacao`); **sem migração** (os índices da 0026 e o `ix_movimentos_estoque_tipo_movimento`
+     que já existia); o PDV não muda (`movimentos_estoque` não desce)).
+     - **`GET /relatorios/movimentacao-estoque/sintetica`** (`relatorios.movimentacao_estoque`;
+       `consultaMovimentacaoSinteticaSchema`: os filtros da analítica, `pagina` e `tamanho` 20/25/35/50, padrão 50):
+       uma linha por **linha de saldo do local** (produto × variação × tipo de estoque) com movimento no período nos
+       filtros, na ordem do nome do produto (sem acento e sem caixa; desempate pelos ids, a ordem estável que o cursor
+       da exportação lê), com o **total** e os **custos do relatório inteiro** pela janela (`count(*) over ()`), numa
+       transação só de leitura com o JIT desligado, como a analítica; a página além do fim conta à parte (como o
+       Estoque Atual). Paginada por página e não por cursor: são milhares de linhas numa loja (as linhas de saldo com
+       movimento), não milhões, e a agregação do período tem de rodar inteira de qualquer jeito.
+     - **Consulta** (`sqlMovimentacaoSintetica`): as condições saem de `condicoesMovimentacao`, a mesma da analítica,
+       em três partes — `local` (o local, os estoques permitidos da sessão, o produto: escolhem as linhas de saldo),
+       `periodo` e `filtro` (tipos, usuário, pessoa, documento: escolhem os movimentos). **Uma passada pelo período**
+       do local agrega, por linha, a soma de **todos** os movimentos (`no_periodo`) e, com `filter (where <filtro>)`,
+       a contagem, as entradas, as saídas (sem o sinal) e o custo gravado (`custo_total`, que é sempre positivo) das
+       entradas e das saídas; a linha sem movimento filtrado sai (`having`). **Saldo inicial** = a soma do razão da linha
+       antes do começo do período (`sqlSaldoAntes`, só pelo `ix_movimentos_estoque_linha_data`, a variação nula pelo
+       `is null`), e o **final** = inicial + `no_periodo`: os saldos da linha de saldo no começo e no fim do período,
+       com ou sem filtro. **Sem filtro de movimento** a sintética **fecha com a analítica** em tudo: o inicial é o
+       "Est. anterior" recalculado do primeiro movimento da linha, o final o "Est. atual" do último (teste: em todas as
+       linhas, inclusive com saldo inicial diferente de zero e em dois tipos de estoque do mesmo produto). **Com filtro
+       de movimento** fecham só as entradas, as saídas, os movimentos e os custos (teste: as somas da analítica com o
+       mesmo filtro); os saldos não, e de propósito: o "Est. anterior" do primeiro movimento filtrado na analítica já
+       inclui os movimentos escondidos do começo do período (a regra da decisão 179), e o da sintética é o do começo do
+       período. Por isso, com filtro, o final deixa de ser inicial + entradas − saídas (a nota da tela diz).
+     - **Última compra** (`compras`): o último `RECEB_MANUAL`/`RECEB_NFE` de entrada que não é estorno (a regra do
+       `movimentoDeCompra` do F2-B6, decisão 151) do produto × variação **no local**, pela `data_movimento` antes do fim
+       do período, em **qualquer tipo de estoque** e **fora dos filtros de movimento** (o filtro "Acerto" não apaga a
+       última compra), com a data e o `custo_unitario` dela (o custo só com `produtos.ver_custo`; a data sai sempre).
+       Um `distinct on` pelo `ix_movimentos_estoque_tipo_movimento` (decisão 176: 108 ms numa loja com 4 milhões; o
+       índice parcial das compras foi descartado lá), juntado à linha pelo `coalesce` da variação com o uuid zero (a
+       igualdade que o hash usa). **Não reaproveita `saldos_estoque.ultima_compra_em`/`ultimo_custo_compra`** (F2-B6):
+       elas são a última compra **lançada** (a ordem de lançamento), de hoje e por tipo de estoque; o relatório pede a
+       última pela data até o fim de um período que pode estar no passado (a nota mais antiga movimentada depois teria
+       a data dela no saldo). A NF-e entra com `data_movimento` = o início da movimentação (F2-B4), então a "última
+       compra" da sintética é a do dia em que a nota foi movimentada, não o da emissão (o vínculo com o fornecedor guarda
+       a emissão).
+     - **Exportação** (`provedorMovimentacao`, chave `movimentacao-estoque`, registrado em `servicos.exportacoes`):
+       `GET /relatorios/movimentacao-estoque/exportar?visao=analitica|sintetica&formato=xlsx|csv&<filtros>`
+       (`exportacaoMovimentacaoEstoqueSchema`: os filtros e a `visao`, padrão a analítica; a entrada crua vai para
+       `tarefas.parametros` e é validada de novo na execução). Arquivo `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM`;
+       auditoria `exportar` em `movimentos_estoque`, localização "Relatórios › Movimentação de Estoque". O `preparar` é
+       o `prepararFiltrosMovimentacao` (o fuso como parâmetro; o local fora dos permitidos **agora** é 403 também na
+       execução da tarefa, com a sessão do momento) e `semJit`. Colunas da **analítica**: as da tela na ordem do export
+       do Nuvem3 (Data/hora, Ref. Interna, Código, Produto, Variação, Tipo de movimento, Tipo de estoque, Est. anterior,
+       Qtd. movimentada, Est. atual, Unidade, Unid. do documento, Fator, Custo unit. e Custo total marcados como custo,
+       Documento e Nº do documento, Cliente, Fornecedor, Usuário, Estoque, Loja, Observação) e no fim os gravados no
+       lançamento e os ids do Nuvem3 (`idmovimentacaoestoquetipo`, `idmovimentacaoestoque`, `idvenda`). Da
+       **sintética**: as da tela, com a Data da última compra e o Último custo (custo). A consulta é a da tela sem a
+       página (a analítica inteira na ordem `(data_movimento, id)`, que o cursor do servidor lê; a sintética na ordem
+       do nome).
+     - **Contagem própria e barata** (`contar`, como a decisão 177 recomenda): `sqlContagemMovimentacao` conta **só na
+       tabela do razão** — a analítica, os movimentos do período nos filtros (sem as junções, o saldo de cada
+       movimento e a ordenação que o `count(*)` da consulta embrulhada faria); a sintética, as linhas de saldo
+       distintas com movimento filtrado.
+     - **A parte vazia do saldo** (`sqlParteAnterior(semFiltro)`, muda a analítica da decisão 179): sem filtro de
+       movimento, a parte do razão entre dois movimentos da mesma linha na página é sempre vazia — todo movimento do
+       local no trecho da página está nela, e o produto filtrado é o da linha —, então só o primeiro de cada linha da
+       página lê o índice (`case when p.ant_id is null`). Na página de 50 é pouco; na exportação da analítica inteira
+       são duas buscas no índice a menos por movimento (1,6 milhão numa loja). Com filtro continua lendo (a compra no
+       meio das vendas escondidas).
+     - **Carga** (`pnpm --filter api carga:movimentacao-exportacao`, fora do CI; a massa do F2-B28 com 4 milhões de
+       movimentos, pela rota de verdade com a API, a fila e o S3 em memória no mesmo processo; apaga os bancos no fim):
+       ~14 min aqui (7,7 min gerando a massa; rodada em primeiro plano, sem nada em paralelo). 12 meses (01/11/2025 a
+       31/10/2026) da Loja 1 (**1.620.913** movimentos; **2.454** linhas na sintética). **Sintética** pela rota, o pior
+       de 3: 1ª página **968 ms**, última página 932 ms, só as compras 1.012 ms, outubro (o saldo inicial lê 11 meses de
+       história) 358 ms, o CD 451 ms — critério (< 5 s, o gatilho da decisão 176): ok. **EXPLAIN (ANALYZE, BUFFERS)**
+       (o melhor de 3, JIT desligado): 12 meses 928 ms, 172.712 páginas de 8 kB e 10.733 temporárias (Seq Scan do
+       razão com 1,62 M linhas do local ← agregação; `ix_..._tipo_movimento` 13.605 compras; o saldo antes do período
+       não lê nada: a massa começa nele); outubro 305 ms, 47.833 páginas (Bitmap do período, 137 mil linhas; o
+       saldo inicial só pelo `linha_data`, e só nas 50 linhas da página: o PostgreSQL deixa a subconsulta cara para
+       depois do `limit`, e na exportação inteira são 719 entradas do índice por linha, ~0,4 ms cada). **Contagem
+       própria** dos 12 meses: analítica 237 ms (1.620.913), sintética 430 ms (2.454). **Exportação da sintética** dos
+       12 meses na hora: 2,7 s, 2.454 linhas conferidas no arquivo. **Exportação da analítica dos 12 meses em tarefa**
+       (`.xlsx`, `202` → tarefa → link): **247 s**, 1.620.913 linhas conferidas no arquivo (lido em streaming), em 2
+       abas, 225 MB; **pico de heap 224 MB** (de 89 MB; critério < 300 MB), fora do heap sem o S3 em memória 6 MB, RSS
+       de pico 901 MB (o S3 em memória guarda o arquivo duas vezes no mesmo processo). O ritmo, ~6.600 linhas/s, é o
+       da escrita do `.xlsx` (28 colunas; ~185 mil células/s, o mesmo da decisão 177 com 9 colunas): a leitura da
+       analítica inteira pelo cursor faz ~48 mil linhas/s (medido com 300 mil movimentos, 120 mil da loja em 2,5 s).
+     - **Testes**: `test/integracao/relatorio-movimentacao-sintetica.test.ts` (com a fila e o S3 em memória: cada linha
+       da sintética fecha com a analítica — saldos, entradas, saídas, movimentos e custos — e o final é a projeção; a
+       última compra do `RECEB_NFE` da NF-e importada e movimentada, a do recebimento manual no período que termina
+       antes da nota, nenhuma para o produto comprado só em outro local nem para o acerto de entrada; o período só de
+       hoje com o saldo inicial de antes; o filtro de compras com os saldos da linha e as somas da analítica, produto e
+       fornecedor; a página com o total, a ordem pelo nome, os totais de custo e a página além do fim; sem "Ver custo"
+       sem os custos e com a data; 403 fora dos permitidos; 422 do período; a exportação na hora das duas visões com o
+       nome, as colunas, a ordem da analítica e o corte do custo, 403 e 422 da visão; os 12 meses (366 dias) das duas
+       visões **em tarefa** com o limite da hora pequeno, o arquivo inteiro e a auditoria com a visão; o razão idêntico
+       no fim) e `relatorios.spec.ts` no shared. O ERP é a decisão 68 do README do ERP.
 
 ### Operação – tarefas em segundo plano (API)
 

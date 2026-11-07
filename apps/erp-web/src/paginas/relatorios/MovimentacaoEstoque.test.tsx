@@ -1,6 +1,8 @@
 import type {
   LinhaMovimentacaoEstoque,
+  LinhaMovimentacaoSintetica,
   RespostaMovimentacaoEstoque,
+  RespostaMovimentacaoSintetica,
   TipoMovimentoEstoqueOpcao,
 } from '@genesis/shared';
 import { screen, waitFor, within } from '@testing-library/react';
@@ -8,7 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProvedorLojaContexto } from '../../layout/lojaContexto';
 import { renderizarComSessao, rotasSessao, simularApi } from '../../teste/utilidades';
-import { MovimentacaoEstoque, unidadeDocumento } from './MovimentacaoEstoque';
+import { linkVerMovimentacao, MovimentacaoEstoque, unidadeDocumento } from './MovimentacaoEstoque';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -102,6 +104,38 @@ const PERMISSOES = [
   'recebimentos.ver',
 ];
 
+const sint = (extra: Partial<LinhaMovimentacaoSintetica> = {}): LinhaMovimentacaoSintetica => ({
+  chave: `${PRODUTO}::${id(6)}`,
+  produtoId: PRODUTO,
+  produtoCodigo: 12,
+  codigoInterno: 'IPA-600',
+  produtoNome: 'CERV SERRA IPA 600',
+  variacaoId: null,
+  variacaoNome: null,
+  tipoEstoqueId: id(6),
+  tipoEstoqueNome: 'Disponível',
+  unidadeBase: 'UN',
+  saldoInicial: '20.000',
+  entradas: '125.000',
+  saidas: '3.000',
+  saldoFinal: '142.000',
+  movimentos: 4,
+  custoEntradas: '496.16',
+  custoSaidas: '11.65',
+  ultimaCompraEm: '2026-11-06T13:30:00.123456Z',
+  ultimoCusto: '3.8847',
+  ...extra,
+});
+
+const respostaSintetica = (itens: LinhaMovimentacaoSintetica[]): RespostaMovimentacaoSintetica => ({
+  itens,
+  total: itens.length,
+  pagina: 1,
+  tamanho: 50,
+  totais: { custoEntradas: '496.16', custoSaidas: '11.65' },
+  referencias: { estoque: { id: ESTOQUE, nome: 'Estoque Loja 1' }, produto: null, pessoa: null },
+});
+
 function api(opcoes: { permissoes?: string[]; relatorio?: (url: URL) => RespostaMovimentacaoEstoque } = {}) {
   const permissoes = opcoes.permissoes ?? PERMISSOES;
   return simularApi(...rotasSessao({ permissoes }), ({ url, metodo }) => {
@@ -120,6 +154,35 @@ function api(opcoes: { permissoes?: string[]; relatorio?: (url: URL) => Resposta
           tamanho: 'todos',
         },
       };
+    if (url.pathname === '/api/relatorios/movimentacao-estoque/sintetica') {
+      const r = respostaSintetica([
+        sint(),
+        sint({
+          chave: 'b',
+          produtoId: id(12),
+          produtoNome: 'SEM COMPRA',
+          ultimaCompraEm: null,
+          ultimoCusto: null,
+          saidas: '0.000',
+        }),
+      ]);
+      return {
+        corpo: permissoes.includes('produtos.ver_custo')
+          ? r
+          : {
+              ...r,
+              totais: null,
+              itens: r.itens.map((l) => ({
+                ...l,
+                custoEntradas: null,
+                custoSaidas: null,
+                ultimoCusto: null,
+              })),
+            },
+      };
+    }
+    if (url.pathname === '/api/relatorios/movimentacao-estoque/exportar')
+      return { status: 202, corpo: { tarefaId: id(20), linhas: 1_620_000 } };
     if (metodo === 'GET' && url.pathname === '/api/relatorios/movimentacao-estoque') {
       const r = opcoes.relatorio?.(url) ?? resposta([linha()]);
       return {
@@ -336,5 +399,117 @@ describe('<MovimentacaoEstoque> (ERP 16.5; F2-B32)', () => {
     expect(filtros).toHaveTextContent('Produto: 12 - CERV SERRA IPA 600');
     expect(filtros).toHaveTextContent('Pessoa (cliente ou fornecedor): 31 - Bar do Zé');
     expect(filtros).not.toHaveTextContent('RECEB_MANUAL');
+  });
+
+  it('a visão sintética (F2-B33): a rota dela com a página, sem a visão; colunas, totais e o link para a analítica', async () => {
+    const { chamadas } = api();
+    abrir(`gerado=1&${PERIODO}&visao=sintetica`);
+    const tabela = await screen.findByRole('table', { name: 'Movimentação de Estoque' });
+    const cabecalho = [...tabela.querySelectorAll('thead th')].map((c) => c.textContent);
+    expect(cabecalho).toEqual([
+      'Ref. Interna',
+      'Produto',
+      'Tipo de estoque',
+      'Saldo inicial',
+      'Entradas',
+      'Saídas',
+      'Saldo final',
+      'Unidade',
+      'Movimentos',
+      'Custo das entradas',
+      'Custo das saídas',
+      'Última compra',
+      'Último custo',
+    ]);
+    const pedido = chamadas.find((c) => c.url.pathname === '/api/relatorios/movimentacao-estoque/sintetica')!;
+    expect(Object.fromEntries(pedido.url.searchParams)).toEqual({
+      estoqueId: ESTOQUE,
+      dataInicial: '2026-11-01',
+      dataFinal: '2026-11-07',
+      pagina: '1',
+      tamanho: '50',
+    });
+    expect(doRelatorio(chamadas)).toHaveLength(0);
+    const l = within(tabela).getByRole('link', { name: '12 - CERV SERRA IPA 600' }).closest('tr')!;
+    expect(l).toHaveTextContent('+125');
+    expect(l).toHaveTextContent('−3');
+    expect(l).toHaveTextContent('142');
+    expect(l).toHaveTextContent('R$ 496,16');
+    expect(l).toHaveTextContent('06/11/2026 10:30');
+    expect(l).toHaveTextContent('R$ 3,8847');
+    const sem = within(tabela).getByRole('link', { name: '12 - SEM COMPRA' }).closest('tr')!;
+    expect(within(sem).getAllByText('—').length).toBeGreaterThanOrEqual(2);
+    // O número de movimentos abre a analítica do produto, nos mesmos filtros, sem a visão: toda a movimentação
+    // dele no local (a analítica não filtra o tipo de estoque nem a variação), e o rótulo diz isso.
+    const movimentos = within(l).getByRole('link', {
+      name: 'Ver toda a movimentação de CERV SERRA IPA 600 neste local',
+    });
+    expect(movimentos).toHaveTextContent('4');
+    const href = new URL(movimentos.getAttribute('href')!, 'http://erp');
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      gerado: '1',
+      estoqueId: ESTOQUE,
+      dataInicial: '2026-11-01',
+      dataFinal: '2026-11-07',
+      produtoId: PRODUTO,
+    });
+    expect(within(tabela).getByText('Total (2 linhas)')).toBeInTheDocument();
+    expect(screen.getByTestId('nota-relatorio')).toHaveTextContent('A última compra é o último recebimento');
+    expect(screen.getByTestId('nota-relatorio')).toHaveTextContent(
+      'toda a movimentação do produto neste local (todos os tipos de estoque e variações)',
+    );
+    expect(screen.getByText('2 registros')).toBeInTheDocument();
+  });
+
+  it('a sintética sem "Ver custo" não tem as colunas de custo; a data da última compra fica', async () => {
+    api({ permissoes: ['relatorios.movimentacao_estoque'] });
+    abrir(`gerado=1&${PERIODO}&visao=sintetica`);
+    const tabela = await screen.findByRole('table', { name: 'Movimentação de Estoque' });
+    const cabecalho = [...tabela.querySelectorAll('thead th')].map((c) => c.textContent);
+    expect(cabecalho).not.toContain('Custo das entradas');
+    expect(cabecalho).not.toContain('Último custo');
+    expect(cabecalho).toContain('Última compra');
+  });
+
+  it('escolher a visão sintética no filtro troca a consulta; a exportação leva a visão e vira tarefa', async () => {
+    const { chamadas } = api({ permissoes: [...PERMISSOES, 'relatorios.exportar'] });
+    abrir();
+    await screen.findByRole('table', { name: 'Movimentação de Estoque' });
+    await userEvent.click(campoDe('Visão'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Sintética por produto', hidden: true }));
+    await userEvent.click(screen.getByRole('button', { name: 'Filtrar' }));
+    await screen.findByRole('columnheader', { name: 'Saldo inicial' });
+    await userEvent.click(screen.getByRole('button', { name: 'Exportar' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Excel (.xlsx)' }));
+    expect(await screen.findByTestId('exportacao-em-tarefa')).toHaveTextContent('1.620.000 linhas');
+    const exp = chamadas.find((c) => c.url.pathname === '/api/relatorios/movimentacao-estoque/exportar')!;
+    expect(Object.fromEntries(exp.url.searchParams)).toEqual({
+      estoqueId: ESTOQUE,
+      dataInicial: '2026-11-01',
+      dataFinal: '2026-11-07',
+      visao: 'sintetica',
+      formato: 'xlsx',
+    });
+  });
+
+  it('linkVerMovimentacao: os 30 dias até hoje (no fuso da empresa) ou até a data dada; a data inválida vira hoje', () => {
+    const agora = new Date('2026-11-07T02:00:00Z'); // 06/11 23:00 em Brasília
+    const ler = (u: string) => Object.fromEntries(new URL(u, 'http://erp').searchParams);
+    expect(ler(linkVerMovimentacao({ estoqueId: ESTOQUE, produtoId: PRODUTO }, agora))).toEqual({
+      estoqueId: ESTOQUE,
+      produtoId: PRODUTO,
+      dataInicial: '2026-10-08',
+      dataFinal: '2026-11-06',
+      gerado: '1',
+    });
+    expect(
+      ler(linkVerMovimentacao({ estoqueId: ESTOQUE, produtoId: PRODUTO, dataFinal: '2026-03-01' }, agora)),
+    ).toMatchObject({ dataInicial: '2026-01-31', dataFinal: '2026-03-01' });
+    expect(
+      ler(linkVerMovimentacao({ estoqueId: ESTOQUE, produtoId: PRODUTO, dataFinal: 'ontem' }, agora)),
+    ).toMatchObject({ dataFinal: '2026-11-06' });
+    expect(linkVerMovimentacao({ estoqueId: ESTOQUE, produtoId: PRODUTO }, agora)).toMatch(
+      /^\/relatorios\/movimentacao-estoque\?/,
+    );
   });
 });

@@ -313,6 +313,35 @@ describe('<EstoqueAtual> (ERP 16.4; F2-B31)', () => {
     expect(within(todas).queryByRole('button', { name: /Ajustar o saldo/ })).not.toBeInTheDocument();
   });
 
+  it('"Ver movimentação" (F2-B33) leva o estoque, o produto e os 30 dias até a data-base; no "Todas", não', async () => {
+    api({
+      permissoes: [...PERMISSOES, 'relatorios.movimentacao_estoque'],
+      relatorio: (url) =>
+        url.searchParams.get('estoqueId') === 'todas'
+          ? resposta([linha({ estoqueId: null, estoqueNome: 'Todas', chave: 'todas' })])
+          : resposta([linha({ emTransito: null, divergenciaATratar: null })], { dataBase: '2026-11-06' }),
+    });
+    const { unmount } = abrir(`gerado=1&estoqueId=${ESTOQUE}&dataBase=2026-11-06`);
+    const tabela = await screen.findByRole('table', { name: 'Estoque Atual' });
+    const link = within(tabela).getByRole('link', {
+      name: 'Ver movimentação de CERV SERRA IPA 600 em Estoque Loja 1',
+    });
+    const href = new URL(link.getAttribute('href')!, 'http://erp');
+    expect(href.pathname).toBe('/relatorios/movimentacao-estoque');
+    expect(Object.fromEntries(href.searchParams)).toEqual({
+      estoqueId: ESTOQUE,
+      produtoId: PRODUTO,
+      dataInicial: '2026-10-08',
+      dataFinal: '2026-11-06',
+      gerado: '1',
+    });
+    unmount();
+    abrir('gerado=1&estoqueId=todas');
+    const todas = await screen.findByRole('table', { name: 'Estoque Atual' });
+    expect(within(todas).getByRole('columnheader', { name: 'Movimentação' })).toBeInTheDocument();
+    expect(within(todas).queryByRole('link', { name: /Ver movimentação/ })).not.toBeInTheDocument();
+  });
+
   it('o modal com o tipo inicial inativo avisa e pede o tipo, em vez de cair no padrão', async () => {
     api({ tipos: TIPOS.map((t) => (t.id === AVARIA ? { ...t, ativo: false } : t)) });
     const enviar = vi.fn(async () => ({

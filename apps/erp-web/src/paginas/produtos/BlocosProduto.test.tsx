@@ -581,6 +581,44 @@ describe('"Ajustar" do bloco Estoque (F2-B12; ERP 8.2.11)', () => {
     expect(screen.queryByRole('columnheader', { name: 'Divergência a tratar' })).toBeNull();
   }, 30_000);
 
+  const rotasVerMovimentacao = (permissoes: string[]) => [
+    ...rotasSessao({ permissoes, lojas: LOJAS }),
+    ...referencias([]),
+    ...rotasEstoque,
+    ({ url }: { url: URL }) => (url.pathname === `/api/produtos/${ID}` ? { corpo: detalhe() } : undefined),
+    ({ url }: { url: URL }) =>
+      url.pathname === `/api/produtos/${ID}/saldos` ? { corpo: saldos('4.000') } : undefined,
+  ];
+
+  it('"Ver movimentação" (F2-B33) em cada linha leva o estoque, o produto e os últimos 30 dias', async () => {
+    const usuario = userEvent.setup();
+    simularApi(...rotasVerMovimentacao([...PERMISSOES, 'relatorios.movimentacao_estoque']));
+    renderizar(`/produtos/${ID}`);
+    await usuario.click(await screen.findByRole('button', { name: /^Estoque/ }));
+    const link = await screen.findByRole('link', { name: /^Ver movimentação em Estoque Loja 1/ });
+    const href = new URL(link.getAttribute('href')!, 'http://erp');
+    expect(href.pathname).toBe('/relatorios/movimentacao-estoque');
+    const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    expect(Object.fromEntries(href.searchParams)).toMatchObject({
+      estoqueId: saldos('4.000').saldos[0]!.estoqueId,
+      produtoId: ID,
+      dataFinal: hoje,
+      gerado: '1',
+    });
+    const dias = (Date.parse(hoje) - Date.parse(href.searchParams.get('dataInicial')!)) / 86_400_000;
+    expect(dias).toBe(29);
+  }, 30_000);
+
+  it('sem relatorios.movimentacao_estoque, o bloco Estoque não tem o "Ver movimentação"', async () => {
+    const usuario = userEvent.setup();
+    simularApi(...rotasVerMovimentacao(PERMISSOES));
+    renderizar(`/produtos/${ID}`);
+    await usuario.click(await screen.findByRole('button', { name: /^Estoque/ }));
+    expect(await screen.findByRole('columnheader', { name: 'Em trânsito' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Ver movimentação/ })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Movimentação' })).toBeNull();
+  }, 30_000);
+
   it('ajusta a nova quantidade da Loja 1: um POST com estoque, tipo padrão e motivo (hora: a da API)', async () => {
     const usuario = userEvent.setup();
     let atual = '4.000';

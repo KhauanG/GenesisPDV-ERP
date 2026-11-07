@@ -1097,6 +1097,10 @@ saldo lançado, com saldo zero) e, quando houver, a **Divergência a tratar** (a
 tratamento, das transferências que **saíram** do estoque: o retorno ou a perda são lançados na origem). As duas ficam
 fora do saldo; só dos estoques permitidos e no tipo de estoque de cada transferência.
 
+"Ver movimentação" (Fase 2, F2-B33; README do ERP › decisão 68): um link em **cada linha** estoque × tipo (a
+Movimentação exige um local), com `relatorios.movimentacao_estoque`, para a analítica já gerada com
+`estoqueId`, `produtoId` e os últimos 30 dias até hoje na URL (`/relatorios/movimentacao-estoque?estoqueId=…&produtoId=…&dataInicial=…&dataFinal=…`).
+
 Regras do Ajustar (Fase 2, F2-B12; `POST /produtos/:id/ajustar-estoque`; README da API › decisão 157): é um
 **"Definir" de um item**, criado e efetivado na hora (13.1.5): o modal mostra o saldo atual do estoque × tipo e pede
 a **nova quantidade** (≥ 0) e a **hora da contagem** (padrão: agora, renovado a cada abertura; sem alterar, vale o
@@ -4269,8 +4273,31 @@ documento, como no Nuvem3) vai na coluna **Unid. do documento** com o fator (ex.
 soma do razão da linha de saldo antes do movimento (também com filtros: o saldo é o da linha de saldo, não o do filtro),
 fecham com `saldos_estoque` e vêm com os gravados no lançamento ao lado; quando diferem (venda offline sincronizada
 tarde, "Definir" na hora da contagem), a tela mostra a nota e os gravados. `idmovimentacaoestoque` é o `id` (o movimento
-não tem código legível próprio; o número que se reconhece é o do documento). Custo só com `produtos.ver_custo`. A visão
-sintética, a exportação e o "Ver movimentação" chegam no F2-B33.
+não tem código legível próprio; o número que se reconhece é o do documento). Custo só com `produtos.ver_custo`.
+
+Fase 2, F2-B33 (README da API › decisão 180; README do ERP › decisão 68): a **visão sintética** em `GET
+/relatorios/movimentacao-estoque/sintetica`, com os mesmos filtros, **paginada por página** com o total e os custos do
+relatório inteiro. Uma linha por **produto × variação × tipo de estoque** do local com movimento no período (nos
+filtros), na ordem do nome do produto. O saldo inicial é o do estoque no começo do período (a soma do razão da linha
+antes dele) e o final o do fim, as entradas e as saídas (estas sem o sinal) são as somas das quantidades positivas e
+negativas, e os custos das entradas e das saídas, as somas do custo gravado nos movimentos. **Sem filtro de movimento,
+fecha com a analítica**: o saldo inicial é o "Est. anterior" do primeiro movimento da linha no período e o final o
+"Est. atual" do último. Com filtro de tipo de movimento, usuário, documento ou pessoa, as entradas, as saídas, os
+movimentos e os custos são só os dos movimentos filtrados (fecham com a analítica no mesmo filtro), e os saldos
+continuam os do começo e do fim do período: não batem com o "Est. anterior" do primeiro movimento filtrado nem com o
+"Est. atual" do último, que incluem os movimentos que o filtro esconde. **Data da última compra** e **Último custo**: o último `RECEB_MANUAL` ou `RECEB_NFE` de
+entrada (não o estorno) do produto e da variação **no local**, pela data do movimento, até o fim do período, em
+qualquer tipo de estoque e fora dos filtros (não o `saldos_estoque.ultima_compra_em`, que é a última compra lançada,
+hoje); o custo só com `produtos.ver_custo`. **Exportação** pela rota comum (`GET
+/relatorios/movimentacao-estoque/exportar?visao=analitica|sintetica&…`): `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`
+(ou `.csv`) com as colunas da visão — na analítica as da tela mais o Código, a variação, o fator, a observação, os
+saldos gravados, `idmovimentacaoestoquetipo`, `idmovimentacaoestoque` e `idvenda`; sem `produtos.ver_custo`, as
+colunas de custo ficam de fora do arquivo —; acima de 50 mil linhas vira tarefa (os 12 meses de uma loja), com a contagem própria só no razão. **"Ver
+movimentação"** no bloco Estoque do produto (8.2.11; em cada linha estoque × tipo) e no Estoque Atual (16.4; na linha de
+um estoque, não no "Todas"), com `relatorios.movimentacao_estoque`: abre a analítica já gerada com o local, o produto
+e os últimos 30 dias até hoje (no Estoque Atual com data-base, até a data-base). Na sintética, o número de movimentos
+abre a analítica do produto com os mesmos filtros: toda a movimentação do produto no local (a analítica não filtra o
+tipo de estoque nem a variação, então o link de cada linha do produto abre a mesma lista).
 
 ### 16.6 Financeiro geral
 

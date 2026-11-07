@@ -1120,6 +1120,44 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       produto ao lado da quantidade e a do documento com o fator; a multisseleção marcada que manda os códigos e os
       "Filtros" da impressão com os nomes dos tipos e o `descrever` do produto e da pessoa).
 
+68. **Movimentação de Estoque: visão sintética, exportação e "Ver movimentação"** (Fase 2, F2-B33; ERP 16.5, 3.5,
+    3.6, 8.2.11; README da API › decisão 180; `src/paginas/relatorios/MovimentacaoEstoque.tsx`,
+    `src/paginas/relatorios/EstoqueAtual.tsx`, `src/paginas/produtos/FormularioProduto.tsx` (o bloco Estoque)).
+    - **Filtro Visão** na Movimentação: "Analítica (um movimento por linha)" (padrão) ou "Sintética por produto"; vai
+      na URL como os outros filtros (`visao=sintetica`, só quando não é o padrão). A tela troca entre duas configurações
+      do `<Relatorio>` com os mesmos filtros: a analítica por cursor (decisão 67) e a **sintética paginada por página**
+      (`paginacao: 'pagina'`, com o total da API: uma linha por produto × tipo de estoque com movimento, milhares numa
+      loja). A visão não vai na consulta da tela (cada uma tem a sua rota, `GET /relatorios/movimentacao-estoque` e
+      `…/sintetica`), mas vai na exportação (a API escolhe as colunas e a consulta por ela).
+    - **Colunas da sintética**: Ref. Interna, Produto (link para o cadastro, com a variação quando houver), Tipo de
+      estoque, Saldo inicial, Entradas (verde, "+"), Saídas (vermelha, "−"; "—" quando zero), Saldo final, Unidade (a
+      do produto), **Movimentos** (o número é o link para a analítica do produto com os mesmos filtros, sem a visão e
+      sem a página; a analítica não filtra o tipo de estoque nem a variação, então o link abre **toda a movimentação
+      do produto no local**, as outras linhas dele na sintética também, e o rótulo para o leitor de tela é "Ver toda a
+      movimentação de X neste local", não "os N movimentos"; a nota diz o mesmo), Custo das entradas e Custo das saídas (só com `produtos.ver_custo`), **Última compra** (data e
+      hora do último recebimento manual ou NF-e do produto no local até o fim do período; "—" sem compra) e Último
+      custo (só com `produtos.ver_custo`, até 4 casas). A linha de totais traz o número de linhas e os custos do
+      relatório inteiro. A nota explica que os saldos são os do estoque no começo e no fim do período e que, com
+      filtro de tipo, usuário, documento ou pessoa, as entradas e as saídas são só as filtradas (o final deixa de ser
+      o inicial + entradas − saídas).
+    - **Exportação**: o Exportar ganhou Excel (.xlsx) e CSV pela API (`exportarPelaApi('movimentacao-estoque')`), com
+      os filtros e a visão (`Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`); acima de 50 mil linhas (os 12
+      meses de uma loja passam de um milhão) vira tarefa, com o aviso e o andamento na tela e o link no ícone Tarefas
+      (decisão 65).
+    - **"Ver movimentação"** (com `relatorios.movimentacao_estoque`): no bloco **Estoque do produto**, uma coluna
+      Movimentação com o link em cada linha (estoque × tipo); no **Estoque Atual**, a coluna Movimentação com o link na
+      linha de um estoque ("—" no "Todas": a soma de vários locais não é um local, e a Movimentação exige um). O link
+      (`linkVerMovimentacao`) abre a analítica já gerada com o **local, o produto e o período na URL**: os últimos 30
+      dias (`DIAS_VER_MOVIMENTACAO`, contando o dia final) até hoje no fuso da empresa — no Estoque Atual com data-base,
+      até a data-base (a que não é uma data, editada à mão na URL, vira hoje). Período de 30 dias, e não o "do primeiro
+      dia do mês" do padrão da tela: no começo do mês o padrão mostraria um dia só.
+    - Testes: `MovimentacaoEstoque.test.tsx` (a sintética pela rota dela com a página e sem a visão, as colunas, os
+      sinais, a última compra e o "—" sem compra, os totais, a nota, o link dos movimentos para a analítica; sem "Ver
+      custo" sem as colunas de custo e com a data da última compra; escolher a visão no filtro troca a consulta, e a
+      exportação leva a visão e vira tarefa; o `linkVerMovimentacao` com os 30 dias no fuso da empresa, até a data dada
+      e com a data inválida), `EstoqueAtual.test.tsx` (o link com a data-base; no "Todas", sem link) e
+      `BlocosProduto.test.tsx` (o link de cada linha do bloco Estoque; sem a permissão, sem a coluna).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação

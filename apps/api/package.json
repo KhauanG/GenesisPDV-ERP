@@ -28,6 +28,7 @@
     "carga:exportacao": "node --expose-gc --max-old-space-size=1536 --import tsx test/carga/exportacao-razao.ts",
     "carga:estoque-atual": "node --max-old-space-size=1536 --import tsx test/carga/estoque-atual.ts",
     "carga:movimentacao": "node --max-old-space-size=1536 --import tsx test/carga/movimentacao.ts",
+    "carga:movimentacao-exportacao": "node --expose-gc --max-old-space-size=1536 --import tsx test/carga/movimentacao-exportacao.ts",
     "empresa:criar": "tsx src/cli/empresa-criar.ts",
     "empresa:provisionamento": "tsx src/cli/empresa-provisionamento.ts",
     "admin:criar": "tsx src/cli/admin-criar.ts",

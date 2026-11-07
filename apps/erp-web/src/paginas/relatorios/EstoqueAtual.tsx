@@ -30,6 +30,7 @@ import {
 import { formatarData, formatarInteiro } from '../../util/formato';
 import { ModalAjustarEstoque } from '../produtos/BlocosProduto';
 import { ROTA_PRODUTOS } from '../produtos/ListaProdutos';
+import { linkVerMovimentacao } from './MovimentacaoEstoque';
 import { useFiltroTreino } from '../vendas/comum';
 
 export const ROTA_ESTOQUE_ATUAL = '/relatorios/estoque-atual';
@@ -55,6 +56,9 @@ const dataBr = (iso: string) => iso.split('-').reverse().join('/');
  * de um item com a origem `relatorio_estoque` (AJUSTE_RELATORIO). Não abre no "Todas" (a soma não é de um estoque), na
  * data-base (é o saldo de outro dia) nem no tipo de estoque inativo (não recebe acerto). Nos filtros "Zerado" e
  * "Abaixo do mínimo" vêm também os produtos sem movimento no estoque (saldo 0): o clique lança a contagem inicial.
+ *
+ * **"Ver movimentação"** (F2-B33; README do ERP › decisão 68, com `relatorios.movimentacao_estoque`): na linha de um
+ * estoque (não no "Todas"), a Movimentação analítica do produto nesse local nos 30 dias até hoje ou até a data-base.
  */
 export function EstoqueAtual() {
   const pode = usePode();
@@ -79,6 +83,7 @@ export function EstoqueAtual() {
   });
   const verCusto = pode('produtos.ver_custo');
   const podeAjustar = pode('estoque_acertos.criar');
+  const verMovimentacao = pode('relatorios.movimentacao_estoque');
   const dataBase = params.get('dataBase');
   const comVencendo = params.has('vencendoEmDias');
   const [ajuste, setAjuste] = useState<LinhaEstoqueAtual | null>(null);
@@ -247,6 +252,33 @@ export function EstoqueAtual() {
       { campo: 'unidadeSigla', rotulo: 'Unidade', formato: (l) => l.unidadeSigla },
       { campo: 'estoqueNome', rotulo: 'Estoque', formato: (l) => l.estoqueNome },
       { campo: 'tipoEstoqueNome', rotulo: 'Tipo', formato: (l) => l.tipoEstoqueNome },
+      // "Ver movimentação" (F2-B33): a analítica do produto no estoque da linha, nos 30 dias até hoje ou até a
+      // data-base. No "Todas" a linha soma estoques, e a Movimentação é de um local só.
+      ...(verMovimentacao
+        ? [
+            {
+              campo: 'movimentacao',
+              rotulo: 'Movimentação',
+              formato: (l: LinhaEstoqueAtual) =>
+                l.estoqueId ? (
+                  <Anchor
+                    component={Link}
+                    to={linkVerMovimentacao({
+                      estoqueId: l.estoqueId,
+                      produtoId: l.produtoId,
+                      dataFinal: dataBase,
+                    })}
+                    size="sm"
+                    aria-label={`Ver movimentação de ${l.produtoNome} em ${l.estoqueNome}`}
+                  >
+                    Ver movimentação
+                  </Anchor>
+                ) : (
+                  '—'
+                ),
+            },
+          ]
+        : []),
     ];
 
     return {
@@ -287,6 +319,7 @@ export function EstoqueAtual() {
     estoquePadrao,
     verCusto,
     podeAjustar,
+    verMovimentacao,
     dataBase,
     comVencendo,
   ]);

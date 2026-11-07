@@ -3,6 +3,8 @@ import {
   ajusteEstoqueRelatorioSchema,
   consultaEstoqueAtualSchema,
   consultaMovimentacaoEstoqueSchema,
+  consultaMovimentacaoSinteticaSchema,
+  exportacaoMovimentacaoEstoqueSchema,
   filtrosEstoqueAtualSchema,
   filtrosMovimentacaoEstoqueSchema,
 } from './relatorios.js';
@@ -104,5 +106,32 @@ describe('filtros da Movimentação de Estoque (ERP 16.5; F2-B32)', () => {
     ]);
     expect(erros({ ...base, documentoTipo: 'vasilhame' })).toEqual([]);
     expect(erros({ ...base, documentoTipo: 'outro' })).toEqual(['documentoTipo']);
+  });
+});
+
+describe('Movimentação sintética e exportação (ERP 16.5; F2-B33)', () => {
+  const base = { estoqueId: ID, dataInicial: '2026-11-01', dataFinal: '2026-11-07' };
+
+  it('a sintética pagina por página (padrão 1 e 50), com as mesmas regras de período', () => {
+    expect(consultaMovimentacaoSinteticaSchema.parse(base)).toEqual({ ...base, pagina: 1, tamanho: 50 });
+    expect(consultaMovimentacaoSinteticaSchema.parse({ ...base, pagina: '3', tamanho: '20' })).toMatchObject({
+      pagina: 3,
+      tamanho: 20,
+    });
+    expect(consultaMovimentacaoSinteticaSchema.safeParse({ ...base, pagina: '0' }).success).toBe(false);
+    expect(consultaMovimentacaoSinteticaSchema.safeParse({ ...base, tamanho: 'todos' }).success).toBe(false);
+    expect(
+      consultaMovimentacaoSinteticaSchema.safeParse({ ...base, dataInicial: '2025-11-06' }).success,
+    ).toBe(false);
+  });
+
+  it('a exportação leva a visão (padrão: a analítica) e aceita a própria entrada crua da tarefa', () => {
+    expect(exportacaoMovimentacaoEstoqueSchema.parse(base).visao).toBe('analitica');
+    expect(exportacaoMovimentacaoEstoqueSchema.parse({ ...base, visao: '' }).visao).toBe('analitica');
+    const entrada = { ...base, visao: 'sintetica', tiposMovimento: 'RECEB_NFE,RECEB_MANUAL' };
+    const f = exportacaoMovimentacaoEstoqueSchema.parse(entrada);
+    expect(f).toMatchObject({ visao: 'sintetica', tiposMovimento: ['RECEB_NFE', 'RECEB_MANUAL'] });
+    expect(exportacaoMovimentacaoEstoqueSchema.parse(JSON.parse(JSON.stringify(entrada)))).toEqual(f);
+    expect(exportacaoMovimentacaoEstoqueSchema.safeParse({ ...base, visao: 'diaria' }).success).toBe(false);
   });
 });

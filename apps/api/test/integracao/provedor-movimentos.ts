@@ -1,8 +1,9 @@
 /**
  * Provedor de exemplo da exportação de relatório (F2-B29): os movimentos do razão, como a Movimentação analítica do
- * F2-B32 vai ler (por local, na ordem `(estoque_id, data_movimento, id)` do `ix_movimentos_estoque_estoque_data`), com
- * o filtro dos estoques permitidos e as colunas de custo marcadas. Só os testes o registram: os relatórios de verdade
- * chegam com os blocos F2-B31 a F2-B33.
+ * F2-B32 lê (por local, na ordem `(estoque_id, data_movimento, id)` do `ix_movimentos_estoque_estoque_data`), com o
+ * filtro dos estoques permitidos e as colunas de custo marcadas. Só os testes o registram (a exportação genérica, sem
+ * depender de um relatório de verdade); os de verdade (Estoque Atual e Movimentação, F2-B31 a F2-B33) têm os provedores
+ * deles em `src/relatorios`.
  */
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
