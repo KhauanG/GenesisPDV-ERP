@@ -51,6 +51,8 @@ import { sessaoDaTarefa, type ExecucaoTarefa, type TarefasSegundoPlano } from '.
 
 /** Linhas por `fetch` do cursor (o lote que fica na memória; o do recalcular e o da massa do F2-B28). */
 export const LINHAS_POR_LOTE_EXPORTACAO = 10_000;
+/** Folga entre o gerador e o envio ao armazenamento (o `highWaterMark` da saída). */
+export const FOLGA_ENVIO_BYTES = 1024 * 1024;
 /** Retenção do arquivo gerado: a do link (ERP 3.6, "link expira em 7 dias"). */
 const RETENCAO_DIAS = 7;
 
@@ -104,6 +106,8 @@ export interface OpcoesExportacao {
   linhasPorLote?: number;
   /** Parte do multipart (padrão `TAMANHO_PARTE_BYTES`; o teste com o S3 em memória usa uma pequena). */
   tamanhoParte?: number;
+  /** Folga entre o gerador e o envio (padrão `FOLGA_ENVIO_BYTES`; o teste usa uma pequena, para o gerador esperar). */
+  folgaBytes?: number;
   /** Linhas por aba do `.xlsx` (padrão: o teto do Excel; o teste usa um pequeno). */
   linhasPorAba?: number;
   /** Até quantas linhas baixa na hora (padrão `LIMITE_EXPORTACAO`; o teste usa um pequeno). */
@@ -374,14 +378,22 @@ export class ExportacaoRelatorios {
 
     const gerado = await semaforoExportacao.executar(async () => {
       await e.progresso(1, 'Lendo o relatório');
-      // 1 MiB de folga entre o gerador e o envio: cheio, o gerador espera a parte subir (`abrirEscritorPlanilha`).
-      const saida = new PassThrough({ highWaterMark: 1024 * 1024 });
+      // A folga entre o gerador e o envio (1 MiB): cheia, o gerador espera a parte subir (`abrirEscritorPlanilha`).
+      const saida = new PassThrough({ highWaterMark: this.opcoes.folgaBytes ?? FOLGA_ENVIO_BYTES });
+      // O erro da saída chega por quem espera nela (o gerador na folga, o envio lendo): sem ouvinte nenhum no
+      // instante do `destroy(erro)` (o gerador esperando o banco), o evento `error` derrubaria o processo.
+      saida.on('error', () => undefined);
       // O envio que falha primeiro destrói a saída: o gerador parado esperando folga acorda, e a tarefa falha com o
       // erro do envio (o do gerador é consequência). O gerador que falha primeiro destrói a saída com o erro dele.
       let falhaEnvio: Error | null = null;
       let falhaGerador = false;
       const envio = this.d.armazenamento
-        .gravarFluxo(chave, saida, tipoMime, { tamanhoParte: this.opcoes.tamanhoParte })
+        // `destroyOnReturn: false`: o `for await` do envio que sai com erro destruiria a saída na hora com um
+        // `AbortError` ("The operation was aborted"), antes do `AbortMultipartUpload` e do `catch` abaixo; o gerador
+        // na folga acordaria com ele e a tarefa falharia com essa mensagem crua no lugar da do armazenamento.
+        .gravarFluxo(chave, saida.iterator({ destroyOnReturn: false }), tipoMime, {
+          tamanhoParte: this.opcoes.tamanhoParte,
+        })
         .catch((erro: unknown) => {
           if (falhaGerador) throw erro;
           falhaEnvio = new Error(

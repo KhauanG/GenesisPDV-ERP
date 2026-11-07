@@ -4651,7 +4651,11 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `@aws-sdk/lib-storage`); o arquivo menor que uma parte vai num `PutObject` só; o sha256 é calculado no caminho
        (no multipart ele fica só em `arquivos`, não nos metadados do objeto); falhou → `AbortMultipartUpload`. O envio
        que falha destrói a saída e a tarefa falha com "O arquivo não pôde ser gravado no armazenamento: …"; o gerador
-       que falha destrói a saída com o erro dele. **Parte pendurada**: o `S3Client` não tinha limite de tempo nenhum
+       que falha destrói a saída com o erro dele. Só o executor destrói a saída: o envio a lê pelo
+       `saida.iterator({ destroyOnReturn: false })`, porque o `for await` que sai com erro a destruiria na hora com um
+       `AbortError` ("The operation was aborted"), antes do `AbortMultipartUpload`, e o gerador parado na folga saía
+       com essa mensagem crua no lugar da do armazenamento (teste com a folga pequena e o aborto atrasado no S3 em
+       memória). **Parte pendurada**: o `S3Client` não tinha limite de tempo nenhum
        (no `@smithy/node-http-handler` 4.14 os três valem 0), e uma parte presa numa conexão meio aberta deixaria o
        gerador parado na pressão de volta com a transação do cursor aberta ("idle in transaction": travas de leitura
        no razão, que fariam a migração do próximo deploy cair no `lock_timeout`, o horizonte do vacuum preso, uma

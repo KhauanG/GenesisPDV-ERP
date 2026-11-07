@@ -20,6 +20,8 @@ export interface S3Falso {
    * inatividade do cliente S3.
    */
   pendurarNaParte: number | null;
+  /** Atraso da resposta do aborto do multipart (`DELETE ?uploadId`): o teste da ordem entre a falha do envio e o gerador. */
+  atrasarAbortoMs: number;
   fechar(): Promise<void>;
 }
 
@@ -40,6 +42,7 @@ export async function iniciarS3Falso(): Promise<S3Falso> {
     pedidos,
     falharNaParte: null,
     pendurarNaParte: null,
+    atrasarAbortoMs: 0,
     fechar: () =>
       new Promise((ok) => {
         servidor.close(() => ok());
@@ -94,7 +97,8 @@ export async function iniciarS3Falso(): Promise<S3Falso> {
         if (req.method === 'DELETE') {
           multipart.delete(envio);
           res.statusCode = 204;
-          res.end();
+          if (falso.atrasarAbortoMs) setTimeout(() => res.end(), falso.atrasarAbortoMs);
+          else res.end();
           return;
         }
         // POST ?uploadId: concluir, com as partes na ordem pedida no corpo.

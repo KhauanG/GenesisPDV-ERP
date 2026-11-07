@@ -604,7 +604,16 @@ describe('teto e falhas', () => {
         `select (select count(*) from arquivos)::text as arquivos,
                 (select count(*) from auditoria where acao = 'exportar')::text as auditoria`,
       );
+      // A ordem que expõe a corrida, de forma determinística: com 16 KiB de folga o gerador está parado esperando o
+      // envio quando a parte 2 falha, e o aborto do multipart demora a responder — a falha do envio só chega ao
+      // executor depois dele. Nesse meio tempo nada pode acordar o gerador com outro erro (antes, o `for await` do
+      // envio destruía a saída com "The operation was aborted", e era essa a mensagem da tarefa).
+      const opcoes = amb.servicos.exportacoes.opcoes;
+      opcoes.folgaBytes = 16 * 1024;
+      escritas = 0;
+      esperadas = 0;
       s3!.falharNaParte = 2;
+      s3!.atrasarAbortoMs = 1000;
       const abortos = s3!.pedidos.filter((p) => p.metodo === 'DELETE' && p.consulta.has('uploadId')).length;
       try {
         const r = await amb.http().get(ROTA).query({ formato }).set(bearer(admin));
@@ -613,8 +622,12 @@ describe('teto e falhas', () => {
         expect(t.status).toBe('falhou');
         expect(t.erro).toMatch(/^O arquivo não pôde ser gravado no armazenamento: /);
         expect(t.download).toBeNull();
+        // O gerador parou no meio (esperando folga), e não depois de escrever tudo.
+        expect(escritas).toBeLessThan(total);
       } finally {
+        delete opcoes.folgaBytes;
         s3!.falharNaParte = null;
+        s3!.atrasarAbortoMs = 0;
       }
       expect(s3!.multipart.size).toBe(0);
       expect(s3!.pedidos.filter((p) => p.metodo === 'DELETE' && p.consulta.has('uploadId')).length).toBe(
