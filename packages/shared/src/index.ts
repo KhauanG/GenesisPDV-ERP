@@ -24,6 +24,7 @@ export * from './produtos.js';
 export * from './recebimentos.js';
 export * from './sync/contratos.js';
 export * from './sync/eventos.js';
+export * from './tarefas.js';
 export * from './terminais.js';
 export * from './transferencias.js';
 export * from './validadores.js';

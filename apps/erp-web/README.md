@@ -977,9 +977,70 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       que as referências do teste respondem com 403 —, o tratamento como perda, o 409 do cancelamento e o romaneio), `GradeItens.test.tsx` (linhas fixas) e o e2e `e2e/fluxo-transferencia.spec.ts` (CD →
       Loja 2 com 5 fardos, o romaneio, 58 recebidos de 60 e a perda; os saldos 40 e 58 no fim), fora do CI.
 
+65. **`<Relatorio>` paginado no servidor e ícone Tarefas no cabeçalho** (Fase 2, F2-B30; ERP 3.5, 3.6, 5.1; README da
+    API › decisão 177). A casca dos relatórios (`componentes/relatorio/Relatorio.tsx`) e o componente comum das tarefas
+    (`componentes/tarefas/`) que os relatórios do PR-7 em diante usam; nenhum relatório real ainda (chegam no F2-B31..B33).
+    - **Paginação no servidor** (`config.paginacao`): `pagina` manda `pagina` e `tamanho` e espera o `total` da API
+      (primeira, anterior, "Página X de Y", próxima, última e "N registros"); `cursor` manda `tamanho` e o `cursor` e
+      espera o `proximoCursor` (primeira, anterior e próxima), para o relatório que lê o razão em ordem e não conta o
+      total (a Movimentação analítica, F2-B32). A página, o tamanho (20, 25, 35 ou 50, os do `paginacaoQuerySchema`;
+      padrão 50 ou o `tamanhoPadrao`) e o cursor ficam na **URL** com os filtros: o link reabre a mesma página. O Filtrar
+      e a troca de tamanho voltam à primeira (o tamanho escolhido continua), e também a troca da loja de contexto do
+      cabeçalho quando o filtro de loja vem dela (fora da URL): a página ou o cursor da URL eram da loja anterior, e a
+      tela os tira da URL (sem nova entrada no histórico) e já consulta a primeira página da loja nova. No cursor, o
+      "Anterior" usa os cursores já vistos, guardados no **estado da entrada do histórico** junto com o cursor da URL
+      (`cursoresAnteriores`), não no estado da tela: o Voltar e o Avançar do navegador trazem a página e a pilha juntas,
+      e o rótulo "Página N", o botão Anterior e o cabeçalho da impressão continuam certos; o link aberto com cursor só
+      tem "Primeira" ("Página aberta pelo link"). Os totais da tabela (`totais`) são do relatório
+      inteiro, vindos da API. PDF e Imprimir saem da página aberta, com "Página X de Y (N registros)" no cabeçalho.
+    - **Seleção de linhas opcional** (`config.selecao`): a coluna de marcação (da página aberta, com "todas da página"),
+      a barra "N selecionada(s)" com as ações do relatório (`acoes(linhas, limpar)`, ex.: o "Definir NCM" em lote do
+      F2-B41) e "Limpar seleção". Trocar de página ou de filtros limpa a seleção. Nada disso sai na impressão.
+    - **Exportação** (`config.exportar`, normalmente `exportarPelaApi(<chave>)`, a rota comum `GET
+      /relatorios/<chave>/exportar` do F2-B29, com os filtros e sem a página): Excel (.xlsx) e **CSV**. Até 50 mil linhas o
+      arquivo baixa na hora; acima, a API responde `202 { tarefaId, linhas }` (o cliente HTTP ganhou o `baixarOuTarefa`,
+      que lê o `202` como JSON) e a tela mostra a notificação, o aviso "Exportação em segundo plano · N linhas" com o
+      andamento e, no fim, o link do arquivo; a mesma tarefa aparece no ícone Tarefas, que é atualizado na hora. A
+      recusa (o teto de 5 milhões, as 2 exportações pendentes por usuário) vem na notificação de erro.
+    - **Ícone Tarefas** (`componentes/tarefas/IconeTarefas.tsx`, no cabeçalho do `Layout.tsx`, entre a loja de contexto
+      e o tema): o contador das tarefas do usuário na fila ou executando e o painel com as 50 mais recentes de `GET
+      /tarefas` (o tipo, a data, a situação, o progresso e a mensagem, o motivo da falha, o link "Baixar arquivo" — 7
+      dias, sem passar da retenção — ou "O arquivo expirou"). A forma da resposta virou contrato
+      (`RespostaTarefas`/`TarefaUsuario` em `packages/shared/src/tarefas.ts`, com os rótulos dos tipos e das situações).
+      Quando uma tarefa vista em andamento termina, uma notificação avisa (ERP 3.6).
+    - **Consulta econômica** (`componentes/tarefas/tarefas.ts`): a lista é pedida uma vez ao abrir o ERP (válida por
+      1 min) e só se repete a cada **5 s** enquanto houver tarefa em andamento ou com o painel aberto (abrir o painel
+      consulta na hora); a tarefa acompanhada numa tela (`useTarefa`, `GET /tarefas/:id`) se repete a cada **2 s** só
+      até terminar (antes, 1 s na Importação e no upload de NF-e), e ao terminar atualiza a lista. Com a aba do
+      navegador em segundo plano nada se repete (o padrão do TanStack Query). Uma **falha passageira** (sem conexão,
+      a API reiniciando na implantação, um 502) não para o acompanhamento: enquanto a última resposta mostrava tarefa
+      em andamento, a consulta continua, a cada **15 s** (`INTERVALO_APOS_ERRO_MS`), e quando a API volta a tela chega
+      ao resultado e o ícone avisa da conclusão sozinhos. Só a recusa da API (4xx: sem permissão, tarefa inexistente)
+      para de vez, e a primeira lista que falha (sem lista nenhuma) espera o painel ser aberto. Na tela, o
+      `AndamentoTarefa` mostra "Não foi possível acompanhar a …" com "Tentar novamente" acima da barra, que fica no
+      último andamento recebido (o upload de NF-e também deixa fechar o quadro); o painel do ícone mostra o aviso com
+      "Tentar novamente" também sobre a última lista recebida. Quem pede uma tarefa (exportação, importação, lote de NF-e)
+      invalida a lista, e o ícone começa a acompanhar sem esperar.
+    - **Permissão**: `GET /tarefas` não tem permissão própria (cada um vê as suas), mas o ícone só aparece — e só
+      consulta — para o Master e para quem tem alguma permissão que cria tarefa em nome do usuário
+      (`PERMISSOES_COM_TAREFA`: `relatorios.exportar`, `produtos.importar`, `pessoas.importar`,
+      `notas_entrada.importar`, `terminais.gerenciar` e `pdv.config.fiscal`, a de quem autoriza a faixa no PDV e em
+      nome de quem sai o reprocessamento depois da lacuna). Tipo novo de tarefa com outra permissão entra na lista.
+    - **A Importação e o upload de NF-e** passaram a usar o mesmo componente (`AndamentoTarefa`: a barra, a mensagem, a
+      falha e o conteúdo da concluída; `DownloadTarefa`: o botão do arquivo ou o aviso de expirado) e o mesmo
+      `useTarefa`; o resultado de cada um continua na própria tela, e o aviso cita o ícone Tarefas.
+    - Testes: `Relatorio.test.tsx` (o relatório de teste com **100 mil linhas** paginando num servidor simulado — só a
+      página vai e volta, a URL com página e tamanho, a última página, a troca de tamanho, o Filtrar e o link com a
+      página —, o cursor com próxima, anterior e primeira, a seleção, e o critério de pronto: no `Layout` de verdade, a
+      exportação que vira tarefa mostra o aviso, o andamento e o contador do ícone e, quando termina, o link no aviso,
+      a notificação e o link no painel), `Tarefas.test.tsx` (o intervalo da lista, o painel com cada situação, o vazio,
+      quem não tem permissão — sem ícone e sem consulta — e a consulta que falha) e `http.test.ts` (o
+      `baixarOuTarefa`). O relatório de teste só existe nos testes (nenhum relatório falso em produção); o e2e com um
+      relatório real fica para o F2-B31 (Estoque Atual).
+
 ## O que ainda não foi feito (Fase 0)
 
-Busca global (Ctrl+K) e ícone de tarefas no cabeçalho; avisos globais (certificado, PDV com pendências); exportação
+Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação
 em segundo plano acima de 5.000 linhas; "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
 `<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,

@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { Outlet } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProvedorSessao, useSessao } from '../../auth/sessao';
+import { CHAVE_TAREFAS } from '../../componentes/tarefas/tarefas';
 import { renderizarRotas, rotasSessao, simularApi } from '../../teste/utilidades';
 import { salvarArquivo } from '../../util/arquivos';
 import { formatarXml, FormularioNotaEntrada, ListaNotasEntrada } from './NotasEntrada';
@@ -299,7 +300,8 @@ describe('Recebimento de NF-e (ERP 13.4; F2-B19)', () => {
 
   it('arrastar e soltar os arquivos na área; o lote grande vira tarefa, acompanhada na tela até o resultado de cada arquivo', async () => {
     const usuario = userEvent.setup();
-    let consultas = 0;
+    // A tarefa responde "executando" até o teste mandar terminar (sem esperar o intervalo da consulta no relógio).
+    let terminou = false;
     const resultadoTarefa: ResultadoImportacaoNfe = {
       tarefaId: 't1',
       resumo: { importadas: 0, duplicadas: 1, recusadas: 1 },
@@ -348,31 +350,29 @@ describe('Recebimento de NF-e (ERP 13.4; F2-B19)', () => {
           corpo: { tarefaId: 't1', resumo: { importadas: 0, duplicadas: 0, recusadas: 0 }, resultados: [] },
         };
       if (url.pathname === '/api/tarefas/t1') {
-        consultas++;
         return {
-          corpo:
-            consultas === 1
-              ? {
-                  id: 't1',
-                  status: 'executando',
-                  progressoPct: 40,
-                  mensagem: 'Arquivo 1 de 2',
-                  resultado: null,
-                  erro: null,
-                }
-              : {
-                  id: 't1',
-                  status: 'concluida',
-                  progressoPct: 100,
-                  mensagem: null,
-                  resultado: resultadoTarefa,
-                  erro: null,
-                },
+          corpo: !terminou
+            ? {
+                id: 't1',
+                status: 'executando',
+                progressoPct: 40,
+                mensagem: 'Arquivo 1 de 2',
+                resultado: null,
+                erro: null,
+              }
+            : {
+                id: 't1',
+                status: 'concluida',
+                progressoPct: 100,
+                mensagem: null,
+                resultado: resultadoTarefa,
+                erro: null,
+              },
         };
       }
       return undefined;
     });
-    renderizar('/estoque/notas-entrada');
+    const { queryClient } = renderizar('/estoque/notas-entrada');
     const area = await screen.findByTestId('area-envio-nfe');
     const { fireEvent } = await import('@testing-library/react');
     fireEvent.drop(area, { dataTransfer: { files: [arquivo('lote.zip')] } });
@@ -381,8 +381,11 @@ describe('Recebimento de NF-e (ERP 13.4; F2-B19)', () => {
     // Enquanto roda: o progresso, com a mensagem da tarefa.
     expect(await screen.findByRole('progressbar', { name: 'Progresso da importação' })).toBeInTheDocument();
     expect(screen.getByText(/Arquivo 1 de 2/)).toBeInTheDocument();
-    // No fim: o resultado de cada arquivo, com as recusas e os avisos que só a tarefa conhece.
-    const tabela = await screen.findByRole('table', { name: 'Resultado da importação' }, { timeout: 4000 });
+    // No fim (a próxima consulta, que o intervalo faria, já acha a tarefa concluída): o resultado de cada arquivo,
+    // com as recusas e os avisos que só a tarefa conhece.
+    terminou = true;
+    await queryClient.invalidateQueries({ queryKey: CHAVE_TAREFAS });
+    const tabela = await screen.findByRole('table', { name: 'Resultado da importação' });
     expect(screen.getByText(/0 importada\(s\), 1 já importada\(s\), 1 recusada\(s\)/)).toBeInTheDocument();
     expect(
       within(tabela).getByText('A nota é de uma loja fora das suas lojas permitidas.'),

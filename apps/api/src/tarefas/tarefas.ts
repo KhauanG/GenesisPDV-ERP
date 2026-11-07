@@ -8,6 +8,7 @@
  * `LIMITE_SINAL_TAREFA_MS` ficou órfã (o processo morreu no meio): a retentativa da fila e a varredura
  * (`interrompidas.ts`) a marcam `falhou` com `mensagemInterrompida`. A que roda neste processo nunca é marcada.
  */
+import type { RespostaTarefas, StatusTarefa } from '@genesis/shared';
 import { Logger } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, lt, notInArray, sql } from 'drizzle-orm';
 import type { SessaoErp } from '../auth/auth.service.js';
@@ -316,9 +317,10 @@ export class TarefasSegundoPlano {
 
   /**
    * Tarefas do usuário (ícone "Tarefas" do cabeçalho, ERP 3.6), com link de download assinado: 7 dias, sem passar da
-   * retenção do arquivo (`validadeDownloadS`). Retenção vencida → `download: null` e `downloadExpirado: true`.
+   * retenção do arquivo (`validadeDownloadS`). Retenção vencida → `download: null` e `downloadExpirado: true`. A
+   * forma é o contrato `RespostaTarefas` do `@genesis/shared` (F2-B30), que o ERP lê.
    */
-  async doUsuario(usuarioId: string, tarefaId?: string) {
+  async doUsuario(usuarioId: string, tarefaId?: string): Promise<RespostaTarefas> {
     const linhas = await this.tenancy.cx().consulta((db) =>
       db
         .select({
@@ -342,7 +344,8 @@ export class TarefasSegundoPlano {
           return {
             id: t.id,
             tipo: t.tipo,
-            status: t.status,
+            // O CHECK da coluna só aceita os de `STATUS_TAREFA`.
+            status: t.status as StatusTarefa,
             progressoPct: t.progressoPct,
             mensagem: t.mensagem,
             resultado: t.resultado,

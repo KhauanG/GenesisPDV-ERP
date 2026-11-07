@@ -4,6 +4,7 @@ import {
   MENSAGEM_ENVIO_GRANDE_NFE,
   ROTULOS_SITUACAO_ARQUIVO_NFE,
   TETO_UPLOAD_NFE_TEXTO,
+  tarefaEmAndamento,
   type EstoqueResumo,
   type Pagina,
   type ResultadoArquivoNfe,
@@ -19,7 +20,6 @@ import {
   FileButton,
   Group,
   Paper,
-  Progress,
   Select,
   Stack,
   Table,
@@ -33,6 +33,8 @@ import { Link } from 'react-router';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { formatarDecimal } from '../../componentes/grade/decimal';
+import { AndamentoTarefa } from '../../componentes/tarefas/AndamentoTarefa';
+import { CHAVE_LISTA_TAREFAS, useTarefa } from '../../componentes/tarefas/tarefas';
 
 export const ROTA_NOTAS_ENTRADA = '/estoque/notas-entrada';
 
@@ -43,16 +45,6 @@ const CORES_SITUACAO: Record<SituacaoArquivoNfe, string> = {
 };
 const EXTENSOES = /\.(xml|zip)$/i;
 const MB = 1024 * 1024;
-
-/** A tarefa do lote grande como `GET /tarefas/:id` devolve (o `resultado` é o mesmo `ResultadoImportacaoNfe`). */
-interface TarefaImportacaoNfe {
-  id: string;
-  status: 'na_fila' | 'executando' | 'concluida' | 'falhou';
-  progressoPct: number;
-  mensagem: string | null;
-  resultado: ResultadoImportacaoNfe | null;
-  erro: string | null;
-}
 
 /** Os estoques ativos (o "Estoque de destino" do envio e o Destino da aba Dados). */
 export function useEstoques() {
@@ -175,19 +167,14 @@ function PainelResultado({
 }
 
 /**
- * O lote grande em segundo plano (tarefa `importar_xml_nfe`): a própria tela consulta `GET /tarefas/:id` a cada
- * segundo até a tarefa terminar, com o progresso, e no fim mostra o resultado de cada arquivo (o mesmo do envio
- * direto) ou a mensagem da falha (ex.: quem pediu perdeu a permissão ou o estoque). O ícone Tarefas do cabeçalho é do
- * F2-B30; até lá o acompanhamento é só aqui.
+ * O lote grande em segundo plano (tarefa `importar_xml_nfe`): a própria tela acompanha `GET /tarefas/:id` até a
+ * tarefa terminar, com o progresso (o componente comum das tarefas, F2-B30), e no fim mostra o resultado de cada
+ * arquivo (o mesmo do envio direto) ou a mensagem da falha (ex.: quem pediu perdeu a permissão ou o estoque). A mesma
+ * tarefa aparece no ícone Tarefas do cabeçalho.
  */
 function AcompanharTarefa({ tarefaId, aoFechar }: { tarefaId: string; aoFechar: () => void }) {
   const queryClient = useQueryClient();
-  const tarefa = useQuery({
-    queryKey: ['tarefas', tarefaId],
-    queryFn: () => apiErp.get<TarefaImportacaoNfe>(`/tarefas/${tarefaId}`),
-    refetchInterval: (q) =>
-      q.state.data && ['concluida', 'falhou'].includes(q.state.data.status) ? false : 1000,
-  });
+  const tarefa = useTarefa<ResultadoImportacaoNfe>(tarefaId);
   const t = tarefa.data;
   const terminou = t?.status === 'concluida' || t?.status === 'falhou';
   useEffect(() => {
@@ -202,25 +189,19 @@ function AcompanharTarefa({ tarefaId, aoFechar }: { tarefaId: string; aoFechar: 
         <Text fw={600} size="sm">
           Importação em segundo plano
         </Text>
-        {t?.status === 'falhou' && <CloseButton aria-label="Fechar o resultado" onClick={aoFechar} />}
+        {/* Com a consulta falhando, também dá para fechar (a tarefa continua no ícone Tarefas). */}
+        {((t && !tarefaEmAndamento(t)) || tarefa.isError) && (
+          <CloseButton aria-label="Fechar o resultado" onClick={aoFechar} />
+        )}
       </Group>
-      {t?.status === 'falhou' ? (
-        <Alert color="red" role="alert" title="A importação falhou">
-          {t.erro}
-        </Alert>
-      ) : tarefa.error ? (
-        <Alert color="red" title="Não foi possível acompanhar a importação">
-          {(tarefa.error as Error).message}
-        </Alert>
-      ) : (
-        <Stack gap={4}>
-          <Progress value={t?.progressoPct ?? 0} animated aria-label="Progresso da importação" />
-          <Text size="sm" c="dimmed">
-            {t?.mensagem ?? 'Na fila…'} São muitas notas: o resultado de cada arquivo aparece aqui quando
-            terminar.
-          </Text>
-        </Stack>
-      )}
+      <AndamentoTarefa
+        tarefa={t}
+        erroConsulta={tarefa.error}
+        aoTentarNovamente={() => void tarefa.refetch()}
+        tentando={tarefa.isFetching}
+        rotulo="importação"
+        aviso="São muitas notas: o resultado de cada arquivo aparece aqui quando terminar."
+      />
     </Paper>
   );
 }
@@ -251,12 +232,15 @@ export function EnvioNotasEntrada() {
       setArquivos([]);
       setResultado(r);
       void queryClient.invalidateQueries({ queryKey: ['listagem', 'notas_entrada'] });
-      if (r.tarefaId)
+      if (r.tarefaId) {
+        // O ícone Tarefas passa a contar (e acompanhar) o lote.
+        void queryClient.invalidateQueries({ queryKey: CHAVE_LISTA_TAREFAS });
         notifications.show({
           color: 'blue',
           title: 'Importação em segundo plano',
-          message: 'São muitas notas: acompanhe o progresso abaixo da área de envio.',
+          message: 'São muitas notas: acompanhe o progresso abaixo da área de envio ou no ícone Tarefas.',
         });
+      }
     },
   });
 
