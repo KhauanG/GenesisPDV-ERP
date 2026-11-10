@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 em andamento: F2-B34 commitado, F2-B35 commitado)._
+_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 em andamento: F2-B34 commitado, F2-B35 e F2-B36 commitados; falta abrir o PR-8)._
 
 ## Repositório
 
@@ -84,7 +84,7 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 |---|---|
 | F2-B34 guarda de produto com variações no PDV (PDV: `ProdutoResolvido.ExigeVariacao`/`VariacaoId`, `ProdutoVenda.TemVariacoesAtivas` e `GuardaVariacoes` no Core, marcação no `CatalogoLocal` — o código da variação e o pai `com_variacoes` com variação ativa; o legado sem variação ativa e o `com_complementos` vendem —, recusa no `ServicoVenda.IncluirResolvidoAsync` pelo bipe e pela pesquisa F2 com "Produto com variações: venda disponível na próxima versão"; chave `pdv.recusa_produto_com_variacoes` = `true`, por loja, D44 decidida pelo dono em 05/11/2026, na aba 7 da Central; nuvem: a venda do pai sem a variação é aceita e abre o `CADASTRO_PRODUTO` `venda_sem_variacao` (`abrirAlertaCadastro`, o mesmo do `alerta.cadastro`); ERP: a chave em Parâmetros › PDV e, ao ligar `produtos.variacoes_habilitadas`, o aviso dos caixas abaixo de `VERSAO_PDV_GUARDA_VARIACOES` = 0.11.0 por `GET /configuracoes/terminais-sem-guarda-variacoes`; **sem migração**, sem `Esquema.g.cs` nem protocolo novos, versão do PDV inalterada (a R1 é do fechamento do PR-8); README da API › decisão 181, do ERP › 69, do PDV › 81) | **commitado** |
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
-| F2-B36 pesquisa F2 com FTS5 (opcional) | não iniciado |
+| F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
 
 ## Próximo passo
 
@@ -99,10 +99,10 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
    `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
 3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36, release R1 do PDV): workflow `genesis-bloco` bloco a bloco
    (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-7). F2-B34
-   commitado; F2-B35 commitado (o próximo é o F2-B36, opcional). No fechamento do PR-8: a versão do PDV para a R1 — se não for **0.11.0**, trocar
+   commitado; F2-B35 commitado; F2-B36 commitado. No fechamento do PR-8: a versão do PDV para a R1 — se não for **0.11.0**, trocar
    `VERSAO_PDV_GUARDA_VARIACOES` em `packages/shared/src/produtos.ts` (o aviso do ERP ao ligar as variações) — e a API
    publicada antes do PDV.
-4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 83** (confira o último número no próprio
+4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 84** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`).

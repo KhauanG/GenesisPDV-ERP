@@ -437,6 +437,10 @@ TM-T88 V/VI) ou **Bematech MP-4200 TH**; sem impressora configurada o caixa **ve
   (+ `_alternativas`), `restricoes_horario_venda`, `formas_pagamento`, `unidades_medida` e `configuracoes`, com a projeção do MD 6.2
   (sem custo, markup etc.), `versao`/`criado_localmente` com `DEFAULT 0`, sem FKs entre espelhos e com os índices das
   buscas do caixa. `RepositorioEspelhos.GravarAsync` faz o upsert por `id` só com versão maior (base do pull).
+- **Índice da pesquisa F2** (decisão 83): `produtos_busca` (FTS5, trigrama) sobre `produtos_busca_texto`, criados por
+  migração com SQL, fora do modelo do EF e do `Esquema.g.cs`; preenchidos e conferidos na abertura
+  (`IndiceBuscaProdutos.GarantirAsync`) e mantidos pelo pull. Ausente ou corrompido, a pesquisa usa a busca em memória e
+  a abertura refaz.
 - **`Esquema.g.cs`** (MD 4.1) é gerado pela API a partir do schema Drizzle: `pnpm --filter api gerar:esquema-pdv`
   (o CI roda `verificar:esquema-pdv` e falha se o arquivo versionado estiver diferente). Ele descreve as tabelas lidas
   pelos fluxos do pull e as de movimento que já existirem no Drizzle (nome, tipo, escala do `numeric(p,s)`, nulidade,
@@ -3590,9 +3594,10 @@ exportação de pendências na
 tela de desativado, ressincronização em sombra (6.11), comandos `enviar_logs`/`atualizar_app`/`reservar_faixa`,
 as demais teclas do F11 (sangria, reforço, movimentos, limite de gaveta, resumo diário, status do sync e devolução de
 cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura avulsa da gaveta, na I4, decisão 63), TEF, PIX dinâmico, crediário e as demais formas
-da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), pesquisa FTS5, confirmação de idade e
+da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
-sem estoque" nas alternativas do combo, a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
+resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -3724,3 +3729,78 @@ reimpresso continua o original, com o número do caixa.
       controla estoque"; a consulta que demora, cancelada pelo `Esc` com o `ct` repassado, e o `F4` seguinte consultando
       de novo; em todos, `Esc` ou `Enter` voltam à pesquisa com o filtro sem incluir nada e o `Enter` nela inclui o
       produto).
+
+83. **Pesquisa F2 pelo índice FTS5 local, com marca, localização, atacado, promocional e estoque** (Fase 2, F2-B36,
+    bloco marcado opcional no plano e incluído na R1 do PDV pela recomendação do plano, sem resposta explícita do dono;
+    PDV 10.3; MD 4.2; SYNC 6.10; sai na release R1, no fechamento do PR-8; uma migração local nova, **sem mudança no
+    `Esquema.g.cs`, sem migração na nuvem e fora do T13**: nenhum evento, nenhum tipo novo em `versoes_schema`).
+    - **Estrutura** (migração EF `BuscaProdutosFts`, SQL escrito nela): a tabela de conteúdo `produtos_busca_texto`
+      (`id` inteiro, `produto_id` único, `texto`: nome, código interno, código numérico, marca e categoria principal, em
+      maiúsculas e sem acento, normalizados no C# como a busca da Fase 1) e a tabela virtual **`produtos_busca`** (FTS5,
+      `content='produtos_busca_texto'`, **tokenizador `trigram`**), mantida pelos três gatilhos da tabela de conteúdo.
+      Não é espelho: fica fora do modelo do EF e do `Esquema.g.cs`. A migração é idempotente (apaga o que existir com
+      esses nomes antes de criar). O SQLite empacotado (`SQLitePCLRaw.bundle_e_sqlite3` 2.1.13, o do EF; nenhum pacote
+      novo) tem a FTS5 compilada em todas as plataformas: o `IndiceBuscaProdutosTests` confere o `ENABLE_FTS5`, e roda
+      no job do PDV no Windows da CI.
+    - **Por que trigrama:** a pesquisa continua casando **trechos** em qualquer ordem, igual à da Fase 1 ("350" acha
+      "LT350ML", "neken" acha "HEINEKEN"); o tokenizador por palavras só acharia o começo das palavras. A palavra de 3
+      letras ou mais vai ao `MATCH` (entre aspas, as aspas internas dobradas: nunca vira operador); a mais curta ("2L"),
+      que o trigrama não indexa, é filtrada com `instr` no próprio SQLite. Ativos e não excluídos, por nome, até 50. O
+      código de barras fica fora do texto de propósito: no meio de 13 dígitos quase todo trecho de 3 números aparece, e
+      "350" traria centenas de produtos pelo EAN; o EAN continua no bipe e na pesquisa só por números (decisão 65).
+    - **Preenchimento sem voltar o cursor:** a abertura (`InicializadorBanco` → `IndiceBuscaProdutos.GarantirAsync`, logo
+      depois das migrações e antes do login) confere a estrutura, a marca pendente e a contagem contra `produtos`; a
+      primeira abertura depois da atualização acha a contagem diferente e preenche com o espelho que já existe, em lotes
+      de 5.000 produtos, cada um numa transação curta (50 mil produtos ≈ 2 s). O SQLite não tira acento em SQL, por isso
+      o texto sai do C# e o preenchimento é da abertura, não da migração. A falha do índice nunca impede a abertura.
+    - **Manutenção:** o `AplicadorPull` recalcula, na mesma transação da página, o texto dos produtos gravados e dos
+      produtos das marcas e categorias gravadas (a marca renomeada muda o texto dos produtos dela); o
+      `RepositorioEspelhos` (demonstração e testes) faz o mesmo. Tudo sob um `SAVEPOINT`, com um `SAVEPOINT` aninhado que
+      força a FTS5 a gravar ali dentro (ela junta as escritas em memória e só grava no `SAVEPOINT`, no `RELEASE` ou no
+      `COMMIT`: a falha no `RELEASE` desfaria o ponto e voltaria no `COMMIT` da página, que nunca passaria). Se falhar
+      (FTS5 corrompida), desfaz só o índice, marca a reconstrução (`configuracao_terminal` `busca.reconstruir_indice`,
+      chave interna) e **a página e o cursor seguem**; o próprio pull refaz o índice logo depois, no máximo uma vez a cada
+      15 minutos. No caso extremo em que o ponto de salvamento se perde (a falha desfez a transação inteira, como num
+      disco cheio: o Microsoft.Data.Sqlite recusa o `ROLLBACK TO` com `InvalidOperationException`, tratada junto com a
+      `SqliteException`), a página falha uma vez e a atualização fica suspensa neste processo até a reconstrução, para o
+      cursor nunca parar numa página.
+    - **Recuperação:** sem a estrutura completa, com a marca pendente ou com a consulta da FTS5 falhando (a falha marca a
+      reconstrução), a pesquisa usa **a busca em memória da Fase 1**, com as mesmas regras e o mesmo texto: o caixa nunca
+      fica sem pesquisa. O `integrity_check` da abertura que acusa **só** a `produtos_busca` (toda linha a cita) descarta
+      a estrutura e a abertura refaz, em vez de bloquear o caixa como banco corrompido; qualquer outro problema continua
+      bloqueando. O descarte só acontece **depois** da conferência das migrações desconhecidas: o banco de uma versão mais
+      nova (I3) continua recusado sem nenhuma escrita. A restauração de backup (PDV 32.5) aplica a mesma regra: o backup
+      tirado com a FTS5 corrompida (offline o índice só se refaz na abertura seguinte, e os backups do dia a levam junto)
+      continua válido; a restauração descarta o índice no arquivo restaurado e marca a reconstrução, e a abertura o refaz.
+    - **Tela:** o diálogo da pesquisa (980 px) ganhou o cabeçalho e as colunas Código, EAN, Descrição, **Marca**,
+      **Local.** (`produtos.localizacao`), **Estoque**, Un., Varejo, **Atac.** e **Promo.** (em destaque âmbar). Atac. e
+      Promo. mostram só o que a venda cobraria, com a regra do `MotorPreco` (o menor candidato vale): o promocional
+      vigente e **menor que o varejo da linha** (que pode ser o preço da loja, `produtos_lojas.preco_venda`: a loja com
+      preço próprio menor que a promoção geral não vê a promoção), e o atacado menor que esse varejo e **fora do combo**
+      (que não recebe atacado, PDV 10.9.1); os dois ficam vazios na linha da embalagem. O estoque é o estimado da inclusão (PDV 29.1, `SaldosEstimadosAsync`),
+      só no terminal real e com **`pdv.exibe_estoque_busca`** ligada na loja (chave que já existia no catálogo, padrão
+      ligada; agora lida pelo PDV e na aba 7 da Central); "—" no produto sem saldo próprio (não controla, combo,
+      produzido, serviço); desligada, a coluna some inteira. O saldo é sempre na unidade do produto: na linha da embalagem
+      (o DUN do fardo, com Un. "FD 12") ele vem com a sigla ("240 UN"), para não ser lido como 240 fardos. A resposta de
+      um filtro já trocado é descartada (só a do
+      último filtro aparece). `ICatalogoProdutos.PesquisarAsync` passou a devolver `ProdutoPesquisado` (com a marca e a
+      localização).
+    - **Fora deste bloco:** o filtro `(Tab) Todos | Com estoque | Promoção` do desenho da PDV 10.3 não entrou (o plano
+      do F2-B36 não o traz); fica nas lacunas conhecidas, para um plano futuro.
+    - **Desempenho:** 50 mil produtos, "heineken 600" com a marca e o estoque: ≈ 30 ms (o critério do plano é < 300 ms;
+      a CI usa o teto de `GENESISPDV_TETO_CONSULTA_MS`).
+    - Testes: `IndiceBuscaProdutosTests` (Data: a FTS5 no SQLite empacotado; o banco do PDV anterior, já em uso,
+      migrado e preenchido na abertura com o cursor intacto, e a segunda abertura sem refazer; a reconstrução com o mesmo
+      esquema da migração; trechos, acento, ordem, marca, categoria, palavra curta, aspas, inativo e excluído; o índice e
+      a busca em memória dão o mesmo resultado; a marca, a categoria e o produto renomeados; a FTS5 ausente e a
+      corrompida, com a pesquisa em memória e a abertura refazendo; a corrompida num banco de versão mais nova, recusado
+      sem descarte; o backup com a FTS5 corrompida restaurável; a suspensão de último recurso e a reconstrução que a tira;
+      50 mil produtos). As regras e a medição conferem que quem respondeu foi o índice (direto em
+      `IndiceBuscaProdutos.PesquisarAsync` e o índice ainda pronto depois das buscas), e não a busca em memória de
+      reserva. `AplicadorPullTests` (Sync: o pull recalcula o texto do produto, o da marca e o da categoria, a versão
+      velha não muda nada e o tombstone tira da pesquisa; a FTS5 corrompida não impede a página nem o cursor, e o pull
+      refaz o índice; a reconstrução que falha só é tentada de novo depois dos 15 minutos) e `PesquisaTelasTests` (App:
+      as colunas novas, o estoque no terminal real com "—" no combo e com a sigla na linha da embalagem, o promocional
+      vencido, futuro, maior ou igual ao varejo e maior que o preço da loja escondido, o atacado do combo e o não menor
+      que o varejo escondido, a resposta de um filtro velho descartada, e a coluna escondida com a chave desligada e na
+      demonstração).

@@ -4,6 +4,7 @@ using System.Text.Json;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Data;
 using GenesisPDV.Data.Convencoes;
+using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Protocolo;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,9 @@ public sealed record ResultadoPagina(int Recebidas, int Gravadas, int Ignoradas,
 /// <item>Relevância de pessoa excluída (MD 3.5.4): sem outra relevância ativa nem venda/evento local pendente, a pessoa e
 /// as filhas saem do espelho (exceção à regra 6.4.4); quando só sobra <c>funcionario</c>, saem telefones e endereços
 /// (D19).</item>
+/// <item>Índice da pesquisa F2 (F2-B36, <see cref="IndiceBuscaProdutos"/>): o texto dos produtos gravados e dos produtos
+/// das marcas e categorias gravadas é recalculado na mesma transação, sob um <c>SAVEPOINT</c> (a falha desfaz só o índice
+/// e marca a reconstrução, que o próprio pull tenta de novo a cada <see cref="IntervaloReconstrucaoIndice"/>).</item>
 /// </list>
 /// A linha adiada por evento local pendente (MD 4.4.12) entra com os espelhos que têm escrita local (vales, comandas),
 /// em fases seguintes: os fluxos da Fase 1B são todos mestres na nuvem.
@@ -49,7 +53,12 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
         "saldos_vasilhame_pessoas",
     ];
 
+    /// <summary>Intervalo mínimo entre as tentativas de reconstruir o índice da pesquisa durante o pull (F2-B36).</summary>
+    public static readonly TimeSpan IntervaloReconstrucaoIndice = TimeSpan.FromMinutes(15);
+
     private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, ColunaLocal>> _colunasLocais = new(StringComparer.Ordinal);
+
+    private DateTimeOffset _proximaReconstrucaoIndice = DateTimeOffset.MinValue;
 
     private sealed record ColunaLocal(string Nome, bool NotNull, bool TemPadrao);
 
@@ -68,7 +77,38 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
         var resultado = await AplicarAsync(conexao, tx, pagina, ct);
         await AtualizarCursorAsync(conexao, tx, pagina, concluirCarga, ct);
         await tx.CommitAsync(ct);
+        await ReconstruirIndiceSePendenteAsync(conexao, ct);
         return resultado;
+    }
+
+    /// <summary>
+    /// Índice da pesquisa com a reconstrução pendente ou a estrutura ausente (F2-B36): refaz, em lotes curtos, sem esperar
+    /// a próxima abertura do caixa — no máximo uma tentativa a cada <see cref="IntervaloReconstrucaoIndice"/>. A falha só
+    /// vai ao log: o pull e a venda seguem, e a pesquisa continua em memória.
+    /// </summary>
+    private async Task ReconstruirIndiceSePendenteAsync(SqliteConnection conexao, CancellationToken ct)
+    {
+        if (relogio.Agora < _proximaReconstrucaoIndice)
+        {
+            return;
+        }
+
+        try
+        {
+            if (await IndiceBuscaProdutos.ProntoAsync(conexao, null, ct))
+            {
+                return;
+            }
+
+            _proximaReconstrucaoIndice = relogio.Agora + IntervaloReconstrucaoIndice;
+            var r = await IndiceBuscaProdutos.GarantirAsync(fabrica.StringConexao, relogio.Agora, ct);
+            log.LogInformation("Índice da pesquisa reconstruído durante o pull ({Motivo}): {Produtos} produtos", r.Motivo, r.Produtos);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            _proximaReconstrucaoIndice = relogio.Agora + IntervaloReconstrucaoIndice;
+            log.LogWarning(e, "Índice da pesquisa: reconstrução falhou ({Erro}); a pesquisa segue em memória", e.Message);
+        }
     }
 
     /// <summary>
@@ -97,6 +137,13 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
         var comandos = new Dictionary<string, (SqliteCommand Comando, string[] Colunas)>(StringComparer.Ordinal);
         var avisados = new HashSet<string>(StringComparer.Ordinal);
         var relevanciasExcluidas = new HashSet<string>(StringComparer.Ordinal);
+        // Índice da pesquisa F2 (F2-B36): os produtos, marcas e categorias da página têm o texto recalculado no fim.
+        var indice = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["produtos"] = new(StringComparer.Ordinal),
+            ["marcas"] = new(StringComparer.Ordinal),
+            ["categorias"] = new(StringComparer.Ordinal),
+        };
         int gravadas = 0, ignoradas = 0;
         try
         {
@@ -140,6 +187,10 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
                 if (await preparado.Comando.ExecuteNonQueryAsync(ct) > 0)
                 {
                     gravadas++;
+                    if (indice.TryGetValue(alt.Tabela, out var tocados) && valores.GetValueOrDefault("id") is string id)
+                    {
+                        tocados.Add(id);
+                    }
                 }
                 else
                 {
@@ -158,6 +209,14 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
             foreach (var pessoaId in relevanciasExcluidas)
             {
                 purgadas += await PurgarPessoaAsync(conexao, tx, pessoaId, ct) ? 1 : 0;
+            }
+
+            // Sob um SAVEPOINT: a falha do índice (FTS5 corrompida) desfaz só ele e marca a reconstrução; a página e o
+            // cursor seguem, e a pesquisa passa à busca em memória até a reconstrução.
+            if (await IndiceBuscaProdutos.AtualizarAsync(conexao, tx, indice["produtos"], indice["marcas"], indice["categorias"], relogio.Agora, ct) is { } falha)
+            {
+                log.LogWarning(falha, "Pull {Fluxo}: índice da pesquisa não atualizado ({Erro}); reconstrução marcada, a pesquisa segue em memória",
+                    pagina.Fluxo, falha.Message);
             }
 
             return new ResultadoPagina(pagina.Alteracoes.Count, gravadas, ignoradas, purgadas);

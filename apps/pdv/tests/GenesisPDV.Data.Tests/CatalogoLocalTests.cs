@@ -612,7 +612,7 @@ public class CatalogoLocalTests
 
         // Pela pesquisa por nome: o mesmo produto marcado; pela só por números, a linha do código da variação leva a variação.
         var porNome = Assert.Single(await catalogo.PesquisarAsync("camiseta", ct: ct));
-        Assert.True(porNome.TemVariacoesAtivas);
+        Assert.True(porNome.Produto.TemVariacoesAtivas);
         var porCodigo = await catalogo.PesquisarCodigoAsync("789000008", ct: ct);
         Assert.Equal(["7890000080001", "7890000080018"], porCodigo.Select(l => l.Codigo).Order(StringComparer.Ordinal));
         var linhaAzul = porCodigo.Single(l => l.Codigo == "7890000080018");

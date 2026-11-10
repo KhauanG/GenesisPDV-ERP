@@ -592,7 +592,7 @@ public sealed class ServicoVenda(
         foreach (var id in produtos)
         {
             var produto = venda.ProdutosRegistrados.FirstOrDefault(p => p.Id == id) ?? await catalogo.ObterAsync(id, ct);
-            if (produto is { ControlaEstoque: true } && produto.Tipo is not (TipoProduto.Kit or TipoProduto.Produzido) && produto.Tipo != "servico")
+            if (produto is not null && TemSaldoProprio(produto))
             {
                 controlados.Add(produto);
             }
@@ -1472,18 +1472,64 @@ public sealed class ServicoVenda(
     /// As linhas da pesquisa: na só por números, o código de uma embalagem (o DUN do fardo) dá a linha da embalagem, que
     /// entra como ela (<see cref="ProdutoPesquisado"/>); na por nome, sempre a unidade.
     /// </returns>
+    /// <remarks>
+    /// Colunas da pesquisa (F2-B36): a marca e a localização vêm do catálogo; aqui entram o promocional vigente agora e,
+    /// com <c>pdv.exibe_estoque_busca</c> ligada na loja (no terminal real; a demonstração não tem estoque), o estoque
+    /// estimado (o mesmo da inclusão, PDV 29.1, sem a venda em andamento).
+    /// </remarks>
     public async Task<IReadOnlyList<ProdutoPesquisado>> PesquisarAsync(string texto, bool soNumeros = false, CancellationToken ct = default)
     {
+        IReadOnlyList<ProdutoPesquisado> linhas;
         if (!soNumeros)
         {
-            return (await catalogo.PesquisarAsync(texto, 50, ct)).Select(p => new ProdutoPesquisado(new ProdutoResolvido(p))).ToList();
+            linhas = await catalogo.PesquisarAsync(texto, 50, ct);
+        }
+        else
+        {
+            var digitos = (texto ?? string.Empty).Trim();
+            linhas = SoDigitos(digitos)
+                ? await catalogo.PesquisarCodigoAsync(digitos, 50, ct)
+                : digitos.Length == 0 ? [] : throw new RegraNegocioException(MensagemPesquisaSoNumeros);
         }
 
-        var digitos = (texto ?? string.Empty).Trim();
-        return SoDigitos(digitos)
-            ? await catalogo.PesquisarCodigoAsync(digitos, 50, ct)
-            : digitos.Length == 0 ? [] : throw new RegraNegocioException(MensagemPesquisaSoNumeros);
+        return await ComColunasAsync(linhas, ct);
     }
+
+    /// <summary>O promocional vigente (só o menor que o varejo da linha) e o estoque estimado das linhas da pesquisa (F2-B36).</summary>
+    private async Task<IReadOnlyList<ProdutoPesquisado>> ComColunasAsync(IReadOnlyList<ProdutoPesquisado> linhas, CancellationToken ct)
+    {
+        if (linhas.Count == 0)
+        {
+            return linhas;
+        }
+
+        var agora = relogio.Agora;
+        IReadOnlyDictionary<Guid, decimal>? saldos = null;
+        if (sessao.IdentidadeReal && sessao.Identidade is { } identidade
+            && await configuracoes.ObterBoolAsync(ChavesConfiguracao.ExibeEstoqueBusca, identidade.LojaId, ct))
+        {
+            saldos = await consultas.SaldosEstimadosAsync(linhas.Where(l => TemSaldoProprio(l.Produto)).Select(l => l.Produto.Id).Distinct().ToList(), ct);
+        }
+
+        return linhas.Select(l => l with
+        {
+            // Só o promocional que a venda cobraria (o menor candidato do MotorPreco): o da loja menor não destaca o geral.
+            PrecoPromocional = !l.EhEmbalagem && l.Produto.Precos is { } precos && precos.PromocaoVigenteEm(agora)
+                && precos.PrecoPromocional is { } promocional && promocional < l.Produto.PrecoBase
+                    ? promocional
+                    : null,
+            Estoque = saldos is not null && TemSaldoProprio(l.Produto) ? saldos.GetValueOrDefault(l.Produto.Id) : null,
+            SemSaldoProprio = saldos is not null && !TemSaldoProprio(l.Produto),
+        })
+            .ToList();
+    }
+
+    /// <summary>
+    /// O produto tem saldo próprio na loja (o mesmo critério da conferência do saldo na inclusão, PDV 29.1): controla
+    /// estoque e não é combo, produzido nem serviço.
+    /// </summary>
+    private static bool TemSaldoProprio(ProdutoVenda produto) =>
+        produto.ControlaEstoque && produto.Tipo is not (TipoProduto.Kit or TipoProduto.Produzido) && produto.Tipo != "servico";
 
     private static bool SoDigitos(string? texto) => !string.IsNullOrEmpty(texto) && texto.All(char.IsAsciiDigit);
 

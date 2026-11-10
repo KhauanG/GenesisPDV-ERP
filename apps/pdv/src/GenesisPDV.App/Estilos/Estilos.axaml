@@ -46,6 +46,11 @@
   <Style Selector="TextBlock.mono">
     <Setter Property="FontFamily" Value="{StaticResource FonteMono}" />
   </Style>
+  <!-- Preço promocional vigente na pesquisa F2 (PDV 10.3, "promocional destacado"; F2-B36). -->
+  <Style Selector="TextBlock.promocao">
+    <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />
+    <Setter Property="FontWeight" Value="Bold" />
+  </Style>
   <!-- Indicador de sincronização (PDV 30.2): âmbar por padrão, verde online, vermelho offline/bloqueado. -->
   <Style Selector="TextBlock.indicador">
     <Setter Property="Foreground" Value="{DynamicResource PincelAviso}" />

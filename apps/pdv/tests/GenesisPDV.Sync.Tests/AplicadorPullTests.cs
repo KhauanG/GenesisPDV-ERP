@@ -402,4 +402,145 @@ public sealed class AplicadorPullTests
         Assert.Equal(new Dictionary<string, decimal> { [loteA] = 0m, [loteB] = 4m }, saldos);
         Assert.Equal(40, await CursorAsync(amb, "estoque"));
     }
+
+    private static JsonObject MarcaLinha(string id, string descricao) => new()
+    {
+        ["id"] = id,
+        ["codigo"] = 7,
+        ["descricao"] = descricao,
+        ["sem_marca"] = false,
+        ["criado_em"] = "2026-10-01T12:00:00.000Z",
+        ["atualizado_em"] = "2026-10-29T17:39:58.311Z",
+    };
+
+    private static JsonObject CategoriaLinha(string id, string nome) => new()
+    {
+        ["id"] = id,
+        ["nome"] = nome,
+        ["categoria_pai_id"] = null,
+        ["caminho"] = "1",
+        ["caminho_nomes"] = nome,
+        ["nivel"] = 1,
+        ["ordem"] = 1,
+        ["ativa"] = true,
+        ["exibe_pdv"] = true,
+        ["exibe_menu_digital"] = false,
+        ["exibe_totem"] = false,
+        ["exibe_site"] = false,
+        ["criado_em"] = "2026-10-01T12:00:00.000Z",
+        ["atualizado_em"] = "2026-10-29T17:39:58.311Z",
+    };
+
+    private static async Task<IReadOnlyList<string>> PesquisarAsync(AmbienteSync amb, string texto) =>
+        (await new CatalogoLocal(amb.Fabrica).PesquisarAsync(texto, ct: Ct)).Select(p => p.Descricao).ToList();
+
+    private static async Task<bool> IndiceProntoAsync(AmbienteSync amb)
+    {
+        await using var conexao = new Microsoft.Data.Sqlite.SqliteConnection(amb.Fabrica.StringConexao);
+        await conexao.OpenAsync(Ct);
+        return await IndiceBuscaProdutos.ProntoAsync(conexao, null, Ct);
+    }
+
+    [Fact]
+    public async Task Pull_recalcula_o_indice_da_pesquisa_dos_produtos_e_dos_produtos_da_marca_na_mesma_pagina()
+    {
+        // F2-B36: o texto da FTS5 (nome, códigos, marca, categoria) acompanha o espelho, sem voltar o cursor.
+        using var amb = await AmbienteSync.CriarAsync();
+        var marca = "01a18760-0000-7000-8000-0000000000b1";
+        var produto = ProdutoLinha("CERV LN 600ML", "9.9000");
+        produto["marca_id"] = marca;
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 10, ("produtos", 10, produto), ("marcas", 9, MarcaLinha(marca, "Heineken"))), ct: Ct);
+        Assert.True(await IndiceProntoAsync(amb));
+        Assert.Equal(["CERV LN 600ML"], await PesquisarAsync(amb, "heineken 600"));
+
+        // Só a marca desce de novo: o produto dela muda de texto.
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 20, ("marcas", 20, MarcaLinha(marca, "Amstel"))), ct: Ct);
+        Assert.Empty(await PesquisarAsync(amb, "heineken"));
+        Assert.Equal(["CERV LN 600ML"], await PesquisarAsync(amb, "amstel"));
+
+        // Só a categoria desce de novo (renomeada no ERP): o produto dela sai do nome antigo.
+        var categoria = "01a18760-0000-7000-8000-0000000000c1";
+        produto["categoria_principal_id"] = categoria;
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 22, ("categorias", 21, CategoriaLinha(categoria, "Cervejas")), ("produtos", 22, produto)), ct: Ct);
+        Assert.Equal(["CERV LN 600ML"], await PesquisarAsync(amb, "cervejas"));
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 25, ("categorias", 25, CategoriaLinha(categoria, "Bebidas Geladas"))), ct: Ct);
+        Assert.Empty(await PesquisarAsync(amb, "cervejas"));
+        Assert.Equal(["CERV LN 600ML"], await PesquisarAsync(amb, "geladas"));
+        Assert.True(await IndiceProntoAsync(amb));
+
+        // A versão velha não grava, nem muda o índice; o tombstone tira o produto da pesquisa.
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 30, ("produtos", 5, ProdutoLinha("NOME VELHO", "1.0000"))), ct: Ct);
+        Assert.Empty(await PesquisarAsync(amb, "velho"));
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 40, ("produtos", 40, ProdutoLinha("CERV LN 600ML", "9.9000", "2026-10-31T10:00:00.000Z"))), ct: Ct);
+        Assert.Empty(await PesquisarAsync(amb, "cerv"));
+        Assert.Equal(1L, amb.Contar("produtos_busca_texto"));
+        Assert.Equal(40, await CursorAsync(amb, "catalogo"));
+    }
+
+    [Fact]
+    public async Task Fts5_corrompida_o_pull_grava_a_pagina_e_o_cursor_marca_a_reconstrucao_e_refaz_o_indice()
+    {
+        using var amb = await AmbienteSync.CriarAsync();
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 10, ("produtos", 10, ProdutoLinha("CERVEJA", "4.9900"))), ct: Ct);
+        // A estrutura da FTS5 vira lixo: qualquer escrita nela falha ("database disk image is malformed").
+        amb.Escalar("update produtos_busca_data set block = randomblob(50) where id > 1");
+
+        var r = await amb.Aplicador.AplicarAsync(Pagina("catalogo", 20, ("produtos", 20, ProdutoLinha("CERVEJA NOVA", "5.4900"))), ct: Ct);
+
+        // A página e o cursor foram gravados (o SAVEPOINT desfez só o índice), e o próprio pull refez o índice em seguida.
+        Assert.Equal(1, r.Gravadas);
+        Assert.Equal("CERVEJA NOVA", amb.Escalar($"select nome from produtos where id = '{Produto}'"));
+        Assert.Equal(20, await CursorAsync(amb, "catalogo"));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("índice da pesquisa não atualizado", StringComparison.Ordinal));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("Índice da pesquisa reconstruído durante o pull", StringComparison.Ordinal));
+        Assert.True(await IndiceProntoAsync(amb));
+        Assert.Equal("ok", amb.Escalar("pragma integrity_check"));
+        Assert.Equal(["CERVEJA NOVA"], await PesquisarAsync(amb, "nova"));
+    }
+
+    [Fact]
+    public async Task Reconstrucao_do_indice_no_pull_falha_e_so_tenta_de_novo_depois_de_15_minutos()
+    {
+        // F2-B36: enquanto a reconstrução falhar, o pull não tenta reconstruir a cada página (com 50 mil produtos, cada
+        // tentativa pesa): no máximo uma a cada IntervaloReconstrucaoIndice, e a página e o cursor seguem.
+        using var amb = await AmbienteSync.CriarAsync();
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 10, ("produtos", 10, ProdutoLinha("CERVEJA", "4.9900"))), ct: Ct);
+        Assert.True(await IndiceProntoAsync(amb));
+        var chave = ChavesConfiguracaoTerminal.BuscaReconstruir;
+        await using (var conexao = new Microsoft.Data.Sqlite.SqliteConnection(amb.Fabrica.StringConexao))
+        {
+            await conexao.OpenAsync(Ct);
+            await IndiceBuscaProdutos.MarcarReconstrucaoAsync(conexao, null, amb.Relogio.Agora, Ct);
+        }
+
+        // A reconstrução começa regravando a marca pendente: o gatilho a faz falhar.
+        amb.Escalar($"create trigger tg_teste_reconstrucao before update on configuracao_terminal when new.chave = '{chave}' "
+            + "begin select raise(abort, 'teste: reconstrução falhou'); end");
+        int Tentativas() => amb.Log.Linhas.Count(l => l.Contains("reconstrução falhou", StringComparison.Ordinal));
+
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 20), ct: Ct);
+        Assert.Equal(1, Tentativas());
+        // Outras páginas no mesmo minuto (e até 1 s antes do intervalo): nenhuma tentativa nova; o cursor anda.
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 30), ct: Ct);
+        amb.Relogio.Agora += AplicadorPull.IntervaloReconstrucaoIndice - TimeSpan.FromSeconds(1);
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 40), ct: Ct);
+        Assert.Equal(1, Tentativas());
+        Assert.Equal(40, await CursorAsync(amb, "catalogo"));
+        Assert.False(await IndiceProntoAsync(amb));
+
+        // Passado o intervalo, tenta de novo (e falha de novo).
+        amb.Relogio.Agora += TimeSpan.FromSeconds(1);
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 50), ct: Ct);
+        Assert.Equal(2, Tentativas());
+
+        // Resolvida a causa, a próxima tentativa (no intervalo seguinte) refaz o índice.
+        amb.Escalar("drop trigger tg_teste_reconstrucao");
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 60), ct: Ct);
+        Assert.False(await IndiceProntoAsync(amb));
+        amb.Relogio.Agora += AplicadorPull.IntervaloReconstrucaoIndice;
+        await amb.Aplicador.AplicarAsync(Pagina("catalogo", 70), ct: Ct);
+        Assert.Equal(2, Tentativas());
+        Assert.True(await IndiceProntoAsync(amb));
+        Assert.Equal(["CERVEJA"], await PesquisarAsync(amb, "cerveja"));
+    }
 }

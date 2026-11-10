@@ -1167,7 +1167,7 @@ de confirmação (opcional).
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Busca incremental (debounce 150 ms) em descrição (todas as palavras, sem acento, em qualquer ordem), código interno,
+- Busca incremental (debounce 150 ms; implementada sem debounce, ver a nota do F2-B36 abaixo) em descrição (todas as palavras, sem acento, em qualquer ordem), código interno,
   código de barras, marca e categoria; índice FTS5 local. Resultado em < 300 ms com 50.000 produtos.
 - Colunas: código, descrição, marca, **Localização** (do cadastro), estoque estimado (só se **Exibe estoque na
   busca**), preço varejo da loja, atacado (se houver), promocional destacado.
@@ -1186,6 +1186,20 @@ de confirmação (opcional).
 > **`pdv.consulta_outras_lojas`** (padrão Sim, por loja) desligada → "Consulta do estoque das outras lojas desligada no
 > ERP para esta loja", sem consultar. `Enter` ou `Esc` voltam à pesquisa com o filtro e a seleção (a consulta em
 > andamento é cancelada): **a venda nunca espera** pela consulta.
+
+> **Implementado no F2-B36 (Fase 2; sai na R1 do PDV; README do PDV › decisão 83).** A busca vai pelo índice FTS5 local
+> `produtos_busca` (MD 4.2), com o tokenizador **trigrama**: todas as palavras, sem acento, em qualquer ordem, como
+> **trechos** (como antes: "350" acha "LT350ML") do nome, do código interno, do código numérico, da **marca** e da
+> **categoria principal**; o código de barras continua no bipe e na pesquisa só por números (no meio do EAN quase todo
+> trecho de 3 números aparece). Sem o índice (antes de preenchido, ausente ou corrompido) a pesquisa usa a busca em
+> memória, com as mesmas regras, e a abertura do PDV refaz o índice. Colunas: código, EAN, descrição, marca,
+> localização, estoque estimado (o mesmo da inclusão, 29.1; só com **Exibe estoque na busca** ligada, no terminal real;
+> "—" no produto sem saldo próprio; na linha da embalagem, com a sigla da unidade do produto, "240 UN"; desligada, a
+> coluna some), unidade, varejo da loja, atacado e o promocional vigente em destaque — os dois só quando a venda os
+> cobraria (menores que o varejo da linha, que pode ser o preço da loja; o combo sem atacado; vazios na linha da
+> embalagem). 50.000 produtos: ≈ 30 ms. Sem debounce: a resposta de um filtro já trocado é descartada. **Pendente:** o
+> filtro `(Tab) Todos | Com estoque | Promoção` do desenho acima não entrou neste bloco (nem no plano dele); fica nas
+> lacunas conhecidas do README do PDV.
 - Mostra produtos inativos? Não.
 
 > **Pesquisa só por números (versão 0.9.1; dono; README do PDV › decisão 65).** Opção por terminal na configuração

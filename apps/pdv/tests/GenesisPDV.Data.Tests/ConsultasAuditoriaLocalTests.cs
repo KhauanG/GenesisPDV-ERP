@@ -119,7 +119,8 @@ public class ConsultasAuditoriaLocalTests
         }
 
         var resultado = await banco.InicializarAsync();
-        Assert.Equal(["20261105131203_IndiceAuditoriaAutorizadoPor"], resultado.MigracoesAplicadas);
+        // A migração do índice e as seguintes (a do F2-B36, a FTS5 da pesquisa, veio depois).
+        Assert.Equal("20261105131203_IndiceAuditoriaAutorizadoPor", resultado.MigracoesAplicadas[0]);
         Assert.Contains(MotivosBackup.AntesMigracao, resultado.ArquivoBackup, StringComparison.Ordinal);
         Assert.Equal(1L, banco.Escalar("select count(*) from sqlite_master where type = 'index' and name = 'ix_log_auditoria_local_autorizado_ocorrido_em'"));
         var registro = Assert.Single((await new ConsultasAuditoriaLocal(banco.Fabrica).ListarAsync(new FiltroAuditoria(UsuarioId: Carlos), ct: Ct)).Registros);

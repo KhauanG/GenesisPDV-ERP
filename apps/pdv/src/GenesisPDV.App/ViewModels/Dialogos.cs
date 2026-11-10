@@ -210,9 +210,15 @@ public sealed class DialogoLiberacaoViewModel(VendaViewModel venda, PedidoLibera
     protected override Task AoCancelarAsync() => pedido.CancelarCommand.ExecuteAsync(null);
 }
 
-/// <summary>Pesquisa de produto (F2, PDV 10.3): busca incremental; ↑/↓ navegam, Enter inclui.</summary>
+/// <summary>
+/// Pesquisa de produto (F2, PDV 10.3): busca incremental; ↑/↓ navegam, Enter inclui. Colunas (F2-B36): código, EAN,
+/// descrição, marca, localização, estoque estimado (com <c>pdv.exibe_estoque_busca</c>), unidade, varejo, atacado e o
+/// promocional vigente destacado. A resposta de um filtro já trocado é descartada (só a do último filtro aparece).
+/// </summary>
 public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
 {
+    private int _consulta;
+
     public DialogoPesquisaViewModel(VendaViewModel venda, string filtroInicial)
         : base(venda)
     {
@@ -226,7 +232,7 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
 
     public string Dica => SoNumeros
         ? "Só números: código interno, EAN ou código adicional — primeiro o exato, depois os que começam e os que contêm."
-        : "Nome (todas as palavras, sem acento) ou código.";
+        : "Nome, marca, categoria ou código: todas as palavras, sem acento, em qualquer ordem (pode ser só um pedaço).";
 
     public ObservableCollection<ProdutoPesquisado> Resultados { get; } = [];
 
@@ -236,15 +242,21 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
     [ObservableProperty]
     public partial ProdutoPesquisado? Selecionado { get; set; }
 
+    /// <summary>A coluna do estoque aparece (a chave da loja ligada, no terminal real).</summary>
+    [ObservableProperty]
+    public partial bool ExibeEstoque { get; set; }
+
     partial void OnFiltroChanged(string value) => _ = AtualizarAsync(value);
 
     public async Task AtualizarAsync(string filtro)
     {
+        var consulta = ++_consulta;
         IReadOnlyList<ProdutoPesquisado> lista;
+        string? erro;
         try
         {
             lista = await Venda.ServicoVenda.PesquisarAsync(filtro ?? string.Empty, SoNumeros);
-            Erro = SoNumeros && lista.Count == 0 && !string.IsNullOrWhiteSpace(filtro)
+            erro = SoNumeros && lista.Count == 0 && !string.IsNullOrWhiteSpace(filtro)
                 ? $"Nenhum produto com os números {filtro.Trim()}: confira e corrija, ou Esc volta."
                 : null;
         }
@@ -252,9 +264,17 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
         {
             // Só números: a letra é recusada (a lista fica vazia até o filtro voltar a ter só dígitos).
             lista = [];
-            Erro = e.Message;
+            erro = e.Message;
         }
 
+        if (consulta != _consulta)
+        {
+            // O operador já digitou mais: esta resposta é de um filtro velho.
+            return;
+        }
+
+        Erro = erro;
+        ExibeEstoque = lista.Any(l => l.EstoqueTexto is not null);
         Resultados.Clear();
         foreach (var p in lista)
         {

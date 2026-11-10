@@ -107,6 +107,12 @@ public static class ChavesConfiguracao
     /// </summary>
     public const string ConsultaOutrasLojas = "pdv.consulta_outras_lojas";
 
+    /// <summary>
+    /// "Exibe estoque na busca" (PDV 10.3; MD 3.1.2, por loja; padrão ligada): a pesquisa F2 mostra a coluna do estoque
+    /// estimado (Fase 2, F2-B36).
+    /// </summary>
+    public const string ExibeEstoqueBusca = "pdv.exibe_estoque_busca";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -127,6 +133,7 @@ public static class ChavesConfiguracao
         [CancelarItemExigeSupervisor] = false,
         [RecusaProdutoComVariacoes] = true,
         [ConsultaOutrasLojas] = true,
+        [ExibeEstoqueBusca] = true,
     };
 
     public const decimal ToleranciaPadrao = 0m;

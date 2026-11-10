@@ -317,8 +317,11 @@
       </Border>
     </DataTemplate>
 
+    <!-- Pesquisa F2 (PDV 10.3; F2-B36): código, EAN, descrição, marca, localização, estoque estimado (com a chave
+         pdv.exibe_estoque_busca), unidade, varejo, atacado e o promocional vigente destacado. As colunas são um DockPanel
+         de larguras fixas (o cabeçalho e a linha iguais): a do estoque some inteira com a chave desligada. -->
     <DataTemplate DataType="vm:DialogoPesquisaViewModel">
-      <Border Classes="dialogo" Width="820">
+      <Border Classes="dialogo" Width="980">
         <Border.KeyBindings>
           <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
           <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
@@ -330,18 +333,39 @@
           <TextBlock Text="{Binding Titulo}" Classes="titulo" />
           <TextBlock x:Name="TextoDicaPesquisa" Text="{Binding Dica}" Classes="rotulo" TextWrapping="Wrap" />
           <TextBox x:Name="CampoPesquisa" Text="{Binding Filtro}" c:Foco.Inicial="True" AutomationProperties.Name="Buscar produto" />
+          <DockPanel x:Name="CabecalhoPesquisa" Margin="9,0">
+            <TextBlock DockPanel.Dock="Left" Width="64" Text="Código" Classes="rotulo" />
+            <TextBlock DockPanel.Dock="Left" Width="116" Text="EAN" Classes="rotulo" />
+            <TextBlock DockPanel.Dock="Right" Width="72" Text="Promo." Classes="rotulo" TextAlignment="Right" />
+            <TextBlock DockPanel.Dock="Right" Width="64" Text="Atac." Classes="rotulo" TextAlignment="Right" />
+            <TextBlock DockPanel.Dock="Right" Width="72" Text="Varejo" Classes="rotulo" TextAlignment="Right" />
+            <TextBlock DockPanel.Dock="Right" Width="52" Text="Un." Classes="rotulo" Margin="8,0,0,0" />
+            <TextBlock DockPanel.Dock="Right" Width="72" Text="Estoque" Classes="rotulo" TextAlignment="Right" x:Name="CabecalhoEstoque"
+                       IsVisible="{Binding ExibeEstoque}" />
+            <TextBlock DockPanel.Dock="Right" Width="72" Text="Local." Classes="rotulo" Margin="8,0,0,0" />
+            <TextBlock DockPanel.Dock="Right" Width="96" Text="Marca" Classes="rotulo" Margin="8,0,0,0" />
+            <TextBlock Text="Descrição" Classes="rotulo" />
+          </DockPanel>
           <ListBox x:Name="ListaPesquisa" ItemsSource="{Binding Resultados}" SelectedItem="{Binding Selecionado}" Height="300" Focusable="False" Classes="itens"
                    c:Comandos.DuploClique="{Binding ConfirmarCommand}">
             <ListBox.ItemTemplate>
               <!-- A linha da embalagem (o DUN do fardo, na pesquisa só por números) mostra o código e a embalagem ("FD 12"). -->
               <DataTemplate DataType="core:ProdutoPesquisado">
-                <Grid ColumnDefinitions="70,140,*,64,90">
-                  <TextBlock Text="{Binding CodigoInterno}" Classes="mono" />
-                  <TextBlock Grid.Column="1" Text="{Binding Codigo}" Classes="mono secundario" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Grid.Column="2" Text="{Binding Descricao}" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Grid.Column="3" Text="{Binding Unidade}" Classes="secundario" />
-                  <TextBlock Grid.Column="4" Text="{Binding Preco, StringFormat='{}{0:N2}'}" HorizontalAlignment="Right" Classes="mono" />
-                </Grid>
+                <DockPanel>
+                  <TextBlock DockPanel.Dock="Left" Width="64" Text="{Binding CodigoInterno}" Classes="mono" TextTrimming="CharacterEllipsis" />
+                  <TextBlock DockPanel.Dock="Left" Width="116" Text="{Binding Codigo}" Classes="mono secundario" TextTrimming="CharacterEllipsis" />
+                  <TextBlock DockPanel.Dock="Right" Width="72" Text="{Binding PrecoPromocional, StringFormat='{}{0:N2}'}" Classes="mono promocao"
+                             TextAlignment="Right" />
+                  <TextBlock DockPanel.Dock="Right" Width="64" Text="{Binding PrecoAtacado, StringFormat='{}{0:N2}'}" Classes="mono secundario"
+                             TextAlignment="Right" />
+                  <TextBlock DockPanel.Dock="Right" Width="72" Text="{Binding Preco, StringFormat='{}{0:N2}'}" Classes="mono" TextAlignment="Right" />
+                  <TextBlock DockPanel.Dock="Right" Width="52" Text="{Binding Unidade}" Classes="secundario" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+                  <TextBlock DockPanel.Dock="Right" Width="72" Text="{Binding EstoqueTexto}" Classes="mono" TextAlignment="Right" TextTrimming="CharacterEllipsis"
+                             IsVisible="{Binding EstoqueTexto, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                  <TextBlock DockPanel.Dock="Right" Width="72" Text="{Binding Localizacao}" Classes="secundario" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+                  <TextBlock DockPanel.Dock="Right" Width="96" Text="{Binding Marca}" Classes="secundario" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Descricao}" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>

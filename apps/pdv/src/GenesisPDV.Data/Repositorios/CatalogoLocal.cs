@@ -1,10 +1,12 @@
 using System.Globalization;
-using System.Text;
 using GenesisPDV.Core.Precos;
 using GenesisPDV.Core.Produtos;
 using GenesisPDV.Core.Vendas;
 using GenesisPDV.Data.Entidades;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 
 namespace GenesisPDV.Data.Repositorios;
 
@@ -15,7 +17,7 @@ namespace GenesisPDV.Data.Repositorios;
 /// das variações (F2-B34), o código de uma variação leva a <c>variacao_id</c> no resultado e o pai "Com variações" com
 /// variação ativa sai marcado (<see cref="ProdutoVenda.TemVariacoesAtivas"/>); quem recusa é a venda (<c>ServicoVenda</c>).
 /// </summary>
-public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICatalogoProdutos
+public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogger<CatalogoLocal>? log = null) : ICatalogoProdutos
 {
     public async Task<IReadOnlyList<ProdutoResolvido>> ResolverAsync(string codigo, CancellationToken ct = default)
     {
@@ -59,26 +61,116 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
         return ids.Where(porId.ContainsKey).Select(id => new ProdutoResolvido(porId[id])).ToList();
     }
 
-    public async Task<IReadOnlyList<ProdutoVenda>> PesquisarAsync(string texto, int limite = 50, CancellationToken ct = default)
+    /// <summary>
+    /// Pesquisa F2 por nome (PDV 10.3): pelo índice FTS5 <c>produtos_busca</c> (<see cref="IndiceBuscaProdutos"/>; F2-B36)
+    /// quando ele está pronto; sem ele (banco antes da abertura que o preenche, reconstrução pendente, FTS5 ausente ou
+    /// corrompida), a busca em memória da Fase 1, com as mesmas regras. A FTS5 que falha na consulta marca a reconstrução
+    /// e a pesquisa segue em memória: o caixa nunca fica sem pesquisa.
+    /// </summary>
+    public async Task<IReadOnlyList<ProdutoPesquisado>> PesquisarAsync(string texto, int limite = 50, CancellationToken ct = default)
     {
-        var palavras = SemAcento(texto ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var palavras = IndiceBuscaProdutos.Palavras(texto);
         await using var db = await fabrica.CreateDbContextAsync(ct);
         var loja = await LojaAsync(db, ct);
+        var ids = await PesquisarNoIndiceAsync(db, palavras, limite, ct) ?? await PesquisarEmMemoriaAsync(db, palavras, limite, ct);
+        var porId = await MontarAsync(db, ids, loja, ct);
+        var detalhes = await DetalhesAsync(db, ids, ct);
+        return ids.Where(porId.ContainsKey).Select(id => porId[id]).Where(p => p.Ativo)
+            .Select(p => ComDetalhes(new ProdutoPesquisado(new ProdutoResolvido(p)), detalhes))
+            .ToList();
+    }
 
-        // Fase 1A: filtro em memória sobre a projeção (sem acento, todas as palavras). A FTS5 produtos_busca (MD 4.2) vem depois.
+    /// <summary>Os ids pelo índice; nulo = índice indisponível (a busca em memória responde).</summary>
+    private async Task<List<Guid>?> PesquisarNoIndiceAsync(PdvDbContext db, string[] palavras, int limite, CancellationToken ct)
+    {
+        var conexao = (SqliteConnection)db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            if (!await IndiceBuscaProdutos.ProntoAsync(conexao, null, ct))
+            {
+                return null;
+            }
+
+            return await IndiceBuscaProdutos.PesquisarAsync(conexao, palavras, limite, ct);
+        }
+        catch (SqliteException e)
+        {
+            log?.LogWarning(e, "Pesquisa F2: índice FTS5 indisponível ({Erro}); reconstrução marcada, a pesquisa segue em memória", e.Message);
+            try
+            {
+                // Hora da máquina: a marca é só local (quem a lê é a abertura, que reconstrói).
+                await IndiceBuscaProdutos.MarcarReconstrucaoAsync(conexao, null, DateTimeOffset.UtcNow, ct);
+            }
+            catch (SqliteException marca)
+            {
+                log?.LogWarning(marca, "Pesquisa F2: não foi possível marcar a reconstrução do índice");
+            }
+
+            return null;
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
+    /// <summary>
+    /// A busca da Fase 1A, sem o índice: filtro em memória sobre a projeção (todas as palavras como trechos do mesmo texto
+    /// que o índice guarda), por nome.
+    /// </summary>
+    private static async Task<List<Guid>> PesquisarEmMemoriaAsync(PdvDbContext db, string[] palavras, int limite, CancellationToken ct)
+    {
         var candidatos = await db.Produtos.AsNoTracking()
             .Where(p => p.ExcluidoEm == null && p.Ativo)
-            .Select(p => new { p.Id, p.Nome, p.CodigoInterno, p.Codigo })
+            .Select(p => new { p.Id, p.Nome, p.CodigoInterno, p.Codigo, p.MarcaId, p.CategoriaPrincipalId })
             .ToListAsync(ct);
-        var ids = candidatos
-            .Where(p => palavras.All(w => SemAcento($"{p.Nome} {p.CodigoInterno} {p.Codigo}").Contains(w, StringComparison.Ordinal)))
+        var marcas = await db.Set<MarcaRegistro>().AsNoTracking().Where(m => m.ExcluidoEm == null).ToDictionaryAsync(m => m.Id, m => m.Descricao, ct);
+        var categorias = await db.Set<CategoriaRegistro>().AsNoTracking().Where(c => c.ExcluidoEm == null).ToDictionaryAsync(c => c.Id, c => c.Nome, ct);
+        return candidatos
+            .Where(p =>
+            {
+                var texto = IndiceBuscaProdutos.Texto(
+                    p.Nome,
+                    p.CodigoInterno,
+                    p.Codigo,
+                    p.MarcaId is { } m ? marcas.GetValueOrDefault(m) : null,
+                    p.CategoriaPrincipalId is { } c ? categorias.GetValueOrDefault(c) : null);
+                return palavras.All(w => texto.Contains(w, StringComparison.Ordinal));
+            })
             .OrderBy(p => p.Nome, StringComparer.Ordinal)
+            .ThenBy(p => p.Id.ToString("D"), StringComparer.Ordinal)
             .Take(limite)
             .Select(p => p.Id)
             .ToList();
-        var porId = await MontarAsync(db, ids, loja, ct);
-        return ids.Where(porId.ContainsKey).Select(id => porId[id]).Where(p => p.Ativo).ToList();
     }
+
+    /// <summary>Marca e localização dos produtos, para as colunas da pesquisa (F2-B36).</summary>
+    private static async Task<Dictionary<Guid, (string? Marca, string? Localizacao)>> DetalhesAsync(PdvDbContext db, IReadOnlyCollection<Guid> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var lista = ids.Distinct().ToList();
+        var produtos = await db.Produtos.AsNoTracking()
+            .Where(p => lista.Contains(p.Id))
+            .Select(p => new { p.Id, p.MarcaId, p.Localizacao })
+            .ToListAsync(ct);
+        var idsMarcas = produtos.Where(p => p.MarcaId != null).Select(p => p.MarcaId!.Value).Distinct().ToList();
+        var marcas = idsMarcas.Count == 0
+            ? []
+            : await db.Set<MarcaRegistro>().AsNoTracking()
+                .Where(m => idsMarcas.Contains(m.Id) && m.ExcluidoEm == null)
+                .ToDictionaryAsync(m => m.Id, m => m.Descricao, ct);
+        return produtos.ToDictionary(
+            p => p.Id,
+            p => (p.MarcaId is { } m ? marcas.GetValueOrDefault(m) : null, string.IsNullOrWhiteSpace(p.Localizacao) ? null : p.Localizacao.Trim()));
+    }
+
+    private static ProdutoPesquisado ComDetalhes(ProdutoPesquisado linha, Dictionary<Guid, (string? Marca, string? Localizacao)> detalhes) =>
+        detalhes.TryGetValue(linha.Produto.Id, out var d) ? linha with { Marca = d.Marca, Localizacao = d.Localizacao } : linha;
 
     public async Task<IReadOnlyList<ProdutoPesquisado>> PesquisarCodigoAsync(string digitos, int limite = 50, CancellationToken ct = default)
     {
@@ -119,8 +211,10 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
             .ThenBy(a => a.Barra?.Fator ?? 1m)
             .Take(limite)
             .ToList();
-        var porId = await MontarAsync(db, achados.Select(a => a.Id).Distinct().ToList(), loja, ct);
+        var idsAchados = achados.Select(a => a.Id).Distinct().ToList();
+        var porId = await MontarAsync(db, idsAchados, loja, ct);
         var siglas = await SiglasAsync(db, achados.Where(a => a.Barra?.UnidadeId is not null).Select(a => a.Barra!.UnidadeId!.Value), ct);
+        var detalhes = await DetalhesAsync(db, idsAchados, ct);
         return achados
             .Where(a => porId.TryGetValue(a.Id, out var p) && p.Ativo)
             .Select(a => a.Barra is { } b
@@ -128,6 +222,7 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
                     new ProdutoResolvido(porId[a.Id], b.Id, b.Fator, b.Preco, b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null, b.VariacaoId),
                     b.Codigo)
                 : new ProdutoPesquisado(new ProdutoResolvido(porId[a.Id])))
+            .Select(l => ComDetalhes(l, detalhes))
             .ToList();
     }
 
@@ -364,32 +459,19 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
 
     private static async Task<Guid?> LojaAsync(PdvDbContext db, CancellationToken ct) =>
         await db.IdentidadeTerminal.AsNoTracking().Select(i => (Guid?)i.LojaId).FirstOrDefaultAsync(ct);
-
-    private static string SemAcento(string texto)
-    {
-        var normalizado = texto.ToUpperInvariant().Normalize(NormalizationForm.FormD);
-        var sb = new StringBuilder(normalizado.Length);
-        foreach (var c in normalizado)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-            {
-                sb.Append(c);
-            }
-        }
-
-        return sb.ToString();
-    }
 }
 
 /// <summary>
 /// Grava linhas de espelho já tipadas (upsert por <c>id</c>, MD 4.2): carga de demonstração e testes. O pull real passa
-/// pelo <c>AplicadorPull</c> (SQL em lote gerado do Esquema.g.cs), com a mesma regra de versão.
+/// pelo <c>AplicadorPull</c> (SQL em lote gerado do Esquema.g.cs), com a mesma regra de versão e o mesmo recálculo do
+/// índice da pesquisa (<see cref="IndiceBuscaProdutos"/>).
 /// </summary>
 public sealed class RepositorioEspelhos(IDbContextFactory<PdvDbContext> fabrica)
 {
     /// <summary>
     /// Upsert por id numa transação própria; só substitui quando a versão recebida é maior (ou a linha não existe). Como no
-    /// <c>AplicadorPull</c>, a linha substituída deixa de ser <c>criado_localmente</c> (MD 4.2: a versão da nuvem chegou).
+    /// <c>AplicadorPull</c>, a linha substituída deixa de ser <c>criado_localmente</c> (MD 4.2: a versão da nuvem chegou),
+    /// e o texto do índice da pesquisa dos produtos, marcas e categorias gravados é recalculado no mesmo commit.
     /// </summary>
     public async Task<int> GravarAsync(IEnumerable<LinhaEspelho> linhas, CancellationToken ct = default)
     {
@@ -397,7 +479,8 @@ public sealed class RepositorioEspelhos(IDbContextFactory<PdvDbContext> fabrica)
         await using var db = await fabrica.CreateDbContextAsync(ct);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var gravadas = 0;
-        foreach (var linha in linhas)
+        var lista = linhas.ToList();
+        foreach (var linha in lista)
         {
             var existente = (LinhaEspelho?)await db.FindAsync(linha.GetType(), [linha.Id], ct);
             if (existente is null)
@@ -414,6 +497,15 @@ public sealed class RepositorioEspelhos(IDbContextFactory<PdvDbContext> fabrica)
         }
 
         await db.SaveChangesAsync(ct);
+        static List<string> Ids<T>(List<LinhaEspelho> linhas) => linhas.Where(l => l is T).Select(l => l.Id.ToString("D")).ToList();
+        await IndiceBuscaProdutos.AtualizarAsync(
+            (SqliteConnection)db.Database.GetDbConnection(),
+            (SqliteTransaction)tx.GetDbTransaction(),
+            Ids<ProdutoRegistro>(lista),
+            Ids<MarcaRegistro>(lista),
+            Ids<CategoriaRegistro>(lista),
+            DateTimeOffset.UtcNow,
+            ct);
         await tx.CommitAsync(ct);
         return gravadas;
     }
