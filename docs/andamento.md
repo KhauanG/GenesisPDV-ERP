@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 aberto (#6), aguardando a liberação do dono)._
+_Última atualização: 10/11/2026 (PR-7 e PR-8 juntados na `main` em 10/11/2026 com a liberação do dono, CI verde em `4edc0d6`; aguardando a implantação e o release do PDV 0.11.0; regra do bucket aplicada)._
 
 ## Repositório
 
@@ -52,8 +52,8 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
-| PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**) |
-| **PR-8 PDV: guarda e consulta** | **B34–B36** | **aberto (#6)**, aguardando a liberação do dono (release R1 do PDV, versão **0.11.0**) |
+| PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
+| PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
 | PR-9 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -90,18 +90,17 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-2. **Implantar o PR-7 (dono):** workflow **Implantação** na `main` (commit `46c8b11` ou mais novo, com a CI verde),
-   aprovando o environment `producao`. A migração **0026** cria os dois índices do razão com `concurrently` antes da
-   transação (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo. Junto,
-   a **regra de ciclo de vida do bucket** `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de
-   `backups/` (`infra/producao/README.md` › Backup e › Pendências). Permissões das telas novas:
-   `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e
-   `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
-3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36 + versão 0.11.0): **aberto (#6)**, aguardando a liberação do
-   dono para o merge. Depois do merge, nesta ordem (dono): Implantação da API na `main` com a CI verde (inclusive o job
-   do PDV no `windows-latest`, que confere a FTS5 do SQLite empacotado); **PDV release** na `main` com "publicar"
-   (tag `pdv-v0.11.0`); Implantação com `publicar_pdv`; atualizar os caixas das lojas e testar no caixa real (recusa da
-   variação, F4, pesquisa F2). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+2. **Implantar o PR-7 e o PR-8 juntos (dono), nesta ordem:** (a) workflow **Implantação** na `main` (commit
+   `4edc0d6` ou mais novo, CI verde), aprovando o environment `producao`. A migração **0026** cria os dois índices do
+   razão com `concurrently` antes da transação (segundos no volume de hoje, sem travar as vendas); (b) **PDV release**
+   na `main` com "publicar" (tag `pdv-v0.11.0`); (c) Implantação de novo com `publicar_pdv`; (d) atualizar os caixas
+   das lojas e testar no caixa real (recusa da variação, produto com complementos vendendo, F4 com e sem cabo,
+   pesquisa F2). Permissões das telas novas do PR-7: `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`,
+   `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar` (ajuste no clique). A regra
+   `AbortIncompleteMultipartUpload` do bucket **já foi aplicada** (10/11/2026, as quatro regras; `infra/producao/README.md`
+   › Backup). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
+   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8).
 4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
@@ -126,8 +125,5 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
   `processo`; o `implantar.sh` guarda o log da API em `/opt/genesis/logs` (`implantar.sh logs`). Na próxima queda:
   `infra/producao/README.md` › A API reiniciou sozinha.
 - **Cloud SQL:** converter o trial antes de 26/11/2026.
-- **Bucket (dono, com o PR-7):** acrescentar a regra de ciclo de vida que aborta envio em partes incompleto
-  (`AbortIncompleteMultipartUpload`, 1 dia) junto das regras de `backups/` (`infra/producao/README.md` › Pendências): a
-  exportação de relatório em tarefa (F2-B29) envia em partes, e um reinício no meio deixa o envio aberto no bucket.
 - **G7 review** (achados menores da aba Sincronização da Central): conferir se algum ficou de fora antes de mexer de
   novo na Central.

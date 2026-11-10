@@ -626,27 +626,31 @@ travaria o `up --wait` da implantação). O Hermes vê o resultado em `ultimo_ba
 banco apagado e corrupção, não contra a perda da conta do Google. Uma cópia fora do Google fica para depois
 ([Pendências](#pendências)). Quem lê o bucket lê os dados de todas as empresas: a chave HMAC continua só na VPS.
 
-**Obrigatório (no Cloud Shell, uma vez): regras de ciclo de vida de `backups/`.** São a garantia da retenção quando o
-container não apaga (parado, chave sem permissão): (a) versões antigas em `backups/` saem no dia seguinte, em vez dos
-90 dias da regra geral; (b) dumps atuais com mais de 30 dias viram versão antiga (e saem pela (a)). Confira antes as
-regras que o bucket já tem (o `configurar-genesis.sh` criou a das versões antigas em 90 dias) e ponha **todas** no
-mesmo arquivo, porque o comando substitui a lista inteira:
+**Obrigatório (no Cloud Shell, uma vez): regras de ciclo de vida do bucket** (aplicadas pelo dono em 10/11/2026, as
+quatro). As de `backups/` são a garantia da retenção quando o container não apaga (parado, chave sem permissão):
+(a) versões antigas em `backups/` saem no dia seguinte, em vez dos 90 dias da regra geral; (b) dumps atuais com mais
+de 30 dias viram versão antiga (e saem pela (a)). A `AbortIncompleteMultipartUpload` (1 dia) descarta o envio em
+partes que ficou aberto: a exportação de relatório em tarefa envia o arquivo em partes (README da API › decisão 177),
+e o processo que reinicia no meio deixa o envio aberto, cobrando, até ser abortado. O comando **substitui a lista
+inteira**: confira antes as regras que o bucket já tem (o `configurar-genesis.sh` criou a das versões antigas em 90
+dias) e ponha **todas** no arquivo.
 
 ```bash
-gcloud storage buckets describe gs://NOME_DO_BUCKET --format='json(versioning,lifecycle,softDeletePolicy)'
-cat >ciclo.json <<'FIM'
-{"rule": [
-  {"action": {"type": "Delete"}, "condition": {"daysSinceNoncurrentTime": 90}},
-  {"action": {"type": "Delete"}, "condition": {"isLive": false, "daysSinceNoncurrentTime": 1, "matchesPrefix": ["backups/"]}},
-  {"action": {"type": "Delete"}, "condition": {"age": 30, "matchesPrefix": ["backups/"]}}
-]}
-FIM
-gcloud storage buckets update gs://NOME_DO_BUCKET --lifecycle-file=ciclo.json
-gcloud storage buckets describe gs://NOME_DO_BUCKET --format='json(lifecycle)'   # as três regras
+gcloud storage buckets list --format="table(name,location)"   # o bucket de arquivos é o de SOUTHAMERICA-EAST1
+B=NOME_DO_BUCKET
+gcloud storage buckets describe gs://$B --format="yaml(lifecycle_config,soft_delete_policy,versioning_enabled)"
+echo '{"rule":[{"action":{"type":"Delete"},"condition":{"daysSinceNoncurrentTime":90}},{"action":{"type":"Delete"},"condition":{"isLive":false,"daysSinceNoncurrentTime":1,"matchesPrefix":["backups/"]}},{"action":{"type":"Delete"},"condition":{"age":30,"matchesPrefix":["backups/"]}},{"action":{"type":"AbortIncompleteMultipartUpload"},"condition":{"age":1}}]}' > ciclo.json
+cat ciclo.json                                                   # tem de terminar com AbortIncompleteMultipartUpload
+gcloud storage buckets update gs://$B --lifecycle-file=ciclo.json
+gcloud storage buckets describe gs://$B --format="yaml(lifecycle_config)"   # as quatro regras
 ```
 
-O ciclo de vida do GCS roda uma vez por dia (pode levar até 24 h para valer). O `softDeletePolicy` mostra o prazo do
-*soft delete* (o padrão é 7 dias, `retentionDurationSeconds: 604800`).
+- O `gcloud storage` usa os nomes `lifecycle_config`, `soft_delete_policy` e `versioning_enabled`: com os nomes da
+  API JSON (`lifecycle`, `softDeletePolicy`) o `--format` responde `null`, que **não** quer dizer "sem regras".
+- O arquivo vai numa linha só (`echo`): no Cloud Shell, colar um `cat <<'FIM'` de várias linhas às vezes não grava
+  nada, e o `update` reaplica o `ciclo.json` antigo sem erro. Por isso o `cat ciclo.json` antes do `update`.
+- O ciclo de vida do GCS roda uma vez por dia (pode levar até 24 h para valer). O `soft_delete_policy` mostra o prazo
+  do *soft delete* (o padrão é 7 dias, `retentionDurationSeconds: '604800'`).
 
 ### Restaurar
 
@@ -987,11 +991,9 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   estilos inline; a URL assinada do armazenamento é de outro domínio).
 - Converter a instância de teste grátis do Cloud SQL em paga antes do fim do período de teste (~03/12/2026) e, nela,
   ligar backups automáticos e PITR (aí o dump do I1b vira a segunda cópia, fora do Cloud SQL).
-- Regra de ciclo de vida do bucket `{"action": {"type": "AbortIncompleteMultipartUpload"}, "condition": {"age": 1}}`
-  (pôr no mesmo arquivo das regras de `backups/`, acima): a exportação de relatório em tarefa envia o arquivo em
-  partes (README da API › decisão 177), e o processo que reinicia no meio deixa o envio aberto, cobrando, até ser
-  abortado. Também falta apagar os arquivos com `retencao_ate` vencida (exportações, 7 dias; relatório da importação,
-  30): hoje ninguém os apaga. O sistema já não os oferece (o `GET /tarefas` não assina link além da retenção e
-  mostra o arquivo como expirado), mas o objeto continua no bucket, ocupando espaço.
+- Apagar os arquivos com `retencao_ate` vencida (exportações, 7 dias; relatório da importação, 30): hoje ninguém os
+  apaga. O sistema já não os oferece (o `GET /tarefas` não assina link além da retenção e mostra o arquivo como
+  expirado), mas o objeto continua no bucket, ocupando espaço. (A regra `AbortIncompleteMultipartUpload` do bucket já
+  foi aplicada em 10/11/2026: [Backup](#backup-i1b).)
 - Configurar o Hermes com as regras de [Monitoramento](#monitoramento-hermes-i1b) (fora deste repositório) e, se
   quiser um segundo olhar independente, um monitor externo simples do `/saude` (VG 13).
