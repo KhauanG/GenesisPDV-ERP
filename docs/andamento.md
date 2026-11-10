@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 com os seis blocos, F2-B28 a F2-B33, commitado e PR aberto)._
+_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 é o próximo)._
 
 ## Repositório
 
@@ -52,8 +52,9 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
-| **PR-7 relatórios de estoque** | **B28–B33** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
-| PR-8 em diante | | não iniciados |
+| PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**) |
+| **PR-8 PDV: guarda e consulta** | **B34–B36** | próximo (release R1 do PDV) |
+| PR-9 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -81,16 +82,17 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33, no branch `claude/blissful-cray-cvroui`): os seis blocos
-   commitados e o **PR aberto** (checks locais no corpo; a CI só roda no push da `main`). Merge só com a liberação do
-   dono. **Na implantação do PR-7:** (a) a 0026 cria os dois índices do razão com `concurrently`
-   (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo, sem pegar
-   trava na tabela; (b) **lembrete ao dono:** configurar no bucket a regra de ciclo de vida
-   `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de `backups/` (`infra/producao/README.md` ›
-   Pendências): as exportações de relatório em tarefa (Estoque Atual e Movimentação, que passam de 50 mil linhas)
-   enviam o arquivo em partes, e o envio interrompido por um reinício fica aberto no bucket, cobrando, até ser abortado.
-   Depois do PR-7, o PR-8 (PDV: guarda e consulta, F2-B34 em diante; `docs/planos/fase2-plano.md`).
-3. Numeração das próximas decisões nos READMEs: **API 181**, **ERP 69**, **PDV 81** (confira o último número no próprio
+2. **Implantar o PR-7 (dono):** workflow **Implantação** na `main` (commit `46c8b11` ou mais novo, com a CI verde),
+   aprovando o environment `producao`. A migração **0026** cria os dois índices do razão com `concurrently` antes da
+   transação (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo. Junto,
+   a **regra de ciclo de vida do bucket** `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de
+   `backups/` (`infra/producao/README.md` › Backup e › Pendências). Permissões das telas novas:
+   `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e
+   `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
+3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36, release R1 do PDV): workflow `genesis-bloco` bloco a bloco a
+   partir do F2-B34 (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o
+   PR-7).
+4. Numeração das próximas decisões nos READMEs: **API 181**, **ERP 69**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
