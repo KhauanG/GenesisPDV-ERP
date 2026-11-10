@@ -1220,6 +1220,53 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       EAN duplicado" ao lado do Exportar (a listagem mostra um produto por linha; o relatório agrupa os pares).
     - Testes: `EanDuplicado.test.tsx` (as colunas, o link de editar, a embalagem com o fator, o inativo, os cards, a nota
       com e sem `configuracoes.ver`, os filtros na query) e `Produtos.test.tsx` (o atalho só com o filtro).
+73. **Cadastro em massa por estoque: a grade, a Atualização em azul e o Gravar de uma vez** (Fase 2, F2-B39; ERP 8.3;
+    F2-Q13 = D54 (a), padrão até a confirmação do dono; README da API › decisão 185;
+    `src/paginas/produtos/CadastroEmMassa.tsx`, `src/paginas/produtos/cadastroMassa.ts`,
+    `src/componentes/grade/GradeItens.tsx` (o `destaque`), `menu.ts`, `rotas.tsx`).
+    - **Tela `/produtos/cadastro-em-massa`** (permissão `produtos.cadastro_massa`; o item do menu ficou pronto) sobre a
+      `<GradeItens>` (F9, Enter, colar do Excel: EAN, nome, custo, preço e estoque — só as colunas que a tela mostra:
+      sem `produtos.ver_custo` sai o custo e sem `estoque_acertos.criar` sai o estoque, para a colagem não preencher um
+      campo escondido que a API recusaria). **Estoque**: os estoques ativos
+      que o usuário vê (a API recusa o que ele não pode movimentar); o padrão é o da loja de contexto ou o primeiro
+      ("Todas as lojas" não escolhe o CD só por ele também não ter loja). O estoque recebe o estoque somado e dá a loja
+      do estoque mínimo; no CD a coluna fica recusada na linha.
+    - **Colunas**: EAN, Nome, Unidade (padrão UN), NCM, Marca (autocomplete; o nome que não existe mostra "nova" e é
+      criado ao gravar, com `marcas.criar`), Categoria (a árvore pelo caminho "Bebidas > Cervejas"), Preço custo e
+      Markup % (só com `produtos.ver_custo`), Preço venda, Estoque (+) (só com `estoque_acertos.criar`), Estoque mín. e
+      Situação. **Markup ⇄ preço** como no formulário: o markup refaz o preço, o preço refaz o markup, o custo refaz o
+      preço pelo markup que já está (`alterarPreco`, com `precoPeloMarkupTexto` e `markupPct` do shared).
+    - **Pesquisar EAN** (na base da empresa, sem base externa): ao sair do campo EAN, no botão (todas as linhas) e
+      depois de colar (as linhas que a colagem pôs na grade com EAN, quantas forem e de onde se colou). O código achado
+      vira **"Atualização"** (fundo azul pela prop nova `destaque` da grade, com o código do produto em link e o aviso
+      do fator quando o código é de uma embalagem) e **completa** a linha com o que está gravado: o que o usuário já
+      digitou ou colou fica (a lista nova de preços colada do Excel atualiza o produto; o markup gravado que não confere
+      com o custo e o preço colados sai da conta), só os campos vazios recebem o gravado (a unidade padrão conta como
+      vazia). O custo e o preço gravados aparecem com as 4 casas (`numeric(15,4)`: o custo de um recebimento,
+      3,4567, não vira 3,46). O EAN em mais de um produto e o de uma variação ficam com erro (o relatório de EAN
+      duplicado e o F2-B50). Trocar o estoque pesquisa de novo: os campos que ninguém mexeu recebem o gravado de agora
+      (o estoque mínimo da loja nova), o digitado fica; ao deixar de ser Atualização, só sai o que a pesquisa trouxe.
+    - **O que não mudou vai nulo**: a linha guarda os valores que a pesquisa pôs (`gravados`) e o `linhaParaApi` manda
+      nulo no campo igual a eles (o vazio mantém o gravado na API). Assim a linha só de estoque não regrava o produto
+      (sem versão nova, histórico de preço nem descida ao PDV), não arredonda o custo gravado, a Entrada sai ao custo
+      médio (o de referência sem saldo, decisão 185 da API) e não pede `produtos.editar` nem `produtos.alterar_preco`. A
+      marca que a Atualização trouxe também vai nula e não se procura na lista de marcas (quem não tem `marcas.ver`
+      não tem a lista, e a marca gravada não pode virar "inexistente" nem "nova").
+    - **Validação por linha** antes de gravar (`errosLinhaMassa`: o novo exige nome, unidade e preço, o EAN precisa da
+      pesquisa e do GTIN válido, o estoque inteiro sem fração, o mínimo só com loja); os erros da API (`linhas.N.campo`,
+      N entre as linhas preenchidas) voltam à linha e à coluna, e o "Linha N" das mensagens e do resultado (a API conta
+      só as enviadas) vira o número da grade, o da coluna "#", com as linhas vazias do meio. **Gravar** manda tudo de
+      uma vez (até `LIMITE_LINHAS_CADASTRO_MASSA` = 100 linhas, D65, padrão até a confirmação do dono; acima, "grave em
+      partes"; o "Pesquisar EAN" aceita até 500 códigos); o EAN repetido com "avisar" pede a confirmação; o resultado
+      mostra quantos criados e atualizados, o link de cada produto e o do acerto de Entrada, e a grade volta vazia.
+      **Limpar** esvazia a grade com a confirmação.
+    - Testes: `CadastroEmMassa.test.tsx` (as contas da linha — a Atualização pela pesquisa, a pesquisa de novo do mesmo
+      produto, a linha nova limpa, markup ⇄ preço, a validação e o corpo da API com a marca existente e a nova — e a
+      tela: o EAN vira Atualização em azul ao sair do campo, a linha nova com a marca nova e o markup, o corpo do
+      Gravar, os links do resultado, os erros da API na coluna e o Limpar; e, da revisão do bloco: a linha só de estoque
+      com o cadastro nulo, o custo de 4 casas inteiro, a colagem com o EAN cadastrado que mantém os preços colados, a
+      marca gravada sem `marcas.ver`, a colagem de 2 linhas na grade nova que pesquisa, a colagem sem o acerto que não
+      preenche o estoque escondido e o "Linha N" da grade com a linha vazia no meio).
 
 ## O que ainda não foi feito (Fase 0)
 

@@ -85,6 +85,11 @@ export interface PropsGradeItens<L> {
    */
   linhasFixas?: boolean;
   rotuloInserir?: string;
+  /**
+   * Destaque da linha sem erro (a cor de fundo do Mantine e o texto da dica): ex.: a "Atualização" em azul do cadastro
+   * em massa (ERP 8.3; F2-B39). A linha com erro continua vermelha.
+   */
+  destaque?: (linha: L) => { cor: string; rotulo: string } | undefined;
 }
 
 /** Erros de todas as linhas não vazias: o formulário bloqueia o Gravar enquanto houver algum (ERP 3.3). */
@@ -121,6 +126,7 @@ export function GradeItens<L extends object>({
   somenteLeitura = false,
   linhasFixas = false,
   rotuloInserir = 'Inserir item',
+  destaque,
 }: PropsGradeItens<L>) {
   /** Sem inserir nem remover linhas (somente leitura ou linhas fixas). */
   const semMudarLinhas = somenteLeitura || linhasFixas;
@@ -270,13 +276,21 @@ export function GradeItens<L extends object>({
               const erros: Partial<Record<string, string>> =
                 validar && !vazia?.(l) && (mostrarErros || tocadas.has(k)) ? validar(l) : {};
               const comErro = Object.keys(erros).length > 0;
+              const marca = comErro ? undefined : destaque?.(l);
               return (
                 <Table.Tr
                   key={k}
                   data-erro={comErro || undefined}
+                  data-destaque={marca?.rotulo}
                   aria-invalid={comErro || undefined}
-                  style={comErro ? { background: 'var(--mantine-color-red-light)' } : undefined}
-                  title={erros._linha}
+                  style={
+                    comErro
+                      ? { background: 'var(--mantine-color-red-light)' }
+                      : marca
+                        ? { background: `var(--mantine-color-${marca.cor}-light)` }
+                        : undefined
+                  }
+                  title={erros._linha ?? marca?.rotulo}
                 >
                   <Table.Td ta="center">
                     <Tooltip label={erros._linha} disabled={!erros._linha}>

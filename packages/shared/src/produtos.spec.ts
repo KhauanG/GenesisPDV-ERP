@@ -18,6 +18,7 @@ import { CONFIGURACOES_POR_CHAVE } from './configuracoes.js';
 import { ajusteEstoqueProdutoSchema } from './estoque.js';
 import { cadastroRapidoFornecedorSchema, tipoPessoaDoDocumento } from './pessoas.js';
 import {
+  cadastroMassaSchema,
   CHAVES_TIPO_PRODUTO,
   chaveFornecedorProduto,
   chaveLoteProduto,
@@ -27,9 +28,12 @@ import {
   criarRestricaoHorarioSchema,
   faixasSobrepostas,
   historicoPrecosQuerySchema,
+  LIMITE_CODIGOS_PESQUISA_EAN_MASSA,
+  LIMITE_LINHAS_CADASTRO_MASSA,
   MAXIMO_FORNECEDORES_PRODUTO,
   MAXIMO_LOTES_PRODUTO,
   motivoTipoProdutoBloqueado,
+  pesquisaEanCadastroMassaSchema,
   TIPOS_PRODUTO,
   TIPOS_SEM_SALDO_PROPRIO,
   tiposProdutoHabilitados,
@@ -43,6 +47,81 @@ const LOJA = '0190a000-0000-7000-8000-0000000000f1';
 
 const campos = (r: { success: boolean; error?: { issues: Array<{ path: PropertyKey[] }> } }) =>
   r.success ? [] : r.error!.issues.map((i) => i.path.join('.')).sort();
+
+describe('cadastro em massa (ERP 8.3; F2-B39)', () => {
+  const gtin = (base: string) => `${base}${calcularDvGtin(base)}`;
+  const EAN = gtin('789980000001');
+  const novo = { ean: EAN, nome: 'AGUA FICTICIA 500ML', unidadeId: UN, precoVenda: '2,50', estoque: '12' };
+
+  it('a linha nova exige nome, unidade, preço e o GTIN válido; os decimais saem com ponto', () => {
+    const r = cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: [novo] });
+    expect(r.success).toBe(true);
+    expect(r.data!.linhas[0]).toMatchObject({ produtoId: null, precoVenda: '2.5000', estoque: '12.000' });
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [{ ean: '7899800000010', precoVenda: '0' }],
+        }),
+      ),
+    ).toEqual(['linhas.0.ean', 'linhas.0.nome', 'linhas.0.precoVenda', 'linhas.0.unidadeId']);
+  });
+
+  it('a Atualização exige o EAN e a versão; os vazios ficam nulos (mantêm o gravado)', () => {
+    const r = cadastroMassaSchema.safeParse({
+      estoqueId: LOJA,
+      linhas: [{ produtoId: A, versao: 7, ean: 'FD12-INTERNO', estoque: '1', precoVenda: '' }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data!.linhas[0]).toMatchObject({ nome: null, precoVenda: null, unidadeId: null });
+    expect(
+      campos(cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: [{ produtoId: A, estoque: '1' }] })),
+    ).toEqual(['linhas.0.ean', 'linhas.0.ean']);
+  });
+
+  it('o EAN e o produto repetidos na grade, a marca escolhida e nova juntas e o limite de linhas', () => {
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [novo, { ...novo, marcaId: B, marcaNova: 'Outra' }],
+        }),
+      ),
+    ).toEqual(['linhas.1.ean', 'linhas.1.marcaNova']);
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [
+            { produtoId: A, versao: 1, ean: EAN },
+            { produtoId: A, versao: 1, ean: gtin('789980000002') },
+          ],
+        }),
+      ),
+    ).toEqual(['linhas.1.ean']);
+    const muitas = Array.from({ length: LIMITE_LINHAS_CADASTRO_MASSA + 1 }, (_, i) => ({
+      ...novo,
+      ean: gtin(`7899800${String(i).padStart(5, '0')}`),
+    }));
+    expect(campos(cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: muitas }))).toEqual(['linhas']);
+    // O "Pesquisar EAN" aceita a grade colada maior que uma gravação (que se faz em partes).
+    const codigos = (n: number) =>
+      Array.from({ length: n }, (_, i) => gtin(`7899800${String(i).padStart(5, '0')}`));
+    expect(LIMITE_CODIGOS_PESQUISA_EAN_MASSA).toBeGreaterThan(LIMITE_LINHAS_CADASTRO_MASSA);
+    expect(
+      pesquisaEanCadastroMassaSchema.safeParse({
+        estoqueId: LOJA,
+        codigos: codigos(LIMITE_CODIGOS_PESQUISA_EAN_MASSA),
+      }).success,
+    ).toBe(true);
+    expect(
+      pesquisaEanCadastroMassaSchema.safeParse({
+        estoqueId: LOJA,
+        codigos: codigos(LIMITE_CODIGOS_PESQUISA_EAN_MASSA + 1),
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe('cadastro rápido de produto (ERP 13.3; F2-B16)', () => {
   const valores = {

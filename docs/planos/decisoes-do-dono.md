@@ -165,6 +165,20 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   F2-B35 (README da API › decisão 182, do ERP › 70, do PDV › 82; roadmap §16, D53). Se o dono preferir (b) — também
   avaria e vasilhame vazio — ou (c) — só com permissão de supervisor —, muda a consulta da API e o diálogo do PDV.
 
+## Catálogo operacional — PR-9 (10/11/2026)
+
+- **F2-Q13 (D54) — vale a recomendação (sem resposta explícita do dono).** Pela regra acima ("Demais (F2-Q2, Q4, Q6,
+  Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano"), a opção (a): a Ice Beer não contrata agora uma
+  base externa de códigos de barras; o "Pesquisar EAN" do cadastro em massa procura só na base da empresa (o código já
+  cadastrado vira "Atualização"). Implementado no F2-B39 (README da API › decisão 185, do ERP › 73; roadmap §16, D54).
+  Se o dono preferir (b) — contratar um serviço como o Cosmos —, ele indica o serviço e quem contrata, e o F2-B47 sai
+  do backlog para sugerir nome, NCM, marca e foto na mesma pesquisa.
+- **D65 — EM ABERTO (padrão até a confirmação do dono): 100 linhas por gravação do cadastro em massa.** A ERP 8.3
+  dizia 500; a revisão do F2-B39 mediu que cada linha da grade faz de 9 a ~50 idas ao banco com a trava de ordenação
+  presa, e 500 linhas prendiam os caixas e o ERP por 40 a 75 s na produção. Opções: (a) 100 linhas, tudo ou nada
+  (recomendada, a aplicada); (b) voltar a 500, aceitando a espera; (c) gravar em partes de 100 sem o "tudo ou nada" da
+  grade inteira. README da API › decisão 185; roadmap §16, D65.
+
 ## Segurança: revisão por PR e auditoria completa (10/11/2026)
 
 - **D63 — RESPONDIDA: (A) sim, a partir do PR-9.** Antes de abrir cada PR, além da revisão por bloco do

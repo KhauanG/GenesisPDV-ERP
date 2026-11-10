@@ -5241,6 +5241,94 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        total, 422 dos filtros, `produtos.ver` sim e o financeiro 403, a exportação `.xlsx` e `.csv`, o EXPLAIN pelo
        índice e a correção de dois produtos zerando o relatório com o `modo` de volta a "bloquear");
        `relatorios.spec.ts` no shared (os filtros e a página).
+185. **Cadastro em massa por estoque: a grade numa transação, as regras do formulário e um acerto de Entrada** (Fase
+     2, F2-B39; ERP 8.3; F2-Q13 = D54 (a), **padrão até a confirmação do dono**; `src/produtos/cadastro-massa.ts`,
+     `inserirProduto`/`atualizarProduto` em `src/produtos/produtos.controller.ts` (a opção `cadastroMassa`),
+     `sqlVersaoAgregada` em `src/produtos/consultas.ts`; contratos `cadastroMassaSchema`, `linhaCadastroMassaSchema`,
+     `pesquisaEanCadastroMassaSchema`, `ResultadoCadastroMassa`, `LIMITE_LINHAS_CADASTRO_MASSA` (100, D65),
+     `LIMITE_CODIGOS_PESQUISA_EAN_MASSA` (500) e `MOTIVO_CADASTRO_MASSA` no shared `produtos.ts`; **sem migração**; PDV sem mudança (os produtos e o saldo descem
+     pelo pull de sempre); o ERP é a decisão 73 do README do ERP).
+     - **`POST /produtos/cadastro-em-massa/pesquisar-ean`** (`{ estoqueId, codigos }`, até 500): os códigos na **base da
+       empresa** — qualquer código vivo do produto (o EAN, o interno, a embalagem com o fator) —, um por produto, o pai
+       antes da variação, com os valores que a "Atualização" mostra (nome, unidade, NCM, marca, categoria principal,
+       preço, o estoque mínimo da loja do estoque, a **versão agregada** do cadastro — a do 409 do formulário, decisão
+       47 — e se tem saldo próprio). Custo e markup só com `produtos.ver_custo` (o markup junto do preço revelaria o
+       custo). Sem base externa de GTIN: a F2-Q13 (D54) ficou sem resposta explícita e vale a recomendação (a); a base
+       externa é o F2-B47, no backlog. POST, e não GET, porque 500 códigos não cabem na URL.
+     - **`POST /produtos/cadastro-em-massa`** (`{ estoqueId, linhas, confirmarEanDuplicado }`): **uma transação** com a
+       7300001 (`travaVersao`), até **100 linhas** (D65, **padrão até a confirmação do dono**; a ERP 8.3 dizia 500). A
+       espera pela trava tem o limite do ERP e, vencida, o 503 "sistema ocupado" amigável com nada gravado (C13). Com a
+       trava, os outros escritores (o push do PDV, o formulário) ficam em série: a conferência e a gravação veem o
+       mesmo banco.
+     - **Por que 100 e não 500** (revisão do bloco): a MD 1.5 e a SYNC 6.13 contam **linhas de tabela** por transação
+       ("blocos de até 500 linhas"), e uma linha da grade grava várias linhas sincronizáveis (o produto, o código de
+       barras, a categoria, a loja, o saldo e o movimento). Contadas as consultas com o Postgres local, a gravação faz
+       umas 26 idas ao banco por produto novo, umas 9 pela linha só de estoque e umas 51 pela Atualização que muda o
+       preço, todas com a trava presa; com os ~3 ms de ida e volta entre a VPS e o Cloud SQL (pelo Auth Proxy, D13),
+       500 linhas seguravam a trava por 40 a 75 s em horário de venda (o push dos caixas esperando, o ERP respondendo
+       "sistema ocupado" a qualquer gravação; medido pela revisão com um atraso simulado de 3 ms: 5,4 s → 42 s em 500
+       linhas novas). Com 100, uns 8 s (novos) a 15 s (Atualizações com preço), o tempo de uma importação de bloco.
+       Para voltar a 500 basta trocar a constante do shared (o ERP e a API a leem); a importação de planilha continua o
+       caminho para catálogos grandes (um produto por transação). Junto, a gravação deixou de repetir o que a
+       conferência já fez na mesma transação: o `validarNoBanco` (a opção `validado` do `inserirProduto` e do
+       `atualizarProduto`; a troca de tipo valida mesmo assim, com o saldo), o detalhe e a validação da linha só de
+       estoque (que não regrava o produto) e o código e o nome do resultado, numa consulta só (de ~30, ~24 e ~56 idas
+       por linha para as de cima). O `POST …/pesquisar-ean` aceita até 500 códigos (a grade colada pode passar do
+       limite da gravação, que se faz em partes).
+     - **A linha**: `produtoId` nulo = **produto novo** — um **Simples**, ativo, com controle de estoque e a tributação
+       vazia (a padrão da Fase 2, decisão 161), pelo `inserirProduto`, com o EAN (GTIN válido) como principal; com o
+       `produtoId` e a `versao` que a pesquisa achou, a **Atualização** pelo `atualizarProduto` sobre o detalhe gravado
+       (o que o usuário vê: as lojas e faixas fora das permitidas ficam como estão), com a versão, o "Altera Preço do
+       Produto no ERP" (`produtos.alterar_preco`), a auditoria e a descida ao PDV. Na Atualização, **o campo vazio
+       mantém o gravado**; a categoria digitada vira a principal (as outras ficam); a marca digitada que não existe é
+       **criada na mesma transação** (`marcaNova`, reaproveitada pelo nome sem acento e caixa, exige `marcas.criar`). O
+       markup gravado é o digitado ou o do preço sobre o custo (4 casas, a conta do formulário). O **preço da grade é o
+       preço geral** do produto (o do cabeçalho do formulário), não o da loja do estoque — onde a ERP 8.3 diz "destino
+       dos preços por loja", a grade grava da loja só o estoque mínimo: o CD não tem loja, e o preço próprio da loja
+       continua no formulário (bloco Lojas). A Atualização que não
+       muda o cadastro (só soma estoque) não regrava o produto (sem versão nova nem auditoria à toa, como a importação):
+       a linha sem nenhum campo do cadastro (o ERP manda nulo no que não mudou desde a pesquisa, decisão 73 do ERP) nem
+       lê o detalhe; a que traz os valores gravados de volta é comparada depois do contrato (os decimais com 4 casas).
+     - **Unicidade de EAN do formulário, não a da importação**: o EAN de um produto novo que já está em outro produto
+       segue `geral.ean_duplicado` — "bloquear" recusa (409 com `detalhes.eanDuplicado`, nada gravado, nem a marca
+       nova); "avisar" pede a confirmação (409 com `confirmar: true`, só quando nada mais está errado) e grava com
+       `confirmarEanDuplicado`. O EAN (ou o produto) repetido na própria grade é sempre recusado pelo contrato.
+     - **Estoque**: o estoque a somar vira **um** acerto de **Entrada** efetivado na hora, com a origem `cadastro_massa`
+       (`AJUSTE_CADASTRO`, lançado agora, `data_movimento = now()`, regra de data da decisão 148), o motivo "Cadastro
+       em massa", o tipo padrão (Disponível) e o custo da linha (com `produtos.ver_custo`; sem ele, o custo
+       médio/de referência da efetivação). O estoque é sempre **na unidade do produto** (o código de uma embalagem acha
+       o produto, e a tela avisa o fator). O produto sem saldo próprio (combo, serviço, produzido, com variações) e o
+       que não controla estoque são recusados na linha, e a quantidade fracionada só com a fração. O **estoque mínimo**
+       vai para `produtos_lojas` da loja do estoque (`lojaDoEstoque`, a de menor código); no estoque sem loja (o CD) é
+       recusado, e a loja fora das permitidas também. Auditoria do acerto (criar + efetivar) com a localização
+       "Produtos › Cadastro em massa", a mesma dos produtos e das marcas criadas. O histórico de preços grava a origem
+       `cadastro_massa` (`OpcoesGravacaoProduto.cadastroMassa`).
+     - **Erros por linha**: a conferência junta os erros de **todas** as linhas antes de gravar — o contrato, o
+       `validarNoBanco` do formulário (unidade, marca, categoria, NCM conforme a loja) e as regras do estoque — em
+       `linhas.N.campo` com o nome da coluna da grade (`codigosBarras.*` → `ean`, `categorias` → `categoriaId`,
+       `lojas.*` → `estoqueMinimo`), e responde 422 "Verifique as linhas destacadas" com nada gravado. O que só aparece
+       na gravação (com a trava, raro: o "Alterar preço" sem `produtos.alterar_preco`, que o `atualizarProduto` confere)
+       volta com "Linha N:" e o campo `linhas.N._linha` e desfaz tudo — N é a posição entre as linhas **enviadas**; o
+       ERP a traduz para a linha da grade. A Atualização com a versão diferente da
+       pesquisa é recusada na linha ("pesquise o EAN de novo"), não com o 409 do formulário.
+     - **Permissões**: `produtos.cadastro_massa` abre a tela e as duas rotas; as gravações seguem as do formulário e do
+       acerto — produto novo exige `produtos.criar`; a Atualização que muda o cadastro, `produtos.editar`; somar
+       estoque, `estoque_acertos.criar`; o estoque permitido para movimentar e ativo (`conferirCabecalhoAcerto`,
+       decisão 149). Assim o cadastro em massa não abre um caminho para quem não pode criar ou editar produto pelo
+       formulário. O perfil Gerente tem tudo pelo prefixo; o Estoquista não tem `produtos.cadastro_massa` (o dono
+       libera em Usuários › Perfis, se quiser).
+     - Resultado: quantos criados e atualizados, um item por linha (código, nome, criado/atualizado) para os links, o
+       acerto (código, itens, movimentos) e as marcas criadas.
+     - Testes: `cadastro-massa.test.ts` (o critério de pronto — 30 produtos novos com estoque no CD, a marca nova uma
+       vez para duas grafias, um acerto `cadastro_massa` com 30 `AJUSTE_CADASTRO` ao custo da linha, o histórico e a
+       auditoria —; a pesquisa com a embalagem e o fator; a Atualização com o preço, o estoque e o mínimo da loja, a
+       versão velha recusada e a linha só de estoque sem regravar; o mínimo no CD recusado; o limite de linhas com a
+       última errada na conferência sem gravar nada, as válidas gravando e uma a mais recusada; o erro que só aparece na
+       gravação (o preço da última linha sem "Alterar preço", com 99 produtos já inseridos) com "Linha 100:", o campo da
+       linha e nada gravado (nem produto, nem acerto); a linha só de estoque com o corpo inteiro de volta (o custo
+       3,4567) sem versão nova, histórico nem `produtos.editar`, e a Entrada a 3,4567; o EAN com "bloquear"
+       e "avisar"; o contrato; 403 sem a permissão e fora dos estoques; o perfil só com a tela e o acerto; 10 gravações
+       junto de 10 vendas do push do PDV; o razão refeito idêntico) e `produtos.spec.ts` no shared (o contrato).
 
 ### Operação – tarefas em segundo plano (API)
 

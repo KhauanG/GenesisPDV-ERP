@@ -113,9 +113,9 @@ export async function buscarOpcoes(
 /**
  * Versão do cadastro inteiro (decisão 47 do README): o trigger de versão não muda `produtos` quando só as filhas
  * mudam; o 409 do ERP 1.4 compara a maior versão entre o produto e as filhas, inclusive as excluídas logicamente.
+ * `id`: o produto (um parâmetro ou a coluna da consulta de quem chama, como o "Pesquisar EAN" do cadastro em massa).
  */
-export async function versaoAgregada(db: DbEmpresa, id: string): Promise<number> {
-  const { rows } = await db.execute<{ v: string }>(sql`select greatest(
+export const sqlVersaoAgregada = (id: SQL) => sql`greatest(
     (select versao from produtos where id = ${id}),
     (select max(versao) from produtos_codigos_barras where produto_id = ${id}),
     (select max(versao) from produtos_lojas where produto_id = ${id}),
@@ -126,7 +126,12 @@ export async function versaoAgregada(db: DbEmpresa, id: string): Promise<number>
     (select max(versao) from produtos_fornecedores where produto_id = ${id}),
     (select max(versao) from produtos_lotes where produto_id = ${id}),
     (select max(a.versao) from produtos_componentes_alternativas a
-       join produtos_componentes pc on pc.id = a.componente_id where pc.produto_id = ${id}))::text as v`);
+       join produtos_componentes pc on pc.id = a.componente_id where pc.produto_id = ${id}))`;
+
+export async function versaoAgregada(db: DbEmpresa, id: string): Promise<number> {
+  const { rows } = await db.execute<{ v: string }>(
+    sql`select ${sqlVersaoAgregada(sql`${id}::uuid`)}::text as v`,
+  );
   return Number(rows[0]!.v);
 }
 

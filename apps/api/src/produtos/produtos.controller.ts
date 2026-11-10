@@ -950,12 +950,33 @@ export interface OpcoesGravacaoProduto {
    * conhecem. Sem ele vale a sequência (`proximoCodigoProduto`, que pula os códigos já usados).
    */
   codigo?: number;
+  /**
+   * Cadastro em massa (ERP 8.3; F2-B39; README da API › decisão 185): o histórico de preços grava a origem
+   * `cadastro_massa` e a auditoria a localização "Produtos › Cadastro em massa". As regras são as do formulário (EAN
+   * duplicado pela `geral.ean_duplicado`, NCM conforme a loja), não as da importação.
+   */
+  cadastroMassa?: boolean;
+  /**
+   * O `validarNoBanco` destes mesmos dados já rodou nesta transação, com a 7300001 presa (a conferência do cadastro em
+   * massa, que junta os erros de todas as linhas antes de gravar): não repete as consultas (umas 3 por produto, com a
+   * trava presa). A troca de tipo valida mesmo assim (a conferência não confere o saldo nem as variações).
+   */
+  validado?: boolean;
 }
 
 type DepsGravacao = Pick<Servicos, 'auditoria' | 'custoCombos'>;
 
-/** A origem do histórico de preços (F2-B15): a importação de planilha grava `importacao`; o formulário, `cadastro`. */
-const origemHistorico = (opcoes: OpcoesGravacaoProduto) => (opcoes.importacao ? 'importacao' : 'cadastro');
+/**
+ * A origem do histórico de preços (F2-B15): a importação de planilha grava `importacao`; o cadastro em massa,
+ * `cadastro_massa` (F2-B39); o formulário, `cadastro`.
+ */
+const origemHistorico = (opcoes: OpcoesGravacaoProduto) =>
+  opcoes.importacao ? 'importacao' : opcoes.cadastroMassa ? 'cadastro_massa' : 'cadastro';
+
+/** Localização da auditoria do produto: a tela de onde veio a gravação (ERP 16.2 "Localização"). */
+export const LOCALIZACAO_CADASTRO_MASSA = 'Produtos › Cadastro em massa';
+const localizacaoDe = (opcoes: OpcoesGravacaoProduto) =>
+  opcoes.cadastroMassa ? LOCALIZACAO_CADASTRO_MASSA : LOCALIZACAO;
 
 /** Insere o produto com as filhas, o custo do combo, o histórico de preços e a auditoria (transação de quem chama). */
 export async function inserirProduto(
@@ -967,7 +988,7 @@ export async function inserirProduto(
   opcoes: OpcoesGravacaoProduto = {},
 ): Promise<string> {
   garantirCriarInversa(sessao, dados);
-  await validarNoBanco(tx, dados, null, null, { ncmOpcional: opcoes.importacao });
+  if (!opcoes.validado) await validarNoBanco(tx, dados, null, null, { ncmOpcional: opcoes.importacao });
   if (opcoes.importacao) await tx.execute(sql`set local genesis.ean_duplicado_importacao = 'on'`);
   else await conferirEanDuplicado(tx, dados, null);
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
@@ -1009,7 +1030,7 @@ export async function inserirProduto(
     acao: 'criar',
     entidade: 'produtos',
     registroId: p!.id,
-    localizacao: LOCALIZACAO,
+    localizacao: localizacaoDe(opcoes),
     depois: { ...p, ...(await filhasAuditoria(tx, p!.id, dados)) },
   });
   await auditarInversas(s, tx, origem, p!.id, inversas);
@@ -1040,19 +1061,23 @@ export async function atualizarProduto(
   const antes = (await detalheProduto(tx, id, true))!;
   if (versao !== null && antes.versao !== versao)
     await conflitoVersao(tx, { ...linha, versao: antes.versao });
-  const contexto: ProdutoAntes = {
-    tipo: linha.tipo as TipoProduto,
-    temMovimento: antes.temMovimento,
-    saldoNaoZero: await saldoNaoZero(tx, id),
-    ...(linha.tipo === 'com_variacoes' && dados.tipo !== 'com_variacoes'
-      ? await situacaoVariacoes(tx, id)
-      : {}),
-  };
+  // O tipo de antes (a troca de tipo confere o saldo e as variações); sem a troca, a conferência que já rodou basta.
+  const validar = !opcoes.validado || dados.tipo !== linha.tipo;
+  const contexto: ProdutoAntes | null = validar
+    ? {
+        tipo: linha.tipo as TipoProduto,
+        temMovimento: antes.temMovimento,
+        saldoNaoZero: await saldoNaoZero(tx, id),
+        ...(linha.tipo === 'com_variacoes' && dados.tipo !== 'com_variacoes'
+          ? await situacaoVariacoes(tx, id)
+          : {}),
+      }
+    : null;
   await garantirAlterarPreco(tx, sessao, antes, dados);
   // As faixas e as variações como estão gravadas, para o histórico das filhas (F2-B37).
   const filhosAntes = await precosFilhosGravados(tx, id);
   garantirCriarInversa(sessao, dados);
-  await validarNoBanco(tx, dados, id, contexto, { ncmOpcional: opcoes.importacao });
+  if (contexto) await validarNoBanco(tx, dados, id, contexto, { ncmOpcional: opcoes.importacao });
   if (opcoes.importacao) await tx.execute(sql`set local genesis.ean_duplicado_importacao = 'on'`);
   else await conferirEanDuplicado(tx, dados, id);
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
@@ -1095,7 +1120,7 @@ export async function atualizarProduto(
     acao: 'editar',
     entidade: 'produtos',
     registroId: id,
-    localizacao: LOCALIZACAO,
+    localizacao: localizacaoDe(opcoes),
     antes,
     depois: { ...depois, ...(await filhasAuditoria(tx, id, dados)) },
   });

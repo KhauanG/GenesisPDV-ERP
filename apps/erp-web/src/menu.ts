@@ -69,6 +69,7 @@ export const MENU: GrupoMenu[] = [
         rota: '/produtos/cadastro-em-massa',
         permissao: 'produtos.cadastro_massa',
         fase: 'Fase 2',
+        pronto: true,
       },
       {
         rotulo: 'Categorias',

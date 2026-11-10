@@ -33,6 +33,7 @@ import { FormularioLoja, ListaLojas } from './paginas/lojas/Lojas';
 import { FormularioMarca, ListaMarcas } from './paginas/marcas/Marcas';
 import { FormularioPerfil, ListaPerfis } from './paginas/perfis/Perfis';
 import { FormularioPessoa, ListaPessoas } from './paginas/pessoas/Pessoas';
+import { CadastroEmMassa, ROTA_CADASTRO_MASSA } from './paginas/produtos/CadastroEmMassa';
 import { FormularioProduto } from './paginas/produtos/FormularioProduto';
 import { FormularioGrupoPreco, ListaGruposPreco } from './paginas/produtos/GruposPreco';
 import { ListaProdutos } from './paginas/produtos/ListaProdutos';
@@ -205,6 +206,14 @@ export const rotas: RouteObject[] = [
                 <FormularioRestricaoHorario />,
               ),
               ...cadastro('/produtos/marcas', 'marcas', <ListaMarcas />, <FormularioMarca />),
+              {
+                path: ROTA_CADASTRO_MASSA,
+                element: (
+                  <ExigePermissao permissao="produtos.cadastro_massa">
+                    <CadastroEmMassa />
+                  </ExigePermissao>
+                ),
+              },
               {
                 path: '/produtos/categorias',
                 element: (

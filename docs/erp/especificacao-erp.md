@@ -1316,7 +1316,24 @@ Colunas da grade (`<GradeItens>`):
 Regras: validação por linha antes de gravar; **Gravar** processa tudo numa transação (ou nada); cria produtos tipo
 Simples com tributação padrão das Configurações; estoque gera um acerto "Entrada" automático com motivo "Cadastro em
 massa" e movimentos "Atualização pelo cadastro de produtos"; resultado mostra quantos criados/atualizados com link
-para cada um. Limite de 500 linhas por gravação.
+para cada um. Limite de 100 linhas por gravação (D65, padrão até a confirmação do dono; era 500: a linha da grade
+grava várias linhas sincronizáveis e segura a trava de ordenação, MD 1.5).
+
+Implementação (F2-B39; README da API › decisão 185, do ERP › 73): o **Pesquisar EAN** procura só na base da empresa
+(F2-Q13 = D54 (a), sem base externa de GTIN até a confirmação do dono; a base externa é o F2-B47, no backlog), ao sair
+do campo EAN, no botão e depois de colar linhas; o código de uma embalagem acha o produto (o estoque é sempre na
+unidade do produto). A Atualização completa a linha com o gravado sem descartar o que foi digitado ou colado (a lista
+de preços colada atualiza o produto). Na Atualização, o campo vazio mantém o gravado, o que não mudou desde a pesquisa
+vai nulo (a linha só de estoque não regrava o produto) e a categoria digitada vira a principal. O preço
+da grade é o preço geral do produto; da loja do estoque a grade grava só o estoque mínimo (o preço próprio da loja
+continua no formulário). O EAN de
+produto novo que já está em outro produto segue a regra do formulário (`geral.ean_duplicado`: bloquear recusa,
+avisar confirma), não a da importação. As gravações exigem também as permissões do formulário (`produtos.criar` para o
+novo, `produtos.editar` para a Atualização que muda o cadastro, `marcas.criar` para a marca nova). Sem `produtos.ver_custo`
+não aparecem o custo nem o markup.
+
+**API**: `POST /api/produtos/cadastro-em-massa/pesquisar-ean` (`{ estoqueId, codigos }`) e
+`POST /api/produtos/cadastro-em-massa` (`{ estoqueId, linhas, confirmarEanDuplicado }`, uma transação).
 
 ### 8.4 Categorias
 
