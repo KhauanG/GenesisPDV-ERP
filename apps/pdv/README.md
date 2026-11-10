@@ -342,7 +342,7 @@ dados.
 
 ### Gerar o instalador e publicar uma versão (desenvolvimento)
 
-- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.10.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79). A mesma aparece no
+- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.11.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84). A mesma aparece no
   nome do instalador, no rodapé do login e do assistente e no `versao_app` que vai à nuvem.
 - **Windows** (SDK do .NET 10; o Inno Setup 6 vem pelo Chocolatey se faltar):
   `pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao X.Y.Z] [-UrlApi https://...]` →
@@ -3804,3 +3804,13 @@ reimpresso continua o original, com o número do caixa.
       vencido, futuro, maior ou igual ao varejo e maior que o preço da loja escondido, o atacado do combo e o não menor
       que o varejo escondido, a resposta de um filtro velho descartada, e a coluna escondida com a chave desligada e na
       demonstração).
+
+84. **Versão 0.11.0: a release R1 da Fase 2** (10/11/2026, fechamento do PR-8). A `<Version>` do `Directory.Build.props`
+    passa de 0.10.0 para **0.11.0** (e os exemplos do `GenesisPDV.iss` e do `gerar-instalador.ps1`), porque o PR-8 muda
+    o que o operador vê: a recusa do produto com variações (decisão 81), o F4 "Outras lojas" (decisão 82) e a pesquisa
+    F2 com as colunas novas pelo índice FTS5 (decisão 83, com a migração local `BuscaProdutosFts`). Sobe o número do
+    meio, como na decisão 79. É a versão que a nuvem usa para saber quem tem a guarda das variações
+    (`VERSAO_PDV_GUARDA_VARIACOES` em `packages/shared/src/produtos.ts`, o aviso do ERP ao ligar as variações): as duas
+    precisam andar juntas. Nada muda no protocolo (`versoes_schema`): o 0.10.0 instalado continua vendendo com a API
+    nova até a loja atualizar. **Ordem na implantação:** primeiro a API (a rota do F4 é nova; o 0.11.0 com a API antiga
+    só mostra "Consulta indisponível"), depois o release "PDV release" e a Implantação com `publicar_pdv`.
