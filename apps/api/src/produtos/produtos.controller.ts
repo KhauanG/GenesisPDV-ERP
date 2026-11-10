@@ -9,6 +9,7 @@ import {
   Post,
   Put,
   Query,
+  Res,
   type StreamableFile,
 } from '@nestjs/common';
 import {
@@ -18,6 +19,7 @@ import {
   combosMontaveis,
   criarProdutoSchema,
   dec,
+  EXPORTACAO_CATALOGO_PRODUTOS,
   exportacaoQuerySchema,
   filtroProdutosSchema,
   gerarCodigoInterno,
@@ -29,6 +31,7 @@ import {
   validarGtin,
   type CriarProduto,
   type CriarProdutoEntrada,
+  type ExportacaoEmTarefa,
   type FiltroProdutos,
   type HistoricoPrecoProduto,
   type Pagina,
@@ -42,6 +45,7 @@ import {
   type VerificacaoEan,
 } from '@genesis/shared';
 import { and, count, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import type { Response } from 'express';
 import { z } from 'zod';
 import type { OrigemAcao } from '../auditoria/auditoria.service.js';
 import type { SessaoErp } from '../auth/auth.service.js';
@@ -296,6 +300,31 @@ export class ProdutosController {
       return linhas;
     });
     return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
+  }
+
+  /**
+   * Exportação do catálogo de ida e volta (ERP 8.5; F2-B40, README da API › decisão 186): a planilha no layout da
+   * importação, com os filtros da tela Produtos › Exportação. Até 5.000 linhas responde o arquivo (`200`); acima, `202`
+   * com a tarefa (o ícone Tarefas). O acesso, o custo e as lojas/estoques permitidos são do provedor
+   * (`provedorCatalogoProdutos`).
+   */
+  @Permissao('produtos.ver')
+  @Get('exportacao')
+  async exportacao(
+    @Query() query: Record<string, unknown>,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile | ExportacaoEmTarefa> {
+    const r = await this.s.exportacoes.exportar(
+      sessao,
+      origemDaRequisicao(req),
+      EXPORTACAO_CATALOGO_PRODUTOS,
+      query ?? {},
+    );
+    if (r.tipo === 'arquivo') return r.arquivo;
+    res.status(202);
+    return r.tarefa;
   }
 
   /** Busca resumida para os seletores (componente do combo, casco, membros do grupo de preço). */

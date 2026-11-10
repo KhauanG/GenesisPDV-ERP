@@ -912,7 +912,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     é cadastrada no ERP). Sem a composição, o combo novo é criado **inativo** com o aviso `combo_sem_posicoes` (o
     schema aceita combo inativo sem posições; ativo exige ≥ 1). Combo existente só recebe a composição da planilha se
     ainda não tiver posições (as do ERP, com alternativas, não são trocadas). As colunas próprias da exportação de
-    "grupo de itens" do Nuvem3 entram quando o arquivo real for validado na homologação.
+    "grupo de itens" do Nuvem3 entram quando o arquivo real for validado na homologação (F2-Q14 = D66: até lá, o
+    mapeamento provisório fica num ponto só, `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186).
 96. **Projeção `produtos.custo_medio`** (MD 3.6.3; ERP 8.2.1). Migração `0006_produtos_custo_medio_historico`: trigger
     `tg_saldos_estoque_custo_medio` recalcula, na mesma transação, a média ponderada das linhas de `saldos_estoque`
     com saldo > 0 (sem nenhuma, fica o último custo médio); o `tg_produtos_custo_kit` leva a mudança aos combos.
@@ -976,7 +977,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
      `exclusao_sem_produto`. Resumo e resultado ganham `sem_alteracao`/`inativar` (`semAlteracao`/`inativados`).
      Produto que não controla estoque (`controla_estoque = false`): o estoque atual sai do diff (o acerto não o
      lançaria; sem isso a linha seria um `atualizar` fantasma a cada reimportação). A tela abre no filtro "Com erro"
-     só se alguma linha tem erro (`ignorar` também conta o Excluir sem produto, que não tem erro).
+     só se alguma linha tem erro (`ignorar` também conta o Excluir sem produto, que não tem erro). Os clientes ganharam
+     o mesmo "Sem alteração" e "O que muda" no F2-B40 (decisão 186).
 104. **Formato do Nuvem3 nas colunas** (`packages/shared/importacao.ts`). Categoria em lista (`CERVEJA,`,
      `MERCEARIA,PIPOCA,`) separada pela vírgula **não** seguida de espaço (`NICSALTS, JUICE E PODS,` é uma só), a 1ª é a
      principal, cada item pode ser caminho `A > B`; um nome só também acha a única subcategoria com esse nome — com o
@@ -993,7 +995,7 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
      `UsaNoMenuDigital` → `usa_menu_digital`; `UsaBalancaEtiquetadoraStr` → `balanca_tipo` (Peso/Sim = `peso`,
      Unidade = `unidade`, Não = `nao_usa`) — **provisório**: a coluna veio vazia na exportação real e não se sabe que
      textos o Nuvem3 escreve nela; **pendência**: confirmar com o dono uma exportação com a coluna preenchida (e só
-     então aceitar `S`/`N` ou outros textos). `PrecoPJ` não tem equivalente (não há preço para pessoa jurídica) e fica
+     então aceitar `S`/`N` ou outros textos; os textos ficam em `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186). `PrecoPJ` não tem equivalente (não há preço para pessoa jurídica) e fica
      ignorada com o motivo na prévia (`COLUNAS_SEM_EQUIVALENTE`). Validado com a planilha real do cliente (1.664
      produtos, não versionada): 1.664 criar; reimportação 100% `sem_alteracao`.
 
@@ -5329,6 +5331,94 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        3,4567) sem versão nova, histórico nem `produtos.editar`, e a Entrada a 3,4567; o EAN com "bloquear"
        e "avisar"; o contrato; 403 sem a permissão e fora dos estoques; o perfil só com a tela e o acerto; 10 gravações
        junto de 10 vendas do push do PDV; o razão refeito idêntico) e `produtos.spec.ts` no shared (o contrato).
+
+186. **Exportação do catálogo de ida e volta e o mapeamento provisório do Nuvem3 num ponto só** (Fase 2, F2-B40; ERP
+     8.5, 8.6; decisões 88, 95, 103 e 104; F2-Q14 = roadmap §16, D66: **vale a recomendação (b)**, sem resposta explícita
+     do dono; `src/produtos/exportacao.ts`, as rotas `GET /produtos/exportacao` e `GET /pessoas/exportacao`,
+     `src/tarefas/exportar-relatorio.ts` (`limiteNaHora` e `garantirAcesso` do provedor), `src/importacao/produtos.ts`;
+     contratos `filtrosExportacaoProdutosSchema`, `filtrosExportacaoClientesSchema`, `LIMITE_EXPORTACAO_CATALOGO`
+     (5.000), `rotuloColunaImportacao`, `MAPEAMENTO_PROVISORIO_NUVEM3`, `lerComposicao`, `formatarBalancaPlanilha` no
+     shared `importacao.ts`; **sem migração**; PDV sem mudança; o ERP é a decisão 74 do README do ERP).
+     - **Layout = o da importação**: os cabeçalhos são os rótulos de `COLUNAS_IMPORTACAO_*` (`rotuloColunaImportacao`;
+       o teste do shared confere que cada rótulo volta para a mesma coluna) e cada valor sai como a análise da
+       importação o lê e compara com o cadastro (decisão 103): `id`, `codigo`, `codigo_interno`, o EAN **principal**
+       sem as variações (os outros códigos ficam; a importação só acrescenta o que falta), nome, tipo pelo rótulo,
+       unidade pela sigla, ativo, marca, as categorias pelo **caminho** (`BEBIDAS > CERVEJA,PROMOÇÕES`: a principal
+       primeiro, vírgula sem espaço, a regra do Nuvem3 de `lerListaCategorias`, que aceita "GELO, CARVÃO E LENHA" como
+       uma só; só as não excluídas), todos os preços como **número** (o `numeric(15,4)` cabe no `double` sem perda; o
+       CSV sai com a vírgula decimal), localização, peso, descrição curta, menu digital e a balança pelo texto do
+       mapeamento (`Não usa`/`Peso`/`Unidade`). As colunas NF (`informacoesNf`) são só os valores gravados, os códigos
+       como **texto** (o `00` do CST e o `04022130` do NCM não perdem o zero). Sem a coluna `composicao`: a posição do
+       combo existente não muda pela planilha (decisão 95), e o código do componente não identifica o produto sem
+       ambiguidade (interno × EAN × número).
+     - **Loja, CD e "Todas"**: `lojaId` (entre as lojas permitidas, senão 403) dá `preco_loja` e `estoque_minimo`
+       (`produtos_lojas` da loja) e `estoque_atual` do estoque dela — **só se esse estoque estiver entre os permitidos
+       para ver** (decisão 149: a loja permitida não basta); senão a planilha sai sem a coluna do estoque, e o filtro
+       de estoque zerado é 403. `estoqueId` (o CD, estoque sem loja; fora dos permitidos, 403) dá só o `estoque_atual`.
+       Nenhum dos dois ("Todas"): sem as colunas da loja (a importação exige a loja para elas). Os dois juntos: 422. O
+       `estoque_atual` é o saldo do **tipo padrão**, sem variação, no estoque — o mesmo que a importação compara e o
+       "Definir" muda —, 0 sem saldo gravado e **vazio** no produto sem saldo próprio (combo, serviço, produzido, com
+       variações, sem controle de estoque), que a importação ignora. Para reimportar o estoque, escolhe-se na
+       Importação a mesma loja (ou o mesmo estoque, o CD).
+     - **Filtros** (ERP 8.5): "Somente ativos" (padrão Sim; o excluído nunca sai), "Com NCM inválido" (a regra do
+       "Sem NCM" da listagem: vazio ou fora da tabela vigente, `ncmVigente`) e "Estoque zerado ou negativo" (o
+       `estoque_atual` ≤ 0, só produto com saldo próprio; exige a loja ou o estoque, 422).
+     - **Na hora ou em tarefa**: são provedores da exportação comum do F2-B29 (decisão 177): lidos por cursor num
+       instantâneo, na hora até **5.000 linhas** (ERP 8.5; `limiteNaHora` novo do provedor, vale o menor entre ele e o
+       da instância) e acima disso a tarefa `exportar_relatorio` com o link de 7 dias no ícone Tarefas. A auditoria
+       `exportar` vai com a localização "Produtos › Exportação".
+     - **Acesso do cadastro** (`garantirAcesso` novo do provedor, no pedido e na execução da tarefa, no lugar do
+       `relatorios.exportar` + permissão do relatório): produtos exigem `produtos.ver` e `produtos.exportar` (ou
+       `relatorios.exportar`, ERP 3.1); clientes, `pessoas.ver` e `pessoas.exportar` (ou `relatorios.exportar`). A rota
+       comum `GET /relatorios/catalogo-*/exportar` passa pelo mesmo `garantirAcesso` (não contorna o cadastro). O custo e
+       o markup são `custo: true` (saem sem `produtos.ver_custo`; a importação de quem não vê o custo também não o
+       compara, então a planilha dele volta igual).
+     - **Clientes** ("Exportar Clientes" no mesmo mecanismo): as pessoas da categoria Cliente, não excluídas e **não
+       anonimizadas** (LGPD), com o telefone e o e-mail principais, o endereço principal no Brasil com a cidade pelo
+       IBGE, o nascimento em `dd/mm/aaaa` (texto, sem o fuso), o limite e as categorias pelos rótulos. Reimportada,
+       cada linha acha o próprio cliente pelo Id, sem erro nem cadastro novo.
+     - **"Sem alteração" e "O que muda" também nos clientes** (a decisão 103 estendida, para a ida e volta não regravar a
+       base): `carregarReferenciasClientes` lê o estado de cada cliente achado com as mesmas escolhas da exportação (o
+       telefone e o e-mail principais, senão o primeiro; o endereço principal no Brasil) e `compararClienteComAtual`
+       tira de `dados` o que não muda (o RG/IE em maiúsculas, o limite como decimal, as categorias como conjunto, o
+       telefone pelos dígitos, o e-mail sem caixa, o endereço pelas colunas da planilha). Sem diferença, a linha é
+       `sem_alteracao` e a confirmação não grava nada (nem versão nova para os PDVs nem auditoria); com diferença, só o
+       que mudou é gravado e a prévia mostra cada "de → para" (a planilha exportada antes de uma alteração no ERP aparece
+       como mudança, não sobrescreve calada). Sem `pessoas.editar_credito` o limite não é comparado (já não era gravado).
+       **Correção na gravação** (`gravarCliente`): o telefone ou o e-mail da planilha que já existe no cadastro ficava
+       sem a marca de principal (o atual perdia a marca e o da planilha era descartado como repetido); agora o existente
+       só ganha a marca, com o id e os outros campos. O endereço principal recebia o da planilha sem id e perdia a
+       referência; agora as colunas da planilha sobrescrevem o principal, que mantém o id e a referência (o principal no
+       exterior, que a exportação não leva, passa a "Outro" em vez de ser apagado).
+     - **Mapeamento provisório do Nuvem3 num ponto só** (F2-Q14, D66, recomendação (b)): `MAPEAMENTO_PROVISORIO_NUVEM3`
+       no shared guarda os cabeçalhos e os textos da balança (`UsaBalancaEtiquetadoraStr`, decisão 104) e os do combo
+       (os aliases de `composicao`, os nomes do tipo que viram Combo, os separadores das posições; decisão 95). A
+       leitura (`lerBalancaPlanilha`, `lerComposicao`, agora só no shared), o reconhecimento das
+       colunas, o `TIPO_POR_NOME` da análise e a exportação (`formatarBalancaPlanilha`) leem dele: quando o dono mandar
+       as exportações reais, troca-se só esse objeto. O andamento da importação já aparece no ícone Tarefas (F2-B30).
+     - **Correção na importação**: o **serviço** novo da planilha caía em "controlaEstoque: Serviço não controla
+       estoque" (a regra do formulário) e era ignorado; agora o tipo decide (`controlaEstoque = false`), e o serviço já
+       gravado continua "Sem alteração".
+     - Testes: `exportacao-catalogo.test.ts` (a massa inventada — combo com posições, serviço, matéria-prima, inativo,
+       categorias em caminho e com vírgula, códigos fiscais com zero, preços de 4 casas, estoque negativo e
+       fracionado, EAN inválido, dois códigos de barras —: o `.xlsx` da loja com a NF, o `.csv` e o arquivo da tarefa
+       reimportados com 100% "Sem alteração", confirmados sem versão nova nem acerto; a célula editada vira um só
+       "Atualizar"; o CD só com o estoque; os três filtros; sem `produtos.ver_custo`; a loja e o estoque fora dos
+       permitidos; o estoque da loja fora dos permitidos; o acesso do cadastro, também pela rota comum; os clientes; e
+       a ida e volta dos clientes confirmada sem gravar nada (versão, filhas, referência e auditoria iguais), a
+       edição de uma célula (só ela gravada; o telefone que já existia passa a principal; o endereço mantém o id e a
+       referência); o limite de 5.000 do provedor abaixo do da instância (um provedor de teste igual ao de produtos com o
+       limite baixo vai para a tarefa com a instância em 100.000); e a **planilha real só local**: o arquivo fica em
+       `test/fixtures/planilhas/reais/` (no `.gitignore`, D60) e o teste é pulado sem ele — carga numa empresa nova,
+       exportação e reimportação com 100% "Sem alteração", com 9 min para cada espera de tarefa), o
+       `importacao.spec.ts` do shared (o mapeamento, a balança de ida e volta, a composição, os rótulos, os filtros e o
+       `LIMITE_EXPORTACAO_CATALOGO`), o `produtos.spec.ts` da API (o serviço) e o `clientes.spec.ts` (o "Sem alteração"
+       e o "O que muda" dos clientes).
+     - **Pendente: a ida e volta com a planilha real.** O critério de pronto do plano ("a exportação completa da Ice
+       Beer, reimportada, dá 100% 'Sem alteração'") **ainda não foi conferido**: nesta sessão não havia a planilha real,
+       e o teste dela foi pulado; só a massa inventada rodou. Fica para quem tiver o arquivo rodar
+       `exportacao-catalogo.test.ts` com ele em `test/fixtures/planilhas/reais/` (antes do merge do PR-9) e registrar o
+       resultado no andamento.
 
 ### Operação – tarefas em segundo plano (API)
 

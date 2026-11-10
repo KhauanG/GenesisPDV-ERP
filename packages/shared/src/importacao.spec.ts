@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  COLUNAS_IMPORTACAO_CLIENTES,
+  COLUNAS_IMPORTACAO_PRODUTOS,
   confirmarImportacaoSchema,
+  filtrosExportacaoClientesSchema,
+  filtrosExportacaoProdutosSchema,
+  formatarBalancaPlanilha,
   lerBalancaPlanilha,
   lerBooleanoPlanilha,
   lerCodigoPlanilha,
+  lerComposicao,
   lerExcluirPlanilha,
   lerListaCategorias,
   lerNcmPlanilha,
   lerNumeroPlanilha,
+  LIMITE_EXPORTACAO_CATALOGO,
+  MAPEAMENTO_PROVISORIO_NUVEM3,
   mapearColunas,
   mesmoDecimal,
   nomesParecidos,
   opcoesImportacaoSchema,
   resolverUnidadePlanilha,
   resumirLinhas,
+  rotuloColunaImportacao,
 } from './importacao.js';
 
 describe('importação por planilha (ERP 8.5, 8.6)', () => {
@@ -266,5 +275,86 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
     );
     expect(nomesParecidos('REFRI - GUARANA ANTARCTICA 2L', 'REFRIGERANTE - GUARANA ANTARTICA 2L')).toBe(true);
     expect(nomesParecidos('CERVEJA - LATA 350ML', 'CERVEJA - LONG NECK')).toBe(true);
+  });
+});
+
+describe('mapeamento provisório do Nuvem3 (F2-Q14 = D66) num ponto só', () => {
+  it('os cabeçalhos da balança e do combo vêm do mapeamento', () => {
+    const m = mapearColunas(['UsaBalancaEtiquetadoraStr', 'Grupo de itens'], 'produtos');
+    expect(m.indices).toEqual({ balanca: 0, composicao: 1 });
+    expect(COLUNAS_IMPORTACAO_PRODUTOS.find((c) => c.chave === 'balanca')!.aliases).toBe(
+      MAPEAMENTO_PROVISORIO_NUVEM3.balanca.aliases,
+    );
+  });
+
+  it('a balança exportada volta igual (ida e volta)', () => {
+    for (const tipo of ['nao_usa', 'peso', 'unidade'] as const)
+      expect(lerBalancaPlanilha(formatarBalancaPlanilha(tipo))).toBe(tipo);
+    expect(formatarBalancaPlanilha(null)).toBeNull();
+    expect(formatarBalancaPlanilha('desconhecido')).toBeNull();
+  });
+
+  it('a composição do combo: código*qtd [rótulo] pelos separadores do mapeamento', () => {
+    expect(lerComposicao('CERV-001*2 [Gelo de sabor] | 7891149103102 ; 502 x 1,5')).toEqual({
+      itens: [
+        { codigo: 'CERV-001', quantidade: '2', rotulo: 'Gelo de sabor' },
+        { codigo: '7891149103102', quantidade: '1', rotulo: null },
+        { codigo: '502', quantidade: '1.5', rotulo: null },
+      ],
+      erros: [],
+    });
+    expect(lerComposicao('X*0').erros).toEqual(['Composição: "X*0" inválida (use código*quantidade)']);
+  });
+});
+
+describe('exportação de ida e volta (F2-B40)', () => {
+  it('o rótulo de cada coluna exportada é reconhecido pela importação, na mesma coluna', () => {
+    for (const [tipo, colunas] of [
+      ['produtos', COLUNAS_IMPORTACAO_PRODUTOS],
+      ['clientes', COLUNAS_IMPORTACAO_CLIENTES],
+    ] as const) {
+      const rotulos = colunas.map((c) => rotuloColunaImportacao(tipo, c.chave));
+      const m = mapearColunas(rotulos, tipo);
+      expect(m.ignoradas).toEqual([]);
+      expect(m.repetidas).toEqual([]);
+      expect(Object.keys(m.indices)).toEqual(colunas.map((c) => c.chave));
+    }
+    expect(() => rotuloColunaImportacao('produtos', 'nao_existe')).toThrow();
+  });
+
+  it('acima de 5.000 linhas a exportação do catálogo vira tarefa (ERP 8.5)', () => {
+    expect(LIMITE_EXPORTACAO_CATALOGO).toBe(5_000);
+  });
+
+  it('filtros da exportação de produtos: strings da query, padrões e as regras cruzadas', () => {
+    const loja = '0190a000-0000-7000-8000-0000000000f1';
+    expect(filtrosExportacaoProdutosSchema.parse({})).toEqual({
+      informacoesNf: false,
+      ncmInvalido: false,
+      estoqueZerado: false,
+      somenteAtivos: true,
+    });
+    expect(
+      filtrosExportacaoProdutosSchema.parse({
+        lojaId: loja,
+        estoqueId: '',
+        informacoesNf: 'true',
+        estoqueZerado: '1',
+        somenteAtivos: 'false',
+      }),
+    ).toEqual({
+      lojaId: loja,
+      informacoesNf: true,
+      ncmInvalido: false,
+      estoqueZerado: true,
+      somenteAtivos: false,
+    });
+    const sem = filtrosExportacaoProdutosSchema.safeParse({ estoqueZerado: 'true' });
+    expect(sem.success).toBe(false);
+    expect(sem.error!.issues[0]!.path).toEqual(['estoqueZerado']);
+    const ambos = filtrosExportacaoProdutosSchema.safeParse({ lojaId: loja, estoqueId: loja });
+    expect(ambos.error!.issues[0]!.path).toEqual(['estoqueId']);
+    expect(filtrosExportacaoProdutosSchema.safeParse({ somenteAtivos: 'talvez' }).success).toBe(false);
+    expect(filtrosExportacaoClientesSchema.parse({})).toEqual({ somenteAtivos: true });
   });
 });

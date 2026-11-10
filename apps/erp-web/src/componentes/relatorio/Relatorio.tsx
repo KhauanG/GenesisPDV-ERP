@@ -711,7 +711,7 @@ function BotaoPagina({
  * A exportação que virou tarefa (F2-B29): o aviso com as linhas, o andamento (`GET /tarefas/:id` até terminar) e, no
  * fim, o link do arquivo — o mesmo que fica no ícone Tarefas do cabeçalho.
  */
-function ExportacaoEmAndamento({
+export function ExportacaoEmAndamento({
   exportacao,
   aoFechar,
 }: {

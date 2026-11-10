@@ -16,6 +16,7 @@ import { EnviadorEmail } from './infra/email.js';
 import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
 import { AtivacaoTerminais } from './sync/ativacao.js';
 import { CRON_TAREFAS_INTERROMPIDAS, VarreduraTarefasInterrompidas } from './tarefas/interrompidas.js';
+import { provedorCatalogoClientes, provedorCatalogoProdutos } from './produtos/exportacao.js';
 import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
 import { provedorEanDuplicado } from './relatorios/ean-duplicado.js';
 import { provedorEstoqueAtual } from './relatorios/estoque-atual.js';
@@ -179,6 +180,9 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
   exportacoes.registrar(provedorEstoqueAtual());
   exportacoes.registrar(provedorMovimentacao());
   exportacoes.registrar(provedorEanDuplicado());
+  // A exportação do catálogo de ida e volta (F2-B40, decisão 186): produtos e clientes, com o acesso do cadastro.
+  exportacoes.registrar(provedorCatalogoProdutos());
+  exportacoes.registrar(provedorCatalogoClientes());
   const terminalAuth = new AutenticacaoTerminal(controle, resolvedor);
   const ativacao = new AtivacaoTerminais(controle, resolvedor, tenancy, auditoria, cifra);
   const manutencaoTerminais = new ManutencaoTerminais(controle, resolvedor, tenancy, auditoria, ativacao);

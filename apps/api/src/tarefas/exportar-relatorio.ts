@@ -95,6 +95,17 @@ export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<strin
   semJit?: boolean;
   /** Total de linhas (decide entre baixar na hora e a tarefa, e dá o progresso); padrão: `count(*)` da consulta. */
   contar?(db: DbEmpresa, sessao: SessaoErp, filtros: F): Promise<number>;
+  /**
+   * Opcional (F2-B40, decisão 186): até quantas linhas baixa na hora, quando o provedor tem um teto menor que o comum
+   * (a exportação do catálogo vira tarefa acima de 5.000, ERP 8.5). Vale o menor entre ele e o da instância.
+   */
+  limiteNaHora?: number;
+  /**
+   * Opcional (F2-B40, decisão 186): a conferência do acesso no lugar da comum (`relatorios.exportar` + `permissao`),
+   * no pedido e de novo na execução. A exportação do catálogo é do cadastro, não um relatório: `produtos.exportar` (ou
+   * `relatorios.exportar`, ERP 3.1) e `produtos.ver`; a de clientes, o mesmo com `pessoas`.
+   */
+  garantirAcesso?(sessao: SessaoErp): void;
 }
 
 /** O que a requisição guarda para a auditoria da tarefa (o executor não tem a requisição). */
@@ -252,6 +263,7 @@ export class ExportacaoRelatorios {
   }
 
   private garantirAcesso(sessao: SessaoErp, provedor: ProvedorRelatorio<unknown, unknown>): void {
+    if (provedor.garantirAcesso) return provedor.garantirAcesso(sessao);
     const faltam = ['relatorios.exportar', provedor.permissao].filter((p) => !sessao.permissoes.has(p));
     if (faltam.length) {
       throw new ErroApi('SEM_PERMISSAO', 'Você não tem permissão para exportar este relatório.', {
@@ -298,7 +310,11 @@ export class ExportacaoRelatorios {
         { detalhes: { linhas: total, limite: limiteTarefa } },
       );
     }
-    if (total <= (this.opcoes.limiteNaHora ?? LIMITE_EXPORTACAO)) {
+    const limiteNaHora = Math.min(
+      this.opcoes.limiteNaHora ?? LIMITE_EXPORTACAO,
+      provedor.limiteNaHora ?? Number.POSITIVE_INFINITY,
+    );
+    if (total <= limiteNaHora) {
       return {
         tipo: 'arquivo',
         arquivo: await this.naHora(sessao, origem, provedor, formato, entrada, filtros),

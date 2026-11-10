@@ -1,7 +1,7 @@
 import { Center, Loader } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router';
-import { usePode } from './permissoes';
+import { usePode, type Pode } from './permissoes';
 import { useSessao } from './sessao';
 import { SemPermissao } from '../paginas/Erros';
 
@@ -29,8 +29,19 @@ export function RotaProtegida() {
   return <Outlet />;
 }
 
-/** Página que exige uma permissão de acesso (o menu já a esconde; isto cobre o link digitado). */
-export function ExigePermissao({ permissao, children }: { permissao: string; children: ReactNode }) {
+/**
+ * Página que exige uma permissão de acesso (o menu já a esconde; isto cobre o link digitado). Com `acesso`, vale a
+ * regra dele (o mesmo `acesso` do item do menu) e `permissao` é só a citada na tela "Sem permissão".
+ */
+export function ExigePermissao({
+  permissao,
+  acesso,
+  children,
+}: {
+  permissao: string;
+  acesso?: (pode: Pode) => boolean;
+  children: ReactNode;
+}) {
   const pode = usePode();
-  return pode(permissao) ? <>{children}</> : <SemPermissao permissao={permissao} />;
+  return (acesso ? acesso(pode) : pode(permissao)) ? <>{children}</> : <SemPermissao permissao={permissao} />;
 }

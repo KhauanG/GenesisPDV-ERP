@@ -1268,10 +1268,35 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       marca gravada sem `marcas.ver`, a colagem de 2 linhas na grade nova que pesquisa, a colagem sem o acerto que não
       preenche o estoque escondido e o "Linha N" da grade com a linha vazia no meio).
 
+74. **Exportação de produtos e clientes de ida e volta** (Fase 2, F2-B40; ERP 8.5; README da API › decisão 186;
+    `src/paginas/produtos/Exportacao.tsx`, `ExportacaoEmAndamento` exportado de `src/componentes/relatorio/Relatorio.tsx`,
+    `menu.ts`, `rotas.tsx`, `auth/RotaProtegida.tsx`).
+    - **Tela `/produtos/exportacao`** (o item do menu ficou pronto). **Acesso**: o item do menu e a rota abrem para
+      quem exporta produtos **ou** clientes (`podeAbrirExportacao`), com a regra da tela e da API
+      (`podeExportarCadastro`: o `<recurso>.ver` com o `<recurso>.exportar` ou o `relatorios.exportar`, ERP 3.1) — o
+      perfil Financeiro (`pessoas.ver` e `relatorios.exportar`, sem produtos) chega aos clientes pelo menu. Para isso o
+      `ItemMenu` ganhou o `acesso` opcional (uma regra no lugar da permissão única; `menuVisivel` e `ExigePermissao`
+      o usam, e `permissao` fica a citada no "Sem permissão", aqui `produtos.exportar`):
+      **Loja** com "Todas as lojas" (sem as colunas da loja), as lojas permitidas e os estoques sem loja (o CD, "só o
+      estoque", com `estoques.ver`); **Formato** Excel ou CSV; "Exportar informações da NF", "Com NCM inválido",
+      "Estoque zerado ou negativo" (desligado no "Todas") e "Somente ativos" (padrão Sim). O seletor ainda não mostra o
+      CNPJ de cada loja (a sessão não o traz; fica para quando o `<SeletorLoja>` o tiver).
+    - **Exportar Produtos** (com `produtos.ver` e `produtos.exportar` ou `relatorios.exportar`) e **Exportar Clientes**
+      (com `pessoas.ver` e `pessoas.exportar` ou `relatorios.exportar`; só o "Somente ativos" vale): até 5.000 linhas o
+      arquivo baixa na hora; acima, o `202` vira o aviso com o andamento e o link (o mesmo componente dos relatórios) e
+      a tarefa aparece no ícone Tarefas. A API confere de novo o acesso, a loja e o estoque permitidos, e tira o custo
+      de quem não o vê.
+    - O texto da tela lembra a ida e volta: nos produtos e nos clientes, o que não mudou fica "Sem alteração" e não é
+      gravado, e a prévia mostra o que muda (a decisão 186 da API estendeu o "Sem alteração" aos clientes); reimportar
+      o estoque pela Importação com a mesma loja (ou o mesmo estoque).
+    - Testes: `Exportacao.test.tsx` (os filtros na query com a loja, o CD como `estoqueId`, a tarefa acima do limite e o
+      Exportar Clientes só com a permissão de pessoas), o `menu.test.ts` (o item com cada combinação de permissões) e o
+      `Login.test.tsx` (Promoções como a tela "Em construção"; a Exportação sem permissão de exportar dá "Sem
+      permissão", e abre só com `pessoas.ver` e `relatorios.exportar`).
+
 ## O que ainda não foi feito (Fase 0)
 
-Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação
-em segundo plano acima de 5.000 linhas; "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
+Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
 `<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
 validade/lotes, foto e tributação por UF (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e

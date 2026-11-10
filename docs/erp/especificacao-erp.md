@@ -1368,17 +1368,22 @@ confirmação e remove apenas os vínculos (os produtos ficam).
 
 ### 8.5 Exportação
 
-**Rota**: `/produtos/exportacao` · **Permissão**: `produtos.exportar` (clientes: `pessoas.exportar`).
+**Rota**: `/produtos/exportacao` · **Permissão**: `produtos.exportar` (clientes: `pessoas.exportar`); `relatorios.exportar`
+também vale (3.1), sempre com o ver do cadastro (`produtos.ver`, `pessoas.ver`). O item do menu e a tela abrem para quem
+pode exportar produtos **ou** clientes (cada botão confere o seu). API: `GET /produtos/exportacao` e
+`GET /pessoas/exportacao` (Fase 2, F2-B40; README da API › decisão 186; README do ERP › decisão 74).
 
 | Campo | Tipo | Regra |
 |---|---|---|
-| Loja | seleção: Todas, CD, Lojas 1–3 (exibe CNPJ de cada uma) | define preço da loja, estoque e estoque mínimo exportados |
-| Exportar informações da NF | booleano | inclui colunas fiscais (NCM, CEST, CFOP, CST/CSOSN, origem, alíquotas) |
-| Com NCM inválido | booleano | só produtos com NCM vazio/inválido |
-| Estoque zerado ou negativo | booleano | só produtos com saldo ≤ 0 no estoque da loja |
-| Somente ativos **(Novo)** | booleano | padrão Sim |
+| Loja | seleção: Todas, as lojas permitidas e os estoques sem loja (o CD) | a loja define o preço da loja, o estoque mínimo e o estoque atual (o do estoque dela, se estiver entre os estoques permitidos do usuário; senão a planilha sai sem o estoque); o CD, só o estoque atual; "Todas", nenhum dos três. O CNPJ de cada loja ainda não aparece no seletor |
+| Formato **(Novo)** | Excel (`.xlsx`) ou CSV | |
+| Exportar informações da NF | booleano | inclui colunas fiscais (NCM, CEST, CFOP, CST/CSOSN, origem, alíquotas): só os valores gravados |
+| Com NCM inválido | booleano | só produtos com NCM vazio ou fora da tabela vigente (a regra do "Sem NCM" da listagem) |
+| Estoque zerado ou negativo | booleano | só produtos com saldo próprio e saldo ≤ 0 no estoque escolhido; exige a loja ou o CD |
+| Somente ativos **(Novo)** | booleano | padrão Sim (vale também para clientes); o excluído nunca sai |
 
-Botões: **Exportar Produtos**, **Exportar Clientes** (gera `.xlsx`). Gera tarefa (3.6) acima de 5.000 linhas.
+Botões: **Exportar Produtos**, **Exportar Clientes**. Gera tarefa (3.6) acima de 5.000 linhas (o link no ícone Tarefas).
+O custo e o markup só saem com `produtos.ver_custo`; a loja e o estoque fora dos permitidos são recusados.
 
 Layout da planilha de produtos (mesmo layout aceito pela importação — "ida e volta"):
 
@@ -1392,12 +1397,23 @@ Layout da planilha de produtos (mesmo layout aceito pela importação — "ida e
 | `preco_loja`, `estoque_minimo`, `estoque_atual` | da loja escolhida |
 | `ncm`, `cest`, `cfop_venda_estado`, `icms_situacao`, `icms_origem`, `icms_aliquota`, `pis_situacao`, `cofins_situacao`, `ipi_situacao` | se "Exportar informações da NF" |
 | `localizacao`, `peso_g`, `descricao_curta` | outros |
+| `usa_menu_digital`, `balanca` (`Não usa`/`Peso`/`Unidade`) **(Novo)** | menu digital e balança |
 
-Planilha de clientes: `id`, `codigo`, `tipo`, `nome`, `apelido`, `cpf_cnpj`, `rg_ie`, `nascimento`, `telefone`,
-`email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `limite_compras`, `categorias`.
+O cabeçalho de cada coluna é o rótulo que a importação reconhece ("Id (UUID)", "Código", "Código interno", "EAN"…). O
+`ean` é o código de barras principal (os demais ficam no cadastro); `categoria` é a lista dos caminhos, a principal
+primeiro, separados por vírgula sem espaço; os preços e as quantidades saem como número; os códigos fiscais, como texto
+(o zero à esquerda fica); `estoque_atual` é o saldo do tipo de estoque padrão (0 sem saldo; vazio no combo, serviço,
+produzido, com variações e sem controle de estoque). A composição do combo não é exportada (as posições são do ERP).
 
-"Ida e volta": a planilha exportada, reimportada sem mudanças, dá **Sem alteração** em todas as linhas (nada é
-gravado); editada, só as células mudadas viram **Atualizar** (8.6).
+Planilha de clientes (as pessoas da categoria Cliente, sem as anonimizadas): `id`, `codigo`, `tipo`, `nome`, `apelido`,
+`cpf_cnpj`, `rg_ie`, `nascimento`, `telefone`, `email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`,
+`uf`, `limite_compras`, `categorias` (o telefone e o e-mail principais, o endereço principal).
+
+"Ida e volta": a planilha exportada, reimportada sem mudanças (na Importação, a mesma loja ou o mesmo estoque), dá
+**Sem alteração** em todas as linhas (nada é gravado); editada, só as células mudadas viram **Atualizar** (8.6). Os
+clientes reimportados acham o próprio cadastro pelo Id e também ficam **Sem alteração** quando nada mudou; o que mudou
+aparece "de → para" na prévia e só isso é gravado (o telefone ou o e-mail que já existe no cadastro passa a principal; o
+endereço principal mantém o ponto de referência e os campos que a planilha não leva).
 
 ### 8.6 Importação
 
@@ -1440,7 +1456,7 @@ Id, código interno ou EAN.
 |---|---|---|
 | Criar | produto não encontrado e linha válida | o produto (com o código da linha, se houver) |
 | Atualizar | produto existente com alguma diferença | **só** os campos que mudaram (coluna "O que muda": `Preço de venda: 4,49 → 4,99`) |
-| Sem alteração **(Novo)** | produto existente igual à planilha (decimais comparados como decimal: 2,5 = 2,50) | nada: sem auditoria e sem versão nova para o sync |
+| Sem alteração **(Novo)** | produto (ou cliente, desde o F2-B40) existente igual à planilha (decimais comparados como decimal: 2,5 = 2,50) | nada: sem auditoria e sem versão nova para o sync |
 | Inativar **(Novo)** | coluna `Excluir` afirmativa em produto existente ativo | `ativo = Não` (o histórico fica; as outras colunas da linha não valem) |
 | Ignorar | erro na linha, ou `Excluir` em produto que não existe (aviso) | nada |
 
@@ -1472,7 +1488,7 @@ tarefa diz quais ficaram) (Fase 2, F2-B11). Célula vazia não muda o cadastro (
 | `Categoria` | categorias | lista com cada categoria seguida de vírgula (`CERVEJA,`, `MERCEARIA,PIPOCA,`); separa pela vírgula **não** seguida de espaço (`NICSALTS, JUICE E PODS,` é uma só), a 1ª é a principal, cada uma pode ser um caminho `PAI > FILHA`; comparação sem acento/caixa (`AGUA` = `ÁGUA`); nome único de subcategoria também é achado (e continua sendo ela mesmo quando outra categoria da célula é criada); inexistente é criada com "Criar marcas e categorias inexistentes" (e a permissão); no máximo 50 por célula (mais é erro da linha, antes de criar qualquer uma) |
 | `Unidade` | `unidade_id` | sigla ou descrição de Unidades, sem acento/caixa, e os nomes por extenso do Nuvem3: Unidade→UN, Conjunto→CJ, Pacote→PCT, Caixa→CX, Fardo→FD, Litro→L, Quilograma/Quilo→KG, Grama→G, Mililitro→ML, Metro→M, Dúzia→DZ, Peça→PC; vazio = UN no produto novo |
 | `UsaNoMenuDigital` | `usa_menu_digital` | Sim/Não |
-| `UsaBalancaEtiquetadoraStr` | `balanca_tipo` | **provisório** (a coluna veio vazia na exportação real; a confirmar com uma exportação do Nuvem3 com ela preenchida — pendência registrada na decisão 104): Peso/Sim → `peso`; Unidade → `unidade`; Não → `nao_usa`; outro texto = aviso |
+| `UsaBalancaEtiquetadoraStr` | `balanca_tipo` | **provisório** (a coluna veio vazia na exportação real; a confirmar com uma exportação do Nuvem3 com ela preenchida — pendência registrada na decisão 104; F2-Q14 = D66: até lá vale este mapeamento, isolado num ponto só, `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186): Peso/Sim → `peso`; Unidade → `unidade`; Não → `nao_usa`; outro texto = aviso |
 | `Excluir` | ação Inativar | afirmativo (S, Sim, X, 1, true) inativa o produto existente; vazio/Não = nada; outro texto = aviso |
 
 Valores numéricos do Excel (IdProduto, EAN, NCM) são lidos como texto inteiro, sem `.0` nem notação científica.

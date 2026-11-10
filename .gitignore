@@ -36,6 +36,9 @@ publish/
 # XMLs reais de fornecedores (D60: o repositório é público): ficam só na máquina de quem testa; o parser.spec.ts os
 # lê se a pasta existir (apps/api/test/fixtures/nfe/fixtures.ts). As fixtures versionadas são todas inventadas.
 apps/api/test/fixtures/nfe/reais/
+# A planilha real de produtos do cliente (D60), para a ida e volta da exportação do catálogo (F2-B40): só local; o
+# exportacao-catalogo.test.ts a usa se a pasta existir e pula o teste sem ela. A massa versionada é inventada.
+apps/api/test/fixtures/planilhas/reais/
 
 # Certificados digitais e chaves
 *.pfx

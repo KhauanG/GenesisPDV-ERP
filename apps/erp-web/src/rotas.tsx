@@ -3,7 +3,7 @@ import { Outlet, type RouteObject } from 'react-router';
 import { ExigePermissao, RotaProtegida } from './auth/RotaProtegida';
 import { ProvedorSessao } from './auth/sessao';
 import { Layout } from './layout/Layout';
-import { ITENS_MENU } from './menu';
+import { ITENS_MENU, podeAbrirExportacao } from './menu';
 import { Dashboard } from './paginas/Dashboard';
 import { EmConstrucao } from './paginas/EmConstrucao';
 import { NaoEncontrado, SemPermissao } from './paginas/Erros';
@@ -34,6 +34,7 @@ import { FormularioMarca, ListaMarcas } from './paginas/marcas/Marcas';
 import { FormularioPerfil, ListaPerfis } from './paginas/perfis/Perfis';
 import { FormularioPessoa, ListaPessoas } from './paginas/pessoas/Pessoas';
 import { CadastroEmMassa, ROTA_CADASTRO_MASSA } from './paginas/produtos/CadastroEmMassa';
+import { Exportacao, ROTA_EXPORTACAO } from './paginas/produtos/Exportacao';
 import { FormularioProduto } from './paginas/produtos/FormularioProduto';
 import { FormularioGrupoPreco, ListaGruposPreco } from './paginas/produtos/GruposPreco';
 import { ListaProdutos } from './paginas/produtos/ListaProdutos';
@@ -113,7 +114,7 @@ function consulta(
 /** Telas do menu ainda não entregues: a rota existe (e respeita a permissão) e mostra "Em construção". */
 const emConstrucao: RouteObject[] = ITENS_MENU.filter((i) => !i.pronto).flatMap((i) => {
   const element = (
-    <ExigePermissao permissao={i.permissao}>
+    <ExigePermissao permissao={i.permissao} acesso={i.acesso}>
       <EmConstrucao item={i} />
     </ExigePermissao>
   );
@@ -211,6 +212,16 @@ export const rotas: RouteObject[] = [
                 element: (
                   <ExigePermissao permissao="produtos.cadastro_massa">
                     <CadastroEmMassa />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                // Abre para quem exporta produtos ou clientes (o `acesso` do item do menu); os botões conferem cada
+                // um, e a API também.
+                path: ROTA_EXPORTACAO,
+                element: (
+                  <ExigePermissao permissao="produtos.exportar" acesso={podeAbrirExportacao}>
+                    <Exportacao />
                   </ExigePermissao>
                 ),
               },

@@ -399,7 +399,7 @@ describe('importação de produtos (ERP 8.6)', () => {
 });
 
 describe('importação de clientes (ERP 8.6)', () => {
-  it('cria pelo CPF, avisa documento inválido e cidade não encontrada; reimportar atualiza', async () => {
+  it('cria pelo CPF, avisa documento inválido e cidade não encontrada; reimportar igual fica "Sem alteração"', async () => {
     const csv = [
       'Cliente;CPF/CNPJ;Fone;E-mail;CEP;Endereço;Número;Bairro;Cidade;UF;Data Nascimento',
       'MARIA DA SILVA;529.982.247-25;(43) 99999-0000;maria@exemplo.com;86010-000;Rua Exemplo;100;Centro;Londrina;PR;15/03/1990',
@@ -452,8 +452,9 @@ describe('importação de clientes (ERP 8.6)', () => {
         cidade: 'Londrina',
       },
     ]);
+    // Os achados pelo CPF/CNPJ, iguais ao cadastro, não são gravados (decisão 103); o sem documento volta como novo.
     const p2 = await previa();
-    expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 2 });
+    expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 0, sem_alteracao: 2 });
   });
 });
 

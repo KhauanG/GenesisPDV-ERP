@@ -173,6 +173,13 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   cadastrado vira "Atualização"). Implementado no F2-B39 (README da API › decisão 185, do ERP › 73; roadmap §16, D54).
   Se o dono preferir (b) — contratar um serviço como o Cosmos —, ele indica o serviço e quem contrata, e o F2-B47 sai
   do backlog para sugerir nome, NCM, marca e foto na mesma pesquisa.
+- **F2-Q14 (D66) — vale a recomendação (sem resposta explícita do dono).** Pela regra acima ("Demais (F2-Q2, Q4, Q6,
+  Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano"), a opção (b): até o dono mandar exportações reais
+  do Nuvem3 com a coluna `UsaBalancaEtiquetadoraStr` preenchida e com o "grupo de itens" (combo), a importação mantém o
+  mapeamento provisório da balança (Peso/Sim = pesado, Unidade = por unidade, Não = não usa; README da API › decisão
+  104) e o combo pela coluna `composicao` (decisão 95), isolados num ponto só (`MAPEAMENTO_PROVISORIO_NUVEM3`).
+  Implementado no F2-B40 (README da API › decisão 186; roadmap §16, D66). Se o dono mandar os arquivos — opção (a) —,
+  fecha-se o mapeamento definitivo trocando só esse ponto.
 - **D65 — EM ABERTO (padrão até a confirmação do dono): 100 linhas por gravação do cadastro em massa.** A ERP 8.3
   dizia 500; a revisão do F2-B39 mediu que cada linha da grade faz de 9 a ~50 idas ao banco com a trava de ordenação
   presa, e 500 linhas prendiam os caixas e o ERP por 40 a 75 s na produção. Opções: (a) 100 linhas, tudo ou nada
