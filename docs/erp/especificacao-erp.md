@@ -387,9 +387,12 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 | Rota | `/relatorios/<nome>` |
 | Filtros | Bloco no topo + botão **Filtrar**; filtros na URL |
 | Resultado | Cards de resumo (quando houver), tabela, gráfico (quando houver) |
-| Exportar | **Excel (.xlsx)**, **PDF** (layout de impressão com cabeçalho da empresa, filtros usados, data/hora e usuário) e **Imprimir** |
+| Exportar | **Excel (.xlsx)**, **CSV** (F2-B30: os dois gerados pela API com os mesmos filtros, sem a página — `exportarPelaApi`), **PDF** (layout de impressão com cabeçalho da empresa, filtros usados, data/hora e usuário) e **Imprimir** |
 | Lojas | Sempre limitado às lojas permitidas do usuário |
-| Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6) |
+| Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6). Na Fase 2 (F2-B29) a regra é só pelo número de linhas, contado no pedido (o tempo não se sabe antes de rodar): até 50.000 o arquivo baixa na hora; acima, a exportação vira a tarefa `exportar_relatorio` (`GET /api/relatorios/<nome>/exportar?formato=xlsx\|csv` responde `202` com a tarefa), que gera o `.xlsx` (ou o `.csv`) em streaming e deixa o link no ícone Tarefas; acima de 5.000.000 de linhas pede para refinar os filtros. O `.xlsx` passa para uma aba nova a cada 1.048.575 linhas (o limite do Excel). Exportar exige `relatorios.exportar` e a permissão do relatório; sem `produtos.ver_custo` as colunas de custo não saem |
+| Paginação | Fase 2, F2-B30 (README do ERP › decisão 65): o relatório de volume pagina **no servidor**: por página (`pagina` e `tamanho`, com o total contado pela API) ou por cursor ("próxima página", para o relatório que lê o razão em ordem). Página, tamanho (20, 25, 35 ou 50) e cursor ficam na URL com os filtros; o Filtrar (e a troca da loja de contexto, quando o filtro de loja vem dela) volta à primeira página; o Voltar/Avançar do navegador traz a página certa. Os totais da tabela são do relatório inteiro. PDF e Imprimir saem da página aberta |
+| Seleção | Opcional: marcação de linhas da página aberta (com "todas da página") e as ações em lote do relatório numa barra; trocar de página ou de filtros limpa a seleção |
+| Exportação em tarefa | Quando a exportação vira tarefa (`202`), a tela mostra o aviso com as linhas e o andamento e, no fim, o link do arquivo; a mesma tarefa fica no ícone Tarefas (3.6) |
 | Leitura | Consultas de relatório podem usar réplica de leitura do PostgreSQL quando existir |
 
 ### 3.6 Tarefas em segundo plano
@@ -397,7 +400,19 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 Importações, exportações grandes, relatórios pesados, download de XML e consulta à SEFAZ viram uma **tarefa**
 (`tarefas`, modelo 3.1.8: `tipo`, `status` `na_fila`/`executando`/`concluida`/`falhou`/`cancelada`, `progresso_pct`,
 `arquivo_id` do resultado, `erro`, `usuario_id`, `iniciada_em`, `concluida_em`). O cabeçalho do ERP tem o ícone **Tarefas** com contador; o usuário recebe
-notificação ao concluir e baixa o arquivo (link expira em 7 dias).
+notificação ao concluir e baixa o arquivo (link expira em 7 dias e nunca vale além da retenção do arquivo; passada a
+retenção, a tarefa mostra o arquivo como expirado).
+
+**Fase 2, F2-B30** (README do ERP › decisão 65): o ícone fica no cabeçalho, com o contador das tarefas na fila ou
+executando e o painel com as 50 mais recentes do usuário (`GET /api/tarefas`): tipo, data, situação, progresso e
+mensagem, o motivo da falha e o link do arquivo (ou "expirado"). Quando uma tarefa acompanhada termina, uma notificação
+avisa. A consulta é econômica: uma vez ao abrir o ERP e, depois, a cada 5 s só enquanto houver tarefa em andamento ou
+com o painel aberto (nada com a aba do navegador em segundo plano). Uma falha passageira da consulta (sem conexão, a API
+reiniciando) não congela o andamento: a tela e o painel avisam, com "Tentar novamente", e a consulta continua a cada
+15 s até a tarefa terminar. O ícone só aparece para o Master e para quem tem
+alguma permissão que cria tarefa (exportar relatório, importar produtos/clientes/NF-e, gerenciar terminais, autorizar a
+faixa do PDV). A tela que pediu a tarefa (Importação, upload de NF-e, exportação do relatório) acompanha a dela até
+terminar, com o mesmo componente de andamento.
 
 ### 3.7 Impressão
 
@@ -1081,6 +1096,10 @@ trânsito** (enviado para o estoque pelas transferências em trânsito e ainda n
 saldo lançado, com saldo zero) e, quando houver, a **Divergência a tratar** (a diferença recebida a menor, ainda sem
 tratamento, das transferências que **saíram** do estoque: o retorno ou a perda são lançados na origem). As duas ficam
 fora do saldo; só dos estoques permitidos e no tipo de estoque de cada transferência.
+
+"Ver movimentação" (Fase 2, F2-B33; README do ERP › decisão 68): um link em **cada linha** estoque × tipo (a
+Movimentação exige um local), com `relatorios.movimentacao_estoque`, para a analítica já gerada com
+`estoqueId`, `produtoId` e os últimos 30 dias até hoje na URL (`/relatorios/movimentacao-estoque?estoqueId=…&produtoId=…&dataInicial=…&dataFinal=…`).
 
 Regras do Ajustar (Fase 2, F2-B12; `POST /produtos/:id/ajustar-estoque`; README da API › decisão 157): é um
 **"Definir" de um item**, criado e efetivado na hora (13.1.5): o modal mostra o saldo atual do estoque × tipo e pede
@@ -3053,8 +3072,8 @@ que tem de estar entre as lojas permitidas de quem importa; o **Estoque de desti
 loja de cada nota) e fica entre os permitidos. O resultado é por arquivo: importada, já importada (com o link para a
 nota existente, só para quem vê a loja e o estoque dela) ou recusada com o motivo; uma nota que não grava (o sistema
 ocupado com os caixas, por exemplo) recusa só aquele arquivo. Acima de 20 XMLs o envio vira uma tarefa, acompanhada
-na própria tela do upload (progresso e, no fim, o mesmo resultado por arquivo, ou a mensagem da falha) até o ícone
-Tarefas do cabeçalho chegar (F2-B30). Os limites contra zip-bomba (1.000 entradas e 100 MiB descompactados) valem
+na própria tela do upload (progresso e, no fim, o mesmo resultado por arquivo, ou a mensagem da falha) e também no
+ícone Tarefas do cabeçalho (F2-B30). Os limites contra zip-bomba (1.000 entradas e 100 MiB descompactados) valem
 por `.zip` e somados para o envio inteiro. O emitente vira o
 fornecedor pelo CNPJ/CPF normalizado: a pessoa que já existe não é alterada (só ganha a categoria Fornecedor), e a
 nova nasce com o nome, a fantasia, a IE, o telefone e o endereço do XML. O aviso fixo "Sem consulta à SEFAZ: confira se
@@ -4179,6 +4198,34 @@ com auditoria por produto.
 | Exportação | Excel (como no Nuvem3) e PDF |
 | Data-base **(Novo)** | opcional "Saldo em <data>": recalcula pelo razão (soma dos movimentos com `data_movimento` ≤ data); sem ajuste nesse modo |
 
+Fase 2, F2-B31 (README da API › decisão 178; README do ERP › decisão 66): `GET /relatorios/estoque-atual`
+(paginado no servidor, com o total e os totais do relatório inteiro) e a exportação pela rota comum `GET
+/relatorios/estoque-atual/exportar` (F2-B29: até 50 mil linhas baixa na hora, acima vira tarefa). Uma linha por
+estoque × tipo de estoque × produto. **Loja**: começa no estoque da loja de contexto; **"Todas"** é uma linha por
+produto × tipo com a soma dos estoques **permitidos** (custo médio = média ponderada pelos saldos positivos; custo e
+venda totais = a soma das linhas, cada uma ao preço da loja do seu estoque; a Venda mostrada é o preço do produto),
+sem a loja de treino por padrão (D39; filtro "Loja de treino" quando a empresa tem uma; o estoque de treino
+escolhido aparece). **Departamento** traz as categorias filhas. **Vencendo em N dias** (Novo): só os produtos com lote
+de validade até hoje + N (inclusive os já vencidos) com saldo no estoque × tipo, com a quantidade desses lotes e a
+validade mais próxima; não combina com a data-base. **Zerado e Abaixo do mínimo** trazem também o produto que
+controla estoque e **nunca teve movimento** no estoque (no tipo escolhido, ou em nenhum tipo), com saldo 0 no tipo do
+filtro ou no padrão, como o "incluir sem movimento" dos Saldos de estoque (8.2.11): a cerveja recém-cadastrada com
+mínimo e ainda não recebida é a mais abaixo do mínimo, e o clique no saldo lança a contagem inicial; no "Todas", só o
+produto sem linha em nenhum dos estoques. **Data-base**: o saldo no fim do dia (fuso da empresa), pela
+projeção menos o razão depois da data quando a data está na metade recente da história dos estoques e pela soma até
+a data na antiga (o mesmo resultado; decisão 176); o custo médio é o do último movimento da linha até a data pela
+ordem de lançamento, antes do primeiro movimento com data depois dela (a venda offline sincronizada tarde, o
+cancelamento e o "Definir" retroativo não trazem para a data o custo das compras posteriores); "Em
+trânsito" e "Divergência a tratar" ficam vazios (só existem os de hoje); data futura é recusada. As colunas de custo
+(e a ordenação por custo) exigem `produtos.ver_custo`, também no arquivo. **Modal de ajuste**: o mesmo do "Ajustar"
+do produto (8.2.11) com o estoque da linha fixo — tipo de estoque (o da linha), nova quantidade, motivo e hora da
+contagem (padrão: agora) —, que cria e efetiva um "Definir" de um item com a origem `relatorio_estoque`
+(`AJUSTE_RELATORIO`), com a diferença na hora da contagem e a compensação das vendas tardias (13.1.5) e o estoque
+permitido para movimentar; `POST /relatorios/estoque-atual/ajustar` exige `relatorios.estoque_atual` e
+`estoque_acertos.criar`. O modal não abre no "Todas" (a soma não é de um estoque), na data-base nem no tipo de
+estoque inativo (não recebe acerto; a dica pede para reativá-lo). O "mover entre
+tipos" continua pelo acerto "Mudar tipo" (13.5): o modal só define o saldo de um tipo.
+
 ### 16.5 Movimentação de Estoque [P2]
 
 **Rota**: `/relatorios/movimentacao-estoque` · **Permissão**: `relatorios.movimentacao_estoque` (custo exige `produtos.ver_custo`).
@@ -4210,6 +4257,47 @@ com auditoria por produto.
 Custo das saídas, **Data da última compra** e **Último custo** (último `RECEB_MANUAL`/`RECEB_NFE` até o fim do período).
 
 Exportação: `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`, com as colunas da visão escolhida.
+
+Fase 2, F2-B32 (README da API › decisão 179; README do ERP › decisão 67): a **visão analítica** em `GET
+/relatorios/movimentacao-estoque`, **paginada por cursor** `(data_movimento, id)` (Próxima/Anterior, sem total nem
+número de páginas; 20 a 50 por página). Local e período obrigatórios (dias de calendário no fuso da empresa; até 366
+dias contando as pontas; padrão na tela: do primeiro dia do mês até hoje, no estoque ativo da loja de contexto; a lista
+tem também os locais inativos, marcados, para o histórico de um local desativado); o local fora dos estoques
+permitidos é recusado. **Tipo de movimento** em multisseleção (`GET /referencias/tipos-movimento-estoque`);
+**Documento** pelo tipo e, opcional, o número da coluna Documento (o número da venda, o código do acerto, do
+recebimento e da transferência, o Nº da NF-e do fornecedor; troca e vasilhame só pelo tipo); **Pessoa** =
+`movimentos_estoque.pessoa_id` (o fornecedor do recebimento e da nota; o cliente da venda, da troca, dos cascos
+devolvidos avulsos e da compensação de uma venda), e a coluna Cliente/Fornecedor mostra a pessoa sempre que o
+movimento tem uma. A quantidade e os saldos estão na unidade do produto (coluna **Unidade**); `sigla` (a unidade do
+documento, como no Nuvem3) vai na coluna **Unid. do documento** com o fator (ex.: "CX ×12": 2 CX entram como 24). **EstoqueAnterior/EstoqueAtual** são recalculados na ordem de `data_movimento` pela
+soma do razão da linha de saldo antes do movimento (também com filtros: o saldo é o da linha de saldo, não o do filtro),
+fecham com `saldos_estoque` e vêm com os gravados no lançamento ao lado; quando diferem (venda offline sincronizada
+tarde, "Definir" na hora da contagem), a tela mostra a nota e os gravados. `idmovimentacaoestoque` é o `id` (o movimento
+não tem código legível próprio; o número que se reconhece é o do documento). Custo só com `produtos.ver_custo`.
+
+Fase 2, F2-B33 (README da API › decisão 180; README do ERP › decisão 68): a **visão sintética** em `GET
+/relatorios/movimentacao-estoque/sintetica`, com os mesmos filtros, **paginada por página** com o total e os custos do
+relatório inteiro. Uma linha por **produto × variação × tipo de estoque** do local com movimento no período (nos
+filtros), na ordem do nome do produto. O saldo inicial é o do estoque no começo do período (a soma do razão da linha
+antes dele) e o final o do fim, as entradas e as saídas (estas sem o sinal) são as somas das quantidades positivas e
+negativas, e os custos das entradas e das saídas, as somas do custo gravado nos movimentos. **Sem filtro de movimento,
+fecha com a analítica**: o saldo inicial é o "Est. anterior" do primeiro movimento da linha no período e o final o
+"Est. atual" do último. Com filtro de tipo de movimento, usuário, documento ou pessoa, as entradas, as saídas, os
+movimentos e os custos são só os dos movimentos filtrados (fecham com a analítica no mesmo filtro), e os saldos
+continuam os do começo e do fim do período: não batem com o "Est. anterior" do primeiro movimento filtrado nem com o
+"Est. atual" do último, que incluem os movimentos que o filtro esconde. **Data da última compra** e **Último custo**: o último `RECEB_MANUAL` ou `RECEB_NFE` de
+entrada (não o estorno) do produto e da variação **no local**, pela data do movimento, até o fim do período, em
+qualquer tipo de estoque e fora dos filtros (não o `saldos_estoque.ultima_compra_em`, que é a última compra lançada,
+hoje); o custo só com `produtos.ver_custo`. **Exportação** pela rota comum (`GET
+/relatorios/movimentacao-estoque/exportar?visao=analitica|sintetica&…`): `Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`
+(ou `.csv`) com as colunas da visão — na analítica as da tela mais o Código, a variação, o fator, a observação, os
+saldos gravados, `idmovimentacaoestoquetipo`, `idmovimentacaoestoque` e `idvenda`; sem `produtos.ver_custo`, as
+colunas de custo ficam de fora do arquivo —; acima de 50 mil linhas vira tarefa (os 12 meses de uma loja), com a contagem própria só no razão. **"Ver
+movimentação"** no bloco Estoque do produto (8.2.11; em cada linha estoque × tipo) e no Estoque Atual (16.4; na linha de
+um estoque, não no "Todas"), com `relatorios.movimentacao_estoque`: abre a analítica já gerada com o local, o produto
+e os últimos 30 dias até hoje (no Estoque Atual com data-base, até a data-base). Na sintética, o número de movimentos
+abre a analítica do produto com os mesmos filtros: toda a movimentação do produto no local (a analítica não filtra o
+tipo de estoque nem a variação, então o link de cada linha do produto abre a mesma lista).
 
 ### 16.6 Financeiro geral
 

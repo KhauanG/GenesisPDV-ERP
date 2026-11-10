@@ -16,6 +16,9 @@ import { EnviadorEmail } from './infra/email.js';
 import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
 import { AtivacaoTerminais } from './sync/ativacao.js';
 import { CRON_TAREFAS_INTERROMPIDAS, VarreduraTarefasInterrompidas } from './tarefas/interrompidas.js';
+import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
+import { provedorEstoqueAtual } from './relatorios/estoque-atual.js';
+import { provedorMovimentacao } from './relatorios/movimentacao.js';
 import { TarefasSegundoPlano } from './tarefas/tarefas.js';
 import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
@@ -90,6 +93,11 @@ export interface Servicos {
   importacoes: Importacoes;
   /** NF-e de fornecedor por XML (ERP 13.4; F2-B19): upload, fornecedor pelo emitente e a tarefa do lote grande. */
   notasEntrada: NotasEntrada;
+  /**
+   * Exportação de relatório (F2-B29, decisão 177): na hora até 50 mil linhas, em tarefa por streaming acima; cada
+   * relatório registra o seu provedor.
+   */
+  exportacoes: ExportacaoRelatorios;
   /** `GET /api/saude/detalhada` (Implantação do piloto, I1b). */
   saudeDetalhada: SaudeDetalhada;
   fechar(): Promise<void>;
@@ -161,6 +169,11 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     permissoes,
   });
   const notasEntrada = new NotasEntrada({ tenancy, tarefas, armazenamento, auditoria, permissoes });
+  const exportacoes = new ExportacaoRelatorios({ tenancy, tarefas, armazenamento, auditoria, permissoes });
+  // Os relatórios exportáveis pela rota comum (F2-B29): o Estoque Atual (F2-B31, decisão 178) e a Movimentação de
+  // Estoque, nas duas visões (F2-B33, decisão 180).
+  exportacoes.registrar(provedorEstoqueAtual());
+  exportacoes.registrar(provedorMovimentacao());
   const terminalAuth = new AutenticacaoTerminal(controle, resolvedor);
   const ativacao = new AtivacaoTerminais(controle, resolvedor, tenancy, auditoria, cifra);
   const manutencaoTerminais = new ManutencaoTerminais(controle, resolvedor, tenancy, auditoria, ativacao);
@@ -247,6 +260,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     custoCombos,
     importacoes,
     notasEntrada,
+    exportacoes,
     saudeDetalhada: new SaudeDetalhada(config, controle, resolvedor, tenancy, armazenamento),
     async fechar() {
       await fila.parar();

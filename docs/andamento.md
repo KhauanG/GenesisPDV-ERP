@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto; decisões D51, D52, D61 e D62 respondidas)._
+_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 com os seis blocos, F2-B28 a F2-B33, commitado e PR aberto)._
 
 ## Repositório
 
@@ -20,9 +20,10 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 
 ## Em produção
 
-- **ERP/API:** a `main` deste repositório (commit `a66397f`), implantada em 06/11/2026 16:27 UTC pela "Implantação"
-  daqui (a primeira com a chave SSH nova). Migrações de empresa até a **0024** (notas de entrada). Saúde:
-  https://erp.grupoicebeer.com.br/saude.
+- **ERP/API:** a `main` deste repositório (commit `45b07ec`: PR-6 transferências e os PRs #1 e #2 do Dependabot),
+  implantada pelo dono em 06/11/2026 23:35 UTC pela "Implantação" (CI verde; imagens montadas com
+  `setup-buildx-action` v4.4.1 e `build-push-action` v7.4.0). Migrações de empresa até a **0025** (transferências).
+  Saúde: https://erp.grupoicebeer.com.br/saude.
 - **PDV na página de download:** **0.10.0** (release `pdv-v0.10.0` deste repositório, publicado em 06/11/2026 16:19
   UTC): Central do PDV (engrenagem ⚙) e saúde do terminal no ERP.
 - Também em produção: a NF-e de fornecedor (F2-B18..B21), o diagnóstico de queda da API (README da API › decisão 166)
@@ -50,8 +51,8 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 | PR-3 inventário inicial e ajustes | B9–B12 | concluído (arquivo #18) |
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
-| **PR-6 transferências** | **B22–B27** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
-| PR-7 relatórios de estoque | B28–B33 | próximo, depois do merge do PR-6 |
+| PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
+| **PR-7 relatórios de estoque** | **B28–B33** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
 | PR-8 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -65,16 +66,31 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 | F2-B26 em trânsito, divergência a tratar e alerta (`em-transito.ts`: `sqlDivergenciaATratar`, `sqlPendenciasTransferencia`, `sqlSaldosComPendencias`; `apps/api/src/transferencias/alertas.ts` e a fila `genesis-alerta-transferencias` a cada hora; colunas em `GET /produtos/:id/saldos`, `GET /saldos-estoque`, no bloco Estoque do produto e na tela Saldos; a divergência fica na origem, fora do em trânsito; chave `estoque.transferencia_alerta_dias` = 3, padrão aplicado sem pergunta; sem migração; README da API › decisão 174; README do ERP › decisão 63) | **commitado** |
 | F2-B27 telas e romaneio (`apps/erp-web/src/paginas/estoques/Transferencias.tsx`, `transferenciaItens.ts` e `TransferenciasRomaneio.tsx`, rotas e menu; `GradeItens` com `linhasFixas`; na API, `GET /transferencias/dados-produtos`, `GET /transferencias/:id/romaneio`, a embalagem de compra nos itens e o alerta `TRANSFERENCIA_PARADA` aberto no detalhe — `apps/api/src/transferencias/romaneio.ts`; sem migração, PDV sem mudança; e2e `apps/erp-web/e2e/fluxo-transferencia.spec.ts` rodado localmente: verde; README da API › decisão 175; README do ERP › decisão 64) | **commitado** |
 
+### PR-7 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B28 desempenho do razão (massa de carga `apps/api/test/carga/massa-razao.ts` — `pnpm --filter api carga:razao`, fora do CI: 4 milhões de movimentos em 12 meses, 3 lojas, CD e Treino, roteiro de `EXPLAIN (ANALYZE, BUFFERS)` antes/depois e o heap do replay, apaga os bancos no fim; migração **`0026_indices_razao`** com `ix_movimentos_estoque_estoque_data (estoque_id, data_movimento, id)` e `ix_movimentos_estoque_linha_data (… tipo_estoque_id, data_movimento, id) include (quantidade)`, criados com `concurrently` pela preparação da tag (`apps/api/src/estoques/indices-razao.ts`); parcial de compras descartado; página de 12 meses de uma loja 0,1 ms quente / 3 ms frio, saldo numa data-base de todas as lojas 0,8–1,3 s, recalcular com pico de heap 348 MB; sem particionamento na Fase 2, com os gatilhos; PDV sem mudança; README da API › decisão 176) | **commitado** |
+| F2-B29 exportação em tarefa, em streaming (`apps/api/src/tarefas/exportar-relatorio.ts` — um provedor por relatório, `GET /relatorios/:relatorio/exportar` em `apps/api/src/relatorios/relatorios.controller.ts`: até 50 mil linhas baixa na hora, acima `202` com a tarefa `exportar_relatorio`, teto de 5 milhões; cursor do servidor, `.xlsx` pelo exceljs 4.4.0 `WorkbookWriter` (versão exata; aba nova a cada 1.048.575 linhas) ou `.csv`, multipart de 8 MiB enquanto escreve (`ArmazenamentoObjetos.gravarFluxo`) com a pressão de volta também na entrada do zip do exceljs; `arquivos` `planilha_exportacao` com 7 dias, auditoria `exportar`; `relatorios.exportar` + a do relatório, custo sem `produtos.ver_custo`; semáforo `EXPORTACAO_CONCORRENCIA` = 2 (mínimo 2) em toda geração de arquivo; o link do `GET /tarefas` não passa da retenção do arquivo (`downloadExpirado`); limite de inatividade no cliente S3 (`ARMAZENAMENTO_INATIVIDADE_MS`, 2 min) e `idle_in_transaction_session_timeout` na transação do cursor; **sem migração** (a categoria já estava no CHECK); carga `pnpm --filter api carga:exportacao` fora do CI: 1 milhão de linhas em `.xlsx` 48 s com pico de heap 116 MB e em `.csv` 15–16 s com 165–179 MB (< 300 MB); os relatórios que a usam são do F2-B31..B33; PDV sem mudança; README da API › decisão 177) | **commitado** |
+| F2-B30 `<Relatorio>` paginado no servidor e ícone Tarefas (`apps/erp-web/src/componentes/relatorio/Relatorio.tsx`: `paginacao` `pagina` — página e tamanho na URL, com o total da API — ou `cursor` — `proximoCursor` —, seleção de linhas opcional com as ações em lote, Excel/CSV por `exportarPelaApi` com o `202` virando o aviso e o andamento; `apps/erp-web/src/componentes/tarefas/`: `IconeTarefas` no cabeçalho do `Layout.tsx` com o contador e o painel das 50 de `GET /tarefas`, o link e o expirado, a notificação ao terminar; `AndamentoTarefa`/`DownloadTarefa`/`useTarefa` também na Importação e no upload de NF-e; consulta econômica: a lista a cada 5 s só com tarefa em andamento ou o painel aberto, a da tela a cada 2 s até terminar, nada com a aba em segundo plano; depois de falha passageira (sem conexão, 5xx) continua a cada 15 s enquanto houver tarefa em andamento, com o aviso e o "Tentar novamente" na tela e no painel, e para só na recusa 4xx; no cursor, a pilha das páginas anteriores no estado do histórico (o Voltar do navegador fica certo) e a troca da loja de contexto volta à primeira página; o ícone só para o Master e quem tem permissão que cria tarefa, sem consulta para os demais; contrato `RespostaTarefas` em `packages/shared/src/tarefas.ts`; `baixarOuTarefa` no cliente HTTP; relatório de teste com 100 mil linhas só nos testes, nenhum relatório falso em produção; sem migração; PDV sem mudança; README do ERP › decisão 65) | **commitado** |
+| F2-B31 Estoque Atual com o modal de ajuste (`apps/api/src/relatorios/estoque-atual.ts` — `GET /relatorios/estoque-atual` paginado no servidor com o total e os totais pela janela numa ida ao banco: marca, departamento com as filhas, "Todas" somando os estoques permitidos sem a loja de treino (D39), Atacado, iFood, "Em trânsito" e "Divergência a tratar" pelas subconsultas do F2-B26 (`em-transito.ts`), "Vencendo em N dias" pelos lotes e a data-base pelo razão (a projeção menos o razão depois da data na metade recente, a soma até a data na antiga, decisão 176; o fuso como parâmetro e `set local jit = off`); custo só com `produtos.ver_custo`; o provedor de exportação real `estoque-atual` (com `preparar` e `semJit`, opcionais, no `ProvedorRelatorio`; estoques permitidos e custo conferidos na execução da tarefa); `POST /relatorios/estoque-atual/ajustar` com o núcleo do "Ajustar" do produto (`ajustarEstoqueDefinir`, origem `relatorio_estoque`/`AJUSTE_RELATORIO`, negativo, compensação, hora da contagem); contratos em `packages/shared/src/relatorios.ts`; ERP `apps/erp-web/src/paginas/relatorios/EstoqueAtual.tsx` no `<Relatorio>` com o mesmo `ModalAjustarEstoque` generalizado, rota e menu pronto; e2e `fluxo-estoque-atual.spec.ts` passou localmente; carga `pnpm --filter api carga:estoque-atual` fora do CI com 4 milhões de movimentos, as datas-base pelo meio real da história e o caminho de cada uma conferido: pior caso 1,78 s (a soma até a data no "Todas"), os demais de 50 ms a 1,38 s (< 3 s); na revisão: o custo da data-base pela ordem de lançamento (a venda offline sincronizada tarde não traz o custo das compras posteriores), os produtos sem movimento no "Zerado" e no "Abaixo do mínimo", o tipo inativo sem o clique do ajuste e mais testes (divergência, "Todas" na data-base); **sem migração**; PDV sem mudança; README da API › decisão 178, README do ERP › decisão 66) | **commitado** |
+| F2-B32 Movimentação analítica (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque`: local e período obrigatórios (até 366 dias contando as pontas, dias no fuso da empresa), filtros de produto, tipos de movimento em multisseleção, usuário, documento (tipo e número) e pessoa, local fora dos permitidos 403; **paginação por cursor** `(data_movimento, id)` com os microssegundos no cursor, sem total, pelo `ix_movimentos_estoque_estoque_data`; **saldo anterior e posterior recalculados na ordem da data** pela soma do razão da linha de saldo, cada movimento lendo só a parte entre o anterior da mesma linha na página e ele pelo `ix_movimentos_estoque_linha_data` só pelo índice, o saldo da linha de saldo também com filtros, fechando com `saldos_estoque`, com o gravado ao lado; colunas do Nuvem3 com `id_nuvem3`, fornecedor, documento com número e link e o custo só com `produtos.ver_custo`, mais a unidade do produto (a da quantidade) e o fator ao lado da unidade do documento, e a pessoa do movimento em qualquer documento (cascos devolvidos, compensação); a tela lista também os locais inativos, marcados; fuso como parâmetro e JIT desligado; consulta pronta para virar o provedor da exportação do F2-B33; `GET /referencias/tipos-movimento-estoque`; contratos em `packages/shared/src/relatorios.ts`; ERP `apps/erp-web/src/paginas/relatorios/MovimentacaoEstoque.tsx` no `<Relatorio>` por cursor com a nota do saldo recalculado e o ícone do gravado, filtros novos `multisselecao` e `componente` no `FiltroListagem`, rota e menu pronto; carga `pnpm --filter api carga:movimentacao` fora do CI com 4 milhões de movimentos, 12 meses da Loja 1 (1,62 M): 1ª página 40 ms, página do meio 98 ms, última 170 ms, filtros de 23 a 51 ms (< 5 s), EXPLAIN registrado; **sem migração**; PDV sem mudança; README da API › decisão 179, README do ERP › decisão 67) | **commitado** |
+| F2-B33 Movimentação sintética, exportação e "Ver movimentação" (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque/sintetica`: uma linha por produto × variação × tipo de estoque do local com movimento no período, paginada por página com o total e os custos do relatório inteiro; **fecha com a analítica** (saldo inicial = a soma do razão antes do período, final = inicial + o período; entradas, saídas e custos pelo `filter` dos filtros de movimento, com os saldos da linha de saldo); **última compra** = o último `RECEB_MANUAL`/`RECEB_NFE` de entrada do produto no local pela data até o fim do período, pelo `ix_movimentos_estoque_tipo_movimento` (não o `saldos_estoque.ultima_compra_em`, que é a última lançada, de hoje); provedor de exportação `movimentacao-estoque` com `visao=analitica|sintetica` (`Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`, colunas do Nuvem3 com os ids, custo cortado sem `produtos.ver_custo`, local permitido conferido de novo na tarefa) e a **contagem própria** só no razão; na analítica sem filtro de movimento, só o primeiro movimento de cada linha lê o índice para o saldo (a parte entre dois da mesma linha é vazia); ERP: filtro Visão na `MovimentacaoEstoque.tsx` (a sintética por página, com o link dos movimentos para a analítica do produto), Excel/CSV pela API, "Ver movimentação" no bloco Estoque do produto e no Estoque Atual (local, produto e os 30 dias até hoje ou até a data-base na URL); carga `pnpm --filter api carga:movimentacao-exportacao` fora do CI com 4 milhões de movimentos: sintética de 12 meses da Loja 1 (1,62 M de movimentos, 2.454 linhas) de 0,36 a 1,01 s por página (< 5 s), contagem própria 237 ms (analítica) e 430 ms (sintética), exportação da analítica dos 12 meses em tarefa (1.620.913 linhas, `.xlsx` de 225 MB em 2 abas) em 247 s com pico de heap 224 MB (< 300 MB), EXPLAIN registrado; os bancos apagados no fim; **sem migração**; PDV sem mudança; README da API › decisão 180, README do ERP › decisão 68) | **commitado** |
+
 ## Próximo passo
 
-1. **PR-6 "Transferência CD ⇄ loja"** (F2-B22 a F2-B27) aberto para a `main`: o dono revisa e testa (Estoque ›
-   Transferência de estoque: CD → loja, Salvar e enviar, Romaneio, Receber com diferença e Tratar diferença) e libera
-   o merge. **Merge só com a liberação explícita do dono**; a implantação é dele (workflow Implantação).
-2. Depois do merge e da implantação, o dono libera em Usuários › Estoques permitidos o CD **e as lojas que ele
+1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-3. Em seguida, o **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33): rodar o workflow `genesis-bloco` no F2-B28
-   (`docs/planos/fase2-plano.md`) num branch novo a partir da `main` já com o PR-6.
-4. Numeração das próximas decisões nos READMEs: **API 176**, **ERP 65**, **PDV 81** (confira o último número no próprio
+2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33, no branch `claude/blissful-cray-cvroui`): os seis blocos
+   commitados e o **PR aberto** (checks locais no corpo; a CI só roda no push da `main`). Merge só com a liberação do
+   dono. **Na implantação do PR-7:** (a) a 0026 cria os dois índices do razão com `concurrently`
+   (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo, sem pegar
+   trava na tabela; (b) **lembrete ao dono:** configurar no bucket a regra de ciclo de vida
+   `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de `backups/` (`infra/producao/README.md` ›
+   Pendências): as exportações de relatório em tarefa (Estoque Atual e Movimentação, que passam de 50 mil linhas)
+   enviam o arquivo em partes, e o envio interrompido por um reinício fica aberto no bucket, cobrando, até ser abortado.
+   Depois do PR-7, o PR-8 (PDV: guarda e consulta, F2-B34 em diante; `docs/planos/fase2-plano.md`).
+3. Numeração das próximas decisões nos READMEs: **API 181**, **ERP 69**, **PDV 81** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 
@@ -82,9 +98,11 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
 
 - **Proteger o SSH da VPS** (dono; `infra/producao/README.md` › Proteger o SSH da VPS): só chave, firewall da
   Hostinger e fail2ban. A chave antiga do GitHub Actions já foi revogada em 06/11/2026 (sobrou só a nova).
-- **PRs do Dependabot #1 e #2** (`docker/setup-buildx-action` v3→v4 e `docker/build-push-action` v6→v7): mudanças de
-  versão principal das Actions que montam as imagens Docker; revisar o que mudou antes de juntar (não juntar sem
-  revisão).
+- **PRs do Dependabot #1 e #2** (`docker/setup-buildx-action` v3→v4.4.1 e `docker/build-push-action` v6→v7.4.0):
+  revisados e juntados em 06/11/2026 com a liberação do dono (os SHAs conferem com as tags oficiais; as versões novas
+  só tiram opções que o Genesis não usa — `config`, `config-inline`, `install` e as variáveis `DOCKER_BUILD_NO_SUMMARY`
+  e `DOCKER_BUILD_EXPORT_RETENTION_DAYS` — e passam ao Node 24). A primeira "Implantação" depois deles é a que prova a
+  montagem das imagens com `load` e o cache `gha`.
 - **Verificação em duas etapas (2FA)** na conta do GitHub do dono: o GitHub exige a partir de 19/12/2026.
 - **XMLs reais de fornecedores** (para conferir a NF-e com notas de verdade, F2-B53): o dono envia depois; **não
   entram no repositório** (público, D60): ficam em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa
@@ -95,5 +113,8 @@ _Última atualização: 06/11/2026 (PR-6: F2-B22 a F2-B27 commitados e PR aberto
   `processo`; o `implantar.sh` guarda o log da API em `/opt/genesis/logs` (`implantar.sh logs`). Na próxima queda:
   `infra/producao/README.md` › A API reiniciou sozinha.
 - **Cloud SQL:** converter o trial antes de 26/11/2026.
+- **Bucket (dono, com o PR-7):** acrescentar a regra de ciclo de vida que aborta envio em partes incompleto
+  (`AbortIncompleteMultipartUpload`, 1 dia) junto das regras de `backups/` (`infra/producao/README.md` › Pendências): a
+  exportação de relatório em tarefa (F2-B29) envia em partes, e um reinício no meio deixa o envio aberto no bucket.
 - **G7 review** (achados menores da aba Sincronização da Central): conferir se algum ficou de fora antes de mexer de
   novo na Central.

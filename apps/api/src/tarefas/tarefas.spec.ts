@@ -5,6 +5,8 @@ import {
   MENSAGEM_TAREFA_INTERROMPIDA,
   SINAL_TAREFA_MS,
   TarefasSegundoPlano,
+  VALIDADE_MAXIMA_DOWNLOAD_S,
+  validadeDownloadS,
 } from './tarefas.js';
 
 /** Mensagem da tarefa interrompida (decisão 150): a genérica mais o complemento do tipo, que só o tipo sabe dar. */
@@ -42,5 +44,25 @@ describe('TarefasSegundoPlano.mensagemInterrompida', () => {
 
   it('o limite sem sinal cobre vários sinais perdidos', () => {
     expect(LIMITE_SINAL_TAREFA_MS / SINAL_TAREFA_MS).toBeGreaterThanOrEqual(4);
+  });
+});
+
+/** Link do arquivo da tarefa (ERP 3.6): 7 dias, sem passar do fim do dia da retenção; vencida → sem link. */
+describe('validadeDownloadS', () => {
+  const agora = Date.parse('2026-11-07T21:30:00Z');
+
+  it('arquivo novo (retenção de hoje + 7): os 7 dias inteiros', () => {
+    expect(validadeDownloadS('2026-11-14', agora)).toBe(VALIDADE_MAXIMA_DOWNLOAD_S);
+  });
+
+  it('perto do fim da retenção: só até o fim do dia retencao_ate (UTC)', () => {
+    expect(validadeDownloadS('2026-11-07', agora)).toBe(2.5 * 3600);
+    expect(validadeDownloadS('2026-11-08', agora)).toBe(26.5 * 3600);
+  });
+
+  it('retenção vencida (até ontem, ou acabando agora) → null; sem retenção → 7 dias', () => {
+    expect(validadeDownloadS('2026-11-06', agora)).toBeNull();
+    expect(validadeDownloadS('2026-11-07', Date.parse('2026-11-08T00:00:00Z'))).toBeNull();
+    expect(validadeDownloadS(null, agora)).toBe(VALIDADE_MAXIMA_DOWNLOAD_S);
   });
 });

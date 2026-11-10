@@ -977,9 +977,190 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       que as referências do teste respondem com 403 —, o tratamento como perda, o 409 do cancelamento e o romaneio), `GradeItens.test.tsx` (linhas fixas) e o e2e `e2e/fluxo-transferencia.spec.ts` (CD →
       Loja 2 com 5 fardos, o romaneio, 58 recebidos de 60 e a perda; os saldos 40 e 58 no fim), fora do CI.
 
+65. **`<Relatorio>` paginado no servidor e ícone Tarefas no cabeçalho** (Fase 2, F2-B30; ERP 3.5, 3.6, 5.1; README da
+    API › decisão 177). A casca dos relatórios (`componentes/relatorio/Relatorio.tsx`) e o componente comum das tarefas
+    (`componentes/tarefas/`) que os relatórios do PR-7 em diante usam; nenhum relatório real ainda (chegam no F2-B31..B33).
+    - **Paginação no servidor** (`config.paginacao`): `pagina` manda `pagina` e `tamanho` e espera o `total` da API
+      (primeira, anterior, "Página X de Y", próxima, última e "N registros"); `cursor` manda `tamanho` e o `cursor` e
+      espera o `proximoCursor` (primeira, anterior e próxima), para o relatório que lê o razão em ordem e não conta o
+      total (a Movimentação analítica, F2-B32). A página, o tamanho (20, 25, 35 ou 50, os do `paginacaoQuerySchema`;
+      padrão 50 ou o `tamanhoPadrao`) e o cursor ficam na **URL** com os filtros: o link reabre a mesma página. O Filtrar
+      e a troca de tamanho voltam à primeira (o tamanho escolhido continua), e também a troca da loja de contexto do
+      cabeçalho quando o filtro de loja vem dela (fora da URL): a página ou o cursor da URL eram da loja anterior, e a
+      tela os tira da URL (sem nova entrada no histórico) e já consulta a primeira página da loja nova. No cursor, o
+      "Anterior" usa os cursores já vistos, guardados no **estado da entrada do histórico** junto com o cursor da URL
+      (`cursoresAnteriores`), não no estado da tela: o Voltar e o Avançar do navegador trazem a página e a pilha juntas,
+      e o rótulo "Página N", o botão Anterior e o cabeçalho da impressão continuam certos; o link aberto com cursor só
+      tem "Primeira" ("Página aberta pelo link"). Os totais da tabela (`totais`) são do relatório
+      inteiro, vindos da API. PDF e Imprimir saem da página aberta, com "Página X de Y (N registros)" no cabeçalho.
+    - **Seleção de linhas opcional** (`config.selecao`): a coluna de marcação (da página aberta, com "todas da página"),
+      a barra "N selecionada(s)" com as ações do relatório (`acoes(linhas, limpar)`, ex.: o "Definir NCM" em lote do
+      F2-B41) e "Limpar seleção". Trocar de página ou de filtros limpa a seleção. Nada disso sai na impressão.
+    - **Exportação** (`config.exportar`, normalmente `exportarPelaApi(<chave>)`, a rota comum `GET
+      /relatorios/<chave>/exportar` do F2-B29, com os filtros e sem a página): Excel (.xlsx) e **CSV**. Até 50 mil linhas o
+      arquivo baixa na hora; acima, a API responde `202 { tarefaId, linhas }` (o cliente HTTP ganhou o `baixarOuTarefa`,
+      que lê o `202` como JSON) e a tela mostra a notificação, o aviso "Exportação em segundo plano · N linhas" com o
+      andamento e, no fim, o link do arquivo; a mesma tarefa aparece no ícone Tarefas, que é atualizado na hora. A
+      recusa (o teto de 5 milhões, as 2 exportações pendentes por usuário) vem na notificação de erro.
+    - **Ícone Tarefas** (`componentes/tarefas/IconeTarefas.tsx`, no cabeçalho do `Layout.tsx`, entre a loja de contexto
+      e o tema): o contador das tarefas do usuário na fila ou executando e o painel com as 50 mais recentes de `GET
+      /tarefas` (o tipo, a data, a situação, o progresso e a mensagem, o motivo da falha, o link "Baixar arquivo" — 7
+      dias, sem passar da retenção — ou "O arquivo expirou"). A forma da resposta virou contrato
+      (`RespostaTarefas`/`TarefaUsuario` em `packages/shared/src/tarefas.ts`, com os rótulos dos tipos e das situações).
+      Quando uma tarefa vista em andamento termina, uma notificação avisa (ERP 3.6).
+    - **Consulta econômica** (`componentes/tarefas/tarefas.ts`): a lista é pedida uma vez ao abrir o ERP (válida por
+      1 min) e só se repete a cada **5 s** enquanto houver tarefa em andamento ou com o painel aberto (abrir o painel
+      consulta na hora); a tarefa acompanhada numa tela (`useTarefa`, `GET /tarefas/:id`) se repete a cada **2 s** só
+      até terminar (antes, 1 s na Importação e no upload de NF-e), e ao terminar atualiza a lista. Com a aba do
+      navegador em segundo plano nada se repete (o padrão do TanStack Query). Uma **falha passageira** (sem conexão,
+      a API reiniciando na implantação, um 502) não para o acompanhamento: enquanto a última resposta mostrava tarefa
+      em andamento, a consulta continua, a cada **15 s** (`INTERVALO_APOS_ERRO_MS`), e quando a API volta a tela chega
+      ao resultado e o ícone avisa da conclusão sozinhos. Só a recusa da API (4xx: sem permissão, tarefa inexistente)
+      para de vez, e a primeira lista que falha (sem lista nenhuma) espera o painel ser aberto. Na tela, o
+      `AndamentoTarefa` mostra "Não foi possível acompanhar a …" com "Tentar novamente" acima da barra, que fica no
+      último andamento recebido (o upload de NF-e também deixa fechar o quadro); o painel do ícone mostra o aviso com
+      "Tentar novamente" também sobre a última lista recebida. Quem pede uma tarefa (exportação, importação, lote de NF-e)
+      invalida a lista, e o ícone começa a acompanhar sem esperar.
+    - **Permissão**: `GET /tarefas` não tem permissão própria (cada um vê as suas), mas o ícone só aparece — e só
+      consulta — para o Master e para quem tem alguma permissão que cria tarefa em nome do usuário
+      (`PERMISSOES_COM_TAREFA`: `relatorios.exportar`, `produtos.importar`, `pessoas.importar`,
+      `notas_entrada.importar`, `terminais.gerenciar` e `pdv.config.fiscal`, a de quem autoriza a faixa no PDV e em
+      nome de quem sai o reprocessamento depois da lacuna). Tipo novo de tarefa com outra permissão entra na lista.
+    - **A Importação e o upload de NF-e** passaram a usar o mesmo componente (`AndamentoTarefa`: a barra, a mensagem, a
+      falha e o conteúdo da concluída; `DownloadTarefa`: o botão do arquivo ou o aviso de expirado) e o mesmo
+      `useTarefa`; o resultado de cada um continua na própria tela, e o aviso cita o ícone Tarefas.
+    - Testes: `Relatorio.test.tsx` (o relatório de teste com **100 mil linhas** paginando num servidor simulado — só a
+      página vai e volta, a URL com página e tamanho, a última página, a troca de tamanho, o Filtrar e o link com a
+      página —, o cursor com próxima, anterior e primeira, a seleção, e o critério de pronto: no `Layout` de verdade, a
+      exportação que vira tarefa mostra o aviso, o andamento e o contador do ícone e, quando termina, o link no aviso,
+      a notificação e o link no painel), `Tarefas.test.tsx` (o intervalo da lista, o painel com cada situação, o vazio,
+      quem não tem permissão — sem ícone e sem consulta — e a consulta que falha) e `http.test.ts` (o
+      `baixarOuTarefa`). O relatório de teste só existe nos testes (nenhum relatório falso em produção); o e2e com um
+      relatório real fica para o F2-B31 (Estoque Atual; decisão 66).
+66. **Relatório Estoque Atual com o modal de ajuste** (Fase 2, F2-B31; ERP 16.4, 13.6, 13.1.5, 3.1, 3.5; README da
+    API › decisão 178; `src/paginas/relatorios/EstoqueAtual.tsx` (novo), `ModalAjustarEstoque` em
+    `src/paginas/produtos/BlocosProduto.tsx`, `menu.ts` (o item pronto), `rotas.tsx`; o primeiro relatório de verdade
+    no `<Relatorio>` da decisão 65). Rota `/relatorios/estoque-atual` (`relatorios.estoque_atual`).
+    - **Filtros** (gravados na URL pelo `<Relatorio>`, gerado só no Filtrar): Nome/código (nome, código interno ou
+      EAN), **Loja (estoque)** — começa no estoque da loja de contexto (ERP 3.1; sem ela, ou fora dos permitidos,
+      "Todas") e tem a opção **"Todas (soma dos permitidos)"** (`estoqueId=todas`, que a API lê como vazio) —, Marca,
+      Departamento (a categoria e as filhas, pelo caminho da árvore), Tipo de estoque, Estoque (situação do saldo:
+      Todos/Positivo/Zerado/Negativo/Abaixo do mínimo), Produtos (ativos/inativos/todos), **Vencendo em (dias)** e
+      **Saldo em (data-base)**; "Loja de treino" (sem/com/só) quando a empresa tem uma (`useFiltroTreino`, D39).
+    - **Colunas** (as do Nuvem3 e as novas): Ref. Interna, Produto (link para o cadastro), Preço Custo (custo médio),
+      Venda, Atacado, iFood, Est. Mínimo, Est. Atual (na data-base, "Saldo em dd/mm/aaaa"), Em trânsito, Divergência a
+      tratar (laranja; "—" sem pendência e na data-base), Vencendo (só com o filtro: a quantidade dos lotes e a
+      validade mais próxima), Custo total, Venda total, Unidade, Estoque e Tipo. As de custo só aparecem com
+      `produtos.ver_custo` (a API também as manda nulas). Cards e linha de totais do relatório inteiro (itens, custo
+      total, venda total; o "Saldo em" com a data-base), paginação por página no servidor (`paginacao: 'pagina'`), e o
+      Exportar com Excel/CSV pela API (`exportarPelaApi('estoque-atual')`: até 50 mil linhas baixa, acima vira tarefa
+      no ícone Tarefas), PDF e Imprimir.
+    - **Ajuste no clique do saldo** (com `estoque_acertos.criar`): o saldo é um botão ("Ajustar o saldo de <produto>
+      em <estoque> (<tipo>)") que abre o **mesmo** `ModalAjustarEstoque` do "Ajustar" do produto (decisão 54), agora
+      com opções: o estoque da linha fixo (`estoqueFixo`), o tipo da linha (`tipoInicial`, trocável), o nome do
+      produto, os rótulos "Gravar"/"Fechar" (ERP 16.4) e o envio para `POST /relatorios/estoque-atual/ajustar`
+      (origem `relatorio_estoque`). O "Saldo atual" de cada tipo vem do próprio relatório filtrado no produto e no
+      estoque, então acompanha a troca do tipo; a hora da contagem segue a regra do modal (sem mexer, vai vazia e vale
+      o instante da gravação). Depois de gravar, a notificação "Acerto Nº … efetivado" e o relatório consultado de
+      novo. Não abre no **"Todas"** (a soma não é de um estoque; a dica pede para escolher a loja), na
+      **data-base** (é o saldo de outro dia, ERP 16.4 "sem ajuste nesse modo") nem no **tipo de estoque inativo** (a
+      API recusa acerto nele; a dica "Tipo de estoque inativo: reative o tipo para ajustar"). E o modal, se ainda
+      receber um `tipoInicial` inativo, avisa e deixa o tipo vazio até o usuário escolher (antes caía calado no
+      padrão, e o "Saldo atual" e o ajuste eram de outro tipo). Nos filtros **Zerado** e **Abaixo do mínimo** vêm
+      também os produtos sem movimento no estoque (saldo 0, decisão 178 da API): o clique lança a contagem inicial.
+      O "mover entre tipos" continua pelo acerto "Mudar tipo" (13.5).
+    - Testes: `EstoqueAtual.test.tsx` (as colunas e os filtros mandados à API; sem "Ver custo" sem as colunas de
+      custo e com o "Todas" como padrão sem loja de contexto; o clique no saldo com o modal, o "Saldo atual" da
+      consulta do produto acompanhando a troca para Avaria, o corpo do ajuste e a tabela consultada de novo (contando
+      só as consultas sem `produtoId`, as da tabela); o tipo inativo sem o clique e o modal com o tipo inicial
+      inativo, que pede o tipo; a data-base e o "Todas" sem o clique; a coluna do "Vencendo"), o
+      `BlocosProduto.test.tsx` de sempre (o "Ajustar" do produto com o modal generalizado) e o e2e
+      `e2e/fluxo-estoque-atual.spec.ts` (também o e2e da casca da decisão 65 com um relatório de verdade: o filtro da
+      marca, 20 por página e a página 2 com o total da API, a data-base de ontem, o ajuste no clique de 15 para 12, o
+      acerto "Relatório Estoque Atual" na lista e o Excel que vira tarefa com o link no aviso e no ícone Tarefas; o
+      servidor do e2e baixa na hora só até 10 linhas, `E2E_EXPORTACAO_NA_HORA`).
+67. **Relatório Movimentação de Estoque, visão analítica** (Fase 2, F2-B32; ERP 16.5, 3.1, 3.5; README da API ›
+    decisão 179; `src/paginas/relatorios/MovimentacaoEstoque.tsx` (novo), `src/componentes/listagem/Listagem.tsx`
+    (os filtros `multisselecao` e `componente`), `src/componentes/relatorio/Relatorio.tsx` (a `nota` e os filtros
+    usados das multisseleções), `menu.ts` (o item pronto), `rotas.tsx`). Rota `/relatorios/movimentacao-estoque`
+    (`relatorios.movimentacao_estoque`).
+    - **Filtros** (na URL, gerado só no Filtrar): **Local de estoque** (obrigatório, sem "Todas": começa no estoque
+      ativo da loja de contexto, ERP 3.1; sem ela, no primeiro ativo permitido; a lista traz também os inativos,
+      marcados "(inativo)", para o histórico de um local desativado — a API aceita o inativo, só recusa o excluído), **Data inicial** e **Data final** (padrão: do
+      primeiro dia do mês até hoje, no fuso da empresa; a API recusa mais de 366 dias), **Tipos de movimento**
+      (multisseleção das referências, `tiposMovimento=A,B`), **Produto** (o `<SeletorProduto>`, com `produtos.ver`),
+      **Usuário** (com `usuarios.ver`, como o "Operador" das vendas), **Documento** (o tipo) e **Nº do documento**, e
+      **Pessoa (cliente ou fornecedor)** (o `<SeletorPessoa>`, com `pessoas.ver`). Os seletores reabertos pelo link
+      mostram o nome pelas `referencias` da resposta.
+    - **Dois tipos novos de filtro** no `FiltroListagem` (servem a listagens e relatórios): `multisselecao` (o
+      `MultiSelect` do Mantine, o valor em vírgulas) e `componente` (o campo desenhado por `renderizar`, para os
+      seletores com busca no servidor; `descrever` dá o texto dos "Filtros" da impressão). O `<Relatorio>` ganhou a
+      `nota` (o texto pequeno acima da tabela, também na impressão).
+    - **Colunas** (as do export do Nuvem3 e as novas): Data/hora, Ref. Interna, Produto (link para o cadastro; com a
+      variação quando houver), Tipo de movimento (com o tipo do Nuvem3 na dica quando confirmado), Tipo de estoque,
+      Est. anterior, Qtd. movimentada (verde/vermelha, com o sinal), Est. atual, **Unidade** (a do produto: a da
+      quantidade e dos saldos, sempre na unidade base), **Unid. do documento** (a `sigla` do Nuvem3 com o fator quando
+      não é 1, ex.: "CX ×12" — 2 CX entram como +24; a nota também explica), Custo unit. e Custo total
+      (só com `produtos.ver_custo`; a API também as manda nulas), **Documento** (o rótulo com o número — "Venda
+      1-0042", "Acerto Nº 5", "Recebimento Nº 7", "NF-e 1234", "Transferência Nº 3" — e o link para a tela dele
+      com a permissão de vê-la), Cliente/Fornecedor (a pessoa do movimento sempre que há: também a devolução de
+      cascos e a compensação de uma venda, as que o filtro Pessoa acha), Usuário e Loja.
+    - **Saldo recalculado**: a nota explica que Est. anterior e Est. atual seguem a ordem da data e hora de cada
+      movimento e podem diferir do gravado no lançamento; quando diferem, o ícone laranja ao lado do saldo mostra os
+      gravados na dica (a venda offline que chegou depois, o "Definir" na hora da contagem).
+    - **Paginação por cursor** (`paginacao: 'cursor'`, decisão 65): Próxima/Anterior com o `proximoCursor` da API,
+      "Página N" sem total (um ano de uma loja passa de um milhão de movimentos), 20/25/35/50 por página (padrão 50).
+      O Exportar tem por enquanto só PDF e Imprimir (a página aberta): o Excel/CSV de 12 meses, em tarefa, é do
+      F2-B33, com a visão sintética e o link "Ver movimentação" no produto e no Estoque Atual. O item do menu já fica
+      pronto, porque a tela abre (a rota "Em construção" daria conflito com a rota de verdade).
+    - Testes: `MovimentacaoEstoque.test.tsx` (as colunas, o custo, o documento com o link e os filtros da URL
+      mandados à API sem página; sem "Ver custo" sem as colunas de custo, o ícone do gravado diferente e o documento
+      sem link sem a permissão; Próxima/Anterior pelo cursor; o padrão do mês e do primeiro local ativo, só depois do
+      Filtrar, e o inativo marcado que se escolhe à mão; o estoque da loja de contexto como padrão; a unidade do
+      produto ao lado da quantidade e a do documento com o fator; a multisseleção marcada que manda os códigos e os
+      "Filtros" da impressão com os nomes dos tipos e o `descrever` do produto e da pessoa).
+
+68. **Movimentação de Estoque: visão sintética, exportação e "Ver movimentação"** (Fase 2, F2-B33; ERP 16.5, 3.5,
+    3.6, 8.2.11; README da API › decisão 180; `src/paginas/relatorios/MovimentacaoEstoque.tsx`,
+    `src/paginas/relatorios/EstoqueAtual.tsx`, `src/paginas/produtos/FormularioProduto.tsx` (o bloco Estoque)).
+    - **Filtro Visão** na Movimentação: "Analítica (um movimento por linha)" (padrão) ou "Sintética por produto"; vai
+      na URL como os outros filtros (`visao=sintetica`, só quando não é o padrão). A tela troca entre duas configurações
+      do `<Relatorio>` com os mesmos filtros: a analítica por cursor (decisão 67) e a **sintética paginada por página**
+      (`paginacao: 'pagina'`, com o total da API: uma linha por produto × tipo de estoque com movimento, milhares numa
+      loja). A visão não vai na consulta da tela (cada uma tem a sua rota, `GET /relatorios/movimentacao-estoque` e
+      `…/sintetica`), mas vai na exportação (a API escolhe as colunas e a consulta por ela).
+    - **Colunas da sintética**: Ref. Interna, Produto (link para o cadastro, com a variação quando houver), Tipo de
+      estoque, Saldo inicial, Entradas (verde, "+"), Saídas (vermelha, "−"; "—" quando zero), Saldo final, Unidade (a
+      do produto), **Movimentos** (o número é o link para a analítica do produto com os mesmos filtros, sem a visão e
+      sem a página; a analítica não filtra o tipo de estoque nem a variação, então o link abre **toda a movimentação
+      do produto no local**, as outras linhas dele na sintética também, e o rótulo para o leitor de tela é "Ver toda a
+      movimentação de X neste local", não "os N movimentos"; a nota diz o mesmo), Custo das entradas e Custo das saídas (só com `produtos.ver_custo`), **Última compra** (data e
+      hora do último recebimento manual ou NF-e do produto no local até o fim do período; "—" sem compra) e Último
+      custo (só com `produtos.ver_custo`, até 4 casas). A linha de totais traz o número de linhas e os custos do
+      relatório inteiro. A nota explica que os saldos são os do estoque no começo e no fim do período e que, com
+      filtro de tipo, usuário, documento ou pessoa, as entradas e as saídas são só as filtradas (o final deixa de ser
+      o inicial + entradas − saídas).
+    - **Exportação**: o Exportar ganhou Excel (.xlsx) e CSV pela API (`exportarPelaApi('movimentacao-estoque')`), com
+      os filtros e a visão (`Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`); acima de 50 mil linhas (os 12
+      meses de uma loja passam de um milhão) vira tarefa, com o aviso e o andamento na tela e o link no ícone Tarefas
+      (decisão 65).
+    - **"Ver movimentação"** (com `relatorios.movimentacao_estoque`): no bloco **Estoque do produto**, uma coluna
+      Movimentação com o link em cada linha (estoque × tipo); no **Estoque Atual**, a coluna Movimentação com o link na
+      linha de um estoque ("—" no "Todas": a soma de vários locais não é um local, e a Movimentação exige um). O link
+      (`linkVerMovimentacao`) abre a analítica já gerada com o **local, o produto e o período na URL**: os últimos 30
+      dias (`DIAS_VER_MOVIMENTACAO`, contando o dia final) até hoje no fuso da empresa — no Estoque Atual com data-base,
+      até a data-base (a que não é uma data, editada à mão na URL, vira hoje). Período de 30 dias, e não o "do primeiro
+      dia do mês" do padrão da tela: no começo do mês o padrão mostraria um dia só.
+    - Testes: `MovimentacaoEstoque.test.tsx` (a sintética pela rota dela com a página e sem a visão, as colunas, os
+      sinais, a última compra e o "—" sem compra, os totais, a nota, o link dos movimentos para a analítica; sem "Ver
+      custo" sem as colunas de custo e com a data da última compra; escolher a visão no filtro troca a consulta, e a
+      exportação leva a visão e vira tarefa; o `linkVerMovimentacao` com os 30 dias no fuso da empresa, até a data dada
+      e com a data inválida), `EstoqueAtual.test.tsx` (o link com a data-base; no "Todas", sem link) e
+      `BlocosProduto.test.tsx` (o link de cada linha do bloco Estoque; sem a permissão, sem a coluna).
+
 ## O que ainda não foi feito (Fase 0)
 
-Busca global (Ctrl+K) e ícone de tarefas no cabeçalho; avisos globais (certificado, PDV com pendências); exportação
+Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação
 em segundo plano acima de 5.000 linhas; "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
 `<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,

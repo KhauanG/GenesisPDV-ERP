@@ -118,6 +118,29 @@ describe('cliente HTTP (token em memória + refresh por cookie)', () => {
     expect(refreshes).toBe(1);
   });
 
+  it('baixarOuTarefa: 200 é o arquivo; 202 é a tarefa da exportação (F2-B29), não um arquivo', async () => {
+    simularApi(({ url }) => {
+      if (url.pathname !== '/api/relatorios/teste/exportar') return undefined;
+      if (url.searchParams.get('formato') === 'csv')
+        return {
+          arquivo: {
+            conteudo: 'a;b',
+            cabecalhos: { 'Content-Disposition': 'attachment; filename="Relatorio_Teste.csv"' },
+          },
+        };
+      return { status: 202, corpo: { tarefaId: 't-1', linhas: 100_000 } };
+    });
+    const api = novoCliente();
+    const arquivo = await api.baixarOuTarefa('/relatorios/teste/exportar?formato=csv');
+    expect('blob' in arquivo && arquivo.nome).toBe('Relatorio_Teste.csv');
+    expect(await api.baixarOuTarefa('/relatorios/teste/exportar?formato=xlsx')).toEqual({
+      tarefaId: 't-1',
+      linhas: 100_000,
+    });
+    // O `baixar` de sempre continua tratando qualquer 2xx como arquivo.
+    expect(await api.baixar('/relatorios/teste/exportar?formato=xlsx')).toHaveProperty('blob');
+  });
+
   it('nomeDoArquivo: filename* tem prioridade; sem cabeçalho usa o padrão', () => {
     expect(nomeDoArquivo(`attachment; filename="a.csv"; filename*=UTF-8''Usu%C3%A1rios.csv`, 'x')).toBe(
       'Usuários.csv',
