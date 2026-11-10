@@ -110,12 +110,17 @@ _Última atualização: 10/11/2026 (PR-9 em andamento: F2-B37 commitado; PR-7 e 
    bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 commitado; o próximo é
    o F2-B38 (relatório de EAN duplicado).
 4. Numeração das próximas decisões nos READMEs: **API 184**, **ERP 72**, **PDV 85** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
-   em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D65** (D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
+   segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
+   dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`).
 
 ## Pendências e lembretes
 
+- **Auditoria completa de segurança no fim da Fase 2 (D64):** antes de levar o sistema a todas as lojas, rodar o
+  plugin oficial `claude-security` (o dono instala pelo catálogo) e, como segunda opinião, a skill
+  `cloudflare/security-audit-skill`. Lembrar o dono ao fechar o último PR da Fase 2.
+- **Revisão de segurança do PR inteiro (D63):** a partir do PR-9, antes de abrir cada PR, a skill `security-review`.
 - **Proteger o SSH da VPS** (dono; `infra/producao/README.md` › Proteger o SSH da VPS): só chave, firewall da
   Hostinger e fail2ban. A chave antiga do GitHub Actions já foi revogada em 06/11/2026 (sobrou só a nova).
 - **PRs do Dependabot #1 e #2** (`docker/setup-buildx-action` v3→v4.4.1 e `docker/build-push-action` v6→v7.4.0):

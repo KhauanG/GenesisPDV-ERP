@@ -20,6 +20,8 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   final com todos os checks. Use o workflow `.claude/workflows/genesis-bloco.js` (ver abaixo).
 - **Um commit por bloco verificado.** Não commite trabalho pela metade (o hook de parada vai pedir; recuse enquanto o bloco
   não passou na verificação final).
+- **Antes de abrir cada PR** (D63, desde o PR-9): revisão de segurança do PR inteiro (skill `security-review`), com os
+  achados confirmados corrigidos no próprio PR.
 - **PR por fatia do plano** (ex.: PR-5 = F2-B18..B21). **Merge só com a liberação explícita do dono**, e nunca push direto
   na `main`.
 - **Deploy em produção é do dono** (workflow Implantação). Não dispare workflows do GitHub sem necessidade (a fila e

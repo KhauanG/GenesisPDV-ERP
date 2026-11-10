@@ -164,3 +164,18 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   só quantidades e nunca o custo, desligável por `pdv.consulta_outras_lojas` (padrão Sim, por loja). Implementado no
   F2-B35 (README da API › decisão 182, do ERP › 70, do PDV › 82; roadmap §16, D53). Se o dono preferir (b) — também
   avaria e vasilhame vazio — ou (c) — só com permissão de supervisor —, muda a consulta da API e o diálogo do PDV.
+
+## Segurança: revisão por PR e auditoria completa (10/11/2026)
+
+- **D63 — RESPONDIDA: (A) sim, a partir do PR-9.** Antes de abrir cada PR, além da revisão por bloco do
+  `genesis-bloco`, roda a revisão de segurança do PR inteiro (skill `security-review`, já disponível nas sessões). Os
+  achados confirmados são corrigidos no próprio PR e citados no corpo dele. Roadmap §16, D63; CLAUDE.md › Regras de
+  trabalho.
+- **D64 — RESPONDIDA: (A) no fim da Fase 2.** Auditoria completa de segurança do sistema inteiro antes de levá-lo a
+  todas as lojas: principal pelo plugin oficial `claude-security` (catálogo da Anthropic; o dono instala na hora) e,
+  como segunda opinião, a skill `cloudflare/security-audit-skill`. Nada a instalar antes. Roadmap §16, D64;
+  `docs/andamento.md` › Pendências.
+- **Plugins sugeridos pelo dono (caveman, claude-mem, karpathy-guidelines):** não adotados, pela recomendação — o
+  caveman encurta as respostas (o contrário do que o dono pede), a memória do projeto já é o `andamento.md` e este
+  arquivo (versionados; as sessões na nuvem são descartáveis e o repositório é público) e as diretrizes de código já
+  estão cobertas pelo processo de bloco.
