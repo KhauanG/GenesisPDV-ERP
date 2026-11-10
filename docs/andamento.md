@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 em andamento: F2-B34 commitado, F2-B35 e F2-B36 commitados; falta abrir o PR-8)._
+_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 aberto (#6), aguardando a liberação do dono)._
 
 ## Repositório
 
@@ -53,7 +53,7 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**) |
-| **PR-8 PDV: guarda e consulta** | **B34–B36** | **em andamento** (release R1 do PDV), no branch `claude/blissful-cray-cvroui` |
+| **PR-8 PDV: guarda e consulta** | **B34–B36** | **aberto (#6)**, aguardando a liberação do dono (release R1 do PDV, versão **0.11.0**) |
 | PR-9 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -97,12 +97,12 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
    `backups/` (`infra/producao/README.md` › Backup e › Pendências). Permissões das telas novas:
    `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e
    `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
-3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36, release R1 do PDV): workflow `genesis-bloco` bloco a bloco
-   (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-7). F2-B34
-   commitado; F2-B35 commitado; F2-B36 commitado. No fechamento do PR-8: a versão do PDV para a R1 — se não for **0.11.0**, trocar
-   `VERSAO_PDV_GUARDA_VARIACOES` em `packages/shared/src/produtos.ts` (o aviso do ERP ao ligar as variações) — e a API
-   publicada antes do PDV.
-4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 84** (confira o último número no próprio
+3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36 + versão 0.11.0): **aberto (#6)**, aguardando a liberação do
+   dono para o merge. Depois do merge, nesta ordem (dono): Implantação da API na `main` com a CI verde (inclusive o job
+   do PDV no `windows-latest`, que confere a FTS5 do SQLite empacotado); **PDV release** na `main` com "publicar"
+   (tag `pdv-v0.11.0`); Implantação com `publicar_pdv`; atualizar os caixas das lojas e testar no caixa real (recusa da
+   variação, F4, pesquisa F2). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`).
