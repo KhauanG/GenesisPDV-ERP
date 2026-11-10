@@ -502,6 +502,46 @@ public sealed record EventoRecuperado(
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Consultas online do caixa (Fase 2, F2-B35): fora do T13, nenhum tipo de evento nem versão nova
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// <summary>
+/// Resposta do <c>GET /sync/consultas/saldos-outras-lojas?produto_id=</c> (Fase 2, F2-B35; PDV 10.3; F2-Q12 = D53): o
+/// saldo online do produto nas lojas reais ativas (sem a loja de treino) e nos depósitos sem loja (o CD), só os tipos
+/// vendáveis (o "Com variações" soma as variações), na ordem: a loja do terminal, as outras pelo código e os depósitos
+/// (primeiro a loja do tipo depósito pelo código, depois os depósitos sem loja pelo nome). Só quantidades, nunca o custo.
+/// </summary>
+/// <param name="ControlaEstoque">
+/// Falso no produto sem controle de estoque e nos sem saldo próprio (o combo, o serviço e o produzido, que baixa os insumos
+/// da ficha técnica): os locais vêm com zero e a tela avisa que o produto não controla estoque.
+/// </param>
+public sealed record RespostaSaldosOutrasLojas(
+    [property: JsonPropertyName("agora_servidor")] string AgoraServidor,
+    [property: JsonPropertyName("produto_id")] Guid ProdutoId,
+    [property: JsonPropertyName("controla_estoque")] bool ControlaEstoque,
+    [property: JsonPropertyName("locais")] IReadOnlyList<SaldoLocalOnline> Locais);
+
+/// <summary>Um local do F4: a loja (o estoque dela) ou o depósito sem loja, com a soma vendável do produto.</summary>
+/// <param name="Tipo"><c>loja</c> ou <c>deposito</c>.</param>
+/// <param name="LojaCodigo">Código da loja (1–99); nulo no depósito sem loja.</param>
+/// <param name="Quantidade"><c>numeric(15,3)</c> em texto (pode ser negativa: a venda não trava sem estoque).</param>
+public sealed record SaldoLocalOnline(
+    [property: JsonPropertyName("estoque_id")] Guid EstoqueId,
+    [property: JsonPropertyName("tipo")] string Tipo,
+    [property: JsonPropertyName("loja_codigo")] int? LojaCodigo,
+    [property: JsonPropertyName("nome")] string Nome,
+    [property: JsonPropertyName("loja_do_terminal")] bool LojaDoTerminal,
+    [property: JsonPropertyName("quantidade")] string Quantidade)
+{
+    public const string TipoLoja = "loja";
+    public const string TipoDeposito = "deposito";
+
+    /// <summary>A quantidade como número (invariante, o formato do protocolo).</summary>
+    [JsonIgnore]
+    public decimal QuantidadeNumero => decimal.Parse(Quantidade, System.Globalization.NumberStyles.AllowLeadingSign | System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Erro (2.4)
 // ---------------------------------------------------------------------------------------------------------------------
 

@@ -70,6 +70,21 @@ public sealed partial class ShellViewModel(IServiceProvider servicos, ILogger<Sh
 
             log.LogInformation("Banco local pronto em {Arquivo} ({Migracoes} migrações aplicadas agora)",
                 caminhos.ArquivoBanco, resultado.MigracoesAplicadas.Count);
+            // Índice da pesquisa F2 (F2-B36): refeito na abertura quando preciso; a falha só deixa a pesquisa em memória.
+            if (resultado.IndiceDescartado)
+            {
+                log.LogWarning("Índice da pesquisa corrompido (só ele no integrity_check): descartado e refeito");
+            }
+
+            if (resultado.IndiceBusca is { Reconstruido: true } indice)
+            {
+                log.LogInformation("Índice da pesquisa reconstruído ({Motivo}): {Produtos} produtos", indice.Motivo, indice.Produtos);
+            }
+
+            if (resultado.ErroIndiceBusca is { } erroIndice)
+            {
+                log.LogWarning("Índice da pesquisa não conferido na abertura ({Erro}): a pesquisa segue em memória", erroIndice);
+            }
             // Painel de saúde (G4): o integrity_check da abertura fica em memória (o Painel nunca o roda de novo).
             Servico<EstadoBanco>().Registrar(resultado.BancoNovo, Servico<IRelogio>().Agora);
             // PDV 32.5: backup a cada 2 h com o caixa aberto (o do fechamento e o de saída são chamados por quem fecha).

@@ -32,6 +32,7 @@ public class ContratosTests
         { "heartbeat.resposta.json", typeof(RespostaHeartbeat) },
         { "eventos-status.resposta.json", typeof(RespostaEventosStatus) },
         { "recuperar.resposta.json", typeof(RespostaRecuperar) },
+        { "saldos-outras-lojas.resposta.json", typeof(RespostaSaldosOutrasLojas) },
         { "token.renovar.requisicao.json", typeof(RequisicaoRenovarToken) },
         { "token.renovar.resposta.json", typeof(RespostaRenovarToken) },
     };

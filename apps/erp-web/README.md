@@ -1157,6 +1157,31 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       exportação leva a visão e vira tarefa; o `linkVerMovimentacao` com os 30 dias no fuso da empresa, até a data dada
       e com a data inválida), `EstoqueAtual.test.tsx` (o link com a data-base; no "Todas", sem link) e
       `BlocosProduto.test.tsx` (o link de cada linha do bloco Estoque; sem a permissão, sem a coluna).
+69. **Guarda das variações: a chave do caixa e o aviso ao ligar "Com variações"** (Fase 2, F2-B34; F2-Q2 = roadmap
+    D44, decidida pelo dono em 05/11/2026; README da API › decisão 181;
+    `src/paginas/configuracoes/CamposConfiguracoes.tsx`, `src/paginas/configuracoes/rotulos.ts`).
+    - **"Recusa produto com variações no caixa"** (`pdv.recusa_produto_com_variacoes`, padrão Sim) em Configurações ›
+      Parâmetros › PDV e, por loja, em Lojas › Parâmetros, com a ajuda do que cada valor faz no caixa.
+    - **Ligar "Cadastrar produtos Com variações" avisa dos caixas antigos:** ao gravar a chave da empresa passando para
+      Sim, a tela consulta `GET /configuracoes/terminais-sem-guarda-variacoes` e, havendo terminal ativo com o PDV
+      anterior à R1 (ou sem versão conhecida), abre "Caixas sem a guarda das variações" com a loja, o caixa, a descrição
+      e a versão de cada um (só das lojas permitidas ao usuário; os das outras lojas aparecem como "E mais n caixa(s) de
+      outras lojas, fora do seu acesso", porque a chave vale para a empresa toda): "Cancelar" não grava; "Gravar mesmo
+      assim" grava. Sem nenhum, grava direto, sem perguntar. A consulta que falha não trava a gravação: o mesmo diálogo
+      diz que não deu para conferir e deixa gravar. Só ao **ligar** (desligar, ou gravar outra chave, não consulta). Um
+      modal da própria tela, e não o `openConfirmModal`, porque a lista vem da consulta e o teste confere o conteúdo.
+    - Testes: `Configuracoes.test.tsx` (os caixas listados e a contagem das outras lojas, só a contagem também avisa,
+      "Cancelar" sem `PUT` e "Gravar mesmo assim" com o `PUT` da chave; a consulta com erro avisa e deixa gravar; o
+      teste de F2-B1 que liga a chave grava direto sem caixa antigo).
+
+70. **Consulta do estoque das outras lojas no caixa: a chave em Parâmetros › PDV** (Fase 2, F2-B35; F2-Q12 = roadmap
+    D53, **vale a recomendação, sem resposta explícita do dono** — padrão até a confirmação do dono; README da API ›
+    decisão 182, do PDV › decisão 82; `src/paginas/configuracoes/rotulos.ts`).
+    - **"Consulta do estoque das outras lojas no caixa (F4)"** (`pdv.consulta_outras_lojas`, padrão Sim) em
+      Configurações › Parâmetros › PDV e, por loja, em Lojas › Parâmetros (a chave é por loja), com a ajuda do que cada
+      valor faz no caixa: Sim, o `F4` da pesquisa mostra online a quantidade nas outras lojas e no CD, sem a loja de
+      treino e sem custo; Não, o `F4` avisa que está desligada. Só o rótulo: o campo booleano, a gravação e a
+      sobreposição por loja são os de sempre. Nenhuma tela nova no ERP.
 
 ## O que ainda não foi feito (Fase 0)
 

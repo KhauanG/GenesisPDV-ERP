@@ -94,6 +94,25 @@ public static class ChavesConfiguracao
 
     public const decimal DescontoCascosMaxSemSupervisorPadrao = 50m;
 
+    /// <summary>
+    /// Guarda das variações (Fase 2, F2-B34; F2-Q2 = D44, decidida pelo dono em 05/11/2026: ligada): o código de
+    /// uma variação e o pai "Com variações" com variação ativa são recusados (<c>GuardaVariacoes</c>); desligada, vende
+    /// o pai.
+    /// </summary>
+    public const string RecusaProdutoComVariacoes = "pdv.recusa_produto_com_variacoes";
+
+    /// <summary>
+    /// F4 "Outras lojas" da pesquisa F2 (Fase 2, F2-B35; F2-Q12 = D53, sem resposta explícita do dono: vale a
+    /// recomendação, ligada para qualquer operador): desligada, o F4 avisa sem consultar (a API também recusa).
+    /// </summary>
+    public const string ConsultaOutrasLojas = "pdv.consulta_outras_lojas";
+
+    /// <summary>
+    /// "Exibe estoque na busca" (PDV 10.3; MD 3.1.2, por loja; padrão ligada): a pesquisa F2 mostra a coluna do estoque
+    /// estimado (Fase 2, F2-B36).
+    /// </summary>
+    public const string ExibeEstoqueBusca = "pdv.exibe_estoque_busca";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -112,6 +131,9 @@ public static class ChavesConfiguracao
         [PixManualExigeSupervisor] = true,
         [CancelamentoDevolveVazios] = true,
         [CancelarItemExigeSupervisor] = false,
+        [RecusaProdutoComVariacoes] = true,
+        [ConsultaOutrasLojas] = true,
+        [ExibeEstoqueBusca] = true,
     };
 
     public const decimal ToleranciaPadrao = 0m;

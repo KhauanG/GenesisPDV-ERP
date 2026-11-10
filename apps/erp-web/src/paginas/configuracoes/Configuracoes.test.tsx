@@ -180,6 +180,10 @@ describe('<CamposConfiguracoes>: chaves de tipo de produto (F2-B1)', () => {
         if (url.pathname === '/api/produtos/tipos-habilitados') {
           return { corpo: { tipos: ligada ? ['simples', 'com_variacoes'] : ['simples'] } };
         }
+        // Todos os caixas já com a guarda das variações (F2-B34): grava sem perguntar.
+        if (url.pathname === '/api/configuracoes/terminais-sem-guarda-variacoes') {
+          return { corpo: { versaoMinima: '0.11.0', terminais: [], outrasLojas: 0 } };
+        }
         if (url.pathname !== '/api/configuracoes') return undefined;
         if (metodo === 'GET') {
           return { corpo: [valor('produtos.variacoes_habilitadas', { valor: ligada, padrao: false })] };
@@ -237,6 +241,96 @@ describe('<CamposConfiguracoes>: chaves de tipo de produto (F2-B1)', () => {
       expect(chamadas.filter((c) => c.url.pathname === '/api/configuracoes')).toHaveLength(3),
     );
     expect(chamadas.filter((c) => c.url.pathname === '/api/produtos/tipos-habilitados')).toHaveLength(1);
+  });
+});
+
+describe('<CamposConfiguracoes>: caixas sem a guarda das variações (F2-B34; D44)', () => {
+  const VARIACOES: RotuloConfiguracao[] = [
+    {
+      chave: 'produtos.variacoes_habilitadas',
+      rotulo: 'Cadastrar produtos "Com variações"',
+      tipo: 'bool',
+      bloco: 'Produtos',
+    },
+  ];
+
+  function montar(terminais: unknown) {
+    return simularApi(
+      ...rotasSessao({ permissoes: ['configuracoes.ver', 'configuracoes.editar'] }),
+      ({ url, metodo }) => {
+        if (url.pathname === '/api/produtos/tipos-habilitados') return { corpo: { tipos: ['simples'] } };
+        if (url.pathname === '/api/configuracoes/terminais-sem-guarda-variacoes') return terminais as never;
+        if (url.pathname !== '/api/configuracoes') return undefined;
+        return metodo === 'GET'
+          ? {
+              corpo: [
+                valor('produtos.variacoes_habilitadas', {
+                  valor: false,
+                  padrao: false,
+                  loja: false,
+                  pdv: false,
+                }),
+              ],
+            }
+          : { corpo: [] };
+      },
+    );
+  }
+
+  it('ligar com caixa antigo mostra os caixas; Cancelar não grava e "Gravar mesmo assim" grava', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = montar({
+      corpo: {
+        versaoMinima: '0.11.0',
+        terminais: [
+          { id: 't1', lojaNome: 'Loja 1', numeroCaixa: 2, descricao: 'Balcão', versaoApp: '0.10.0' },
+          { id: 't2', lojaNome: 'Petiscaria 2', numeroCaixa: 1, descricao: null, versaoApp: null },
+        ],
+        outrasLojas: 3,
+      },
+    });
+    renderizarComSessao(<CamposConfiguracoes itens={VARIACOES} />);
+    await u.click(await screen.findByRole('switch', { name: 'Cadastrar produtos "Com variações"' }));
+    await u.click(screen.getByRole('button', { name: 'Gravar' }));
+    expect(await screen.findByText(/anterior à versão 0\.11\.0/)).toBeInTheDocument();
+    expect(screen.getByText('Loja 1 – caixa 02 (Balcão): versão 0.10.0')).toBeInTheDocument();
+    expect(screen.getByText('Petiscaria 2 – caixa 01: versão desconhecida')).toBeInTheDocument();
+    expect(screen.getByText('E mais 3 caixa(s) de outras lojas, fora do seu acesso')).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Cancelar' }));
+    await waitFor(() => expect(screen.queryByText(/anterior à versão/)).not.toBeInTheDocument());
+    expect(chamadas.some((c) => c.metodo === 'PUT')).toBe(false);
+
+    await u.click(screen.getByRole('button', { name: 'Gravar' }));
+    await u.click(await screen.findByRole('button', { name: 'Gravar mesmo assim' }));
+    await waitFor(() => expect(chamadas.filter((c) => c.metodo === 'PUT')).toHaveLength(1));
+    expect(chamadas.find((c) => c.metodo === 'PUT')!.corpo).toEqual({
+      lojaId: null,
+      valores: { 'produtos.variacoes_habilitadas': true },
+    });
+  });
+
+  it('só caixas antigos de lojas fora do acesso: avisa pela contagem', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = montar({ corpo: { versaoMinima: '0.11.0', terminais: [], outrasLojas: 2 } });
+    renderizarComSessao(<CamposConfiguracoes itens={VARIACOES} />);
+    await u.click(await screen.findByRole('switch', { name: 'Cadastrar produtos "Com variações"' }));
+    await u.click(screen.getByRole('button', { name: 'Gravar' }));
+    expect(await screen.findByText('2 caixa(s) de outras lojas, fora do seu acesso')).toBeInTheDocument();
+    expect(chamadas.some((c) => c.metodo === 'PUT')).toBe(false);
+  });
+
+  it('a consulta que falha avisa e deixa gravar', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = montar({ status: 500, corpo: { codigo: 'ERRO_INTERNO', mensagem: 'Falhou' } });
+    renderizarComSessao(<CamposConfiguracoes itens={VARIACOES} />);
+    await u.click(await screen.findByRole('switch', { name: 'Cadastrar produtos "Com variações"' }));
+    await u.click(screen.getByRole('button', { name: 'Gravar' }));
+    expect(await screen.findByText(/Não foi possível conferir a versão do PDV/)).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Gravar mesmo assim' }));
+    await waitFor(() => expect(chamadas.filter((c) => c.metodo === 'PUT')).toHaveLength(1));
+    const consultas = () =>
+      chamadas.filter((c) => c.url.pathname === '/api/configuracoes/terminais-sem-guarda-variacoes').length;
+    expect(consultas()).toBe(1);
   });
 });
 

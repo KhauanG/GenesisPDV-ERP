@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UTC; PR-7 com os seis blocos, F2-B28 a F2-B33, commitado e PR aberto)._
+_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 aberto (#6), aguardando a liberação do dono)._
 
 ## Repositório
 
@@ -52,8 +52,9 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 | PR-4 fornecedores e recebimento manual | B13–B17 | concluído (arquivo #19) |
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
-| **PR-7 relatórios de estoque** | **B28–B33** | **PR aberto** (branch `claude/blissful-cray-cvroui` → `main`), aguardando a revisão e a liberação do dono |
-| PR-8 em diante | | não iniciados |
+| PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**) |
+| **PR-8 PDV: guarda e consulta** | **B34–B36** | **aberto (#6)**, aguardando a liberação do dono (release R1 do PDV, versão **0.11.0**) |
+| PR-9 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -77,22 +78,34 @@ _Última atualização: 07/11/2026 (PR-6 em produção desde 06/11/2026 23:35 UT
 | F2-B32 Movimentação analítica (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque`: local e período obrigatórios (até 366 dias contando as pontas, dias no fuso da empresa), filtros de produto, tipos de movimento em multisseleção, usuário, documento (tipo e número) e pessoa, local fora dos permitidos 403; **paginação por cursor** `(data_movimento, id)` com os microssegundos no cursor, sem total, pelo `ix_movimentos_estoque_estoque_data`; **saldo anterior e posterior recalculados na ordem da data** pela soma do razão da linha de saldo, cada movimento lendo só a parte entre o anterior da mesma linha na página e ele pelo `ix_movimentos_estoque_linha_data` só pelo índice, o saldo da linha de saldo também com filtros, fechando com `saldos_estoque`, com o gravado ao lado; colunas do Nuvem3 com `id_nuvem3`, fornecedor, documento com número e link e o custo só com `produtos.ver_custo`, mais a unidade do produto (a da quantidade) e o fator ao lado da unidade do documento, e a pessoa do movimento em qualquer documento (cascos devolvidos, compensação); a tela lista também os locais inativos, marcados; fuso como parâmetro e JIT desligado; consulta pronta para virar o provedor da exportação do F2-B33; `GET /referencias/tipos-movimento-estoque`; contratos em `packages/shared/src/relatorios.ts`; ERP `apps/erp-web/src/paginas/relatorios/MovimentacaoEstoque.tsx` no `<Relatorio>` por cursor com a nota do saldo recalculado e o ícone do gravado, filtros novos `multisselecao` e `componente` no `FiltroListagem`, rota e menu pronto; carga `pnpm --filter api carga:movimentacao` fora do CI com 4 milhões de movimentos, 12 meses da Loja 1 (1,62 M): 1ª página 40 ms, página do meio 98 ms, última 170 ms, filtros de 23 a 51 ms (< 5 s), EXPLAIN registrado; **sem migração**; PDV sem mudança; README da API › decisão 179, README do ERP › decisão 67) | **commitado** |
 | F2-B33 Movimentação sintética, exportação e "Ver movimentação" (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque/sintetica`: uma linha por produto × variação × tipo de estoque do local com movimento no período, paginada por página com o total e os custos do relatório inteiro; **fecha com a analítica** (saldo inicial = a soma do razão antes do período, final = inicial + o período; entradas, saídas e custos pelo `filter` dos filtros de movimento, com os saldos da linha de saldo); **última compra** = o último `RECEB_MANUAL`/`RECEB_NFE` de entrada do produto no local pela data até o fim do período, pelo `ix_movimentos_estoque_tipo_movimento` (não o `saldos_estoque.ultima_compra_em`, que é a última lançada, de hoje); provedor de exportação `movimentacao-estoque` com `visao=analitica|sintetica` (`Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`, colunas do Nuvem3 com os ids, custo cortado sem `produtos.ver_custo`, local permitido conferido de novo na tarefa) e a **contagem própria** só no razão; na analítica sem filtro de movimento, só o primeiro movimento de cada linha lê o índice para o saldo (a parte entre dois da mesma linha é vazia); ERP: filtro Visão na `MovimentacaoEstoque.tsx` (a sintética por página, com o link dos movimentos para a analítica do produto), Excel/CSV pela API, "Ver movimentação" no bloco Estoque do produto e no Estoque Atual (local, produto e os 30 dias até hoje ou até a data-base na URL); carga `pnpm --filter api carga:movimentacao-exportacao` fora do CI com 4 milhões de movimentos: sintética de 12 meses da Loja 1 (1,62 M de movimentos, 2.454 linhas) de 0,36 a 1,01 s por página (< 5 s), contagem própria 237 ms (analítica) e 430 ms (sintética), exportação da analítica dos 12 meses em tarefa (1.620.913 linhas, `.xlsx` de 225 MB em 2 abas) em 247 s com pico de heap 224 MB (< 300 MB), EXPLAIN registrado; os bancos apagados no fim; **sem migração**; PDV sem mudança; README da API › decisão 180, README do ERP › decisão 68) | **commitado** |
 
+### PR-8 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B34 guarda de produto com variações no PDV (PDV: `ProdutoResolvido.ExigeVariacao`/`VariacaoId`, `ProdutoVenda.TemVariacoesAtivas` e `GuardaVariacoes` no Core, marcação no `CatalogoLocal` — o código da variação e o pai `com_variacoes` com variação ativa; o legado sem variação ativa e o `com_complementos` vendem —, recusa no `ServicoVenda.IncluirResolvidoAsync` pelo bipe e pela pesquisa F2 com "Produto com variações: venda disponível na próxima versão"; chave `pdv.recusa_produto_com_variacoes` = `true`, por loja, D44 decidida pelo dono em 05/11/2026, na aba 7 da Central; nuvem: a venda do pai sem a variação é aceita e abre o `CADASTRO_PRODUTO` `venda_sem_variacao` (`abrirAlertaCadastro`, o mesmo do `alerta.cadastro`); ERP: a chave em Parâmetros › PDV e, ao ligar `produtos.variacoes_habilitadas`, o aviso dos caixas abaixo de `VERSAO_PDV_GUARDA_VARIACOES` = 0.11.0 por `GET /configuracoes/terminais-sem-guarda-variacoes`; **sem migração**, sem `Esquema.g.cs` nem protocolo novos, versão do PDV inalterada (a R1 é do fechamento do PR-8); README da API › decisão 181, do ERP › 69, do PDV › 81) | **commitado** |
+| F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
+| F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
+
 ## Próximo passo
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-2. **PR-7 "Relatórios de estoque"** (F2-B28 a F2-B33, no branch `claude/blissful-cray-cvroui`): os seis blocos
-   commitados e o **PR aberto** (checks locais no corpo; a CI só roda no push da `main`). Merge só com a liberação do
-   dono. **Na implantação do PR-7:** (a) a 0026 cria os dois índices do razão com `concurrently`
-   (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo, sem pegar
-   trava na tabela; (b) **lembrete ao dono:** configurar no bucket a regra de ciclo de vida
-   `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de `backups/` (`infra/producao/README.md` ›
-   Pendências): as exportações de relatório em tarefa (Estoque Atual e Movimentação, que passam de 50 mil linhas)
-   enviam o arquivo em partes, e o envio interrompido por um reinício fica aberto no bucket, cobrando, até ser abortado.
-   Depois do PR-7, o PR-8 (PDV: guarda e consulta, F2-B34 em diante; `docs/planos/fase2-plano.md`).
-3. Numeração das próximas decisões nos READMEs: **API 181**, **ERP 69**, **PDV 81** (confira o último número no próprio
+2. **Implantar o PR-7 (dono):** workflow **Implantação** na `main` (commit `46c8b11` ou mais novo, com a CI verde),
+   aprovando o environment `producao`. A migração **0026** cria os dois índices do razão com `concurrently` antes da
+   transação (segundos no volume de hoje, sem travar as vendas); a `.sql` da 0026 depois só confere pelo catálogo. Junto,
+   a **regra de ciclo de vida do bucket** `AbortIncompleteMultipartUpload` (1 dia), no mesmo arquivo das regras de
+   `backups/` (`infra/producao/README.md` › Backup e › Pendências). Permissões das telas novas:
+   `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e
+   `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
+3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36 + versão 0.11.0): **aberto (#6)**, aguardando a liberação do
+   dono para o merge. Depois do merge, nesta ordem (dono): Implantação da API na `main` com a CI verde (inclusive o job
+   do PDV no `windows-latest`, que confere a FTS5 do SQLite empacotado); **PDV release** na `main` com "publicar"
+   (tag `pdv-v0.11.0`); Implantação com `publicar_pdv`; atualizar os caixas das lojas e testar no caixa real (recusa da
+   variação, F4, pesquisa F2). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
-   em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
+   em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
+   `docs/planos/decisoes-do-dono.md`).
 
 ## Pendências e lembretes
 

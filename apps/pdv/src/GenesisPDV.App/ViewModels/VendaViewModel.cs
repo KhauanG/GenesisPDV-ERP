@@ -1210,6 +1210,14 @@ public sealed partial class VendaViewModel : ViewModelBase
         return null;
     }
 
+    /// <summary>F4 na pesquisa (F2-B35): o diálogo dos saldos online do produto; Esc volta à <paramref name="pesquisa"/>.</summary>
+    public async Task AbrirOutrasLojasAsync(DialogoPesquisaViewModel pesquisa, ProdutoVenda produto)
+    {
+        var dialogo = new DialogoOutrasLojasViewModel(this, pesquisa, produto);
+        AbrirDialogo(dialogo);
+        await dialogo.ConsultarAsync();
+    }
+
     private async Task AbrirPesquisaAsync(string filtro)
     {
         var dialogo = new DialogoPesquisaViewModel(this, filtro);

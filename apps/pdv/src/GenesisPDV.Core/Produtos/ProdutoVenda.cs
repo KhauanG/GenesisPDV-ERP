@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using GenesisPDV.Core.Numeros;
 using GenesisPDV.Core.Precos;
 using GenesisPDV.Core.Vendas;
@@ -51,6 +52,14 @@ public sealed record ProdutoVenda(
     /// </summary>
     public short? IdadeMinima { get; init; }
 
+    /// <summary>
+    /// Produto pai <c>com_variacoes</c> com variação ativa no espelho (<c>produtos_variacoes</c> ativa e não excluída):
+    /// vendê-lo sem a variação baixa o saldo errado (F2-B34; <see cref="GuardaVariacoes"/>). O pai sem variação ativa
+    /// (o legado do Nuvem3 sem grade) vende como simples. Fato da resolução, fora do snapshot da venda.
+    /// </summary>
+    [JsonIgnore]
+    public bool TemVariacoesAtivas { get; init; }
+
     public bool Fracionavel => PermiteFracao ?? UnidadesFracionaveis.Contains(Unidade);
 
     /// <summary>Varejo da regra 11.3 passo 3: <c>produtos_lojas.preco_venda ?? produtos.preco_venda</c>.</summary>
@@ -76,13 +85,24 @@ public sealed record ComponenteBaixa(Guid ProdutoId, Guid? VariacaoId, decimal Q
 /// <param name="Fator">Fator da embalagem (fardo de 12 = 12); a quantidade do item é fator × multiplicador.</param>
 /// <param name="PrecoEmbalagem"><c>produtos_codigos_barras.preco</c>: preço autoritativo da embalagem (nulo = regra 11.3).</param>
 /// <param name="SiglaEmbalagem">Sigla da <c>unidade_id</c> da embalagem ("FD"), para tela e cupom.</param>
+/// <param name="VariacaoId">
+/// <c>produtos_codigos_barras.variacao_id</c> do código lido: o código é o de uma variação (F2-B34). O PDV-1 não vende
+/// a variação (a escolha é da Fase 3), e a guarda recusa (<see cref="GuardaVariacoes"/>).
+/// </param>
 public sealed record ProdutoResolvido(
     ProdutoVenda Produto,
     Guid? CodigoBarrasId = null,
     decimal Fator = 1m,
     decimal? PrecoEmbalagem = null,
-    string? SiglaEmbalagem = null)
+    string? SiglaEmbalagem = null,
+    Guid? VariacaoId = null)
 {
+    /// <summary>
+    /// Vender exige escolher a variação, o que o PDV-1 não faz: o código é o de uma variação, ou o produto é o pai com
+    /// variação ativa (F2-B34). <c>com_complementos</c> não entra: vende sem os complementos (PDV 10.2).
+    /// </summary>
+    public bool ExigeVariacao => VariacaoId is not null || (Produto.Tipo == TipoProduto.ComVariacoes && Produto.TemVariacoesAtivas);
+
     /// <summary>Embalagem lida (fator ≠ 1 ou com preço próprio); nulo para a unidade.</summary>
     public EmbalagemPreco? Embalagem => CodigoBarrasId is { } id && (Fator != 1m || PrecoEmbalagem is not null)
         ? new EmbalagemPreco(id, Fator, PrecoEmbalagem, SiglaEmbalagem)
@@ -117,6 +137,66 @@ public sealed record ProdutoPesquisado(ProdutoResolvido Resolvido, string? Codig
     public decimal Preco => EhEmbalagem
         ? Resolvido.PrecoEmbalagem ?? Arredondamento.Arred2(Produto.PrecoBase * Resolvido.Fator)
         : Produto.PrecoBase;
+
+    /// <summary>Descrição da marca do produto (<c>marcas.descricao</c>; F2-B36), nula sem marca.</summary>
+    public string? Marca { get; init; }
+
+    /// <summary><c>produtos.localizacao</c> (a prateleira ou o corredor do cadastro; F2-B36).</summary>
+    public string? Localizacao { get; init; }
+
+    /// <summary>
+    /// Estoque estimado da loja (PDV 29.1; SYNC 15.2) para a coluna da pesquisa, com <c>pdv.exibe_estoque_busca</c>
+    /// ligada (F2-B36). Nulo com a chave desligada, na demonstração ou no produto sem saldo próprio
+    /// (<see cref="SemSaldoProprio"/>).
+    /// </summary>
+    public decimal? Estoque { get; init; }
+
+    /// <summary>A coluna do estoque está ligada, mas o produto não tem saldo próprio (não controla, combo, produzido, serviço).</summary>
+    public bool SemSaldoProprio { get; init; }
+
+    /// <summary>
+    /// Texto da coluna do estoque: a quantidade ("1.250", "-2", "0,5"), "—" sem saldo próprio, ou nulo com a coluna
+    /// desligada (a tela esconde a coluna). O saldo é sempre na unidade do produto: na linha da embalagem (o DUN do
+    /// fardo, com Un. "FD 12") vem com a sigla dela ("240 UN"), para não ser lido como 240 fardos.
+    /// </summary>
+    public string? EstoqueTexto => Estoque is { } q
+        ? EhEmbalagem ? $"{q.ToString("#,##0.###", NumeroBr.Cultura)} {Produto.Unidade}" : q.ToString("#,##0.###", NumeroBr.Cultura)
+        : SemSaldoProprio ? "—" : null;
+
+    /// <summary>
+    /// Preço promocional que a venda cobraria agora, destacado na pesquisa: vigente
+    /// (<see cref="TabelaPreco.PromocaoVigenteEm"/>) e menor que o varejo da linha (<see cref="ProdutoVenda.PrecoBase"/>,
+    /// que pode ser o preço da loja), a mesma regra do <c>MotorPreco</c> (o menor candidato vale). Nulo fora da promoção,
+    /// com o promocional igual ou maior que o varejo e na linha da embalagem (que tem o preço dela).
+    /// </summary>
+    public decimal? PrecoPromocional { get; init; }
+
+    /// <summary>
+    /// Preço de atacado do cadastro (com a quantidade mínima, PDV 11.3), só quando a venda pode cobrá-lo: menor que o
+    /// varejo da linha e fora do combo (que não recebe atacado, PDV 10.9.1). Nulo sem atacado e na linha da embalagem.
+    /// </summary>
+    public decimal? PrecoAtacado => !EhEmbalagem && !Produto.EhKit && Produto.Precos?.PrecoAtacado is > 0m and var atacado
+        && atacado < Produto.PrecoBase
+            ? atacado
+            : null;
+}
+
+/// <summary>
+/// Guarda do produto com variações no caixa (Fase 2, F2-B34; F2-Q2 = D44, decidida pelo dono em 05/11/2026):
+/// enquanto o caixa não sabe escolher a variação (Fase 3, PDV-2), o código de uma variação e o pai com variação ativa
+/// são recusados com <see cref="Mensagem"/>, pela chave <c>pdv.recusa_produto_com_variacoes</c> (padrão ligada).
+/// Desligada, vende o pai como antes (o preço e o saldo do pai), e a nuvem abre o alerta de cadastro ao receber a venda.
+/// </summary>
+public static class GuardaVariacoes
+{
+    public const string Mensagem = "Produto com variações: venda disponível na próxima versão";
+
+    /// <summary>A mensagem da recusa, ou nulo quando o item pode entrar (<paramref name="recusa"/> = a chave da loja).</summary>
+    public static string? Motivo(ProdutoResolvido resolvido, bool recusa)
+    {
+        ArgumentNullException.ThrowIfNull(resolvido);
+        return recusa && resolvido.ExigeVariacao ? Mensagem : null;
+    }
 }
 
 public interface ICatalogoProdutos
@@ -124,8 +204,12 @@ public interface ICatalogoProdutos
     /// <summary>Resolve código de barras, código interno ou código numérico do produto. Pode haver mais de um resultado.</summary>
     Task<IReadOnlyList<ProdutoResolvido>> ResolverAsync(string codigo, CancellationToken ct = default);
 
-    /// <summary>Pesquisa por descrição/código (F2): todas as palavras, sem acento, em qualquer ordem.</summary>
-    Task<IReadOnlyList<ProdutoVenda>> PesquisarAsync(string texto, int limite = 50, CancellationToken ct = default);
+    /// <summary>
+    /// Pesquisa por descrição/código (F2): todas as palavras, sem acento, em qualquer ordem, como trechos do nome, do código
+    /// interno, do código numérico, da marca ou da categoria principal (F2-B36: índice FTS5 local). Sempre a linha da
+    /// unidade, com a marca e a localização.
+    /// </summary>
+    Task<IReadOnlyList<ProdutoPesquisado>> PesquisarAsync(string texto, int limite = 50, CancellationToken ct = default);
 
     /// <summary>
     /// Pesquisa só por código (a "pesquisa só por números" do terminal): <paramref name="digitos"/> no código interno, no

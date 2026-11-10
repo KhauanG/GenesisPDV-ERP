@@ -342,7 +342,7 @@ dados.
 
 ### Gerar o instalador e publicar uma versão (desenvolvimento)
 
-- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.10.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79). A mesma aparece no
+- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.11.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84). A mesma aparece no
   nome do instalador, no rodapé do login e do assistente e no `versao_app` que vai à nuvem.
 - **Windows** (SDK do .NET 10; o Inno Setup 6 vem pelo Chocolatey se faltar):
   `pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao X.Y.Z] [-UrlApi https://...]` →
@@ -437,6 +437,10 @@ TM-T88 V/VI) ou **Bematech MP-4200 TH**; sem impressora configurada o caixa **ve
   (+ `_alternativas`), `restricoes_horario_venda`, `formas_pagamento`, `unidades_medida` e `configuracoes`, com a projeção do MD 6.2
   (sem custo, markup etc.), `versao`/`criado_localmente` com `DEFAULT 0`, sem FKs entre espelhos e com os índices das
   buscas do caixa. `RepositorioEspelhos.GravarAsync` faz o upsert por `id` só com versão maior (base do pull).
+- **Índice da pesquisa F2** (decisão 83): `produtos_busca` (FTS5, trigrama) sobre `produtos_busca_texto`, criados por
+  migração com SQL, fora do modelo do EF e do `Esquema.g.cs`; preenchidos e conferidos na abertura
+  (`IndiceBuscaProdutos.GarantirAsync`) e mantidos pelo pull. Ausente ou corrompido, a pesquisa usa a busca em memória e
+  a abertura refaz.
 - **`Esquema.g.cs`** (MD 4.1) é gerado pela API a partir do schema Drizzle: `pnpm --filter api gerar:esquema-pdv`
   (o CI roda `verificar:esquema-pdv` e falha se o arquivo versionado estiver diferente). Ele descreve as tabelas lidas
   pelos fluxos do pull e as de movimento que já existirem no Drizzle (nome, tipo, escala do `numeric(p,s)`, nulidade,
@@ -3590,9 +3594,10 @@ exportação de pendências na
 tela de desativado, ressincronização em sombra (6.11), comandos `enviar_logs`/`atualizar_app`/`reservar_faixa`,
 as demais teclas do F11 (sangria, reforço, movimentos, limite de gaveta, resumo diário, status do sync e devolução de
 cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura avulsa da gaveta, na I4, decisão 63), TEF, PIX dinâmico, crediário e as demais formas
-da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), pesquisa FTS5, confirmação de idade e
+da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
-sem estoque" nas alternativas do combo, variações, agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
+resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -3648,3 +3653,164 @@ reimpresso continua o original, com o número do caixa.
     integração da API roda só no job do PostgreSQL 18, a versão da produção (antes rodava também no 16, no job
     TypeScript). Isso não foi pedido pelo dono, que falou só do PDV: foi escolha técnica, depois **decidida pelo dono
     em 05/11/2026** seguindo a recomendação (roadmap §16, D59); CONTRIBUTING.md › CI.
+
+81. **Guarda do produto com variações: o caixa recusa em vez de vender o pai** (Fase 2, F2-B34; F2-Q2 = roadmap D44,
+    **decidida pelo dono em 05/11/2026: recusar** — o dono respondeu em 04/11/2026 que as variações não entram na
+    Fase 2, D43; PDV 10.2; MD 6.1; README da API › decisão 181; sai na release R1 do PDV, no fechamento do PR-8; sem
+    migração local, sem mudança no `Esquema.g.cs` nem no protocolo). Antes, o EAN de uma variação resolvia para o produto pai e
+    vendia com o preço e o saldo do pai — a baixa errada só aparecia no inventário.
+    - **Quem recusa:** `ProdutoResolvido.ExigeVariacao` (Core) é verdadeiro quando o código lido é o de uma variação
+      (`VariacaoId`, novo no `ProdutoResolvido`, de `produtos_codigos_barras.variacao_id`) ou quando o produto é o pai
+      `com_variacoes` com variação ativa (`ProdutoVenda.TemVariacoesAtivas`); `GuardaVariacoes.Motivo` devolve
+      "Produto com variações: venda disponível na próxima versão" com a chave ligada. O `ServicoVenda.IncluirResolvidoAsync`
+      — o caminho do bipe (`ProcessarEntradaAsync`) e da pesquisa F2 (`IncluirDaPesquisaAsync`) — confere antes de
+      tudo, e a recusa é uma `RegraNegocioException` comum: a mensagem na barra (ou o erro no diálogo da pesquisa), o
+      campo limpo, a venda não abre e o número não é gasto. O combo e a venda recuperada após queda não passam por
+      aqui (o componente do combo com variações fica para a Fase 3, com o ERP já travando a criação do tipo, F2-B1).
+    - **O catálogo só marca** (`CatalogoLocal`): o `ResolverAsync` leva a `variacao_id` do código; o `MontarAsync` marca
+      os pais `com_variacoes` com alguma `produtos_variacoes` ativa e não excluída (uma consulta só, e só quando há pai
+      desse tipo entre os produtos); na pesquisa só por números, o código de uma variação dá a linha dele (como o de
+      uma embalagem), para a inclusão saber que é a variação. O pai **sem** variação ativa (o legado do Nuvem3 sem
+      grade, ou só com inativas) vende como simples, e o `com_complementos` vende sem os complementos (PDV 10.2): só
+      `com_variacoes` é recusado (a crítica do plano). `TemVariacoesAtivas` é `[JsonIgnore]`: é fato da resolução, não
+      entra no snapshot da venda (`produtos_venda_snapshot`).
+    - **Chave `pdv.recusa_produto_com_variacoes`** (`ChavesConfiguracao.RecusaProdutoComVariacoes`, padrão `true`, por
+      loja; desce no fluxo `configuracao` como toda `pdv.*`), lida da loja do terminal a cada inclusão de produto com
+      variações (só desse; os outros não leem a chave). Desligada, vende o pai como antes, e a nuvem aceita e abre o
+      alerta de cadastro (API › decisão 181). Na aba 7 Parâmetros da Central, "Recusa produto com variações no caixa"
+      (`CatalogoRotulosConfiguracao`), e o padrão confere com o catálogo (`CicloOnlineTests`, `CatalogoRotulosConfiguracaoTests`).
+    - **Compatibilidade:** o PDV 0.10.0 das lojas continua vendendo o pai (a nuvem não recusa), e o ERP avisa ao ligar
+      `produtos.variacoes_habilitadas` com caixa abaixo de `VERSAO_PDV_GUARDA_VARIACOES` (`0.11.0`, a versão prevista da
+      R1; README do ERP › decisão 69). A versão do PDV não muda neste bloco (fica para o fechamento do PR-8).
+    - Testes: `GuardaVariacoesTests` (Core: a recusa com a chave ligada e nenhuma com ela desligada, o item do pai com
+      ela desligada; pai sem variação ativa, complementos e simples entram), `CatalogoLocalTests` (Data: o EAN da
+      variação com a `VariacaoId`, o do pai e o código interno marcados, o legado só com variação inativa e excluída e o
+      "Com complementos" sem marca, a pesquisa por nome e a só por números com a linha da variação) e
+      `VariacoesTelasTests` (App: a recusa pelo bipe do EAN da variação, do pai e do código interno sem abrir a venda,
+      pela pesquisa F2 no diálogo; o legado e a porção com complementos vendem; com a chave desligada na loja, o EAN da
+      variação vende o pai).
+
+82. **F4 "Outras lojas" na pesquisa: o saldo online das lojas e do CD, sem travar a venda** (Fase 2, F2-B35; F2-Q12 =
+    roadmap D53, **vale a recomendação, sem resposta explícita do dono** — padrão até a confirmação do dono; PDV 10.3;
+    SYNC 1.4, 17.5, 20.2; README da API › decisão 182, do ERP › decisão 70; sai na release R1 do PDV, no fechamento do
+    PR-8; sem migração local, sem mudança no `Esquema.g.cs` e **fora do T13**: nenhum tipo de evento nem versão nova).
+    - **Cliente:** `IClienteSync.SaldosOutrasLojasAsync` (`GET /sync/consultas/saldos-outras-lojas?produto_id=`) com o
+      prazo próprio `TemposLimiteSync.Consulta` = **3 s** (o operador está com o cliente no balcão; o do pull é 30 s).
+      Records `RespostaSaldosOutrasLojas`/`SaldoLocalOnline` em `Protocolo/Contratos.cs`, pela fixture
+      `saldos-outras-lojas.resposta.json` (`ContratosTests`). Só leitura: `X-Requisicao-Id` novo a cada envio.
+    - **`IConsultaOutrasLojas`/`ConsultaOutrasLojasHttp`** (`GenesisPDV.Sync/Cliente/ConsultaOutrasLojas.cs`) devolve os
+      saldos ou o aviso, **nunca exceção para a tela** (só o cancelamento de quem chamou): o terminal sem nuvem
+      (demonstração) e o caixa **já dado como offline** pelo ciclo (2 falhas seguidas, `OfflineDesde` preenchido) nem
+      chamam; a falha de rede, o prazo estourado, o 5xx/503, a resposta fora do contrato e o **404 da API antiga** (sem
+      `detalhes.produto_id`) dão "Consulta indisponível (requer conexão)"; o 404 com `detalhes.produto_id` dá "Produto
+      não encontrado na nuvem"; o 403 `ESCOPO_INVALIDO` com `detalhes.chave` (a chave desligada na nuvem) dá "desligada no
+      ERP", e o mesmo 403 sem ela (o terminal em desativação, SYNC 3.8) dá a mensagem da API; o 429, "aguarde
+      um minuto"; o 409 `HARDWARE_ALTERADO`, o aviso do hardware. Ainda sem contato nenhum (antes do primeiro heartbeat)
+      tenta: pode estar online. A consulta não mexe na situação do ciclo (não conta como falha de transporte).
+    - **Tela:** `F4` (e o botão "Outras lojas [F4]") no diálogo da pesquisa (`DialogoPesquisaViewModel.OutrasLojas`; o
+      `F4` da tela de venda continua sendo Remover item, porque a tecla do diálogo trata antes) abre
+      `DialogoOutrasLojasViewModel` sobre o produto selecionado: "Consultando a nuvem…", depois cada local com a
+      quantidade na unidade do produto ("1.250 UN", "120,5 UN", "-2 UN"), a loja do caixa primeiro em negrito com
+      "(esta loja)", e a nota de que é a quantidade vendável na nuvem agora (sem as vendas não sincronizadas) — ou, no
+      produto que não controla estoque (`controla_estoque` falso: sem controle, combo, serviço ou produzido), a nota
+      disso. A chave **`pdv.consulta_outras_lojas`**
+      (`ChavesConfiguracao.ConsultaOutrasLojas`, padrão `true`, por loja; na aba 7 da Central, `CatalogoRotulosConfiguracao`)
+      é lida do espelho antes: desligada, o aviso sem chamar a API. **`Enter` ou `Esc` voltam à pesquisa** (o mesmo
+      `DialogoPesquisaViewModel`, com o filtro e a seleção) e cancelam a consulta em andamento: a venda nunca espera.
+      Liberada a qualquer operador (sem permissão própria, D53). O `F1` cita o `F4` da pesquisa.
+    - **Compatibilidade:** o PDV novo diante da API anterior ao F2-B35 recebe 404 e mostra "requer conexão" (a ordem
+      de implantação continua API primeiro). A versão do PDV não muda neste bloco (fica para o fechamento do PR-8).
+    - Testes: `ConsultaOutrasLojasTests` (Sync: a rota com o `produto_id` e o token, a fixture; o prazo de 3 s por
+      padrão e o estourado em "requer conexão" antes de 3 s; a API antiga, a rede fora e o 503; o sem nuvem e o
+      offline confirmado sem envio, o ainda sem contato com envio; os avisos do 404 do produto, do 403 da chave e do sem
+      ela, do 429, do 409 e de outra recusa; o cancelamento de quem chamou), `ContratosTests` (a fixture) e
+      `OutrasLojasTelasTests` (App, com a consulta trocada: online as quantidades e a loja do caixa marcada; offline
+      "requer conexão"; a chave desligada na loja avisa sem consultar; o produto sem saldo próprio com a nota "não
+      controla estoque"; a consulta que demora, cancelada pelo `Esc` com o `ct` repassado, e o `F4` seguinte consultando
+      de novo; em todos, `Esc` ou `Enter` voltam à pesquisa com o filtro sem incluir nada e o `Enter` nela inclui o
+      produto).
+
+83. **Pesquisa F2 pelo índice FTS5 local, com marca, localização, atacado, promocional e estoque** (Fase 2, F2-B36,
+    bloco marcado opcional no plano e incluído na R1 do PDV pela recomendação do plano, sem resposta explícita do dono;
+    PDV 10.3; MD 4.2; SYNC 6.10; sai na release R1, no fechamento do PR-8; uma migração local nova, **sem mudança no
+    `Esquema.g.cs`, sem migração na nuvem e fora do T13**: nenhum evento, nenhum tipo novo em `versoes_schema`).
+    - **Estrutura** (migração EF `BuscaProdutosFts`, SQL escrito nela): a tabela de conteúdo `produtos_busca_texto`
+      (`id` inteiro, `produto_id` único, `texto`: nome, código interno, código numérico, marca e categoria principal, em
+      maiúsculas e sem acento, normalizados no C# como a busca da Fase 1) e a tabela virtual **`produtos_busca`** (FTS5,
+      `content='produtos_busca_texto'`, **tokenizador `trigram`**), mantida pelos três gatilhos da tabela de conteúdo.
+      Não é espelho: fica fora do modelo do EF e do `Esquema.g.cs`. A migração é idempotente (apaga o que existir com
+      esses nomes antes de criar). O SQLite empacotado (`SQLitePCLRaw.bundle_e_sqlite3` 2.1.13, o do EF; nenhum pacote
+      novo) tem a FTS5 compilada em todas as plataformas: o `IndiceBuscaProdutosTests` confere o `ENABLE_FTS5`, e roda
+      no job do PDV no Windows da CI.
+    - **Por que trigrama:** a pesquisa continua casando **trechos** em qualquer ordem, igual à da Fase 1 ("350" acha
+      "LT350ML", "neken" acha "HEINEKEN"); o tokenizador por palavras só acharia o começo das palavras. A palavra de 3
+      letras ou mais vai ao `MATCH` (entre aspas, as aspas internas dobradas: nunca vira operador); a mais curta ("2L"),
+      que o trigrama não indexa, é filtrada com `instr` no próprio SQLite. Ativos e não excluídos, por nome, até 50. O
+      código de barras fica fora do texto de propósito: no meio de 13 dígitos quase todo trecho de 3 números aparece, e
+      "350" traria centenas de produtos pelo EAN; o EAN continua no bipe e na pesquisa só por números (decisão 65).
+    - **Preenchimento sem voltar o cursor:** a abertura (`InicializadorBanco` → `IndiceBuscaProdutos.GarantirAsync`, logo
+      depois das migrações e antes do login) confere a estrutura, a marca pendente e a contagem contra `produtos`; a
+      primeira abertura depois da atualização acha a contagem diferente e preenche com o espelho que já existe, em lotes
+      de 5.000 produtos, cada um numa transação curta (50 mil produtos ≈ 2 s). O SQLite não tira acento em SQL, por isso
+      o texto sai do C# e o preenchimento é da abertura, não da migração. A falha do índice nunca impede a abertura.
+    - **Manutenção:** o `AplicadorPull` recalcula, na mesma transação da página, o texto dos produtos gravados e dos
+      produtos das marcas e categorias gravadas (a marca renomeada muda o texto dos produtos dela); o
+      `RepositorioEspelhos` (demonstração e testes) faz o mesmo. Tudo sob um `SAVEPOINT`, com um `SAVEPOINT` aninhado que
+      força a FTS5 a gravar ali dentro (ela junta as escritas em memória e só grava no `SAVEPOINT`, no `RELEASE` ou no
+      `COMMIT`: a falha no `RELEASE` desfaria o ponto e voltaria no `COMMIT` da página, que nunca passaria). Se falhar
+      (FTS5 corrompida), desfaz só o índice, marca a reconstrução (`configuracao_terminal` `busca.reconstruir_indice`,
+      chave interna) e **a página e o cursor seguem**; o próprio pull refaz o índice logo depois, no máximo uma vez a cada
+      15 minutos. No caso extremo em que o ponto de salvamento se perde (a falha desfez a transação inteira, como num
+      disco cheio: o Microsoft.Data.Sqlite recusa o `ROLLBACK TO` com `InvalidOperationException`, tratada junto com a
+      `SqliteException`), a página falha uma vez e a atualização fica suspensa neste processo até a reconstrução, para o
+      cursor nunca parar numa página.
+    - **Recuperação:** sem a estrutura completa, com a marca pendente ou com a consulta da FTS5 falhando (a falha marca a
+      reconstrução), a pesquisa usa **a busca em memória da Fase 1**, com as mesmas regras e o mesmo texto: o caixa nunca
+      fica sem pesquisa. O `integrity_check` da abertura que acusa **só** a `produtos_busca` (toda linha a cita) descarta
+      a estrutura e a abertura refaz, em vez de bloquear o caixa como banco corrompido; qualquer outro problema continua
+      bloqueando. O descarte só acontece **depois** da conferência das migrações desconhecidas: o banco de uma versão mais
+      nova (I3) continua recusado sem nenhuma escrita. A restauração de backup (PDV 32.5) aplica a mesma regra: o backup
+      tirado com a FTS5 corrompida (offline o índice só se refaz na abertura seguinte, e os backups do dia a levam junto)
+      continua válido; a restauração descarta o índice no arquivo restaurado e marca a reconstrução, e a abertura o refaz.
+    - **Tela:** o diálogo da pesquisa (980 px) ganhou o cabeçalho e as colunas Código, EAN, Descrição, **Marca**,
+      **Local.** (`produtos.localizacao`), **Estoque**, Un., Varejo, **Atac.** e **Promo.** (em destaque âmbar). Atac. e
+      Promo. mostram só o que a venda cobraria, com a regra do `MotorPreco` (o menor candidato vale): o promocional
+      vigente e **menor que o varejo da linha** (que pode ser o preço da loja, `produtos_lojas.preco_venda`: a loja com
+      preço próprio menor que a promoção geral não vê a promoção), e o atacado menor que esse varejo e **fora do combo**
+      (que não recebe atacado, PDV 10.9.1); os dois ficam vazios na linha da embalagem. O estoque é o estimado da inclusão (PDV 29.1, `SaldosEstimadosAsync`),
+      só no terminal real e com **`pdv.exibe_estoque_busca`** ligada na loja (chave que já existia no catálogo, padrão
+      ligada; agora lida pelo PDV e na aba 7 da Central); "—" no produto sem saldo próprio (não controla, combo,
+      produzido, serviço); desligada, a coluna some inteira. O saldo é sempre na unidade do produto: na linha da embalagem
+      (o DUN do fardo, com Un. "FD 12") ele vem com a sigla ("240 UN"), para não ser lido como 240 fardos. A resposta de
+      um filtro já trocado é descartada (só a do
+      último filtro aparece). `ICatalogoProdutos.PesquisarAsync` passou a devolver `ProdutoPesquisado` (com a marca e a
+      localização).
+    - **Fora deste bloco:** o filtro `(Tab) Todos | Com estoque | Promoção` do desenho da PDV 10.3 não entrou (o plano
+      do F2-B36 não o traz); fica nas lacunas conhecidas, para um plano futuro.
+    - **Desempenho:** 50 mil produtos, "heineken 600" com a marca e o estoque: ≈ 30 ms (o critério do plano é < 300 ms;
+      a CI usa o teto de `GENESISPDV_TETO_CONSULTA_MS`).
+    - Testes: `IndiceBuscaProdutosTests` (Data: a FTS5 no SQLite empacotado; o banco do PDV anterior, já em uso,
+      migrado e preenchido na abertura com o cursor intacto, e a segunda abertura sem refazer; a reconstrução com o mesmo
+      esquema da migração; trechos, acento, ordem, marca, categoria, palavra curta, aspas, inativo e excluído; o índice e
+      a busca em memória dão o mesmo resultado; a marca, a categoria e o produto renomeados; a FTS5 ausente e a
+      corrompida, com a pesquisa em memória e a abertura refazendo; a corrompida num banco de versão mais nova, recusado
+      sem descarte; o backup com a FTS5 corrompida restaurável; a suspensão de último recurso e a reconstrução que a tira;
+      50 mil produtos). As regras e a medição conferem que quem respondeu foi o índice (direto em
+      `IndiceBuscaProdutos.PesquisarAsync` e o índice ainda pronto depois das buscas), e não a busca em memória de
+      reserva. `AplicadorPullTests` (Sync: o pull recalcula o texto do produto, o da marca e o da categoria, a versão
+      velha não muda nada e o tombstone tira da pesquisa; a FTS5 corrompida não impede a página nem o cursor, e o pull
+      refaz o índice; a reconstrução que falha só é tentada de novo depois dos 15 minutos) e `PesquisaTelasTests` (App:
+      as colunas novas, o estoque no terminal real com "—" no combo e com a sigla na linha da embalagem, o promocional
+      vencido, futuro, maior ou igual ao varejo e maior que o preço da loja escondido, o atacado do combo e o não menor
+      que o varejo escondido, a resposta de um filtro velho descartada, e a coluna escondida com a chave desligada e na
+      demonstração).
+
+84. **Versão 0.11.0: a release R1 da Fase 2** (10/11/2026, fechamento do PR-8). A `<Version>` do `Directory.Build.props`
+    passa de 0.10.0 para **0.11.0** (e os exemplos do `GenesisPDV.iss` e do `gerar-instalador.ps1`), porque o PR-8 muda
+    o que o operador vê: a recusa do produto com variações (decisão 81), o F4 "Outras lojas" (decisão 82) e a pesquisa
+    F2 com as colunas novas pelo índice FTS5 (decisão 83, com a migração local `BuscaProdutosFts`). Sobe o número do
+    meio, como na decisão 79. É a versão que a nuvem usa para saber quem tem a guarda das variações
+    (`VERSAO_PDV_GUARDA_VARIACOES` em `packages/shared/src/produtos.ts`, o aviso do ERP ao ligar as variações): as duas
+    precisam andar juntas. Nada muda no protocolo (`versoes_schema`): o 0.10.0 instalado continua vendendo com a API
+    nova até a loja atualizar. **Ordem na implantação:** primeiro a API (a rota do F4 é nova; o 0.11.0 com a API antiga
+    só mostra "Consulta indisponível"), depois o release "PDV release" e a Implantação com `publicar_pdv`.

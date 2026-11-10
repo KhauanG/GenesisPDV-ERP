@@ -10,9 +10,11 @@ import { readFileSync } from 'node:fs';
 import {
   ALERTA_TOKEN_ANTERIOR_REUTILIZADO,
   jcs,
+  VERSAO_PDV_GUARDA_VARIACOES,
   type Ativar,
   type ListagemEventosComErro,
   type ListagemTerminais,
+  type RespostaTerminaisSemGuardaVariacoes,
   type TerminalDetalhe,
 } from '@genesis/shared';
 import { uuidv7 } from 'uuidv7';
@@ -221,6 +223,66 @@ describe('listagem e detalhe (ERP 12.2, 12.4)', () => {
     ).toBe(403);
     expect((await erp(tk).post(`/api/terminais/${t1.id}/mensagem`, { texto: 'oi' })).status).toBe(403);
     expect((await erp(tk).post('/api/terminais/ativacoes/liberar')).status).toBe(403);
+  });
+});
+
+describe('guarda das variações no caixa (F2-B34; D44)', () => {
+  it('lista os terminais ativos abaixo da R1 do PDV ou sem versão; só para quem grava configurações', async () => {
+    const antigo = await ativar(loja1, await criarCaixa(loja1, 21));
+    const novo = await ativar(loja1, await criarCaixa(loja1, 22));
+    const revogado = await ativar(loja1, await criarCaixa(loja1, 23));
+    expect((await heartbeat(antigo.token, { eventos_pendentes: 0, versao_app: '0.10.0' })).status).toBe(200);
+    expect(
+      (await heartbeat(novo.token, { eventos_pendentes: 0, versao_app: VERSAO_PDV_GUARDA_VARIACOES })).status,
+    ).toBe(200);
+    expect((await heartbeat(revogado.token, { eventos_pendentes: 0, versao_app: '0.9.1' })).status).toBe(200);
+    expect(
+      (await erp().post(`/api/terminais/${revogado.id}/revogar`, { modo: 'imediato', confirmacaoCaixa: 23 }))
+        .status,
+    ).toBe(200);
+    const r = await erp().get('/api/configuracoes/terminais-sem-guarda-variacoes');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const corpo = r.body as RespostaTerminaisSemGuardaVariacoes;
+    expect(corpo.versaoMinima).toBe(VERSAO_PDV_GUARDA_VARIACOES);
+    expect(corpo.terminais.find((t) => t.id === antigo.id)).toEqual({
+      id: antigo.id,
+      lojaNome: 'Loja 1 - Centro',
+      numeroCaixa: 21,
+      descricao: null,
+      versaoApp: '0.10.0',
+    });
+    expect(corpo.terminais.some((t) => t.id === novo.id)).toBe(false);
+    expect(corpo.terminais.some((t) => t.id === revogado.id)).toBe(false);
+    // O Master vê todas as lojas: nenhum caixa fica só na contagem.
+    expect(corpo.outrasLojas).toBe(0);
+    // Sem versão conhecida (nunca mandou o heartbeat com ela): conta como antigo.
+    await consultar(emp.nomeBanco, 'update terminais set versao_app = null where id = $1', [novo.id]);
+    const semVersao = (await erp().get('/api/configuracoes/terminais-sem-guarda-variacoes'))
+      .body as RespostaTerminaisSemGuardaVariacoes;
+    expect(semVersao.terminais.find((t) => t.id === novo.id)?.versaoApp).toBeNull();
+
+    // Usuário só da loja 1 (ERP 2.1): o caixa antigo da loja 2 entra só na contagem, sem loja, caixa nem versão.
+    const daLoja2 = await ativar(loja2, await criarCaixa(loja2, 21));
+    expect((await heartbeat(daLoja2.token, { eventos_pendentes: 0, versao_app: '0.10.0' })).status).toBe(200);
+    const todos = (await erp().get('/api/configuracoes/terminais-sem-guarda-variacoes'))
+      .body as RespostaTerminaisSemGuardaVariacoes;
+    expect(todos.terminais.find((t) => t.id === daLoja2.id)?.lojaNome).toBe('Loja 2 - Bairro');
+    expect(todos.outrasLojas).toBe(0);
+    const restrito = await erp(tokenGerente).get('/api/configuracoes/terminais-sem-guarda-variacoes');
+    expect(restrito.status, JSON.stringify(restrito.body)).toBe(200);
+    const doGerente = restrito.body as RespostaTerminaisSemGuardaVariacoes;
+    expect(doGerente.terminais.length).toBeGreaterThan(0);
+    expect(doGerente.terminais.every((t) => t.lojaNome === 'Loja 1 - Centro')).toBe(true);
+    expect(doGerente.terminais.some((t) => t.id === daLoja2.id)).toBe(false);
+    // A contagem é a dos antigos da loja 2 que o Master vê (este e o `t2`, ativo e sem versão conhecida).
+    const antigosLoja2 = todos.terminais.filter((t) => t.lojaNome === 'Loja 2 - Bairro').length;
+    expect(antigosLoja2).toBeGreaterThan(0);
+    expect(doGerente.outrasLojas).toBe(antigosLoja2);
+    expect(JSON.stringify(doGerente)).not.toContain('Loja 2');
+
+    await criarUsuario(emp.nomeBanco, { login: 'estoquista_b34', perfil: 'estoquista', lojas: [loja1] });
+    const estoquista = await amb.entrar(emp.codigo, 'estoquista_b34', SENHA_TESTE);
+    expect((await erp(estoquista).get('/api/configuracoes/terminais-sem-guarda-variacoes')).status).toBe(403);
   });
 });
 

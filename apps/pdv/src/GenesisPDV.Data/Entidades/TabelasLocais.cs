@@ -90,10 +90,18 @@ public static class ChavesConfiguracaoTerminal
     /// </summary>
     public const string ContaAtivacao = "ativacao.conta";
 
+    /// <summary>
+    /// Reconstrução pendente do índice da pesquisa F2 (<c>Repositorios.IndiceBuscaProdutos</c>; Fase 2, F2-B36): gravada
+    /// quando a atualização do índice falha (FTS5 corrompida ou ausente) ou enquanto ele é refeito; enquanto existe, a
+    /// pesquisa usa a busca em memória. A reconstrução concluída a apaga.
+    /// </summary>
+    public const string BuscaReconstruir = "busca.reconstruir_indice";
+
     /// <summary>Todas as chaves internas: a tela de configuração local e o evento de configuração filtram por esta lista.</summary>
     public static readonly IReadOnlySet<string> Internas = new HashSet<string>(StringComparer.Ordinal)
     {
         BackupChave, ChavePrivadaTerminal, TokenPendente, ResumoAtivacao, ContaAtivacao, RestauracaoPendente, ReidratacaoPendente,
+        BuscaReconstruir,
     };
 }
 

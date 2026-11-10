@@ -605,6 +605,60 @@ export const respostaRenovarTokenSchema = z.strictObject({
 });
 export type RespostaRenovarToken = z.infer<typeof respostaRenovarTokenSchema>;
 
+// ---------------------------------------------------------------------------------------------------------------
+// Consultas online do caixa (fora do T13: nenhum tipo de evento nem versão nova em `versoes_schema`)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Chave que liga o F4 "Outras lojas" da pesquisa F2 (Fase 2, F2-B35; F2-Q12 = roadmap D53, vale a recomendação): por
+ * loja, desce ao PDV. Desligada, o caixa não consulta e a API responde `403 ESCOPO_INVALIDO`. A linha do catálogo
+ * (`configuracoes.ts`) a escreve por extenso.
+ */
+export const CHAVE_CONSULTA_OUTRAS_LOJAS = 'pdv.consulta_outras_lojas';
+
+/** Query do `GET /sync/consultas/saldos-outras-lojas?produto_id=` (Fase 2, F2-B35; PDV 10.3). */
+export const saldosOutrasLojasQuerySchema = z.object({
+  produto_id: z.preprocess((v) => (typeof v === 'string' ? v.trim().toLowerCase() : v), uuid),
+});
+export type SaldosOutrasLojasQuery = z.infer<typeof saldosOutrasLojasQuerySchema>;
+
+/** Tipo do local do F4: a loja (o estoque vinculado a ela) ou o depósito sem loja (o CD). */
+export const TIPOS_LOCAL_SALDO_ONLINE = ['loja', 'deposito'] as const;
+
+/**
+ * Um local da consulta: a soma dos tipos de estoque **vendáveis** do produto (todas as variações) no estoque da loja
+ * ou do depósito, como `numeric(15,3)` em texto (pode ser negativa: a venda não trava sem estoque, D27/D55). Só a
+ * quantidade: nenhum custo, nenhum outro dado da loja além do código e do nome.
+ */
+export const saldoLocalOnlineSchema = z.strictObject({
+  estoque_id: uuid,
+  tipo: z.enum(TIPOS_LOCAL_SALDO_ONLINE),
+  /** Código da loja (1–99); nulo no depósito sem loja. */
+  loja_codigo: inteiro.min(1).max(99).nullable(),
+  /** O nome da loja ou, no depósito, o do estoque. */
+  nome: z.string().min(1).max(60),
+  /** O estoque da loja do próprio terminal (a quantidade online dela, ao lado da estimada do caixa). */
+  loja_do_terminal: z.boolean(),
+  quantidade: z.string().regex(/^-?\d{1,12}\.\d{3}$/),
+});
+export type SaldoLocalOnline = z.infer<typeof saldoLocalOnlineSchema>;
+
+/**
+ * Resposta `200` do `GET /sync/consultas/saldos-outras-lojas` (Fase 2, F2-B35; F2-Q12 = D53; PDV 10.3; SYNC 1.4,
+ * 20.2): o saldo online do produto nas lojas reais ativas (sem a loja de treino, D39) e nos depósitos sem loja (o CD),
+ * só os tipos de estoque vendáveis (o "Com variações" soma as variações), na ordem: a loja do terminal, as outras lojas
+ * pelo código e os depósitos — primeiro a loja do tipo depósito pelo código, depois os depósitos sem loja pelo nome.
+ * `controla_estoque = false` (o produto sem controle e os sem saldo próprio: combo, serviço e produzido, que baixa os
+ * insumos da ficha técnica) → os locais vêm com zero e o caixa avisa que o produto não controla.
+ */
+export const respostaSaldosOutrasLojasSchema = z.strictObject({
+  agora_servidor: instante,
+  produto_id: uuid,
+  controla_estoque: z.boolean(),
+  locais: z.array(saldoLocalOnlineSchema),
+});
+export type RespostaSaldosOutrasLojas = z.infer<typeof respostaSaldosOutrasLojasSchema>;
+
 /** Envelope de erro do `/sync/*` (SYNC 2.4): `requisicao_id` = `X-Requisicao-Id` aceito (ou gerado) pela API. */
 export const envelopeErroSyncSchema = z.strictObject({
   erro: z.strictObject({

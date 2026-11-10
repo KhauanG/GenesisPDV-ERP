@@ -1,10 +1,16 @@
-import { CHAVES_TIPO_PRODUTO, type ValorConfiguracao } from '@genesis/shared';
+import {
+  CHAVES_TIPO_PRODUTO,
+  type RespostaTerminaisSemGuardaVariacoes,
+  type ValorConfiguracao,
+} from '@genesis/shared';
 import {
   Alert,
   Badge,
   Button,
   Group,
+  List,
   Loader,
+  Modal,
   NumberInput,
   Paper,
   SegmentedControl,
@@ -34,6 +40,12 @@ export function paraCatalogo(tipo: TipoCampo, v: unknown): unknown {
   if (tipo === 'int') return Math.trunc(Number(v));
   return v;
 }
+
+/** F2-B34 (D44): ligar esta chave com caixa anterior à guarda das variações pede confirmação. */
+const CHAVE_VARIACOES = CHAVES_TIPO_PRODUTO.com_variacoes!;
+
+/** O que a confirmação mostra: os terminais antigos, ou o erro da consulta (a gravação continua possível). */
+type AvisoVariacoes = { resposta: RespostaTerminaisSemGuardaVariacoes } | { erro: string };
 
 const exibir = (tipo: TipoCampo, v: unknown): unknown => {
   if (v === null || v === undefined) return tipo === 'bool' ? false : '';
@@ -206,6 +218,28 @@ export function CamposConfiguracoes({
     },
   });
 
+  // F2-B34 (D44): "Cadastrar produtos Com variações" ligada com caixa anterior à R1 do PDV vende o pai (preço e saldo
+  // dele) quando o operador passa o código da variação; a tela confere antes de gravar e pede confirmação.
+  const [avisoVariacoes, setAvisoVariacoes] = useState<AvisoVariacoes | null>(null);
+  const [conferindo, setConferindo] = useState(false);
+  const ligaVariacoes =
+    !lojaId && alteradas.some((i) => i.chave === CHAVE_VARIACOES) && valores[CHAVE_VARIACOES] === true;
+  const aoGravar = async () => {
+    if (!ligaVariacoes) return gravar.mutate();
+    setConferindo(true);
+    try {
+      const resposta = await apiErp.get<RespostaTerminaisSemGuardaVariacoes>(
+        '/configuracoes/terminais-sem-guarda-variacoes',
+      );
+      if (resposta.terminais.length || resposta.outrasLojas) setAvisoVariacoes({ resposta });
+      else gravar.mutate();
+    } catch (e) {
+      setAvisoVariacoes({ erro: (e as Error).message });
+    } finally {
+      setConferindo(false);
+    }
+  };
+
   if (dados.isPending) return <Loader />;
   if (dados.isError) return <Alert color="red">{(dados.error as Error).message}</Alert>;
   const blocos = [...new Set(visiveis.map((i) => i.bloco))];
@@ -294,13 +328,68 @@ export function CamposConfiguracoes({
           <Button
             leftSection={<IconDeviceFloppy size={16} />}
             disabled={!alteradas.length}
-            loading={gravar.isPending}
-            onClick={() => gravar.mutate()}
+            loading={gravar.isPending || conferindo}
+            onClick={() => void aoGravar()}
           >
             Gravar
           </Button>
         </Group>
       )}
+      <Modal
+        opened={!!avisoVariacoes}
+        onClose={() => setAvisoVariacoes(null)}
+        title="Caixas sem a guarda das variações"
+        size="lg"
+      >
+        {avisoVariacoes && (
+          <Stack gap="sm">
+            {'resposta' in avisoVariacoes ? (
+              <>
+                <Text size="sm">
+                  Estes caixas estão com o PDV anterior à versão {avisoVariacoes.resposta.versaoMinima}: eles
+                  vendem o produto com variações com o preço e o saldo do produto pai, sem escolher a
+                  variação. Atualize o PDV deles antes de cadastrar variações.
+                </Text>
+                <List size="sm">
+                  {avisoVariacoes.resposta.terminais.map((t) => (
+                    <List.Item key={t.id}>
+                      {t.lojaNome ?? 'Loja'} – caixa {String(t.numeroCaixa).padStart(2, '0')}
+                      {t.descricao ? ` (${t.descricao})` : ''}: versão {t.versaoApp ?? 'desconhecida'}
+                    </List.Item>
+                  ))}
+                  {/* As lojas fora do acesso do usuário (ERP 2.1) só na contagem: a chave vale para a empresa. */}
+                  {avisoVariacoes.resposta.outrasLojas > 0 && (
+                    <List.Item>
+                      {avisoVariacoes.resposta.terminais.length ? 'E mais ' : ''}
+                      {`${avisoVariacoes.resposta.outrasLojas} caixa(s) de outras lojas, fora do seu acesso`}
+                    </List.Item>
+                  )}
+                </List>
+              </>
+            ) : (
+              <Alert color="yellow">
+                Não foi possível conferir a versão do PDV dos caixas ({avisoVariacoes.erro}). Os caixas
+                anteriores à guarda das variações vendem o produto com variações com o preço e o saldo do
+                produto pai.
+              </Alert>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setAvisoVariacoes(null)}>
+                Cancelar
+              </Button>
+              <Button
+                color="orange"
+                onClick={() => {
+                  setAvisoVariacoes(null);
+                  gravar.mutate();
+                }}
+              >
+                Gravar mesmo assim
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   );
 }

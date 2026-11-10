@@ -11,7 +11,7 @@
     <Company>Genesis</Company>
     <Product>GenesisPDV</Product>
     <!-- Versão única do PDV (I3, README › decisão 62): instalador, rodapé e versao_app; a tag pdv-vX.Y.Z sobrepõe no CI. -->
-    <Version>0.10.0</Version>
+    <Version>0.11.0</Version>
     <NeutralLanguage>pt-BR</NeutralLanguage>
     <SatelliteResourceLanguages>pt-BR;en</SatelliteResourceLanguages>
     <!-- packages.lock.json versionado: dependências transitivas (ex.: SQLitePCLRaw) iguais em toda máquina; CI usa locked-mode. -->

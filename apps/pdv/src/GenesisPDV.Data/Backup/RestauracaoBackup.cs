@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Data.Convencoes;
 using GenesisPDV.Data.Entidades;
+using GenesisPDV.Data.Repositorios;
 using Microsoft.Data.Sqlite;
 
 namespace GenesisPDV.Data.Backup;
@@ -97,7 +98,7 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
                 MarcadorEncerramento.Confere(caminhos.PastaDados, arquivo),
                 restaurado.SequenciaEvento,
                 restaurado.UltimoBackupEm);
-            Gravar(temporario, agora, pendente, atual, usuarioId, autorizadoPorId);
+            Gravar(temporario, agora, pendente, atual, usuarioId, autorizadoPorId, restaurado.SoOIndiceCorrompido);
 
             var anterior = await GuardarBancoEmUsoAsync(emUso is not null, ct);
             SqliteConnection.ClearAllPools();
@@ -148,14 +149,25 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
         return (restaurado, emUso, atual?.TerminalId == restaurado.TerminalId ? atual : null);
     }
 
-    /// <summary>O que a restauração lê de um banco (<see cref="EventosPendentes"/>: ainda a enviar; nulo sem a tabela).</summary>
+    /// <summary>
+    /// O que a restauração lê de um banco (<see cref="EventosPendentes"/>: ainda a enviar; nulo sem a tabela).
+    /// <see cref="SoOIndiceCorrompido"/>: o <c>integrity_check</c> acusou só a FTS5 da pesquisa (F2-B36), que é derivada do
+    /// espelho; o banco vale, e a restauração descarta o índice no arquivo restaurado (a abertura o refaz).
+    /// </summary>
     private sealed record BancoLido(
-        Guid? TerminalId, byte[]? Token, string? TokenPendente, long SequenciaEvento, DateTimeOffset? UltimoBackupEm, int? EventosPendentes);
+        Guid? TerminalId,
+        byte[]? Token,
+        string? TokenPendente,
+        long SequenciaEvento,
+        DateTimeOffset? UltimoBackupEm,
+        int? EventosPendentes,
+        bool SoOIndiceCorrompido = false);
 
     /// <summary>
     /// Nulo se o banco não é do PDV ou não sai; com <paramref name="conferir"/>, também se não passa no
-    /// <c>integrity_check</c>. Sem conferir (o banco em uso corrompido), é a leitura direta das linhas, que pode sair
-    /// mesmo com a página de outra tabela estragada.
+    /// <c>integrity_check</c> — o problema só na FTS5 da pesquisa passa (a mesma regra da abertura,
+    /// <see cref="InicializadorBanco"/>: o backup tirado com o índice corrompido offline continua restaurável). Sem conferir
+    /// (o banco em uso corrompido), é a leitura direta das linhas, que pode sair mesmo com a página de outra tabela estragada.
     /// </summary>
     private static BancoLido? LerBanco(string arquivo, bool conferir)
     {
@@ -163,8 +175,9 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
         {
             using var c = new SqliteConnection(BackupLocal.Conexao(arquivo, SqliteOpenMode.ReadOnly));
             c.Open();
-            if ((conferir && !string.Equals(Escalar(c, "PRAGMA integrity_check;")?.ToString(), "ok", StringComparison.OrdinalIgnoreCase))
-                || !Tabela(c, "identidade_terminal"))
+            var problemas = conferir ? ProblemasIntegridade(c) : [];
+            var soOIndice = IndiceBuscaProdutos.SoOIndiceCorrompido(problemas);
+            if ((problemas.Count > 0 && !soOIndice) || !Tabela(c, "identidade_terminal"))
             {
                 return null;
             }
@@ -201,12 +214,28 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
                 // Corrompido: o terminal e o token já bastam (o resto fica com o que saiu).
             }
 
-            return new BancoLido(terminal, token, pendente, evento, ultimoBackup, aEnviar);
+            return new BancoLido(terminal, token, pendente, evento, ultimoBackup, aEnviar, soOIndice);
         }
         catch (Exception e) when (e is SqliteException || (!conferir && e is FormatException or InvalidCastException))
         {
             return null;
         }
+    }
+
+    /// <summary>As linhas do <c>integrity_check</c> (até 100); vazia = íntegro.</summary>
+    private static List<string> ProblemasIntegridade(SqliteConnection c)
+    {
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "PRAGMA integrity_check(100);";
+        var linhas = new List<string>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            linhas.Add(r.IsDBNull(0) ? string.Empty : r.GetString(0));
+        }
+
+        return linhas is [var unica] && string.Equals(unica, "ok", StringComparison.OrdinalIgnoreCase) ? []
+            : linhas.Count == 0 ? ["sem resposta do integrity_check"] : linhas;
     }
 
     private static bool Tabela(SqliteConnection c, string nome) =>
@@ -219,12 +248,25 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
         return cmd.ExecuteScalar();
     }
 
-    /// <summary>Grava no arquivo restaurado (SQL direto: o backup pode ser de um schema anterior, migrado na abertura).</summary>
-    private static void Gravar(string arquivo, DateTimeOffset agora, RestauracaoPendente pendente, BancoLido? emUso, Guid? usuarioId, Guid? autorizadoPorId)
+    /// <summary>
+    /// Grava no arquivo restaurado (SQL direto: o backup pode ser de um schema anterior, migrado na abertura). Com
+    /// <paramref name="descartarIndice"/>, a FTS5 corrompida sai e fica a reconstrução pendente (a abertura refaz).
+    /// </summary>
+    private static void Gravar(
+        string arquivo, DateTimeOffset agora, RestauracaoPendente pendente, BancoLido? emUso, Guid? usuarioId, Guid? autorizadoPorId, bool descartarIndice)
     {
         using var c = new SqliteConnection(BackupLocal.Conexao(arquivo, SqliteOpenMode.ReadWrite));
         c.Open();
         using var tx = c.BeginTransaction();
+        if (descartarIndice)
+        {
+            foreach (var sql in IndiceBuscaProdutos.Descarte)
+            {
+                Executar(c, sql);
+            }
+
+            GravarConfiguracao(c, ChavesConfiguracaoTerminal.BuscaReconstruir, "true", agora);
+        }
         Executar(c, "UPDATE identidade_terminal SET restaurado_em = $agora;", ("$agora", DataHoraUtcTexto.Formatar(agora)));
         if (emUso?.Token is { Length: > 0 } token)
         {

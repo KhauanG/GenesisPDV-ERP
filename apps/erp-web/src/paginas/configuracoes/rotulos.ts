@@ -56,7 +56,8 @@ export const ABA_GERAL: RotuloConfiguracao[] = [
   // F2-B1 (D43): Não = o tipo não pode ser escolhido no cadastro nem na planilha (o produto já gravado segue editável).
   r('produtos.variacoes_habilitadas', 'Cadastrar produtos "Com variações"', 'bool', 'Produtos', {
     fut: true,
-    ajuda: 'Ligar só com a grade de variações: sem ela o caixa vende com o preço e o saldo do produto pai',
+    ajuda:
+      'Ligar só com a grade de variações e os caixas na versão com a guarda: a tela avisa dos caixas antigos, que vendem o produto pai com o preço e o saldo dele',
   }),
   r('produtos.complementos_habilitados', 'Cadastrar produtos "Com complementos"', 'bool', 'Produtos', {
     fut: true,
@@ -196,6 +197,16 @@ export const ABA_PARAMETROS: RotuloConfiguracao[] = [
   r('pdv.vale_compra_validade_dias', 'Validade do vale compra (dias)', 'int', 'PDV'),
   r('pdv.imprime_cupom_troca', 'Imprime cupom de troca', 'bool', 'PDV'),
   r('pdv.bloqueia_venda_sem_estoque', 'Bloqueia venda sem estoque', 'bool', 'PDV'),
+  // F2-B34 (F2-Q2 = D44, decidida pelo dono em 05/11/2026: Sim).
+  r('pdv.recusa_produto_com_variacoes', 'Recusa produto com variações no caixa', 'bool', 'PDV', {
+    ajuda:
+      'Sim: o código de uma variação e o produto com variações ativas não vendem ("venda disponível na próxima versão"). Não: vende o produto pai, com o preço e o saldo dele',
+  }),
+  // F2-B35 (F2-Q12 = D53; sem resposta explícita do dono, vale a recomendação: Sim, para qualquer operador).
+  r('pdv.consulta_outras_lojas', 'Consulta do estoque das outras lojas no caixa (F4)', 'bool', 'PDV', {
+    ajuda:
+      'Sim: na pesquisa F2 do caixa, o F4 mostra online a quantidade do produto nas outras lojas e no CD (sem a loja de treino e sem custo). Não: o F4 avisa que a consulta está desligada',
+  }),
   r('pdv.limite_valor_venda', 'Limite de valor de vendas PDV', 'dinheiro', 'PDV', {
     ajuda: 'Vazio = sem limite',
   }),

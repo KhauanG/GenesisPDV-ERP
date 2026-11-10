@@ -7,6 +7,7 @@ using GenesisPDV.Core.Comum;
 using GenesisPDV.Core.Numeros;
 using GenesisPDV.Core.Produtos;
 using GenesisPDV.Core.Vendas;
+using GenesisPDV.Sync.Cliente;
 
 namespace GenesisPDV.App.ViewModels;
 
@@ -209,9 +210,15 @@ public sealed class DialogoLiberacaoViewModel(VendaViewModel venda, PedidoLibera
     protected override Task AoCancelarAsync() => pedido.CancelarCommand.ExecuteAsync(null);
 }
 
-/// <summary>Pesquisa de produto (F2, PDV 10.3): busca incremental; ↑/↓ navegam, Enter inclui.</summary>
+/// <summary>
+/// Pesquisa de produto (F2, PDV 10.3): busca incremental; ↑/↓ navegam, Enter inclui. Colunas (F2-B36): código, EAN,
+/// descrição, marca, localização, estoque estimado (com <c>pdv.exibe_estoque_busca</c>), unidade, varejo, atacado e o
+/// promocional vigente destacado. A resposta de um filtro já trocado é descartada (só a do último filtro aparece).
+/// </summary>
 public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
 {
+    private int _consulta;
+
     public DialogoPesquisaViewModel(VendaViewModel venda, string filtroInicial)
         : base(venda)
     {
@@ -225,7 +232,7 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
 
     public string Dica => SoNumeros
         ? "Só números: código interno, EAN ou código adicional — primeiro o exato, depois os que começam e os que contêm."
-        : "Nome (todas as palavras, sem acento) ou código.";
+        : "Nome, marca, categoria ou código: todas as palavras, sem acento, em qualquer ordem (pode ser só um pedaço).";
 
     public ObservableCollection<ProdutoPesquisado> Resultados { get; } = [];
 
@@ -235,15 +242,21 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
     [ObservableProperty]
     public partial ProdutoPesquisado? Selecionado { get; set; }
 
+    /// <summary>A coluna do estoque aparece (a chave da loja ligada, no terminal real).</summary>
+    [ObservableProperty]
+    public partial bool ExibeEstoque { get; set; }
+
     partial void OnFiltroChanged(string value) => _ = AtualizarAsync(value);
 
     public async Task AtualizarAsync(string filtro)
     {
+        var consulta = ++_consulta;
         IReadOnlyList<ProdutoPesquisado> lista;
+        string? erro;
         try
         {
             lista = await Venda.ServicoVenda.PesquisarAsync(filtro ?? string.Empty, SoNumeros);
-            Erro = SoNumeros && lista.Count == 0 && !string.IsNullOrWhiteSpace(filtro)
+            erro = SoNumeros && lista.Count == 0 && !string.IsNullOrWhiteSpace(filtro)
                 ? $"Nenhum produto com os números {filtro.Trim()}: confira e corrija, ou Esc volta."
                 : null;
         }
@@ -251,9 +264,17 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
         {
             // Só números: a letra é recusada (a lista fica vazia até o filtro voltar a ter só dígitos).
             lista = [];
-            Erro = e.Message;
+            erro = e.Message;
         }
 
+        if (consulta != _consulta)
+        {
+            // O operador já digitou mais: esta resposta é de um filtro velho.
+            return;
+        }
+
+        Erro = erro;
+        ExibeEstoque = lista.Any(l => l.EstoqueTexto is not null);
         Resultados.Clear();
         foreach (var p in lista)
         {
@@ -280,6 +301,118 @@ public sealed partial class DialogoPesquisaViewModel : DialogoViewModel
     {
         var produto = Selecionado ?? throw new RegraNegocioException("Nenhum produto selecionado.");
         await Venda.IncluirDaPesquisaAsync(produto);
+    }
+
+    /// <summary>
+    /// F4 "Outras lojas" (Fase 2, F2-B35; PDV 10.3): o saldo online do produto selecionado nas outras lojas e no CD. Esc
+    /// no diálogo dos saldos volta a esta pesquisa, com o filtro e a seleção.
+    /// </summary>
+    [RelayCommand]
+    private Task OutrasLojasAsync()
+    {
+        if (Selecionado is not { } linha)
+        {
+            Erro = "Nenhum produto selecionado.";
+            return Task.CompletedTask;
+        }
+
+        Erro = null;
+        return Venda.AbrirOutrasLojasAsync(this, linha.Produto);
+    }
+}
+
+/// <summary>Uma linha do F4 "Outras lojas": o local e a quantidade já formatada na unidade do produto.</summary>
+/// <param name="DestaLoja">O estoque da loja do próprio caixa (a quantidade online dela).</param>
+public sealed record LinhaOutraLoja(string Local, string Quantidade, bool DestaLoja);
+
+/// <summary>
+/// F4 "Outras lojas" da pesquisa (Fase 2, F2-B35; F2-Q12 = D53; PDV 10.3): consulta online (até 3 s) do saldo vendável
+/// do produto nas lojas reais e no CD, só quantidades. Enquanto consulta, "Consultando…"; offline, sem resposta, API
+/// antiga ou a chave <c>pdv.consulta_outras_lojas</c> desligada, o aviso no lugar da lista. A venda nunca espera: Esc ou
+/// Enter voltam à pesquisa na hora (a consulta em andamento é cancelada).
+/// </summary>
+public sealed partial class DialogoOutrasLojasViewModel : DialogoViewModel
+{
+    public const string NotaOnline = "Quantidade vendável na nuvem agora; vendas ainda não sincronizadas dos caixas não entram.";
+
+    public const string NotaSemControle = "Este produto não controla estoque: as lojas não têm saldo dele.";
+
+    private readonly DialogoPesquisaViewModel _pesquisa;
+    private readonly ProdutoVenda _produto;
+    private readonly CancellationTokenSource _cancelar = new();
+
+    public DialogoOutrasLojasViewModel(VendaViewModel venda, DialogoPesquisaViewModel pesquisa, ProdutoVenda produto)
+        : base(venda)
+    {
+        _pesquisa = pesquisa;
+        _produto = produto;
+        Consultando = true;
+    }
+
+    public override string Titulo => $"Estoque nas outras lojas — {_produto.Descricao}";
+
+    public ObservableCollection<LinhaOutraLoja> Locais { get; } = [];
+
+    [ObservableProperty]
+    public partial bool Consultando { get; set; }
+
+    /// <summary>Por que não há lista (offline, desligada, recusa); nulo com a lista.</summary>
+    [ObservableProperty]
+    public partial string? Aviso { get; set; }
+
+    [ObservableProperty]
+    public partial string? Nota { get; set; }
+
+    public async Task ConsultarAsync()
+    {
+        var ct = _cancelar.Token;
+        try
+        {
+            if (!await Venda.ServicoVenda.ConsultaOutrasLojasLigadaAsync(ct))
+            {
+                Aviso = MensagensConsultaOutrasLojas.Desligada;
+                return;
+            }
+
+            var r = await Venda.Servico<IConsultaOutrasLojas>().ConsultarAsync(_produto.Id, ct);
+            if (r.Saldos is not { } saldos)
+            {
+                Aviso = r.Aviso ?? MensagensConsultaOutrasLojas.RequerConexao;
+                return;
+            }
+
+            foreach (var local in saldos.Locais)
+            {
+                var quantidade = local.QuantidadeNumero;
+                var nome = local.LojaDoTerminal ? $"{local.Nome} (esta loja)" : local.Nome;
+                Locais.Add(new LinhaOutraLoja(nome, $"{quantidade.ToString("#,##0.###", NumeroBr.Cultura)} {_produto.Unidade}", local.LojaDoTerminal));
+            }
+
+            Nota = saldos.ControlaEstoque ? NotaOnline : NotaSemControle;
+            if (Locais.Count == 0)
+            {
+                Aviso = "Nenhuma loja ou depósito para mostrar.";
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Voltou à pesquisa antes da resposta: nada a mostrar.
+        }
+        finally
+        {
+            Consultando = false;
+        }
+    }
+
+    protected override Task AoConfirmarAsync() => VoltarAsync();
+
+    protected override Task AoCancelarAsync() => VoltarAsync();
+
+    private Task VoltarAsync()
+    {
+        _cancelar.Cancel();
+        Venda.AbrirDialogo(_pesquisa);
+        return Task.CompletedTask;
     }
 }
 
@@ -315,7 +448,7 @@ public sealed class DialogoAjudaViewModel(VendaViewModel venda) : DialogoViewMod
         "Enter      Incluir o código digitado/bipado (aceita 3*código e 0,750*código)",
         "+ / -      Somar ou tirar 1 do último item",
         "↑ ↓        Selecionar item          Home/End  Primeiro/último item",
-        "F2         Pesquisar produto        F3  Quantidade",
+        "F2         Pesquisar produto (na pesquisa, F4 = estoque nas outras lojas, online)    F3  Quantidade",
         "F4         Remover (cancelar) item  Shift+F4  Cancelar a venda",
         "F5         CPF na nota / cliente    F6  Desconto (item / total)",
         "F10        Concluir venda: ↑↓ ou Alt+1..9 escolhem a forma (cartão: maquininha; PIX: QR e supervisor)",

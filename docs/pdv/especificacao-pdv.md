@@ -1090,6 +1090,15 @@ Ordem de busca (índices no SQLite):
 Mais de um produto com o mesmo código de barras (o Nuvem3 permite duplicados; o ERP novo valida, mas cadastros
 importados podem ter): abre lista de seleção com descrição, preço e estoque; `Enter` escolhe.
 
+**Produto com variações** — Fase 2 (F2-B34; roadmap D44, decidida pelo dono em 05/11/2026). Enquanto o caixa não sabe
+escolher a variação (PDV-2), com `pdv.recusa_produto_com_variacoes = true` (padrão, por loja) a resolução pelo código e
+pela pesquisa F2 recusa, com "Produto com variações: venda disponível na próxima versão" (sem abrir a venda nem gastar
+número): o código que resolve para uma variação (`produtos_codigos_barras.variacao_id` não nulo) e o produto pai
+`com_variacoes` com variação ativa no espelho (`produtos_variacoes` ativa e não excluída). O pai sem variação ativa (o
+legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos. Com a chave desligada, o código
+da variação vende o pai, com o preço e o saldo dele (o comportamento do piloto); a nuvem aceita a venda e abre o alerta
+de cadastro (SYNC 15.1). Na pesquisa só por números, o código de uma variação dá a linha dele (como o da embalagem).
+
 **Embalagem / fardo / caixa / pack (fator ≠ 1)** — Fase PDV-1. Quando o código lido é uma linha de
 `produtos_codigos_barras` com `fator ≠ 1` (ex.: DUN-14 ou EAN da caixa com 12 latas):
 
@@ -1158,12 +1167,39 @@ de confirmação (opcional).
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Busca incremental (debounce 150 ms) em descrição (todas as palavras, sem acento, em qualquer ordem), código interno,
+- Busca incremental (debounce 150 ms; implementada sem debounce, ver a nota do F2-B36 abaixo) em descrição (todas as palavras, sem acento, em qualquer ordem), código interno,
   código de barras, marca e categoria; índice FTS5 local. Resultado em < 300 ms com 50.000 produtos.
 - Colunas: código, descrição, marca, **Localização** (do cadastro), estoque estimado (só se **Exibe estoque na
   busca**), preço varejo da loja, atacado (se houver), promocional destacado.
 - `F4 Outras lojas`: consulta **online** `GET /estoque/saldos?produto=...` com o saldo em todas as lojas e no CD
   (desabilitado offline com aviso "requer conexão").
+
+> **Implementado no F2-B35 (Fase 2; sai na R1 do PDV; F2-Q12 = roadmap D53, vale a recomendação sem resposta
+> explícita do dono; README do PDV › decisão 82).** A rota é `GET /sync/consultas/saldos-outras-lojas?produto_id=`
+> (SYNC 1.4). O `F4` na pesquisa (e o botão "Outras lojas [F4]") abre, sobre o produto selecionado, o diálogo "Estoque
+> nas outras lojas — <produto>": cada loja real ativa (a do caixa primeiro, marcada "(esta loja)") e o CD, com a
+> quantidade **vendável** online na unidade do produto (pode ser negativa); sem a loja de treino, sem avaria nem
+> vasilhame vazio, **nunca o custo**, e liberado a **qualquer operador** (sem permissão própria). O produto que não
+> controla estoque (e o combo, o serviço e o produzido, que não têm saldo próprio) mostra a nota disso no lugar dos
+> zeros. O caixa em desativação no ERP não consulta (a mensagem da nuvem). Prazo de **3 s**; offline (o caixa já dado como offline nem tenta), sem resposta, a
+> API antiga (404 da rota) ou fora do ar → "Consulta indisponível (requer conexão)"; a chave
+> **`pdv.consulta_outras_lojas`** (padrão Sim, por loja) desligada → "Consulta do estoque das outras lojas desligada no
+> ERP para esta loja", sem consultar. `Enter` ou `Esc` voltam à pesquisa com o filtro e a seleção (a consulta em
+> andamento é cancelada): **a venda nunca espera** pela consulta.
+
+> **Implementado no F2-B36 (Fase 2; sai na R1 do PDV; README do PDV › decisão 83).** A busca vai pelo índice FTS5 local
+> `produtos_busca` (MD 4.2), com o tokenizador **trigrama**: todas as palavras, sem acento, em qualquer ordem, como
+> **trechos** (como antes: "350" acha "LT350ML") do nome, do código interno, do código numérico, da **marca** e da
+> **categoria principal**; o código de barras continua no bipe e na pesquisa só por números (no meio do EAN quase todo
+> trecho de 3 números aparece). Sem o índice (antes de preenchido, ausente ou corrompido) a pesquisa usa a busca em
+> memória, com as mesmas regras, e a abertura do PDV refaz o índice. Colunas: código, EAN, descrição, marca,
+> localização, estoque estimado (o mesmo da inclusão, 29.1; só com **Exibe estoque na busca** ligada, no terminal real;
+> "—" no produto sem saldo próprio; na linha da embalagem, com a sigla da unidade do produto, "240 UN"; desligada, a
+> coluna some), unidade, varejo da loja, atacado e o promocional vigente em destaque — os dois só quando a venda os
+> cobraria (menores que o varejo da linha, que pode ser o preço da loja; o combo sem atacado; vazios na linha da
+> embalagem). 50.000 produtos: ≈ 30 ms. Sem debounce: a resposta de um filtro já trocado é descartada. **Pendente:** o
+> filtro `(Tab) Todos | Com estoque | Promoção` do desenho acima não entrou neste bloco (nem no plano dele); fica nas
+> lacunas conhecidas do README do PDV.
 - Mostra produtos inativos? Não.
 
 > **Pesquisa só por números (versão 0.9.1; dono; README do PDV › decisão 65).** Opção por terminal na configuração

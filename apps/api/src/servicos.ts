@@ -24,6 +24,7 @@ import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
 import { TerminaisErp } from './terminais/terminais.service.js';
 import { HeartbeatSync } from './sync/heartbeat.js';
+import { ConsultasSync } from './sync/consultas.js';
 import { RecuperarSync } from './sync/recuperar.js';
 import { PullSync } from './sync/pull.js';
 import { PushSync } from './sync/push.js';
@@ -82,6 +83,8 @@ export interface Servicos {
   heartbeat: HeartbeatSync;
   /** `GET /sync/recuperar` (SYNC 22.2; C17): a re-hidratação do banco local restaurado. */
   recuperar: RecuperarSync;
+  /** Consultas online do caixa no `/sync/*` (F2-B35): o saldo das outras lojas no F4 da pesquisa. */
+  consultas: ConsultasSync;
   token: TokenTerminal;
   fila: FilaTrabalhos;
   armazenamento: ArmazenamentoObjetos;
@@ -250,6 +253,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     }),
     heartbeat: new HeartbeatSync(controle, tenancy, auditoria),
     recuperar: new RecuperarSync(tenancy),
+    consultas: new ConsultasSync(tenancy),
     token: new TokenTerminal(controle, tenancy, auditoria),
     fila,
     armazenamento,

@@ -8,21 +8,24 @@ import {
   gravarConfiguracoesSchema,
   grupoDaChave,
   validarValorConfiguracao,
+  VERSAO_PDV_GUARDA_VARIACOES,
   type AtalhoPdv,
+  type RespostaTerminaisSemGuardaVariacoes,
   type ValorConfiguracao,
 } from '@genesis/shared';
 import { and, asc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
-import { garantirLoja } from '../autorizacao/lojas.js';
+import { garantirLoja, lojaPermitida } from '../autorizacao/lojas.js';
 import { ErroApi } from '../comum/erros.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
-import { atalhosPdv, configuracoes, lojas, terminais } from '../database/empresa/schema/index.js';
+import { atalhosPdv, caixas, configuracoes, lojas, terminais } from '../database/empresa/schema/index.js';
 import { CHAVES_SENHA_CLIENTE_PDV, pessoaRelevante } from '../sync/fluxos.js';
 import { tocar } from '../sync/toque.js';
+import { compararVersoes } from '../sync/versoes-app.js';
 import { ATALHOS_PDV_PADRAO } from '../database/seed/dados/tabelas-md.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -230,6 +233,46 @@ export class ConfiguracoesController {
     );
     const grupos = [...new Set(Object.keys(valores).map(grupoDaChave))].join(',');
     return this.listar({ grupos, ...(lojaId ? { lojaId } : {}) }, sessao);
+  }
+
+  /**
+   * Os terminais ativos com o PDV anterior à guarda das variações (Fase 2, F2-B34; D44): ligar
+   * `produtos.variacoes_habilitadas` com eles no ar faz o caixa vender o produto com variações com o preço e o saldo do
+   * pai, e a tela de configurações avisa antes de gravar. Abaixo de `VERSAO_PDV_GUARDA_VARIACOES` ou sem versão
+   * conhecida (a do último heartbeat, `terminais.versao_app`). Mesma permissão de quem grava a chave. Os detalhes só
+   * das lojas permitidas ao usuário (ERP 2.1); como a chave vale para a empresa toda, os caixas antigos das outras
+   * lojas entram só na contagem (`outrasLojas`), sem nome de loja, caixa, descrição nem versão.
+   */
+  @Permissao('configuracoes.editar')
+  @Get('configuracoes/terminais-sem-guarda-variacoes')
+  async terminaisSemGuardaVariacoes(
+    @Sessao() sessao: SessaoErp,
+  ): Promise<RespostaTerminaisSemGuardaVariacoes> {
+    const linhas = await this.s.tenancy.cx().consulta((db) =>
+      db
+        .select({
+          id: terminais.id,
+          lojaId: terminais.lojaId,
+          lojaNome: lojas.nome,
+          numeroCaixa: caixas.numero,
+          descricao: terminais.descricao,
+          versaoApp: terminais.versaoApp,
+        })
+        .from(terminais)
+        .innerJoin(caixas, eq(caixas.id, terminais.caixaId))
+        .leftJoin(lojas, eq(lojas.id, terminais.lojaId))
+        .where(and(inArray(terminais.status, ['ativo', 'desativando']), isNull(terminais.excluidoEm)))
+        .orderBy(asc(lojas.nome), asc(caixas.numero)),
+    );
+    const antigos = linhas.filter(
+      (t) => !t.versaoApp || compararVersoes(t.versaoApp, VERSAO_PDV_GUARDA_VARIACOES) < 0,
+    );
+    const visiveis = antigos.filter((t) => lojaPermitida(sessao, t.lojaId));
+    return {
+      versaoMinima: VERSAO_PDV_GUARDA_VARIACOES,
+      terminais: visiveis.map(({ lojaId: _lojaId, ...t }) => t),
+      outrasLojas: antigos.length - visiveis.length,
+    };
   }
 
   /** Tabela de atalhos do PDV da empresa (ERP 9.9; MD 3.10.2, 7.8). */

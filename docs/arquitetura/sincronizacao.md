@@ -119,6 +119,7 @@ Todos sob `https://api.<dominio>/`. Autenticação pelo **token do terminal** (s
 | `GET /sync/eventos-status?ids=` | Situação atual na nuvem de eventos deste terminal (rede de segurança para os `rejeitado`) | 21.1 |
 | `GET /sync/eventos` | Canal SSE de avisos ("há novidades") | 18.1 |
 | `GET /sync/recuperar?desde_sequencia=` | Re-hidratação: devolve ao terminal os eventos que a nuvem já tem dele | 22.2 |
+| `GET /sync/consultas/saldos-outras-lojas?produto_id=` | Consulta online do F4 "Outras lojas" da pesquisa do caixa: o saldo vendável do produto nas lojas reais e no CD, só quantidades (Fase 2, F2-B35) | 1.4 (nota abaixo), 20.2 |
 | `POST /sync/recuperacao/chave` | Entrega a chave de backup em custódia de um terminal antigo (com código de recuperação do ERP) | 22.3 |
 | `POST /sync/recuperacao/importar` | Importação de outbox órfão de um terminal antigo (com código de recuperação do ERP) | 22.3 |
 | `POST /sync/logs` | Envio do pacote de logs (comando `enviar_logs`) | 21.1 |
@@ -128,13 +129,30 @@ conexão e sempre com fallback offline definido na especificação do PDV): `GET
 `POST /vales/{id}/reservar`, `PUT /vales/{id}/reservas/{pagamento_venda_id}/em-uso`,
 `DELETE /vales/{id}/reservas/{pagamento_venda_id}` (reservas de vale, `reservas_vale`, 14.4),
 `POST /orcamentos/{id}/reservar`, `GET /orcamentos/{codigo}`, `POST /pix/cobrancas`,
-`POST /pix/cobrancas/{txid}/devolucao`, `GET /estoque/saldos?produto=`, `GET /vendas/busca`,
+`POST /pix/cobrancas/{txid}/devolucao`, `GET /vendas/busca`,
 `GET /pessoas/busca?q=` (pessoas fora da relevância da loja, por nome, CPF/CNPJ ou telefone, até 20 resultados, sem
 `senha_hash` — modelo 3.5.4 e 6.2, ERP 7.2), `GET /pessoas/{id}/credito`, `POST /pessoas/{id}/credito/reservar`,
 `DELETE /pessoas/{id}/credito/reservas/{pagamento_venda_id}` (reserva de crédito, `reservas_credito`, 14.1),
 `POST /comandas`, `GET /comandas/{id}`, `POST /comandas/{id}/itens`,
 `POST /comandas/{id}/fechar` (comandas online, seção 9.20), `POST /operadores/autenticar` (senha do ERP validada
 online, 4.1), `GET /cep/{cep}`. Todo endpoint online que altera estado exige `X-Requisicao-Id` (20.4).
+
+> **Consultas online dentro do `/sync/*` (Fase 2, F2-B35; README da API › decisão 182).** O saldo das outras lojas,
+> que esta especificação previa como `GET /estoque/saldos?produto=`, ficou em `GET /sync/consultas/saldos-outras-lojas`
+> para reaproveitar a autenticação do terminal, a exclusão do prefixo `/api` e o envelope de erro do protocolo. É só
+> leitura e **fica fora do T13** (17.5): não cria tipo de evento nem versão, e a Fase 2 mantém `venda.finalizada` v1 e
+> não anuncia nada novo em `versoes_schema`. Regras: exige o hardware registrado (409 `HARDWARE_ALTERADO`, 20.5);
+> desligável por `pdv.consulta_outras_lojas` na loja do terminal (403 `ESCOPO_INVALIDO`, `detalhes.chave`); terminal em
+> `desativando` recusado como os demais endpoints online (3.8: 403 `ESCOPO_INVALIDO`, sem `detalhes.chave`); limite por
+> terminal (`SYNC_CONSULTA_SALDOS_POR_MINUTO`, padrão 30/min → 429 `LIMITE_TAXA` com `Retry-After: 60`); produto
+> desconhecido → 404 `NAO_ENCONTRADO` com `detalhes.produto_id` (o 404 sem ele é a rota que a API antiga não tem). Escopo
+> (F2-Q12 = roadmap D53, vale a recomendação): o estoque de cada loja ativa e não de treino e os depósitos sem loja,
+> somando só os tipos vendáveis do produto (todas as variações), com o local sem saldo em zero; nenhum custo. Ordem: a
+> loja do terminal, as outras lojas pelo código, a loja do tipo depósito pelo código e os depósitos sem loja pelo nome.
+> `controla_estoque` falso no produto sem controle e nos sem saldo próprio (combo, serviço e produzido). Resposta:
+> `respostaSaldosOutrasLojasSchema` (shared) = `RespostaSaldosOutrasLojas` (C#), fixture
+> `saldos-outras-lojas.resposta.json`. O PDV chama com prazo de 3 s; offline, sem resposta, API antiga ou recusa, a tela
+> mostra o aviso e a venda segue (PDV 10.3). **Publicar a API antes do PDV** (a ordem de sempre).
 
 ---
 
@@ -953,7 +971,7 @@ flowchart TD
 | Correção | Snapshot é só aceleração: o pull a partir de `versao_snapshot` completa tudo que mudou depois. Por isso o snapshot pode ser gerado com leitura `repeatable read` sem bloquear ninguém |
 | Retomada | Interrompida a carga, o PDV retoma do cursor do fluxo (cursor salvo a cada página, PDV 5.3) |
 | Término | `tem_mais = false` com `novo_cursor = cursor_teto` (6.3). Como o cursor avança até o teto mesmo quando as últimas versões são de outra loja/estoque, a condição sempre fica verdadeira depois da última página |
-| Desempenho local | Durante a carga inicial (antes da primeira venda) o PDV usa transações de até 5.000 linhas, `PRAGMA synchronous=NORMAL` e recria o FTS5 no fim; volta a `synchronous=FULL` antes de liberar login |
+| Desempenho local | Durante a carga inicial (antes da primeira venda) o PDV usa transações de até 5.000 linhas, `PRAGMA synchronous=NORMAL` e recria o FTS5 no fim; volta a `synchronous=FULL` antes de liberar login. No F2-B36 o `produtos_busca` é mantido página a página também na carga (dezenas de ms por página de 2.000 produtos), e a abertura do PDV confere a contagem e refaz se preciso (README do PDV › decisão 83) |
 | Meta | 50 mil produtos (≈ 250 mil linhas no `catalogo`) em < 5 min numa conexão de 10 Mbit/s |
 
 ### 6.10 Aplicação local de uma página
@@ -988,7 +1006,7 @@ eventosLocais.Publicar(new CadastrosAlterados(pagina.Fluxo));  // telas recarreg
 | Venda em andamento | Não é afetada: itens já incluídos guardam snapshot; o próximo item usa o cadastro novo (PDV 30.3) |
 | Concorrência com o caixa | Transação de página ≤ 500 linhas (~100–200 ms); `busy_timeout = 5000`; a gravação de uma venda nunca espera mais que uma página |
 | Linha criada localmente | Espelhos com inserção local (`vales`, `comandas`, `itens_comanda`, `orcamentos`, `itens_orcamento`, `cobrancas_pix`) recebem a versão da nuvem com o mesmo `id` e passam a ter `versao` real (modelo 4.2) |
-| Implementação (Fase 1B) | `GenesisPDV.Sync/Pull/AplicadorPull.cs`: SQL gerado do `Esquema.g.cs` (`insert … on conflict(<chave primária>) do update … where excluded.versao > versao`, um comando preparado por tabela e conjunto de colunas; a chave das referências é a natural, como `ufs.sigla`); coluna `NOT NULL` ausente numa linha **nova** recebe um valor neutro até a próxima versão; `criado_localmente` nunca vem da nuvem (a coluna da linha é ignorada) e a versão da nuvem que substitui a linha local grava `0` (modelo 4.2); página e cursor num commit. A linha adiada entra com os espelhos de escrita local (vales, comandas), que ainda não existem; o FTS5 e o evento `CadastrosAlterados` também ficam para depois |
+| Implementação (Fase 1B) | `GenesisPDV.Sync/Pull/AplicadorPull.cs`: SQL gerado do `Esquema.g.cs` (`insert … on conflict(<chave primária>) do update … where excluded.versao > versao`, um comando preparado por tabela e conjunto de colunas; a chave das referências é a natural, como `ufs.sigla`); coluna `NOT NULL` ausente numa linha **nova** recebe um valor neutro até a próxima versão; `criado_localmente` nunca vem da nuvem (a coluna da linha é ignorada) e a versão da nuvem que substitui a linha local grava `0` (modelo 4.2); página e cursor num commit. A linha adiada entra com os espelhos de escrita local (vales, comandas), que ainda não existem; o evento `CadastrosAlterados` também fica para depois. **FTS5 (F2-B36):** o texto de `produtos_busca` dos produtos gravados na página (e dos produtos das marcas e categorias gravadas) é recalculado na mesma transação, sob um `SAVEPOINT` (com outro aninhado que força a FTS5 a gravar ali dentro); a falha desfaz só o índice e marca a reconstrução, e a página e o cursor seguem (README do PDV › decisão 83). A `pessoas_busca` continua para depois |
 
 ### 6.11 Ressincronização (reset) sem parar o caixa
 
@@ -3142,6 +3160,8 @@ decisão técnica T25 da Fase 1C) e `chave_deduplicacao = 'cadastro:<tipo_alerta
 aberto). O cadastro e a chave são da empresa: o alerta nasce com `loja_id` nulo (todo gerente com acesso aos alertas o
 vê), com a loja do primeiro aviso em `dados.loja_id` e as lojas que avisaram em `dados.lojas` (o aviso de outra loja com
 o alerta aberto entra na lista). Produto ou variação que nunca existiu na empresa → `REFERENCIA_INEXISTENTE` (o excluído é aceito).
+A nuvem abre o mesmo alerta, com `tipo_alerta = 'venda_sem_variacao'`, ao receber a venda de um produto com variações
+sem a variação (15.1; F2-B34): o motivo não é um `tipo_alerta` que o caixa manda.
 
 ### 9.25 `crediario.recebido` e `crediario.recebimento_cancelado` (novos)
 
@@ -3822,6 +3842,13 @@ sequenceDiagram
   `estoque` como qualquer saldo, sem tipo nem versão de evento novos. O `lote_id` informado pelo PDV que não é do
   produto ou do estoque da loja não recusa a venda: a linha segue sem ele (e entra na divisão FEFO). O cancelamento
   devolve cada parte ao lote de onde saiu.
+- **Produto com variações sem a variação** (Fase 2, F2-B34; roadmap D44; README da API › decisão 181): o item não
+  cancelado sem `variacao_id` cujo código lido (`codigo_barras_id`) é o de uma variação, ou cujo produto é
+  `com_variacoes` com variação ativa na nuvem, **não recusa** a venda (o PDV 0.10.0 das lojas não tem a guarda, e o da
+  R1 com `pdv.recusa_produto_com_variacoes` desligada vende o pai): a baixa fica no pai, como veio, e abre o
+  `CADASTRO_PRODUTO` da empresa com `dados.tipo_alerta = 'venda_sem_variacao'` (chave
+  `cadastro:venda_sem_variacao:<produto_id>`, o mesmo formato do `alerta.cadastro`, 9.24), sem tipo nem versão de evento
+  novos.
 
 ### 15.2 Saldo estimado no PDV
 
@@ -4061,6 +4088,10 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   gravado desde a atualização (coluna nula), todo tipo vale como aceito: a implantação é sempre API primeiro e o caixa
   nunca trava por falta de internet (O18); se a API ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO`
   (transitório). Padrão até a confirmação do dono (README do PDV › decisão 51).
+- **Consultas online não passam pelo T13** (Fase 2, F2-B35): o `GET /sync/consultas/saldos-outras-lojas` do `F4` (1.4)
+  não grava evento nem anuncia tipo ou versão; o PDV novo diante da API antiga recebe 404 e mostra "requer conexão". A
+  Fase 2 inteira mantém `venda.finalizada` v1 (a `variacao_id` e o `lote_id` já existem nele) e não acrescenta nada a
+  `versoes_schema`.
 - `SCHEMA_DESCONHECIDO` é **transitório** com backoff de 10 min e alerta para a plataforma: o evento é válido, a API é
   que está atrasada.
 - `itens_venda.fiscal_snapshot` tem versão própria (`schema_fiscal`, modelo 3.11.3), independente de
@@ -4221,7 +4252,7 @@ contingência à SEFAZ corre em paralelo, pelo módulo fiscal (não depende da A
 | Pode | Não pode |
 |---|---|
 | `/sync/*` da própria empresa, filtrado pela loja/estoque/terminal do token | Qualquer rota do ERP (`/api/*`), que exige JWT de usuário |
-| Endpoints online do PDV (1.4) restritos à loja do token; `GET /estoque/saldos` lê saldos de todas as lojas e do CD (só quantidades, PDV 10.3) | Ler dados de outra empresa, de outra loja (exceto saldos), custos, financeiro |
+| Endpoints online do PDV (1.4) restritos à loja do token; `GET /sync/consultas/saldos-outras-lojas` lê o saldo vendável das lojas reais e do CD (só quantidades, sem a loja de treino; PDV 10.3, F2-B35) | Ler dados de outra empresa, de outra loja (exceto saldos), custos, financeiro |
 | Receber segredos da **própria loja** (CSC, certificado, token TEF), **cifrados para a `chave_publica_terminal`** | Receber segredos de outra loja; receber qualquer segredo em claro (mesmo dentro do TLS); receber segredos com `HARDWARE_ALTERADO` pendente |
 | `GET /sync/arquivos/{id}` só das categorias e escopos de 6.12 (imagens de cadastro; logotipo/banner da loja; XML fiscal da loja e do próprio terminal) | Baixar XML de NF-e de fornecedor, XML/logs de outras lojas ou terminais, anexos financeiros, planilhas (`403 ESCOPO_INVALIDO`) |
 | Enviar eventos com `loja_id`/`caixa_id`/`terminal_id` iguais aos do token | Enviar evento "em nome" de outro terminal (`ESCOPO_INVALIDO`), exceto pela recuperação assistida com código do ERP (22.3) |

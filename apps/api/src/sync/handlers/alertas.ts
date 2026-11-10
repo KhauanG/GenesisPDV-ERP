@@ -15,9 +15,10 @@ import {
 } from '@genesis/shared';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { alertas } from '../../database/empresa/schema/index.js';
+import type { DbEmpresa } from '../../tenancy/tenancy.js';
+import type { TerminalDoEvento } from '../aplicacao.js';
 import { ErroRegraEvento } from '../erros.js';
-import { registrarAuditoriaPdv, type CatalogoHandlers, type ContextoHandler } from './comum.js';
-import { gravarAlerta } from './vendas.js';
+import { gravarAlerta, registrarAuditoriaPdv, type CatalogoHandlers, type ContextoHandler } from './comum.js';
 
 /** SYNC 9.24: um tipo de alerta para todos os avisos de cadastro do caixa; o motivo vai em `dados.tipo_alerta`. */
 export const ALERTA_CADASTRO_PRODUTO = 'CADASTRO_PRODUTO';
@@ -58,28 +59,43 @@ async function prepararAlerta({ tx }: ContextoHandler, p: PayloadAlertaCadastro)
   return { nome: rows[0].nome };
 }
 
-async function aplicarAlerta(ctx: ContextoHandler, p: PayloadAlertaCadastro, prep: AlertaPreparado) {
-  const { tx, terminal } = ctx;
-  const produtoId = minusculo(p.produto_id);
-  const caixa = String(terminal.numeroCaixa).padStart(2, '0');
-  const titulo = TITULOS[p.tipo_alerta];
-  const chave = `cadastro:${p.tipo_alerta}:${produtoId}`;
+/** O alerta de cadastro de um produto (o do caixa, SYNC 9.24, ou o que a nuvem abre ao receber a venda, F2-B34). */
+export interface AlertaCadastro {
+  /** Vai em `dados.tipo_alerta` e na chave `cadastro:<tipo_alerta>:<produto_id>`. */
+  tipoAlerta: string;
+  titulo: string;
+  mensagem: string;
+  produtoId: string;
+  variacaoId: string | null;
+  detalhes: Record<string, unknown>;
+}
+
+/**
+ * Abre o `CADASTRO_PRODUTO` da empresa (`loja_id` nulo) deduplicado por `cadastro:<tipo_alerta>:<produto_id>`; com o
+ * alerta já aberto, a loja do terminal entra em `dados.lojas` (uma vez). Devolve se o alerta é novo.
+ */
+export async function abrirAlertaCadastro(
+  tx: DbEmpresa,
+  terminal: TerminalDoEvento,
+  a: AlertaCadastro,
+): Promise<boolean> {
+  const chave = `cadastro:${a.tipoAlerta}:${a.produtoId}`;
   const novo = await gravarAlerta(tx, {
     tipo: ALERTA_CADASTRO_PRODUTO,
     severidade: 'aviso',
-    titulo: `${titulo}: ${prep.nome}`.slice(0, 150),
-    mensagem: `${p.descricao} (avisado pelo caixa ${caixa}). Corrija o cadastro do produto no ERP.`,
+    titulo: a.titulo.slice(0, 150),
+    mensagem: a.mensagem,
     lojaId: null,
     entidade: 'produtos',
-    registroId: produtoId,
+    registroId: a.produtoId,
     dados: {
-      tipo_alerta: p.tipo_alerta,
-      produto_id: produtoId,
-      variacao_id: p.variacao_id ? minusculo(p.variacao_id) : null,
+      tipo_alerta: a.tipoAlerta,
+      produto_id: a.produtoId,
+      variacao_id: a.variacaoId,
       loja_id: terminal.lojaId,
       lojas: [terminal.lojaId],
       terminal_id: terminal.terminalId,
-      detalhes: p.detalhes,
+      detalhes: a.detalhes,
     },
     chaveDeduplicacao: chave,
   });
@@ -100,6 +116,22 @@ async function aplicarAlerta(ctx: ContextoHandler, p: PayloadAlertaCadastro, pre
         ),
       );
   }
+  return novo;
+}
+
+async function aplicarAlerta(ctx: ContextoHandler, p: PayloadAlertaCadastro, prep: AlertaPreparado) {
+  const { tx, terminal } = ctx;
+  const produtoId = minusculo(p.produto_id);
+  const caixa = String(terminal.numeroCaixa).padStart(2, '0');
+  const titulo = TITULOS[p.tipo_alerta];
+  const novo = await abrirAlertaCadastro(tx, terminal, {
+    tipoAlerta: p.tipo_alerta,
+    titulo: `${titulo}: ${prep.nome}`,
+    mensagem: `${p.descricao} (avisado pelo caixa ${caixa}). Corrija o cadastro do produto no ERP.`,
+    produtoId,
+    variacaoId: p.variacao_id ? minusculo(p.variacao_id) : null,
+    detalhes: p.detalhes,
+  });
   await registrarAuditoriaPdv(ctx, {
     entidade: 'produtos',
     registroId: produtoId,

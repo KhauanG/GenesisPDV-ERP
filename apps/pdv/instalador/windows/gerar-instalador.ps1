@@ -4,7 +4,7 @@
 # (instalado pelo Chocolatey se faltar) e grava o .sha256 ao lado. Usado pelo CI (job do PDV no Windows) e pelo
 # workflow pdv-release; roda igual numa máquina Windows com o SDK do .NET 10:
 #
-#   pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao 0.10.0] [-UrlApi https://api.grupoicebeer.com.br]
+#   pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao 0.11.0] [-UrlApi https://api.grupoicebeer.com.br]
 #
 # Sem -Versao vale a <Version> do apps/pdv/Directory.Build.props (a fonte única). Assinatura de código (opcional): as
 # variáveis PDV_CERT_PFX_BASE64 e PDV_CERT_SENHA (segredos do ambiente release-pdv do GitHub); sem elas o passo é pulado

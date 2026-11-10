@@ -9,7 +9,7 @@ import { uuidv7 } from 'uuidv7';
 import type { z } from 'zod';
 import { mascararSensiveis } from '../../auditoria/mascarar.js';
 import { auditoria } from '../../database/empresa/auditoria.js';
-import { eventosRecebidos } from '../../database/empresa/schema/index.js';
+import { alertas, eventosRecebidos } from '../../database/empresa/schema/index.js';
 import { erroDoDriver } from '../../database/erro-postgres.js';
 import type { ClienteEmpresa, DbEmpresa } from '../../tenancy/tenancy.js';
 import type { TerminalDoEvento } from '../aplicacao.js';
@@ -194,4 +194,10 @@ export function agregadoDivergente(tabela: string, id: string, colunas: string[]
     tabela,
     colunas,
   });
+}
+
+/** Grava o alerta deduplicado (`chave_deduplicacao`); devolve se ele é novo (o aberto com a mesma chave fica). */
+export async function gravarAlerta(tx: DbEmpresa, alerta: typeof alertas.$inferInsert): Promise<boolean> {
+  const r = await tx.insert(alertas).values(alerta).onConflictDoNothing().returning({ id: alertas.id });
+  return r.length > 0;
 }

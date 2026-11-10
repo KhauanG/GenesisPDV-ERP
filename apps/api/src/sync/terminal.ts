@@ -20,7 +20,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/;
 
 export type EndpointSync =
-  'estado' | 'pull' | 'push' | 'heartbeat' | 'token' | 'eventos-status' | 'recuperar';
+  'estado' | 'pull' | 'push' | 'heartbeat' | 'token' | 'eventos-status' | 'recuperar' | 'consulta-saldos';
 
 /**
  * SYNC 3.7: o anterior só conta como reutilizado quando o atual já funcionou há mais que isso. Absorve a corrida do
@@ -30,12 +30,21 @@ export type EndpointSync =
 export const MARGEM_TOKEN_ANTERIOR_MS = 30_000;
 
 /**
- * Push, renovação de token e recuperação exigem o hardware registrado (SYNC 20.5; PDV 5.3): 409, nada é gravado nem
- * devolvido. O `recuperar` (22.2; Fase 1C, C17) entrega os payloads do terminal (vendas, CPF na nota, quem retirou a
- * sangria): uma cópia do token em outra máquina não os lê, e a reidratação só serve ao push, que já exige o hardware.
+ * Push, renovação de token, recuperação e as consultas online exigem o hardware registrado (SYNC 20.5; PDV 5.3): 409,
+ * nada é gravado nem devolvido. O `recuperar` (22.2; Fase 1C, C17) entrega os payloads do terminal (vendas, CPF na
+ * nota, quem retirou a sangria): uma cópia do token em outra máquina não os lê, e a reidratação só serve ao push, que
+ * já exige o hardware. A consulta de saldos das outras lojas (F2-B35) mostra o estoque da empresa inteira: só o caixa
+ * registrado a usa.
  */
+const ENDPOINTS_COM_HARDWARE: ReadonlySet<EndpointSync> = new Set([
+  'push',
+  'token',
+  'recuperar',
+  'consulta-saldos',
+]);
+
 export function exigirHardware(t: TerminalAutenticado, endpoint: EndpointSync): void {
-  if (!t.hardwareConfere && (endpoint === 'push' || endpoint === 'token' || endpoint === 'recuperar')) {
+  if (!t.hardwareConfere && ENDPOINTS_COM_HARDWARE.has(endpoint)) {
     throw new ErroSync('HARDWARE_ALTERADO', 'Hardware alterado — aguardando aprovação no ERP.');
   }
 }
