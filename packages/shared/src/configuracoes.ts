@@ -134,6 +134,10 @@ const LINHAS: Linha[] = [
   ['pdv.imprime_sangria_automaticamente', bool, true, LP],
   ['pdv.valor_limite_sangria', dinheiro, null, LP],
   ['pdv.exibe_foto_produto', bool, false, LP],
+  // F2-B34 (F2-Q2 = D44, decidida pelo dono em 05/11/2026): o caixa recusa o código de uma variação e o pai "Com
+  // variações" com variação ativa, em vez de vender com o preço e o saldo do pai; o pai sem variação continua vendendo.
+  // Escrita por extenso (= `CHAVE_RECUSA_PRODUTO_COM_VARIACOES`): o teste do PDV confere o padrão por esta linha.
+  ['pdv.recusa_produto_com_variacoes', bool, true, LP],
   ['pdv.usa_pdv', bool, true, LP],
   ['pdv.orcamento_pdv', bool, false, LP],
   ['pdv.altera_preco_pdv', bool, false, LP],

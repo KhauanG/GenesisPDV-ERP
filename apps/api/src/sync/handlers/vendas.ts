@@ -58,7 +58,6 @@ import {
   type NovoMovimento,
 } from '../../estoques/movimentos.js';
 import {
-  alertas,
   cobrancasPix,
   itensVenda,
   itensVendaComplementos,
@@ -70,10 +69,12 @@ import {
 import type { DbEmpresa } from '../../tenancy/tenancy.js';
 import { tocarPessoas } from '../toque.js';
 import { ErroRegraEvento } from '../erros.js';
+import { ALERTA_CADASTRO_PRODUTO, abrirAlertaCadastro } from './alertas.js';
 import {
   agregadoDivergente,
   colunasDivergentes,
   conferirEscopoLinha,
+  gravarAlerta,
   registrarAuditoriaPdv,
   type CatalogoHandlers,
   type ContextoHandler,
@@ -251,6 +252,66 @@ interface VendaPreparada extends DocumentoConferido {
   estoqueContextoInvalido: string | null;
   /** O cliente existe e não está excluído (relevância `compra` só para quem desce). */
   clienteVivo: boolean;
+  /** Itens de produto com variações vendidos sem a variação (F2-B34), por produto: o alerta de cadastro. */
+  semVariacao: Map<string, ProdutoSemVariacao>;
+}
+
+/** O produto com variações que o caixa vendeu sem a variação (F2-B34; SYNC 15.1): o primeiro item que o mostrou. */
+interface ProdutoSemVariacao {
+  nome: string;
+  itemId: string;
+  /** A variação do código lido (`produtos_codigos_barras.variacao_id`), quando o código era o de uma variação. */
+  variacaoDoCodigo: string | null;
+  codigoLido: string | null;
+}
+
+/** `dados.tipo_alerta` do `CADASTRO_PRODUTO` aberto pela nuvem quando a venda traz o pai sem a variação (F2-B34). */
+export const TIPO_ALERTA_VENDA_SEM_VARIACAO = 'venda_sem_variacao';
+
+/**
+ * F2-B34 (SYNC 15.1; D44): o item não cancelado sem `variacao_id` cujo código lido é o de uma variação, ou cujo produto é
+ * "Com variações" com variação ativa na nuvem. A venda nunca é recusada por isso (o PDV 0.10.0 das lojas não tem a
+ * guarda, e o da R1 com `pdv.recusa_produto_com_variacoes` desligada vende o pai): a baixa fica no pai, e o ERP é avisado.
+ * Só lendo, no `preparar`, com os cadastros atuais (como o resto da venda).
+ */
+async function produtosSemVariacao(
+  tx: DbEmpresa,
+  p: PayloadVendaFinalizada,
+  cadastros: CadastrosEstoque,
+): Promise<Map<string, ProdutoSemVariacao>> {
+  const itens = p.itens_venda.filter((i) => !i.cancelado && !i.variacao_id);
+  const comVariacoes = itens
+    .map((i) => minusculo(i.produto_id))
+    .filter((id) => cadastros.produtos.get(id)?.tipo === 'com_variacoes');
+  const codigos = itens.flatMap((i) => (i.codigo_barras_id ? [minusculo(i.codigo_barras_id)] : []));
+  if (!comVariacoes.length && !codigos.length) return new Map();
+  const { rows: ativos } = comVariacoes.length
+    ? await tx.execute<{ produto_id: string }>(sql`
+        select distinct produto_id from produtos_variacoes
+         where produto_id = any(${`{${[...new Set(comVariacoes)].join(',')}}`}::uuid[]) and ativo and excluido_em is null`)
+    : { rows: [] };
+  const { rows: deVariacao } = codigos.length
+    ? await tx.execute<{ id: string; variacao_id: string }>(sql`
+        select id, variacao_id from produtos_codigos_barras
+         where id = any(${`{${[...new Set(codigos)].join(',')}}`}::uuid[]) and variacao_id is not null`)
+    : { rows: [] };
+  const comAtiva = new Set(ativos.map((r) => r.produto_id));
+  const variacaoDoCodigo = new Map(deVariacao.map((r) => [r.id, r.variacao_id]));
+  const resultado = new Map<string, ProdutoSemVariacao>();
+  for (const item of itens) {
+    const produtoId = minusculo(item.produto_id);
+    const variacao = item.codigo_barras_id
+      ? (variacaoDoCodigo.get(minusculo(item.codigo_barras_id)) ?? null)
+      : null;
+    if (resultado.has(produtoId) || (!variacao && !comAtiva.has(produtoId))) continue;
+    resultado.set(produtoId, {
+      nome: cadastros.produtos.get(produtoId)!.nome,
+      itemId: minusculo(item.id),
+      variacaoDoCodigo: variacao,
+      codigoLido: item.codigo_lido ?? null,
+    });
+  }
+  return resultado;
 }
 
 /** O id definitivo de uma pessoa citada pelo payload (`pessoas_aliases` já lidos em `resolverAliases`). */
@@ -437,7 +498,13 @@ async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizada): P
     cadastros,
     'da venda',
   );
-  return { ...conferido, cadastros, ...(await escolherEstoque(ctx, cadastros)), clienteVivo };
+  return {
+    ...conferido,
+    cadastros,
+    ...(await escolherEstoque(ctx, cadastros)),
+    clienteVivo,
+    semVariacao: await produtosSemVariacao(tx, p, cadastros),
+  };
 }
 
 // ---------------------------------------------------------------- linhas da venda
@@ -726,12 +793,6 @@ async function inserirEmBlocos(tx: DbEmpresa, tabela: PgTable, linhas: readonly 
   }
 }
 
-/** Grava o alerta deduplicado (`chave_deduplicacao`); devolve se ele é novo (o aberto com a mesma chave fica). */
-export async function gravarAlerta(tx: DbEmpresa, alerta: typeof alertas.$inferInsert): Promise<boolean> {
-  const r = await tx.insert(alertas).values(alerta).onConflictDoNothing().returning({ id: alertas.id });
-  return r.length > 0;
-}
-
 /**
  * `INSERT` do documento da venda (cabeçalho e linhas), um comando por tabela (em blocos, `inserirEmBlocos`), na ordem
  * das FKs: o casco cobrado aponta para o item cheio da mesma venda (`ordenarCheiosAntes`), o complemento para o item,
@@ -945,6 +1006,30 @@ async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinaliza
     if (novo) inativosNovos++;
   }
   if (inativosNovos) alertasGerados.push(ALERTA_PRODUTO_INATIVO_VENDIDO);
+
+  // F2-B34 (SYNC 15.1; D44): o produto com variações vendido sem a variação é aceito (baixa no pai), com o alerta de
+  // cadastro da empresa, um aberto por produto (as lojas que venderam entram em `dados.lojas`).
+  let semVariacaoNovos = 0;
+  for (const [produtoId, s] of prep.semVariacao) {
+    const novo = await abrirAlertaCadastro(tx, terminal, {
+      tipoAlerta: TIPO_ALERTA_VENDA_SEM_VARIACAO,
+      titulo: `Produto com variações vendido sem a variação: ${s.nome}`,
+      mensagem:
+        `O caixa ${caixa} vendeu ${s.nome} sem a variação (versão do PDV sem a guarda das variações, ou com ` +
+        '"Recusa produto com variações no caixa" desligada): a venda foi aceita e o estoque saiu do produto pai. ' +
+        'Atualize o PDV e confira o saldo das variações.',
+      produtoId,
+      variacaoId: s.variacaoDoCodigo,
+      detalhes: {
+        venda_id: minusculo(v.id),
+        item_venda_id: s.itemId,
+        codigo_lido: s.codigoLido,
+        versao_app: ctx.evento.contexto.versao_app ?? null,
+      },
+    });
+    if (novo) semVariacaoNovos++;
+  }
+  if (semVariacaoNovos) alertasGerados.push(ALERTA_CADASTRO_PRODUTO);
 
   // SYNC 9.7 (P6): somas que não fecham não recusam; a venda grava como veio e o ERP é avisado.
   const diferencas = conferirSomasVenda(p);

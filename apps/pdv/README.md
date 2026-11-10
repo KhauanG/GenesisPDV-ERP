@@ -3592,7 +3592,7 @@ as demais teclas do F11 (sangria, reforço, movimentos, limite de gaveta, resumo
 cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura avulsa da gaveta, na I4, decisão 63), TEF, PIX dinâmico, crediário e as demais formas
 da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), pesquisa FTS5, confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
-sem estoque" nas alternativas do combo, variações, agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+sem estoque" nas alternativas do combo, a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -3648,3 +3648,39 @@ reimpresso continua o original, com o número do caixa.
     integração da API roda só no job do PostgreSQL 18, a versão da produção (antes rodava também no 16, no job
     TypeScript). Isso não foi pedido pelo dono, que falou só do PDV: foi escolha técnica, depois **decidida pelo dono
     em 05/11/2026** seguindo a recomendação (roadmap §16, D59); CONTRIBUTING.md › CI.
+
+81. **Guarda do produto com variações: o caixa recusa em vez de vender o pai** (Fase 2, F2-B34; F2-Q2 = roadmap D44,
+    **decidida pelo dono em 05/11/2026: recusar** — o dono respondeu em 04/11/2026 que as variações não entram na
+    Fase 2, D43; PDV 10.2; MD 6.1; README da API › decisão 181; sai na release R1 do PDV, no fechamento do PR-8; sem
+    migração local, sem mudança no `Esquema.g.cs` nem no protocolo). Antes, o EAN de uma variação resolvia para o produto pai e
+    vendia com o preço e o saldo do pai — a baixa errada só aparecia no inventário.
+    - **Quem recusa:** `ProdutoResolvido.ExigeVariacao` (Core) é verdadeiro quando o código lido é o de uma variação
+      (`VariacaoId`, novo no `ProdutoResolvido`, de `produtos_codigos_barras.variacao_id`) ou quando o produto é o pai
+      `com_variacoes` com variação ativa (`ProdutoVenda.TemVariacoesAtivas`); `GuardaVariacoes.Motivo` devolve
+      "Produto com variações: venda disponível na próxima versão" com a chave ligada. O `ServicoVenda.IncluirResolvidoAsync`
+      — o caminho do bipe (`ProcessarEntradaAsync`) e da pesquisa F2 (`IncluirDaPesquisaAsync`) — confere antes de
+      tudo, e a recusa é uma `RegraNegocioException` comum: a mensagem na barra (ou o erro no diálogo da pesquisa), o
+      campo limpo, a venda não abre e o número não é gasto. O combo e a venda recuperada após queda não passam por
+      aqui (o componente do combo com variações fica para a Fase 3, com o ERP já travando a criação do tipo, F2-B1).
+    - **O catálogo só marca** (`CatalogoLocal`): o `ResolverAsync` leva a `variacao_id` do código; o `MontarAsync` marca
+      os pais `com_variacoes` com alguma `produtos_variacoes` ativa e não excluída (uma consulta só, e só quando há pai
+      desse tipo entre os produtos); na pesquisa só por números, o código de uma variação dá a linha dele (como o de
+      uma embalagem), para a inclusão saber que é a variação. O pai **sem** variação ativa (o legado do Nuvem3 sem
+      grade, ou só com inativas) vende como simples, e o `com_complementos` vende sem os complementos (PDV 10.2): só
+      `com_variacoes` é recusado (a crítica do plano). `TemVariacoesAtivas` é `[JsonIgnore]`: é fato da resolução, não
+      entra no snapshot da venda (`produtos_venda_snapshot`).
+    - **Chave `pdv.recusa_produto_com_variacoes`** (`ChavesConfiguracao.RecusaProdutoComVariacoes`, padrão `true`, por
+      loja; desce no fluxo `configuracao` como toda `pdv.*`), lida da loja do terminal a cada inclusão de produto com
+      variações (só desse; os outros não leem a chave). Desligada, vende o pai como antes, e a nuvem aceita e abre o
+      alerta de cadastro (API › decisão 181). Na aba 7 Parâmetros da Central, "Recusa produto com variações no caixa"
+      (`CatalogoRotulosConfiguracao`), e o padrão confere com o catálogo (`CicloOnlineTests`, `CatalogoRotulosConfiguracaoTests`).
+    - **Compatibilidade:** o PDV 0.10.0 das lojas continua vendendo o pai (a nuvem não recusa), e o ERP avisa ao ligar
+      `produtos.variacoes_habilitadas` com caixa abaixo de `VERSAO_PDV_GUARDA_VARIACOES` (`0.11.0`, a versão prevista da
+      R1; README do ERP › decisão 69). A versão do PDV não muda neste bloco (fica para o fechamento do PR-8).
+    - Testes: `GuardaVariacoesTests` (Core: a recusa com a chave ligada e nenhuma com ela desligada, o item do pai com
+      ela desligada; pai sem variação ativa, complementos e simples entram), `CatalogoLocalTests` (Data: o EAN da
+      variação com a `VariacaoId`, o do pai e o código interno marcados, o legado só com variação inativa e excluída e o
+      "Com complementos" sem marca, a pesquisa por nome e a só por números com a linha da variação) e
+      `VariacoesTelasTests` (App: a recusa pelo bipe do EAN da variação, do pai e do código interno sem abrir a venda,
+      pela pesquisa F2 no diálogo; o legado e a porção com complementos vendem; com a chave desligada na loja, o EAN da
+      variação vende o pai).

@@ -3142,6 +3142,8 @@ decisão técnica T25 da Fase 1C) e `chave_deduplicacao = 'cadastro:<tipo_alerta
 aberto). O cadastro e a chave são da empresa: o alerta nasce com `loja_id` nulo (todo gerente com acesso aos alertas o
 vê), com a loja do primeiro aviso em `dados.loja_id` e as lojas que avisaram em `dados.lojas` (o aviso de outra loja com
 o alerta aberto entra na lista). Produto ou variação que nunca existiu na empresa → `REFERENCIA_INEXISTENTE` (o excluído é aceito).
+A nuvem abre o mesmo alerta, com `tipo_alerta = 'venda_sem_variacao'`, ao receber a venda de um produto com variações
+sem a variação (15.1; F2-B34): o motivo não é um `tipo_alerta` que o caixa manda.
 
 ### 9.25 `crediario.recebido` e `crediario.recebimento_cancelado` (novos)
 
@@ -3822,6 +3824,13 @@ sequenceDiagram
   `estoque` como qualquer saldo, sem tipo nem versão de evento novos. O `lote_id` informado pelo PDV que não é do
   produto ou do estoque da loja não recusa a venda: a linha segue sem ele (e entra na divisão FEFO). O cancelamento
   devolve cada parte ao lote de onde saiu.
+- **Produto com variações sem a variação** (Fase 2, F2-B34; roadmap D44; README da API › decisão 181): o item não
+  cancelado sem `variacao_id` cujo código lido (`codigo_barras_id`) é o de uma variação, ou cujo produto é
+  `com_variacoes` com variação ativa na nuvem, **não recusa** a venda (o PDV 0.10.0 das lojas não tem a guarda, e o da
+  R1 com `pdv.recusa_produto_com_variacoes` desligada vende o pai): a baixa fica no pai, como veio, e abre o
+  `CADASTRO_PRODUTO` da empresa com `dados.tipo_alerta = 'venda_sem_variacao'` (chave
+  `cadastro:venda_sem_variacao:<produto_id>`, o mesmo formato do `alerta.cadastro`, 9.24), sem tipo nem versão de evento
+  novos.
 
 ### 15.2 Saldo estimado no PDV
 

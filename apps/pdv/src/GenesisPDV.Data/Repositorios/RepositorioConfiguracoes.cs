@@ -94,6 +94,13 @@ public static class ChavesConfiguracao
 
     public const decimal DescontoCascosMaxSemSupervisorPadrao = 50m;
 
+    /// <summary>
+    /// Guarda das variações (Fase 2, F2-B34; F2-Q2 = D44, decidida pelo dono em 05/11/2026: ligada): o código de
+    /// uma variação e o pai "Com variações" com variação ativa são recusados (<c>GuardaVariacoes</c>); desligada, vende
+    /// o pai.
+    /// </summary>
+    public const string RecusaProdutoComVariacoes = "pdv.recusa_produto_com_variacoes";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -112,6 +119,7 @@ public static class ChavesConfiguracao
         [PixManualExigeSupervisor] = true,
         [CancelamentoDevolveVazios] = true,
         [CancelarItemExigeSupervisor] = false,
+        [RecusaProdutoComVariacoes] = true,
     };
 
     public const decimal ToleranciaPadrao = 0m;

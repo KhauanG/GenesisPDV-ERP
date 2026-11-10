@@ -320,6 +320,13 @@ public sealed class ServicoVenda(
         string? origemEntrada = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(resolvido);
+        // F2-B34 (D44): o código de uma variação e o pai com variação ativa, pelo bipe e pela pesquisa, antes de abrir a venda.
+        if (resolvido.ExigeVariacao && GuardaVariacoes.Motivo(resolvido, await RecusaProdutoComVariacoesAsync(ct)) is { } recusa)
+        {
+            throw new RegraNegocioException(recusa);
+        }
+
         if (resolvido.Produto.EhKit)
         {
             var combo = await catalogo.ObterComboAsync(resolvido.Produto.Id, ct)
@@ -336,6 +343,12 @@ public sealed class ServicoVenda(
         var item = await IncluirAsync(resolvido, quantidade, codigo, origemEntrada, ct);
         return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, item);
     }
+
+    /// <summary><c>pdv.recusa_produto_com_variacoes</c> da loja do terminal (padrão do catálogo: ligada).</summary>
+    private async Task<bool> RecusaProdutoComVariacoesAsync(CancellationToken ct) =>
+        sessao.Identidade is { } identidade
+            ? await configuracoes.ObterBoolAsync(ChavesConfiguracao.RecusaProdutoComVariacoes, identidade.LojaId, ct)
+            : ChavesConfiguracao.PadroesBool[ChavesConfiguracao.RecusaProdutoComVariacoes];
 
     /// <summary>Inclui o combo com as escolhas do diálogo Montar combo (ou os padrões), PDV 10.9.1.</summary>
     public async Task<IReadOnlyList<ItemVenda>> IncluirComboAsync(

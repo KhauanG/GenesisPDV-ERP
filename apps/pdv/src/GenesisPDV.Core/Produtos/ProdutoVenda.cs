@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using GenesisPDV.Core.Numeros;
 using GenesisPDV.Core.Precos;
 using GenesisPDV.Core.Vendas;
@@ -51,6 +52,14 @@ public sealed record ProdutoVenda(
     /// </summary>
     public short? IdadeMinima { get; init; }
 
+    /// <summary>
+    /// Produto pai <c>com_variacoes</c> com variação ativa no espelho (<c>produtos_variacoes</c> ativa e não excluída):
+    /// vendê-lo sem a variação baixa o saldo errado (F2-B34; <see cref="GuardaVariacoes"/>). O pai sem variação ativa
+    /// (o legado do Nuvem3 sem grade) vende como simples. Fato da resolução, fora do snapshot da venda.
+    /// </summary>
+    [JsonIgnore]
+    public bool TemVariacoesAtivas { get; init; }
+
     public bool Fracionavel => PermiteFracao ?? UnidadesFracionaveis.Contains(Unidade);
 
     /// <summary>Varejo da regra 11.3 passo 3: <c>produtos_lojas.preco_venda ?? produtos.preco_venda</c>.</summary>
@@ -76,13 +85,24 @@ public sealed record ComponenteBaixa(Guid ProdutoId, Guid? VariacaoId, decimal Q
 /// <param name="Fator">Fator da embalagem (fardo de 12 = 12); a quantidade do item é fator × multiplicador.</param>
 /// <param name="PrecoEmbalagem"><c>produtos_codigos_barras.preco</c>: preço autoritativo da embalagem (nulo = regra 11.3).</param>
 /// <param name="SiglaEmbalagem">Sigla da <c>unidade_id</c> da embalagem ("FD"), para tela e cupom.</param>
+/// <param name="VariacaoId">
+/// <c>produtos_codigos_barras.variacao_id</c> do código lido: o código é o de uma variação (F2-B34). O PDV-1 não vende
+/// a variação (a escolha é da Fase 3), e a guarda recusa (<see cref="GuardaVariacoes"/>).
+/// </param>
 public sealed record ProdutoResolvido(
     ProdutoVenda Produto,
     Guid? CodigoBarrasId = null,
     decimal Fator = 1m,
     decimal? PrecoEmbalagem = null,
-    string? SiglaEmbalagem = null)
+    string? SiglaEmbalagem = null,
+    Guid? VariacaoId = null)
 {
+    /// <summary>
+    /// Vender exige escolher a variação, o que o PDV-1 não faz: o código é o de uma variação, ou o produto é o pai com
+    /// variação ativa (F2-B34). <c>com_complementos</c> não entra: vende sem os complementos (PDV 10.2).
+    /// </summary>
+    public bool ExigeVariacao => VariacaoId is not null || (Produto.Tipo == TipoProduto.ComVariacoes && Produto.TemVariacoesAtivas);
+
     /// <summary>Embalagem lida (fator ≠ 1 ou com preço próprio); nulo para a unidade.</summary>
     public EmbalagemPreco? Embalagem => CodigoBarrasId is { } id && (Fator != 1m || PrecoEmbalagem is not null)
         ? new EmbalagemPreco(id, Fator, PrecoEmbalagem, SiglaEmbalagem)
@@ -117,6 +137,24 @@ public sealed record ProdutoPesquisado(ProdutoResolvido Resolvido, string? Codig
     public decimal Preco => EhEmbalagem
         ? Resolvido.PrecoEmbalagem ?? Arredondamento.Arred2(Produto.PrecoBase * Resolvido.Fator)
         : Produto.PrecoBase;
+}
+
+/// <summary>
+/// Guarda do produto com variações no caixa (Fase 2, F2-B34; F2-Q2 = D44, decidida pelo dono em 05/11/2026):
+/// enquanto o caixa não sabe escolher a variação (Fase 3, PDV-2), o código de uma variação e o pai com variação ativa
+/// são recusados com <see cref="Mensagem"/>, pela chave <c>pdv.recusa_produto_com_variacoes</c> (padrão ligada).
+/// Desligada, vende o pai como antes (o preço e o saldo do pai), e a nuvem abre o alerta de cadastro ao receber a venda.
+/// </summary>
+public static class GuardaVariacoes
+{
+    public const string Mensagem = "Produto com variações: venda disponível na próxima versão";
+
+    /// <summary>A mensagem da recusa, ou nulo quando o item pode entrar (<paramref name="recusa"/> = a chave da loja).</summary>
+    public static string? Motivo(ProdutoResolvido resolvido, bool recusa)
+    {
+        ArgumentNullException.ThrowIfNull(resolvido);
+        return recusa && resolvido.ExigeVariacao ? Mensagem : null;
+    }
 }
 
 public interface ICatalogoProdutos

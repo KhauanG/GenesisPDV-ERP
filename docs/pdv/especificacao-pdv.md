@@ -1090,6 +1090,15 @@ Ordem de busca (índices no SQLite):
 Mais de um produto com o mesmo código de barras (o Nuvem3 permite duplicados; o ERP novo valida, mas cadastros
 importados podem ter): abre lista de seleção com descrição, preço e estoque; `Enter` escolhe.
 
+**Produto com variações** — Fase 2 (F2-B34; roadmap D44, decidida pelo dono em 05/11/2026). Enquanto o caixa não sabe
+escolher a variação (PDV-2), com `pdv.recusa_produto_com_variacoes = true` (padrão, por loja) a resolução pelo código e
+pela pesquisa F2 recusa, com "Produto com variações: venda disponível na próxima versão" (sem abrir a venda nem gastar
+número): o código que resolve para uma variação (`produtos_codigos_barras.variacao_id` não nulo) e o produto pai
+`com_variacoes` com variação ativa no espelho (`produtos_variacoes` ativa e não excluída). O pai sem variação ativa (o
+legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos. Com a chave desligada, o código
+da variação vende o pai, com o preço e o saldo dele (o comportamento do piloto); a nuvem aceita a venda e abre o alerta
+de cadastro (SYNC 15.1). Na pesquisa só por números, o código de uma variação dá a linha dele (como o da embalagem).
+
 **Embalagem / fardo / caixa / pack (fator ≠ 1)** — Fase PDV-1. Quando o código lido é uma linha de
 `produtos_codigos_barras` com `fator ≠ 1` (ex.: DUN-14 ou EAN da caixa com 12 latas):
 

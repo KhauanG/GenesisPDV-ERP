@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 é o próximo)._
+_Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a liberação do dono; aguardando a implantação; PR-8 em andamento: F2-B34 commitado)._
 
 ## Repositório
 
@@ -53,7 +53,7 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 | PR-5 NF-e de fornecedor por XML | B18–B21 | concluído (arquivo #30) e em produção |
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**) |
-| **PR-8 PDV: guarda e consulta** | **B34–B36** | próximo (release R1 do PDV) |
+| **PR-8 PDV: guarda e consulta** | **B34–B36** | **em andamento** (release R1 do PDV), no branch `claude/blissful-cray-cvroui` |
 | PR-9 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -78,6 +78,14 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
 | F2-B32 Movimentação analítica (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque`: local e período obrigatórios (até 366 dias contando as pontas, dias no fuso da empresa), filtros de produto, tipos de movimento em multisseleção, usuário, documento (tipo e número) e pessoa, local fora dos permitidos 403; **paginação por cursor** `(data_movimento, id)` com os microssegundos no cursor, sem total, pelo `ix_movimentos_estoque_estoque_data`; **saldo anterior e posterior recalculados na ordem da data** pela soma do razão da linha de saldo, cada movimento lendo só a parte entre o anterior da mesma linha na página e ele pelo `ix_movimentos_estoque_linha_data` só pelo índice, o saldo da linha de saldo também com filtros, fechando com `saldos_estoque`, com o gravado ao lado; colunas do Nuvem3 com `id_nuvem3`, fornecedor, documento com número e link e o custo só com `produtos.ver_custo`, mais a unidade do produto (a da quantidade) e o fator ao lado da unidade do documento, e a pessoa do movimento em qualquer documento (cascos devolvidos, compensação); a tela lista também os locais inativos, marcados; fuso como parâmetro e JIT desligado; consulta pronta para virar o provedor da exportação do F2-B33; `GET /referencias/tipos-movimento-estoque`; contratos em `packages/shared/src/relatorios.ts`; ERP `apps/erp-web/src/paginas/relatorios/MovimentacaoEstoque.tsx` no `<Relatorio>` por cursor com a nota do saldo recalculado e o ícone do gravado, filtros novos `multisselecao` e `componente` no `FiltroListagem`, rota e menu pronto; carga `pnpm --filter api carga:movimentacao` fora do CI com 4 milhões de movimentos, 12 meses da Loja 1 (1,62 M): 1ª página 40 ms, página do meio 98 ms, última 170 ms, filtros de 23 a 51 ms (< 5 s), EXPLAIN registrado; **sem migração**; PDV sem mudança; README da API › decisão 179, README do ERP › decisão 67) | **commitado** |
 | F2-B33 Movimentação sintética, exportação e "Ver movimentação" (`apps/api/src/relatorios/movimentacao.ts` — `GET /relatorios/movimentacao-estoque/sintetica`: uma linha por produto × variação × tipo de estoque do local com movimento no período, paginada por página com o total e os custos do relatório inteiro; **fecha com a analítica** (saldo inicial = a soma do razão antes do período, final = inicial + o período; entradas, saídas e custos pelo `filter` dos filtros de movimento, com os saldos da linha de saldo); **última compra** = o último `RECEB_MANUAL`/`RECEB_NFE` de entrada do produto no local pela data até o fim do período, pelo `ix_movimentos_estoque_tipo_movimento` (não o `saldos_estoque.ultima_compra_em`, que é a última lançada, de hoje); provedor de exportação `movimentacao-estoque` com `visao=analitica|sintetica` (`Relatorio_Movimentacao_Estoque_DD_MM_AAAA_HH_MM.xlsx`, colunas do Nuvem3 com os ids, custo cortado sem `produtos.ver_custo`, local permitido conferido de novo na tarefa) e a **contagem própria** só no razão; na analítica sem filtro de movimento, só o primeiro movimento de cada linha lê o índice para o saldo (a parte entre dois da mesma linha é vazia); ERP: filtro Visão na `MovimentacaoEstoque.tsx` (a sintética por página, com o link dos movimentos para a analítica do produto), Excel/CSV pela API, "Ver movimentação" no bloco Estoque do produto e no Estoque Atual (local, produto e os 30 dias até hoje ou até a data-base na URL); carga `pnpm --filter api carga:movimentacao-exportacao` fora do CI com 4 milhões de movimentos: sintética de 12 meses da Loja 1 (1,62 M de movimentos, 2.454 linhas) de 0,36 a 1,01 s por página (< 5 s), contagem própria 237 ms (analítica) e 430 ms (sintética), exportação da analítica dos 12 meses em tarefa (1.620.913 linhas, `.xlsx` de 225 MB em 2 abas) em 247 s com pico de heap 224 MB (< 300 MB), EXPLAIN registrado; os bancos apagados no fim; **sem migração**; PDV sem mudança; README da API › decisão 180, README do ERP › decisão 68) | **commitado** |
 
+### PR-8 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B34 guarda de produto com variações no PDV (PDV: `ProdutoResolvido.ExigeVariacao`/`VariacaoId`, `ProdutoVenda.TemVariacoesAtivas` e `GuardaVariacoes` no Core, marcação no `CatalogoLocal` — o código da variação e o pai `com_variacoes` com variação ativa; o legado sem variação ativa e o `com_complementos` vendem —, recusa no `ServicoVenda.IncluirResolvidoAsync` pelo bipe e pela pesquisa F2 com "Produto com variações: venda disponível na próxima versão"; chave `pdv.recusa_produto_com_variacoes` = `true`, por loja, D44 decidida pelo dono em 05/11/2026, na aba 7 da Central; nuvem: a venda do pai sem a variação é aceita e abre o `CADASTRO_PRODUTO` `venda_sem_variacao` (`abrirAlertaCadastro`, o mesmo do `alerta.cadastro`); ERP: a chave em Parâmetros › PDV e, ao ligar `produtos.variacoes_habilitadas`, o aviso dos caixas abaixo de `VERSAO_PDV_GUARDA_VARIACOES` = 0.11.0 por `GET /configuracoes/terminais-sem-guarda-variacoes`; **sem migração**, sem `Esquema.g.cs` nem protocolo novos, versão do PDV inalterada (a R1 é do fechamento do PR-8); README da API › decisão 181, do ERP › 69, do PDV › 81) | **commitado** |
+| F2-B35 F4 "Outras lojas" | próximo |
+| F2-B36 pesquisa F2 com FTS5 (opcional) | não iniciado |
+
 ## Próximo passo
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
@@ -89,10 +97,12 @@ _Última atualização: 10/11/2026 (PR-7 juntado na `main` em 10/11/2026 com a l
    `backups/` (`infra/producao/README.md` › Backup e › Pendências). Permissões das telas novas:
    `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e
    `estoque_acertos.criar` (ajuste no clique). O PDV não muda.
-3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36, release R1 do PDV): workflow `genesis-bloco` bloco a bloco a
-   partir do F2-B34 (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o
-   PR-7).
-4. Numeração das próximas decisões nos READMEs: **API 181**, **ERP 69**, **PDV 81** (confira o último número no próprio
+3. **PR-8 "PDV: guarda e consulta"** (F2-B34 a F2-B36, release R1 do PDV): workflow `genesis-bloco` bloco a bloco
+   (`docs/planos/fase2-plano.md`), no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-7). F2-B34
+   commitado; o próximo é o F2-B35. No fechamento do PR-8: a versão do PDV para a R1 — se não for **0.11.0**, trocar
+   `VERSAO_PDV_GUARDA_VARIACOES` em `packages/shared/src/produtos.ts` (o aviso do ERP ao ligar as variações) — e a API
+   publicada antes do PDV.
+4. Numeração das próximas decisões nos READMEs: **API 182**, **ERP 70**, **PDV 82** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; `docs/planos/decisoes-do-dono.md`).
 

@@ -15,6 +15,7 @@ import {
 } from './estoque.js';
 import { CHAVE_ASSINATURA_INVALIDA, MODOS_ASSINATURA_INVALIDA } from './notas-entrada.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
+import { CHAVE_RECUSA_PRODUTO_COM_VARIACOES } from './produtos.js';
 import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 describe('catálogo de configurações (MD 3.1.2)', () => {
@@ -101,5 +102,13 @@ describe('catálogo de configurações (MD 3.1.2)', () => {
     expect(def.pdv).toBe(false);
     for (const v of [1, 3, 365]) expect(def.tipo.safeParse(v).success, String(v)).toBe(true);
     for (const v of [0, 366, 2.5, '3']) expect(def.tipo.safeParse(v).success, String(v)).toBe(false);
+  });
+
+  it('pdv.recusa_produto_com_variacoes: booleana, padrão Sim, por loja e desce ao PDV (F2-B34; D44)', () => {
+    const def = CONFIGURACOES_POR_CHAVE.get(CHAVE_RECUSA_PRODUTO_COM_VARIACOES)!;
+    expect(def.padrao).toBe(true);
+    expect(def.loja).toBe(true);
+    expect(def.pdv).toBe(true);
+    expect(CHAVES_CONFIGURACAO_PDV).toContain(CHAVE_RECUSA_PRODUTO_COM_VARIACOES);
   });
 });

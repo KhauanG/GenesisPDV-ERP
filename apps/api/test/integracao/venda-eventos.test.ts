@@ -1241,6 +1241,125 @@ describe('conferências sem recusa (SYNC 9.7, 16.2; P6)', () => {
     expect(ina!.dados).toMatchObject({ produto_id: inativo, excluido: false, venda_id: seguinte.vendas.id });
     expect(await alerta(depois)).toEqual([]);
   });
+
+  it('produto com variações vendido sem a variação: aceita, baixa no pai e abre o CADASTRO_PRODUTO (F2-B34; D44)', async () => {
+    // O PDV 0.10.0 das lojas não tem a guarda (e o da R1 com pdv.recusa_produto_com_variacoes desligada vende o pai).
+    const p = await novoPonto();
+    const outro = await novoPonto();
+    const camiseta = await criarProduto({ nome: 'CAMISETA COM GRADE B34' });
+    const legado = await criarProduto({ nome: 'CAMISA LEGADO SEM GRADE B34' });
+    const bone = await criarProduto({ nome: 'BONE SIMPLES COM CODIGO DE VARIACAO B34' });
+    // Com variação ativa, mas só cancelado na venda: não abre alerta.
+    const regata = await criarProduto({ nome: 'REGATA COM GRADE SO CANCELADA B34' });
+    // O saldo do pai antes da grade (o acerto do ERP já exige a variação do produto com variações).
+    await entrada([
+      [camiseta, '10', '2'],
+      [legado, '10', '2'],
+      [bone, '10', '2'],
+      [regata, '10', '2'],
+    ]);
+    await consultar(emp.nomeBanco, "update produtos set tipo = 'com_variacoes' where id = any($1::uuid[])", [
+      [camiseta, legado, regata],
+    ]);
+    await consultar(
+      emp.nomeBanco,
+      "insert into produtos_variacoes (produto_id, nome) values ($1, 'P'), ($2, 'P')",
+      [camiseta, regata],
+    );
+    // O legado só tem variação inativa e excluída: vende como Simples, sem alerta (o pai sem variação ativa).
+    await consultar(
+      emp.nomeBanco,
+      "insert into produtos_variacoes (produto_id, nome, ativo, excluido_em) values ($1, 'P', false, null), ($1, 'M', true, now())",
+      [legado],
+    );
+    const [{ id: variacaoBone }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into produtos_variacoes (produto_id, nome) values ($1, 'AZUL') returning id",
+      [bone],
+    )) as [{ id: string }];
+    const [{ id: codigoBone }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      `insert into produtos_codigos_barras (produto_id, variacao_id, codigo, tipo)
+       values ($1, $2, '7890000034001', 'gtin') returning id`,
+      [bone, variacaoBone],
+    )) as [{ id: string }];
+    const primeira = venda(p, [
+      { produto: camiseta, quantidade: '2.000' },
+      { produto: legado, quantidade: '1.000' },
+      {
+        produto: bone,
+        quantidade: '1.000',
+        extra: { codigo_barras_id: codigoBone, codigo_lido: '7890000034001' },
+      },
+      // O item cancelado não conta: a regata só aparece cancelada.
+      { produto: regata, quantidade: '1.000', extra: { cancelado: true, cancelado_em: agora() } },
+    ]);
+    const [r1] = await pushOk(p, [evento(p, 'venda.finalizada', primeira)]);
+    expect(r1, JSON.stringify(r1)).toMatchObject({
+      status: 'aplicado',
+      resultado: { alertas: ['CADASTRO_PRODUTO'] },
+    });
+    // A baixa é no pai (sem variação), como vendeu.
+    expect([await saldo(camiseta), await saldo(legado), await saldo(bone), await saldo(regata)]).toEqual([
+      8, 9, 9, 10,
+    ]);
+    const alerta = (produto: string) =>
+      consultar<{ loja_id: string | null; titulo: string; dados: Record<string, unknown> }>(
+        emp.nomeBanco,
+        `select loja_id, titulo, dados from alertas
+          where tipo = 'CADASTRO_PRODUTO' and chave_deduplicacao = $1 and resolvido_em is null`,
+        [`cadastro:venda_sem_variacao:${produto}`],
+      );
+    const [cam] = await alerta(camiseta);
+    expect(cam).toMatchObject({
+      loja_id: null,
+      titulo: 'Produto com variações vendido sem a variação: CAMISETA COM GRADE B34',
+      dados: {
+        tipo_alerta: 'venda_sem_variacao',
+        produto_id: camiseta,
+        variacao_id: null,
+        lojas: [loja],
+        terminal_id: p.terminal,
+        detalhes: { venda_id: primeira.vendas.id, item_venda_id: idItem(primeira, 0), versao_app: '1.0.0' },
+      },
+    });
+    const [bo] = await alerta(bone);
+    expect(bo!.dados).toMatchObject({
+      variacao_id: variacaoBone,
+      detalhes: { item_venda_id: idItem(primeira, 2), codigo_lido: '7890000034001' },
+    });
+    expect(await alerta(legado)).toEqual([]);
+    expect(await alerta(regata)).toEqual([]);
+
+    // Outra venda do mesmo produto, de outro caixa da mesma loja: o alerta aberto não repete nem duplica a loja.
+    const [r2] = await pushOk(outro, [
+      evento(outro, 'venda.finalizada', venda(outro, [{ produto: camiseta, quantidade: '1.000' }])),
+    ]);
+    expect(r2, JSON.stringify(r2)).toMatchObject({ status: 'aplicado' });
+    expect(r2!.resultado?.alertas).toBeUndefined();
+    const abertos = await alerta(camiseta);
+    expect(abertos).toHaveLength(1);
+    expect(abertos[0]!.dados.lojas).toEqual([loja]);
+
+    // Com a variação informada (o PDV da Fase 3), sem alerta novo depois de resolver o aberto.
+    await consultar(emp.nomeBanco, 'update alertas set resolvido_em = now() where chave_deduplicacao = $1', [
+      `cadastro:venda_sem_variacao:${camiseta}`,
+    ]);
+    const [{ id: variacaoP }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      'select id from produtos_variacoes where produto_id = $1',
+      [camiseta],
+    )) as [{ id: string }];
+    const [r3] = await pushOk(p, [
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: camiseta, quantidade: '1.000', extra: { variacao_id: variacaoP } }]),
+      ),
+    ]);
+    expect(r3, JSON.stringify(r3)).toMatchObject({ status: 'aplicado' });
+    expect(await alerta(camiseta)).toEqual([]);
+  });
 });
 
 describe('custo e estorno (SYNC 10.2, 15.3; ERP 13.5; T22, T23)', () => {

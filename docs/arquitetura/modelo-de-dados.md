@@ -789,7 +789,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `geral.logotipo_arquivo_id`, `geral.banner_arquivo_id` | uuid→`arquivos` | — | — | S | Geral › Logotipo e Banner |
 | `geral.altera_preco_produto_erp` | bool | `true` | — | — | Geral › Altera Preço do Produto no ERP |
 | `geral.produto_usa_fornecedores` | bool | `false` | — | — | Geral › Produto Usa Fornecedores |
-| `produtos.variacoes_habilitadas` | bool | `false` | — | — | Novo (Fase 2, F2-B1; roadmap D43): criar ou trocar o produto para `com_variacoes` exige a chave; o já gravado segue (ERP 8.2.1) |
+| `produtos.variacoes_habilitadas` | bool | `false` | — | — | Novo (Fase 2, F2-B1; roadmap D43): criar ou trocar o produto para `com_variacoes` exige a chave; o já gravado segue (ERP 8.2.1). Ligar avisa dos terminais ativos com o PDV anterior à guarda das variações (F2-B34) |
 | `produtos.complementos_habilitados` | bool | `false` | — | — | Novo (Fase 2, F2-B1; roadmap D43): idem para `com_complementos` |
 | `produtos.custo_base_margem` | `preco_custo`/`custo_medio`/`ultimo_custo` | `preco_custo` | — | — | Novo (Fase 2, F2-B16; roadmap D49, decidida pelo dono): a base do markup ⇄ preço de venda da compra (ERP 13.3) — o preço de custo que o produto terá depois da compra, o custo médio do estoque depois da entrada ou o último custo (o da compra); sem `produtos.ver_custo`, sempre o custo da compra |
 | `geral.utiliza_servico_avulso` | bool | `false` | S | S | Geral › Utiliza Serviço Avulso |
@@ -826,6 +826,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.vale_compra_validade_dias` | inteiro | `90` | — | S | Parâmetros › Data de Expiração do Vale Compra |
 | `pdv.imprime_cupom_troca` | bool | `false` | S | S | Parâmetros › Imprime cupom de troca |
 | `pdv.bloqueia_venda_sem_estoque` | bool | `false` | S | S | Parâmetros › Bloqueia venda sem estoque |
+| `pdv.recusa_produto_com_variacoes` | bool | `true` | S | S | Novo (Fase 2, F2-B34; roadmap D44, decidida pelo dono em 05/11/2026): o caixa recusa o código de uma variação e o pai `com_variacoes` com variação ativa ("Produto com variações: venda disponível na próxima versão"); desligada, vende o pai como antes (PDV 10.2) |
 | `pdv.limite_valor_venda` | dinheiro | nulo | S | S | Parâmetros › Limite de Valor de Vendas PDV |
 | `pdv.aviso_vencimento`, `pdv.aviso_vencimento_dias` | bool, inteiro | `false`, `30` | S | S | Parâmetros › Aviso de vencimento + dias |
 | `pdv.limite_venda_em_aberto` | inteiro | nulo | S | S | Parâmetros › Limite Venda em Aberto (semântica em aberto — ver 8) |

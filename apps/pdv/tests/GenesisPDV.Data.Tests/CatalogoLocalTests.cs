@@ -558,4 +558,67 @@ public class CatalogoLocalTests
         Assert.False(opcao.Disponivel);
         Assert.Equal("retornável", opcao.Motivo);
     }
+
+    [Fact]
+    public async Task Codigo_de_variacao_e_pai_com_variacao_ativa_saem_marcados_para_a_guarda()
+    {
+        // F2-B34 (D44): o catálogo só marca; quem recusa é a venda, pela chave pdv.recusa_produto_com_variacoes.
+        var (banco, catalogo) = await CriarAsync();
+        using var _ = banco;
+        var ct = TestContext.Current.CancellationToken;
+        var agora = banco.Relogio.Agora;
+        var camiseta = Guid.CreateVersion7();
+        var legado = Guid.CreateVersion7();
+        var porcao = Guid.CreateVersion7();
+        var azul = Guid.CreateVersion7();
+        var codigoAzul = Guid.CreateVersion7();
+        LinhaEspelho[] linhas =
+        [
+            Produto(camiseta, 800, "CAMISETA ICE BEER", 49.90m, p => p.Tipo = TipoProduto.ComVariacoes),
+            new ProdutoVariacaoRegistro { Id = azul, ProdutoId = camiseta, Nome = "AZUL", Ativo = true },
+            new ProdutoVariacaoRegistro { Id = Guid.CreateVersion7(), ProdutoId = camiseta, Nome = "VERDE", Ativo = false },
+            new ProdutoCodigoBarrasRegistro { Id = Guid.CreateVersion7(), ProdutoId = camiseta, Codigo = "7890000080001", Principal = true },
+            new ProdutoCodigoBarrasRegistro { Id = codigoAzul, ProdutoId = camiseta, VariacaoId = azul, Codigo = "7890000080018" },
+            // Legado do Nuvem3: "Com variações" só com variação inativa e outra excluída — vende como simples.
+            Produto(legado, 801, "CAMISA LEGADO", 39.90m, p => p.Tipo = TipoProduto.ComVariacoes),
+            new ProdutoVariacaoRegistro { Id = Guid.CreateVersion7(), ProdutoId = legado, Nome = "P", Ativo = false },
+            new ProdutoVariacaoRegistro { Id = Guid.CreateVersion7(), ProdutoId = legado, Nome = "M", Ativo = true, ExcluidoEm = agora },
+            Produto(porcao, 802, "PORCAO DE FRITAS", 29.90m, p => p.Tipo = TipoProduto.ComComplementos),
+        ];
+        foreach (var linha in linhas)
+        {
+            linha.CriadoEm = linha.AtualizadoEm = agora;
+            linha.Versao = 1;
+        }
+
+        await new RepositorioEspelhos(banco.Fabrica).GravarAsync(linhas, ct);
+
+        var variacao = Assert.Single(await catalogo.ResolverAsync("7890000080018", ct));
+        Assert.Equal(camiseta, variacao.Produto.Id);
+        Assert.Equal(azul, variacao.VariacaoId);
+        Assert.Equal(codigoAzul, variacao.CodigoBarrasId);
+        Assert.True(variacao.ExigeVariacao);
+
+        var pai = Assert.Single(await catalogo.ResolverAsync("7890000080001", ct));
+        Assert.Null(pai.VariacaoId);
+        Assert.True(pai.Produto.TemVariacoesAtivas);
+        Assert.True(pai.ExigeVariacao);
+        Assert.True(Assert.Single(await catalogo.ResolverAsync("0800", ct)).ExigeVariacao);
+
+        // O pai sem variação ativa, o "Com complementos" e o simples entram.
+        Assert.False(Assert.Single(await catalogo.ResolverAsync("801", ct)).ExigeVariacao);
+        Assert.False(Assert.Single(await catalogo.ResolverAsync("0802", ct)).ExigeVariacao);
+        Assert.False(Assert.Single(await catalogo.ResolverAsync("7891149103102", ct)).ExigeVariacao);
+
+        // Pela pesquisa por nome: o mesmo produto marcado; pela só por números, a linha do código da variação leva a variação.
+        var porNome = Assert.Single(await catalogo.PesquisarAsync("camiseta", ct: ct));
+        Assert.True(porNome.TemVariacoesAtivas);
+        var porCodigo = await catalogo.PesquisarCodigoAsync("789000008", ct: ct);
+        Assert.Equal(["7890000080001", "7890000080018"], porCodigo.Select(l => l.Codigo).Order(StringComparer.Ordinal));
+        var linhaAzul = porCodigo.Single(l => l.Codigo == "7890000080018");
+        Assert.Equal(azul, linhaAzul.Resolvido.VariacaoId);
+        Assert.False(linhaAzul.EhEmbalagem);
+        Assert.Equal("UN", linhaAzul.Unidade);
+        Assert.All(porCodigo, l => Assert.True(l.Resolvido.ExigeVariacao));
+    }
 }

@@ -5061,6 +5061,50 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        nome, as colunas, a ordem da analítica e o corte do custo, 403 e 422 da visão; os 12 meses (366 dias) das duas
        visões **em tarefa** com o limite da hora pequeno, o arquivo inteiro e a auditoria com a visão; o razão idêntico
        no fim) e `relatorios.spec.ts` no shared. O ERP é a decisão 68 do README do ERP.
+181. **Produto com variações vendido sem a variação: aceito, com o alerta de cadastro; e o aviso dos caixas antigos**
+     (Fase 2, F2-B34; F2-Q2 = roadmap D44, **decidida pelo dono em 05/11/2026: recusar no caixa**; SYNC 9.24, 15.1;
+     PDV 10.2; `src/sync/handlers/vendas.ts`, `src/sync/handlers/alertas.ts`, `src/sync/handlers/comum.ts`,
+     `src/configuracoes/configuracoes.controller.ts`, `packages/shared/src/produtos.ts`, `packages/shared/src/configuracoes.ts`;
+     **sem migração**; sem tipo nem versão de evento novos; o PDV é a decisão 81 do README do PDV e o ERP a 69 do README
+     do ERP).
+     - **Chave `pdv.recusa_produto_com_variacoes`** (bool, padrão `true`, por loja, desce ao PDV no fluxo `configuracao`
+       pelo catálogo, como toda `pdv.*`): ligada, o caixa da R1 recusa o código de uma variação e o pai "Com variações"
+       com variação ativa; desligada, vende o pai. Escrita por extenso na linha do catálogo (e igual a
+       `CHAVE_RECUSA_PRODUTO_COM_VARIACOES` do `produtos.ts`), porque o teste do PDV confere o padrão pela linha.
+     - **A venda nunca é recusada por isso** (SYNC 15.1): o PDV 0.10.0 das lojas não tem a guarda e continua vendendo o
+       pai, e o da R1 com a chave desligada também. No `preparar` do `venda.finalizada` (só lendo, com os cadastros
+       atuais), `produtosSemVariacao` acha o item não cancelado sem `variacao_id` cujo `codigo_barras_id` é o de uma
+       variação (`produtos_codigos_barras.variacao_id`) ou cujo produto é `com_variacoes` com variação ativa e não
+       excluída na nuvem — o legado "Com variações" sem grade (ou só com inativas) vende como simples, sem alerta, como
+       no caixa. No `aplicar`, um `CADASTRO_PRODUTO` por produto, da empresa (`loja_id` nulo), com
+       `dados.tipo_alerta = 'venda_sem_variacao'`, a variação do código lido (quando foi o código), o terminal e em
+       `detalhes` a venda, o item, o código lido e a versão do app do contexto do envelope; a chave
+       `cadastro:venda_sem_variacao:<produto_id>` deduplica, e outra loja que vende com o alerta aberto entra em
+       `dados.lojas`, igual ao `alerta.cadastro` do caixa (SYNC 9.24). A baixa fica no pai, como veio (a correção é o
+       inventário das variações quando a grade chegar). O resultado do evento lista `CADASTRO_PRODUTO` em `alertas`
+       quando abriu um novo.
+     - **Por que o `CADASTRO_PRODUTO` e não um tipo novo:** é um problema de cadastro da empresa (o produto tem
+       variações que o caixa não vende), e o gerente já trata esse alerta na mesma fila do aviso do caixa; o motivo vai
+       em `dados.tipo_alerta`, que é texto livre na tabela. `venda_sem_variacao` **não** entra em
+       `TIPOS_ALERTA_CADASTRO`: aquele enum é o contrato do evento que o caixa manda, e este motivo só a nuvem abre.
+       Para o handler da venda e o do `alerta.cadastro` abrirem o mesmo alerta, `abrirAlertaCadastro` saiu do
+       `aplicarAlerta` (`alertas.ts`), e o `gravarAlerta` foi para o `comum.ts` (todos os handlers a importam de lá; o
+       `vendas.ts` não a reexporta) — sem o ciclo `vendas.ts` ⇄ `alertas.ts`.
+     - **`GET /configuracoes/terminais-sem-guarda-variacoes`** (`configuracoes.editar`, a mesma de quem grava a chave):
+       os terminais `ativo`/`desativando` do banco da empresa com a `versao_app` do último heartbeat abaixo de
+       `VERSAO_PDV_GUARDA_VARIACOES` (`0.11.0`, a R1 prevista; se a release sair com outro número, troca-se a constante
+       no shared) ou sem versão conhecida, com a loja, o número do caixa e a descrição, pela `compararVersoes` do sync.
+       Os detalhes vêm só das lojas permitidas ao usuário (ERP 2.1, como a listagem de terminais); como a chave vale
+       para a empresa toda, os antigos das outras lojas entram só na contagem `outrasLojas`. O ERP consulta antes de
+       gravar `produtos.variacoes_habilitadas` ligada. Uma rota própria, e não um aviso na resposta do
+       `PUT /configuracoes`: o aviso vem **antes** de gravar, e a resposta do `PUT` não muda para os outros blocos.
+     - Testes: `venda-eventos.test.ts` (a venda com o pai com variação ativa, o legado só com variação inativa e
+       excluída, o código de uma variação e um produto com variação ativa só cancelado na venda: aplicada, baixa no pai,
+       o alerta do pai e o do código com a variação e os detalhes, nenhum do legado nem do só cancelado; a venda de
+       outro caixa da mesma loja não repete o alerta nem a loja; a venda com a variação informada, sem alerta),
+       `terminais.test.ts` (o abaixo da versão listado com a loja e o caixa, o da versão e o revogado fora, o sem versão
+       listado, o usuário só de uma loja com o da outra só na contagem, 403 sem `configuracoes.editar`) e
+       `configuracoes.spec.ts` no shared (a chave: padrão, por loja e no PDV).
 
 ### Operação – tarefas em segundo plano (API)
 

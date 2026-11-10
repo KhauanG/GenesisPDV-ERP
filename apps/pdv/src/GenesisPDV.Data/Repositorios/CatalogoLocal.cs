@@ -11,7 +11,9 @@ namespace GenesisPDV.Data.Repositorios;
 /// <summary>
 /// Catálogo da venda lido dos espelhos locais do fluxo <c>catalogo</c> (MD 4.2): resolução do código (PDV 10.2),
 /// pesquisa (10.3), fontes de preço da regra 11.3 (loja, promocional, atacado, faixas, mix, embalagens) e a composição
-/// do combo com as alternativas vendáveis na loja (10.9.1). Linhas com <c>excluido_em</c> são ignoradas.
+/// do combo com as alternativas vendáveis na loja (10.9.1). Linhas com <c>excluido_em</c> são ignoradas. Para a guarda
+/// das variações (F2-B34), o código de uma variação leva a <c>variacao_id</c> no resultado e o pai "Com variações" com
+/// variação ativa sai marcado (<see cref="ProdutoVenda.TemVariacoesAtivas"/>); quem recusa é a venda (<c>ServicoVenda</c>).
 /// </summary>
 public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICatalogoProdutos
 {
@@ -40,7 +42,8 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
                     b.Id,
                     b.Fator,
                     b.Preco,
-                    b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null))
+                    b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null,
+                    b.VariacaoId))
                 .ToList();
         }
 
@@ -100,14 +103,15 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
             .ToListAsync(ct);
 
         // Uma linha por produto e embalagem: o código de uma embalagem (fator ≠ 1 ou preço próprio, como no bipe) dá a linha
-        // dela, que entra como a embalagem; os códigos da unidade, a da unidade.
+        // dela, que entra como a embalagem; os códigos da unidade, a da unidade. O código de uma variação (F2-B34) também
+        // dá a linha dele, para a inclusão saber que é a variação (e a guarda recusar, como no bipe).
         static int Posicao(string codigo, string d) => codigo == d ? 0 : codigo.StartsWith(d, StringComparison.Ordinal) ? 1 : 2;
-        static bool EhEmbalagem(ProdutoCodigoBarrasRegistro b) => b.Fator != 1m || b.Preco is not null;
+        static bool LinhaPropria(ProdutoCodigoBarrasRegistro b) => b.Fator != 1m || b.Preco is not null || b.VariacaoId is not null;
         var achados = produtos
             .SelectMany(p => new[] { p.CodigoInterno, p.Codigo.ToString(CultureInfo.InvariantCulture) }
                 .Where(c => c is not null && c.Contains(d, StringComparison.Ordinal))
                 .Select(c => (Id: p.Id, p.Nome, Barra: (ProdutoCodigoBarrasRegistro?)null, Posicao: Posicao(c!, d))))
-            .Concat(barras.Select(b => (Id: b.Barra.ProdutoId, b.Nome, Barra: EhEmbalagem(b.Barra) ? b.Barra : null, Posicao: Posicao(b.Barra.Codigo, d))))
+            .Concat(barras.Select(b => (Id: b.Barra.ProdutoId, b.Nome, Barra: LinhaPropria(b.Barra) ? b.Barra : null, Posicao: Posicao(b.Barra.Codigo, d))))
             .GroupBy(a => (a.Id, Embalagem: a.Barra?.Id))
             .Select(g => (g.Key.Id, g.First().Nome, g.First().Barra, Posicao: g.Min(a => a.Posicao)))
             .OrderBy(a => a.Posicao)
@@ -121,7 +125,8 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
             .Where(a => porId.TryGetValue(a.Id, out var p) && p.Ativo)
             .Select(a => a.Barra is { } b
                 ? new ProdutoPesquisado(
-                    new ProdutoResolvido(porId[a.Id], b.Id, b.Fator, b.Preco, b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null), b.Codigo)
+                    new ProdutoResolvido(porId[a.Id], b.Id, b.Fator, b.Preco, b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null, b.VariacaoId),
+                    b.Codigo)
                 : new ProdutoPesquisado(new ProdutoResolvido(porId[a.Id])))
             .ToList();
     }
@@ -274,6 +279,15 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
             .ToListAsync(ct);
         var siglas = await SiglasAsync(
             db, produtos.Select(p => p.UnidadeId).Concat(embalagens.Where(b => b.UnidadeId != null).Select(b => b.UnidadeId!.Value)), ct);
+        // F2-B34: os pais "Com variações" com variação ativa (o legado sem grade, ou só com inativas, vende como simples).
+        var idsComVariacoes = produtos.Where(p => p.Tipo == TipoProduto.ComVariacoes).Select(p => p.Id).ToList();
+        var comVariacaoAtiva = idsComVariacoes.Count == 0
+            ? []
+            : (await db.Set<ProdutoVariacaoRegistro>().AsNoTracking()
+                .Where(v => idsComVariacoes.Contains(v.ProdutoId) && v.Ativo && v.ExcluidoEm == null)
+                .Select(v => v.ProdutoId)
+                .Distinct()
+                .ToListAsync(ct)).ToHashSet();
         // Ficha técnica do produzido (D17 do dono; PDV 10.9.2): a venda baixa os insumos, com a perda.
         var idsProduzidos = produtos.Where(p => p.Tipo == TipoProduto.Produzido).Select(p => p.Id).ToList();
         var fichas = idsProduzidos.Count == 0
@@ -329,6 +343,7 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica) : ICa
                                   ?? p.CodigoInterno,
                 ControlaEstoque = p.ControlaEstoque,
                 IdadeMinima = p.IdadeMinima,
+                TemVariacoesAtivas = comVariacaoAtiva.Contains(p.Id),
                 FichaTecnica = p.Tipo == TipoProduto.Produzido
                     ? fichas.Where(c => c.ProdutoId == p.Id)
                         .Select(c => new ComponenteFicha(c.ComponenteId, c.ComponenteVariacaoId, c.Quantidade, c.PerdaPct)).ToList()

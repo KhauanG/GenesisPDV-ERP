@@ -69,6 +69,38 @@ export const CHAVES_TIPO_PRODUTO: Readonly<Partial<Record<TipoProduto, string>>>
   com_complementos: 'produtos.complementos_habilitados',
 };
 
+/**
+ * Guarda das variações no caixa (Fase 2, F2-B34; F2-Q2 = D44, decidida pelo dono em 05/11/2026): ligada, o PDV recusa o
+ * código de uma variação e o produto pai "Com variações" com variação ativa ("Produto com variações: venda disponível
+ * na próxima versão"); desligada, vende o pai como antes. A chave está no catálogo (`configuracoes.ts`), por loja.
+ */
+export const CHAVE_RECUSA_PRODUTO_COM_VARIACOES = 'pdv.recusa_produto_com_variacoes';
+
+/**
+ * Primeira versão do PDV com a guarda das variações (a release R1 do PDV, fechamento do PR-8 da Fase 2). Ligar
+ * `produtos.variacoes_habilitadas` avisa dos terminais ativos abaixo dela (ou sem versão conhecida): eles vendem o
+ * produto com variações com o preço e o saldo do pai. Se a R1 sair com outro número, é só trocar aqui.
+ */
+export const VERSAO_PDV_GUARDA_VARIACOES = '0.11.0';
+
+/** Terminal ativo com o PDV anterior à guarda das variações (`GET /configuracoes/terminais-sem-guarda-variacoes`). */
+export interface TerminalSemGuardaVariacoes {
+  id: string;
+  lojaNome: string | null;
+  numeroCaixa: number;
+  descricao: string | null;
+  /** `null` = o terminal ainda não informou a versão (nunca mandou o handshake). */
+  versaoApp: string | null;
+}
+
+export interface RespostaTerminaisSemGuardaVariacoes {
+  versaoMinima: string;
+  /** Só os das lojas permitidas ao usuário (ERP 2.1). */
+  terminais: TerminalSemGuardaVariacoes[];
+  /** Quantos terminais antigos ficam nas lojas fora do acesso do usuário (só a contagem: a chave vale na empresa). */
+  outrasLojas: number;
+}
+
 /** Tipos liberados pelas chaves (`ligada(chave)` = valor efetivo da chave), na ordem de `TIPOS_PRODUTO`. */
 export function tiposProdutoHabilitados(ligada: (chave: string) => boolean): TipoProduto[] {
   return TIPOS_PRODUTO.filter((t) => {
