@@ -16,6 +16,7 @@ import {
 import { CHAVE_ASSINATURA_INVALIDA, MODOS_ASSINATURA_INVALIDA } from './notas-entrada.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
 import { CHAVE_RECUSA_PRODUTO_COM_VARIACOES } from './produtos.js';
+import { CHAVE_CONSULTA_OUTRAS_LOJAS } from './sync/contratos.js';
 import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 describe('catálogo de configurações (MD 3.1.2)', () => {
@@ -110,5 +111,13 @@ describe('catálogo de configurações (MD 3.1.2)', () => {
     expect(def.loja).toBe(true);
     expect(def.pdv).toBe(true);
     expect(CHAVES_CONFIGURACAO_PDV).toContain(CHAVE_RECUSA_PRODUTO_COM_VARIACOES);
+  });
+
+  it('pdv.consulta_outras_lojas: booleana, padrão Sim, por loja e desce ao PDV (F2-B35; D53)', () => {
+    const def = CONFIGURACOES_POR_CHAVE.get(CHAVE_CONSULTA_OUTRAS_LOJAS)!;
+    expect(def.padrao).toBe(true);
+    expect(def.loja).toBe(true);
+    expect(def.pdv).toBe(true);
+    expect(CHAVES_CONFIGURACAO_PDV).toContain(CHAVE_CONSULTA_OUTRAS_LOJAS);
   });
 });

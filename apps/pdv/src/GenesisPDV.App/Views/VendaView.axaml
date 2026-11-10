@@ -324,6 +324,7 @@
           <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
           <KeyBinding Gesture="Up" Command="{Binding MoverCommand}" CommandParameter="acima" />
           <KeyBinding Gesture="Down" Command="{Binding MoverCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="F4" Command="{Binding OutrasLojasCommand}" />
         </Border.KeyBindings>
         <StackPanel Spacing="10">
           <TextBlock Text="{Binding Titulo}" Classes="titulo" />
@@ -345,9 +346,42 @@
             </ListBox.ItemTemplate>
           </ListBox>
           <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
-          <TextBlock Text="↑↓ ou clique escolhe   duplo clique ou [Enter] inclui" Classes="tecla" />
+          <TextBlock Text="↑↓ ou clique escolhe   duplo clique ou [Enter] inclui   [F4] estoque nas outras lojas" Classes="tecla" />
           <WrapPanel Classes="botoes" HorizontalAlignment="Right">
             <Button Classes="acao" Content="Incluir [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoIncluirPesquisa" />
+            <Button Classes="acao" Content="Outras lojas [F4]" Command="{Binding OutrasLojasCommand}" x:Name="BotaoOutrasLojas" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- F4 da pesquisa (Fase 2, F2-B35; PDV 10.3): saldo online nas outras lojas e no CD; Enter ou Esc voltam à pesquisa. -->
+    <DataTemplate DataType="vm:DialogoOutrasLojasViewModel">
+      <Border Classes="dialogo" Width="620" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoOutrasLojas">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" TextWrapping="Wrap" />
+          <TextBlock x:Name="TextoConsultandoOutrasLojas" Text="Consultando a nuvem…" Classes="secundario" IsVisible="{Binding Consultando}" />
+          <ItemsControl x:Name="ListaOutrasLojas" ItemsSource="{Binding Locais}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:LinhaOutraLoja">
+                <Grid ColumnDefinitions="*,160" Margin="0,2">
+                  <TextBlock Text="{Binding Local}" TextTrimming="CharacterEllipsis" FontWeight="{Binding DestaLoja, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                  <TextBlock Grid.Column="1" Text="{Binding Quantidade}" HorizontalAlignment="Right" Classes="mono" />
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="TextoAvisoOutrasLojas" Text="{Binding Aviso}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Aviso, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoNotaOutrasLojas" Text="{Binding Nota}" Classes="secundario" TextWrapping="Wrap"
+                     IsVisible="{Binding Nota, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="A venda continua: [Enter] ou [Esc] voltam à pesquisa" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
             <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
           </WrapPanel>
         </StackPanel>

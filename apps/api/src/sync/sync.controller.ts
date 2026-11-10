@@ -12,6 +12,7 @@ import {
   pullQuerySchema,
   recuperarQuerySchema,
   renovarTokenSchema,
+  saldosOutrasLojasQuerySchema,
   validarSync,
 } from './contratos.js';
 import { exigirHardware, lerCabecalhos, type EndpointSync, type TerminalAutenticado } from './terminal.js';
@@ -126,6 +127,21 @@ export class SyncController {
   ) {
     return this.noTerminal(req, res, 'recuperar', (t) =>
       this.s.recuperar.recuperar(t, validarSync(recuperarQuerySchema, query)),
+    );
+  }
+
+  /**
+   * F4 "Outras lojas" da pesquisa F2 (Fase 2, F2-B35; PDV 10.3; F2-Q12 = D53): o saldo vendável do produto nas lojas
+   * reais e no CD, só quantidades (`consultas.ts`). Consulta online fora do T13; a API antiga responde 404.
+   */
+  @Get('consultas/saldos-outras-lojas')
+  saldosOutrasLojas(
+    @Query() query: unknown,
+    @Req() req: RequisicaoGenesis,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.noTerminal(req, res, 'consulta-saldos', (t) =>
+      this.s.consultas.saldosOutrasLojas(t, validarSync(saldosOutrasLojasQuerySchema, query)),
     );
   }
 }

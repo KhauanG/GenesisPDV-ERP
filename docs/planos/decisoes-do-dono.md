@@ -155,3 +155,12 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   permitidos); criar e enviar à mão continua sem exigir o destino. (3) A "Divergência a tratar" aparece no estoque de
   **origem**, onde a diferença se trata. (4) O alerta de transferência parada sai depois de **3 dias**
   (`estoque.transferencia_alerta_dias`, configurável). README da API › decisões 173 e 174.
+
+## PDV: guarda e consulta — PR-8 (10/11/2026)
+
+- **F2-Q12 (D53) — vale a recomendação (sem resposta explícita do dono).** Pela regra acima ("Demais (F2-Q2, Q4, Q6,
+  Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano"), o `F4` "Outras lojas" da pesquisa do caixa
+  mostra a opção (a): só o estoque vendável das lojas reais e do CD, sem a loja Treino, liberado a qualquer operador,
+  só quantidades e nunca o custo, desligável por `pdv.consulta_outras_lojas` (padrão Sim, por loja). Implementado no
+  F2-B35 (README da API › decisão 182, do ERP › 70, do PDV › 82; roadmap §16, D53). Se o dono preferir (b) — também
+  avaria e vasilhame vazio — ou (c) — só com permissão de supervisor —, muda a consulta da API e o diálogo do PDV.

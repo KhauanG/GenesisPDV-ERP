@@ -3684,3 +3684,43 @@ reimpresso continua o original, com o número do caixa.
       `VariacoesTelasTests` (App: a recusa pelo bipe do EAN da variação, do pai e do código interno sem abrir a venda,
       pela pesquisa F2 no diálogo; o legado e a porção com complementos vendem; com a chave desligada na loja, o EAN da
       variação vende o pai).
+
+82. **F4 "Outras lojas" na pesquisa: o saldo online das lojas e do CD, sem travar a venda** (Fase 2, F2-B35; F2-Q12 =
+    roadmap D53, **vale a recomendação, sem resposta explícita do dono** — padrão até a confirmação do dono; PDV 10.3;
+    SYNC 1.4, 17.5, 20.2; README da API › decisão 182, do ERP › decisão 70; sai na release R1 do PDV, no fechamento do
+    PR-8; sem migração local, sem mudança no `Esquema.g.cs` e **fora do T13**: nenhum tipo de evento nem versão nova).
+    - **Cliente:** `IClienteSync.SaldosOutrasLojasAsync` (`GET /sync/consultas/saldos-outras-lojas?produto_id=`) com o
+      prazo próprio `TemposLimiteSync.Consulta` = **3 s** (o operador está com o cliente no balcão; o do pull é 30 s).
+      Records `RespostaSaldosOutrasLojas`/`SaldoLocalOnline` em `Protocolo/Contratos.cs`, pela fixture
+      `saldos-outras-lojas.resposta.json` (`ContratosTests`). Só leitura: `X-Requisicao-Id` novo a cada envio.
+    - **`IConsultaOutrasLojas`/`ConsultaOutrasLojasHttp`** (`GenesisPDV.Sync/Cliente/ConsultaOutrasLojas.cs`) devolve os
+      saldos ou o aviso, **nunca exceção para a tela** (só o cancelamento de quem chamou): o terminal sem nuvem
+      (demonstração) e o caixa **já dado como offline** pelo ciclo (2 falhas seguidas, `OfflineDesde` preenchido) nem
+      chamam; a falha de rede, o prazo estourado, o 5xx/503, a resposta fora do contrato e o **404 da API antiga** (sem
+      `detalhes.produto_id`) dão "Consulta indisponível (requer conexão)"; o 404 com `detalhes.produto_id` dá "Produto
+      não encontrado na nuvem"; o 403 `ESCOPO_INVALIDO` com `detalhes.chave` (a chave desligada na nuvem) dá "desligada no
+      ERP", e o mesmo 403 sem ela (o terminal em desativação, SYNC 3.8) dá a mensagem da API; o 429, "aguarde
+      um minuto"; o 409 `HARDWARE_ALTERADO`, o aviso do hardware. Ainda sem contato nenhum (antes do primeiro heartbeat)
+      tenta: pode estar online. A consulta não mexe na situação do ciclo (não conta como falha de transporte).
+    - **Tela:** `F4` (e o botão "Outras lojas [F4]") no diálogo da pesquisa (`DialogoPesquisaViewModel.OutrasLojas`; o
+      `F4` da tela de venda continua sendo Remover item, porque a tecla do diálogo trata antes) abre
+      `DialogoOutrasLojasViewModel` sobre o produto selecionado: "Consultando a nuvem…", depois cada local com a
+      quantidade na unidade do produto ("1.250 UN", "120,5 UN", "-2 UN"), a loja do caixa primeiro em negrito com
+      "(esta loja)", e a nota de que é a quantidade vendável na nuvem agora (sem as vendas não sincronizadas) — ou, no
+      produto que não controla estoque (`controla_estoque` falso: sem controle, combo, serviço ou produzido), a nota
+      disso. A chave **`pdv.consulta_outras_lojas`**
+      (`ChavesConfiguracao.ConsultaOutrasLojas`, padrão `true`, por loja; na aba 7 da Central, `CatalogoRotulosConfiguracao`)
+      é lida do espelho antes: desligada, o aviso sem chamar a API. **`Enter` ou `Esc` voltam à pesquisa** (o mesmo
+      `DialogoPesquisaViewModel`, com o filtro e a seleção) e cancelam a consulta em andamento: a venda nunca espera.
+      Liberada a qualquer operador (sem permissão própria, D53). O `F1` cita o `F4` da pesquisa.
+    - **Compatibilidade:** o PDV novo diante da API anterior ao F2-B35 recebe 404 e mostra "requer conexão" (a ordem
+      de implantação continua API primeiro). A versão do PDV não muda neste bloco (fica para o fechamento do PR-8).
+    - Testes: `ConsultaOutrasLojasTests` (Sync: a rota com o `produto_id` e o token, a fixture; o prazo de 3 s por
+      padrão e o estourado em "requer conexão" antes de 3 s; a API antiga, a rede fora e o 503; o sem nuvem e o
+      offline confirmado sem envio, o ainda sem contato com envio; os avisos do 404 do produto, do 403 da chave e do sem
+      ela, do 429, do 409 e de outra recusa; o cancelamento de quem chamou), `ContratosTests` (a fixture) e
+      `OutrasLojasTelasTests` (App, com a consulta trocada: online as quantidades e a loja do caixa marcada; offline
+      "requer conexão"; a chave desligada na loja avisa sem consultar; o produto sem saldo próprio com a nota "não
+      controla estoque"; a consulta que demora, cancelada pelo `Esc` com o `ct` repassado, e o `F4` seguinte consultando
+      de novo; em todos, `Esc` ou `Enter` voltam à pesquisa com o filtro sem incluir nada e o `Enter` nela inclui o
+      produto).

@@ -1173,6 +1173,19 @@ de confirmação (opcional).
   busca**), preço varejo da loja, atacado (se houver), promocional destacado.
 - `F4 Outras lojas`: consulta **online** `GET /estoque/saldos?produto=...` com o saldo em todas as lojas e no CD
   (desabilitado offline com aviso "requer conexão").
+
+> **Implementado no F2-B35 (Fase 2; sai na R1 do PDV; F2-Q12 = roadmap D53, vale a recomendação sem resposta
+> explícita do dono; README do PDV › decisão 82).** A rota é `GET /sync/consultas/saldos-outras-lojas?produto_id=`
+> (SYNC 1.4). O `F4` na pesquisa (e o botão "Outras lojas [F4]") abre, sobre o produto selecionado, o diálogo "Estoque
+> nas outras lojas — <produto>": cada loja real ativa (a do caixa primeiro, marcada "(esta loja)") e o CD, com a
+> quantidade **vendável** online na unidade do produto (pode ser negativa); sem a loja de treino, sem avaria nem
+> vasilhame vazio, **nunca o custo**, e liberado a **qualquer operador** (sem permissão própria). O produto que não
+> controla estoque (e o combo, o serviço e o produzido, que não têm saldo próprio) mostra a nota disso no lugar dos
+> zeros. O caixa em desativação no ERP não consulta (a mensagem da nuvem). Prazo de **3 s**; offline (o caixa já dado como offline nem tenta), sem resposta, a
+> API antiga (404 da rota) ou fora do ar → "Consulta indisponível (requer conexão)"; a chave
+> **`pdv.consulta_outras_lojas`** (padrão Sim, por loja) desligada → "Consulta do estoque das outras lojas desligada no
+> ERP para esta loja", sem consultar. `Enter` ou `Esc` voltam à pesquisa com o filtro e a seleção (a consulta em
+> andamento é cancelada): **a venda nunca espera** pela consulta.
 - Mostra produtos inativos? Não.
 
 > **Pesquisa só por números (versão 0.9.1; dono; README do PDV › decisão 65).** Opção por terminal na configuração

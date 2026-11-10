@@ -71,6 +71,7 @@ public static class CatalogoRotulosConfiguracao
         new(ChavesConfiguracao.BloqueioEstoqueOffline, "Bloqueio de estoque também offline", TipoRegraLoja.Booleano, "false", AbaPdv),
         new(ChavesConfiguracao.UsaPrecoVolume, "Usa produto preço volume (atacarejo)", TipoRegraLoja.Booleano, "false", AbaParametros),
         new(ChavesConfiguracao.RecusaProdutoComVariacoes, "Recusa produto com variações no caixa", TipoRegraLoja.Booleano, "true", AbaParametros),
+        new(ChavesConfiguracao.ConsultaOutrasLojas, "Consulta do estoque das outras lojas no caixa (F4)", TipoRegraLoja.Booleano, "true", AbaParametros),
         new(ChavesConfiguracao.CancelarItemExigeSupervisor, "Cancelar item sempre pede supervisor", TipoRegraLoja.Booleano, "false", AbaPdv),
         new(ChavesConfiguracao.CancelamentoDevolveVazios, "Cancelar venda devolve os vazios trazidos", TipoRegraLoja.Booleano, "true", AbaPdv),
         new(ChavesConfiguracao.DescontoCascosMaxSemSupervisor, "Desconto pelos cascos sem supervisor até (R$ por venda)", TipoRegraLoja.Dinheiro, "\"50.00\"", AbaPdv, "sem teto"),

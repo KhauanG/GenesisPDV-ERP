@@ -344,6 +344,12 @@ public sealed class ServicoVenda(
         return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, item);
     }
 
+    /// <summary><c>pdv.consulta_outras_lojas</c> da loja do terminal (F2-B35; padrão do catálogo: ligada).</summary>
+    public async Task<bool> ConsultaOutrasLojasLigadaAsync(CancellationToken ct = default) =>
+        sessao.Identidade is { } identidade
+            ? await configuracoes.ObterBoolAsync(ChavesConfiguracao.ConsultaOutrasLojas, identidade.LojaId, ct)
+            : ChavesConfiguracao.PadroesBool[ChavesConfiguracao.ConsultaOutrasLojas];
+
     /// <summary><c>pdv.recusa_produto_com_variacoes</c> da loja do terminal (padrão do catálogo: ligada).</summary>
     private async Task<bool> RecusaProdutoComVariacoesAsync(CancellationToken ct) =>
         sessao.Identidade is { } identidade

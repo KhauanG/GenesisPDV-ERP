@@ -202,6 +202,11 @@ export const ABA_PARAMETROS: RotuloConfiguracao[] = [
     ajuda:
       'Sim: o código de uma variação e o produto com variações ativas não vendem ("venda disponível na próxima versão"). Não: vende o produto pai, com o preço e o saldo dele',
   }),
+  // F2-B35 (F2-Q12 = D53; sem resposta explícita do dono, vale a recomendação: Sim, para qualquer operador).
+  r('pdv.consulta_outras_lojas', 'Consulta do estoque das outras lojas no caixa (F4)', 'bool', 'PDV', {
+    ajuda:
+      'Sim: na pesquisa F2 do caixa, o F4 mostra online a quantidade do produto nas outras lojas e no CD (sem a loja de treino e sem custo). Não: o F4 avisa que a consulta está desligada',
+  }),
   r('pdv.limite_valor_venda', 'Limite de valor de vendas PDV', 'dinheiro', 'PDV', {
     ajuda: 'Vazio = sem limite',
   }),

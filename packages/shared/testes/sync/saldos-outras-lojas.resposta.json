@@ -1,0 +1,31 @@
+{
+  "agora_servidor": "2026-11-10T15:30:00.000Z",
+  "produto_id": "01a18753-1a2b-7c3d-8e4f-5a6b7c8d9e01",
+  "controla_estoque": true,
+  "locais": [
+    {
+      "estoque_id": "01a18752-0001-7000-8000-000000000001",
+      "tipo": "loja",
+      "loja_codigo": 1,
+      "nome": "Loja 1 - Centro",
+      "loja_do_terminal": true,
+      "quantidade": "24.000"
+    },
+    {
+      "estoque_id": "01a18752-0001-7000-8000-000000000002",
+      "tipo": "loja",
+      "loja_codigo": 2,
+      "nome": "Petiscaria 2",
+      "loja_do_terminal": false,
+      "quantidade": "-3.000"
+    },
+    {
+      "estoque_id": "01a18752-0001-7000-8000-000000000009",
+      "tipo": "deposito",
+      "loja_codigo": null,
+      "nome": "CD - Estoque",
+      "loja_do_terminal": false,
+      "quantidade": "1250.500"
+    }
+  ]
+}

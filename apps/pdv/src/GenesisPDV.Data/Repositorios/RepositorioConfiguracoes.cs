@@ -101,6 +101,12 @@ public static class ChavesConfiguracao
     /// </summary>
     public const string RecusaProdutoComVariacoes = "pdv.recusa_produto_com_variacoes";
 
+    /// <summary>
+    /// F4 "Outras lojas" da pesquisa F2 (Fase 2, F2-B35; F2-Q12 = D53, sem resposta explícita do dono: vale a
+    /// recomendação, ligada para qualquer operador): desligada, o F4 avisa sem consultar (a API também recusa).
+    /// </summary>
+    public const string ConsultaOutrasLojas = "pdv.consulta_outras_lojas";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -120,6 +126,7 @@ public static class ChavesConfiguracao
         [CancelamentoDevolveVazios] = true,
         [CancelarItemExigeSupervisor] = false,
         [RecusaProdutoComVariacoes] = true,
+        [ConsultaOutrasLojas] = true,
     };
 
     public const decimal ToleranciaPadrao = 0m;

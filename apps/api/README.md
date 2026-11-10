@@ -5106,6 +5106,56 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        listado, o usuário só de uma loja com o da outra só na contagem, 403 sem `configuracoes.editar`) e
        `configuracoes.spec.ts` no shared (a chave: padrão, por loja e no PDV).
 
+182. **Saldo das outras lojas para o F4 do caixa: uma consulta online dentro do `/sync/*`** (Fase 2, F2-B35; F2-Q12 =
+     roadmap D53, **vale a recomendação, sem resposta explícita do dono** — padrão até a confirmação do dono; PDV 10.3;
+     SYNC 1.4, 17.5, 20.2; `src/sync/consultas.ts`, `src/sync/sync.controller.ts`, `src/sync/terminal.ts`,
+     `src/servicos.ts`, `packages/shared/src/sync/contratos.ts`, `packages/shared/src/configuracoes.ts`; **sem
+     migração**; sem tipo nem versão de evento novos; o PDV é a decisão 82 do README do PDV e o ERP a 70 do README do
+     ERP).
+     - **Rota `GET /sync/consultas/saldos-outras-lojas?produto_id=`**, e não o `GET /estoque/saldos` que a SYNC 1.4
+       previa: dentro do `/sync/*` ela reaproveita a autenticação do token do terminal (`noTerminal`), a exclusão do
+       prefixo `/api`, o `X-Agora-Servidor` e o envelope de erro do protocolo, que o `ClienteSyncHttp` do PDV já
+       traduz. Endpoint novo de `EndpointSync` (`consulta-saldos`), que entra no `exigirHardware` (agora um conjunto,
+       `ENDPOINTS_COM_HARDWARE`): a cópia do token em outra máquina não lê o estoque da empresa (409
+       `HARDWARE_ALTERADO`). Empresa suspensa ou cancelada recusa como qualquer rota que não é push/recuperar.
+     - **Escopo da recomendação (F2-Q12 (a)):** os estoques ativos e não excluídos que são o estoque de uma loja ativa,
+       não excluída e **não de treino** (pelo `lojas.estoque_id`) ou um **depósito sem loja** (o CD); o estoque
+       `loja`/`outro` sem loja e o da loja inativa ficam de fora. A quantidade é a soma das linhas de
+       `saldos_estoque` do produto nos **tipos vendáveis** (todas as variações; avaria e vasilhame vazio, que não são
+       vendáveis, não entram), como `numeric(15,3)` em texto, podendo ser negativa; o local sem linha vem com `0.000`
+       (o operador vê que lá não tem). Ordem: a loja do terminal (`loja_do_terminal`), as outras lojas pelo código e os
+       depósitos (primeiro a loja do tipo depósito pelo código, depois os depósitos sem loja pelo nome). **Nenhum custo** sai: a resposta é `strictObject` com estoque, tipo (`loja`/`deposito` — a loja do tipo
+       depósito sai como depósito, com o código), código e nome da loja, a marca da loja do terminal e a quantidade, mais
+       `controla_estoque` (falso no produto sem controle e nos tipos sem saldo próprio, `TIPOS_SEM_SALDO_PROPRIO` do
+       shared: o combo, o serviço e o **produzido**, que nunca tem linha em `saldos_estoque` porque a venda baixa os
+       insumos da ficha técnica, decisão 91; o "Com variações" fica de fora da lista de propósito, porque as variações
+       gravam o `produto_id` do pai e a soma delas é o saldo que o F4 mostra). Liberada a qualquer operador: o
+       principal é o terminal e nenhum operador vai no pedido. **Terminal em desativação** (SYNC 3.8) recusado como no
+       pull: 403 `ESCOPO_INVALIDO` sem `detalhes.chave` (o caixa mostra a mensagem da API, não "desligada no ERP"); o
+       `desativando` de uma substituição em andamento já chega como `ativo` e consulta.
+     - **Chave `pdv.consulta_outras_lojas`** (bool, padrão `true`, por loja, desce ao PDV como toda `pdv.*`; escrita por
+       extenso na linha do catálogo = `CHAVE_CONSULTA_OUTRAS_LOJAS`): desligada na loja do terminal → 403
+       `ESCOPO_INVALIDO` com `detalhes.chave`. O PDV confere antes pelo espelho e nem chama; a API confere de novo para o
+       espelho atrasado.
+     - **Limite por terminal**, na memória da instância (o `garantirLimitePorMinuto` do `limites-processo.ts`, com a
+       chave do `terminal_id`): `SYNC_CONSULTA_SALDOS_POR_MINUTO` (padrão 30, lido a cada chamada) → 429 `LIMITE_TAXA`
+       com `Retry-After: 60`, antes de ler o banco. Por terminal e não por IP: os caixas de uma loja saem pelo mesmo IP.
+     - **Produto desconhecido → 404 `NAO_ENCONTRADO` com `detalhes.produto_id`.** O 404 da rota que a API anterior não
+       tem vem sem esse detalhe: é por ele que o PDV separa "produto não encontrado na nuvem" de "requer conexão".
+     - **Fora do T13 (SYNC 17.5):** só leitura, nenhum evento; a Fase 2 mantém `venda.finalizada` v1 e não anuncia nada
+       novo em `versoes_schema`. Compatível com o PDV 0.10.0 das lojas (que não chama a rota). **Publicar a API antes
+       do PDV** da R1: o PDV novo diante da API antiga mostra "requer conexão" e a venda segue.
+     - Contrato: `saldosOutrasLojasQuerySchema` e `respostaSaldosOutrasLojasSchema` no shared, a fixture
+       `saldos-outras-lojas.resposta.json` (o zod, o record C# `RespostaSaldosOutrasLojas` e a integração passam por
+       ela).
+     - Testes: `consulta-saldos-outras-lojas.test.ts` (Loja 1, 2 e 3, a Treino, uma inativa, o CD e um estoque "outro"
+       sem loja: só as lojas reais e o CD, só o vendável, a Loja 1 sem saldo em zero e primeiro, o negativo, nenhum
+       custo na resposta, o serviço com `controla_estoque` falso; a chave desligada na Loja 1 → 403 e a Loja 2 segue;
+       query inválida 400 e o produto desconhecido 404 com o `produto_id`; o token de outra empresa não vê o produto, o
+       forjado com o id de um terminal e o segredo de outro → 401, o hardware divergente → 409 e o revogado → 401; o
+       limite de 3 por minuto → 429 com `Retry-After` e outro terminal segue), `contratos.spec.ts` e
+       `configuracoes.spec.ts` no shared.
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

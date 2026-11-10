@@ -46,6 +46,13 @@ public interface IClienteSync
     Task<RespostaRecuperar> RecuperarAsync(long desdeSequencia, int limite, CancellationToken ct = default);
 
     /// <summary>
+    /// <c>GET /sync/consultas/saldos-outras-lojas?produto_id=</c> (Fase 2, F2-B35; PDV 10.3): o saldo online do produto
+    /// nas lojas e no CD, para o F4 da pesquisa. Só leitura, com o prazo curto de <see cref="TemposLimiteSync.Consulta"/>
+    /// (a venda nunca espera por ela).
+    /// </summary>
+    Task<RespostaSaldosOutrasLojas> SaldosOutrasLojasAsync(Guid produtoId, CancellationToken ct = default);
+
+    /// <summary>
     /// Chamada online que altera estado (reservas, comandas, PIX, renovação de token — SYNC 20.4): o
     /// <paramref name="requisicaoId"/> é gerado uma vez por operação lógica e repetido em toda nova tentativa, para a API
     /// devolver a mesma resposta. Na renovação de token ele fica em <c>configuracao_terminal['token.pendente']</c>.
@@ -93,6 +100,12 @@ public sealed record TemposLimiteSync
 
     /// <summary><c>/saude</c> do assistente e chamadas online que alteram estado (renovação do token, 20.4).</summary>
     public TimeSpan Outras { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Consultas online que o operador faz com o cliente no balcão (o F4 "Outras lojas", F2-B35): 3 s, e a tela diz
+    /// "requer conexão" em vez de esperar o prazo do pull.
+    /// </summary>
+    public TimeSpan Consulta { get; init; } = TimeSpan.FromSeconds(3);
 }
 
 /// <summary>
@@ -185,6 +198,12 @@ public sealed class ClienteSyncHttp(
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limite, MaximoRecuperar);
         var rota = string.Create(CultureInfo.InvariantCulture, $"sync/recuperar?desde_sequencia={desdeSequencia}&limite={limite}");
         return EnviarAsync<RespostaRecuperar>(HttpMethod.Get, new Uri(rota, UriKind.Relative), null, null, autenticar: true, _tempos.Pull, ct);
+    }
+
+    public Task<RespostaSaldosOutrasLojas> SaldosOutrasLojasAsync(Guid produtoId, CancellationToken ct = default)
+    {
+        var rota = "sync/consultas/saldos-outras-lojas?produto_id=" + produtoId.ToString("D");
+        return EnviarAsync<RespostaSaldosOutrasLojas>(HttpMethod.Get, new Uri(rota, UriKind.Relative), null, null, autenticar: true, _tempos.Consulta, ct);
     }
 
     public Task<T> AlterarAsync<T>(HttpMethod metodo, string rota, object? corpo, Guid requisicaoId, CancellationToken ct = default)

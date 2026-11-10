@@ -27,6 +27,8 @@ import {
   respostaPushSchema,
   respostaRecuperarSchema,
   respostaRenovarTokenSchema,
+  respostaSaldosOutrasLojasSchema,
+  saldosOutrasLojasQuerySchema,
 } from './contratos.js';
 import { chavesDescartadas, lerFixtureSync as ler, pastaFixturesSync as pasta } from './fixtures.teste.js';
 
@@ -49,6 +51,7 @@ const SCHEMAS: Record<string, z.ZodType> = {
   'heartbeat.resposta.json': respostaHeartbeatSchema,
   'eventos-status.resposta.json': respostaEventosStatusSchema,
   'recuperar.resposta.json': respostaRecuperarSchema,
+  'saldos-outras-lojas.resposta.json': respostaSaldosOutrasLojasSchema,
   'token.renovar.requisicao.json': renovarTokenSchema,
   'token.renovar.resposta.json': respostaRenovarTokenSchema,
   'auditoria.registros.payload.json': payloadAuditoriaRegistrosSchema,
@@ -264,6 +267,28 @@ describe('fixtures do protocolo de sincronização', () => {
         eventos: [{ ...item, envelope: { ...(item.envelope as object), x: 1 } }],
       }).success,
     ).toBe(false);
+  });
+
+  it('saldos de outras lojas (F2-B35): produto_id uuid; só quantidade (sem custo), com sinal e 3 casas', () => {
+    expect(
+      saldosOutrasLojasQuerySchema.parse({ produto_id: ' 01A18753-1A2B-7C3D-8E4F-5A6B7C8D9E01 ' }),
+    ).toEqual({
+      produto_id: '01a18753-1a2b-7c3d-8e4f-5a6b7c8d9e01',
+    });
+    expect(saldosOutrasLojasQuerySchema.safeParse({}).success).toBe(false);
+    expect(saldosOutrasLojasQuerySchema.safeParse({ produto_id: '0123' }).success).toBe(false);
+    const r = respostaSaldosOutrasLojasSchema.parse(ler('saldos-outras-lojas.resposta.json'));
+    expect(r.locais.map((l) => [l.tipo, l.loja_codigo, l.loja_do_terminal])).toEqual([
+      ['loja', 1, true],
+      ['loja', 2, false],
+      ['deposito', null, false],
+    ]);
+    const local = r.locais[0]!;
+    for (const ruim of [{ custo_medio: '1.0000' }, { quantidade: '1.5' }, { quantidade: '1' }]) {
+      expect(
+        respostaSaldosOutrasLojasSchema.safeParse({ ...r, locais: [{ ...local, ...ruim }] }).success,
+      ).toBe(false);
+    }
   });
 
   it('respostas são estritas: campo novo na API sem fixture/record C# quebra o contrato', () => {

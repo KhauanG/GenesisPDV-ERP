@@ -147,6 +147,10 @@ public static class Inicializacao
             sp.GetRequiredService<ILogger<ServicoSincronizacaoHttp>>(),
             () => sp.GetRequiredService<SessaoTerminal>().Operador?.Id));
         servicos.AddSingleton<IServicoSincronizacao>(sp => sp.GetRequiredService<ServicoSincronizacaoHttp>());
+        // F4 "Outras lojas" da pesquisa (F2-B35): a consulta online de 3 s, que nunca trava a venda.
+        servicos.AddSingleton<IConsultaOutrasLojas>(sp => new ConsultaOutrasLojasHttp(
+            sp.GetRequiredService<IClienteSync>(), sp.GetRequiredService<IServicoSincronizacao>(),
+            sp.GetRequiredService<ILogger<ConsultaOutrasLojasHttp>>()));
         servicos.AddSingleton<SessaoTerminal>();
         // Central do PDV (bloco G2): quem está nela, a liberação de 5 min e a auditoria do acesso.
         servicos.AddSingleton<Diagnostico.AcessoCentral>();

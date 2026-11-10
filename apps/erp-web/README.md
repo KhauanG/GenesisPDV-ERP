@@ -1174,6 +1174,15 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       "Cancelar" sem `PUT` e "Gravar mesmo assim" com o `PUT` da chave; a consulta com erro avisa e deixa gravar; o
       teste de F2-B1 que liga a chave grava direto sem caixa antigo).
 
+70. **Consulta do estoque das outras lojas no caixa: a chave em Parâmetros › PDV** (Fase 2, F2-B35; F2-Q12 = roadmap
+    D53, **vale a recomendação, sem resposta explícita do dono** — padrão até a confirmação do dono; README da API ›
+    decisão 182, do PDV › decisão 82; `src/paginas/configuracoes/rotulos.ts`).
+    - **"Consulta do estoque das outras lojas no caixa (F4)"** (`pdv.consulta_outras_lojas`, padrão Sim) em
+      Configurações › Parâmetros › PDV e, por loja, em Lojas › Parâmetros (a chave é por loja), com a ajuda do que cada
+      valor faz no caixa: Sim, o `F4` da pesquisa mostra online a quantidade nas outras lojas e no CD, sem a loja de
+      treino e sem custo; Não, o `F4` avisa que está desligada. Só o rótulo: o campo booleano, a gravação e a
+      sobreposição por loja são os de sempre. Nenhuma tela nova no ERP.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação

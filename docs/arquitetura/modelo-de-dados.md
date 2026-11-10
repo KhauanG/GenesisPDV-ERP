@@ -827,6 +827,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.imprime_cupom_troca` | bool | `false` | S | S | Parâmetros › Imprime cupom de troca |
 | `pdv.bloqueia_venda_sem_estoque` | bool | `false` | S | S | Parâmetros › Bloqueia venda sem estoque |
 | `pdv.recusa_produto_com_variacoes` | bool | `true` | S | S | Novo (Fase 2, F2-B34; roadmap D44, decidida pelo dono em 05/11/2026): o caixa recusa o código de uma variação e o pai `com_variacoes` com variação ativa ("Produto com variações: venda disponível na próxima versão"); desligada, vende o pai como antes (PDV 10.2) |
+| `pdv.consulta_outras_lojas` | bool | `true` | S | S | Novo (Fase 2, F2-B35; roadmap D53, vale a recomendação sem resposta explícita do dono): o `F4` da pesquisa do caixa consulta online o saldo vendável das lojas reais e do CD (sem a loja de treino, só quantidades), para qualquer operador; desligada, o caixa não consulta e a API recusa (PDV 10.3; SYNC 1.4) |
 | `pdv.limite_valor_venda` | dinheiro | nulo | S | S | Parâmetros › Limite de Valor de Vendas PDV |
 | `pdv.aviso_vencimento`, `pdv.aviso_vencimento_dias` | bool, inteiro | `false`, `30` | S | S | Parâmetros › Aviso de vencimento + dias |
 | `pdv.limite_venda_em_aberto` | inteiro | nulo | S | S | Parâmetros › Limite Venda em Aberto (semântica em aberto — ver 8) |

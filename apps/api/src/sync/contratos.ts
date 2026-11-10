@@ -18,6 +18,7 @@ export {
   pushSchema,
   recuperarQuerySchema,
   renovarTokenSchema,
+  saldosOutrasLojasQuerySchema,
   type Ativar,
   type EnvelopeEvento,
   type EnvelopeRecuperado,
@@ -34,7 +35,9 @@ export {
   type RespostaPush,
   type RespostaRecuperar,
   type RespostaRenovarToken,
+  type RespostaSaldosOutrasLojas,
   type ResultadoEvento,
+  type SaldosOutrasLojasQuery,
   type StatusEventoNuvemItem,
   type StatusResultadoEvento,
 } from '@genesis/shared';
