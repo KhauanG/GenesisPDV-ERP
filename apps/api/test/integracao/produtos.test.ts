@@ -154,6 +154,9 @@ describe('cadastro de produto (ERP 8.2)', () => {
       'loja',
       'parcelado',
       'promocional',
+      // As duas faixas criadas com o produto (F2-B37).
+      'quantidade',
+      'quantidade',
       'venda',
     ]);
     const [{ busca }] = (await consultar<{ busca: string }>(

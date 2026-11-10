@@ -1183,6 +1183,24 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       treino e sem custo; Não, o `F4` avisa que está desligada. Só o rótulo: o campo booleano, a gravação e a
       sobreposição por loja são os de sempre. Nenhuma tela nova no ERP.
 
+71. **Histórico de preços do produto: botão e modal no formulário** (Fase 2, F2-B37; MD 3.6.10; ERP 8.2 "Alteração de
+    preço"; README da API › decisão 183; `src/paginas/produtos/HistoricoPrecos.tsx`, `FormularioProduto.tsx`).
+    - **Botão "Histórico de preços"** nas ações do formulário (produto gravado; ao lado do Duplicar e do Histórico da
+      auditoria), abrindo um **modal** e não um bloco do acordeão: a consulta só roda com o modal aberto (`enabled`),
+      sem pesar na abertura do produto, e o formulário de 1.900 linhas não cresce.
+    - **Filtros:** Tipo (os tipos do `TIPOS_PRECO_HISTORICO`, sem "Custo" para quem não tem `produtos.ver_custo`), Loja
+      ("Geral (sem loja)" e as lojas do `/eu`, que já são só as permitidas) e o período De/Até (dias). Mudar um
+      filtro volta à primeira página; a página tem 20 linhas, com o total e a paginação.
+    - **Colunas:** data e hora, o preço (o tipo com a faixa — "6 a 11", "12 ou mais" —, a variação e a loja, ou "todas
+      as lojas" na faixa sem loja), anterior e novo ("—" quando não havia ou deixou de haver; o custo com até 4
+      casas, os preços com 2), a variação em % (`variacaoPct`, vazia sem um dos dois ou com o anterior zero), a origem
+      (o rótulo de `ROTULOS_ORIGEM_HISTORICO_PRECO`, com "nº" do documento e o link do recebimento ou da NF-e para quem
+      tem `recebimentos.ver`/`notas_entrada.ver`) e o usuário.
+    - O corte do custo e das lojas é da API; a tela não esconde linha nenhuma por conta própria.
+    - Testes: `HistoricoPrecos.test.tsx` (a faixa, a variação, o custo com 4 casas, o link da NF-e; o filtro de tipo na
+      query; trocado na página 2 de 3, a chamada volta com a página 1; sem `ver_custo` não há "Custo"; sem a
+      permissão da nota, o número sem o link).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação

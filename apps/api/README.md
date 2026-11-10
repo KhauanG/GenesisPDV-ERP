@@ -5156,6 +5156,51 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        limite de 3 por minuto → 429 com `Retry-After` e outro terminal segue), `contratos.spec.ts` e
        `configuracoes.spec.ts` no shared.
 
+183. **Histórico de preços: a consulta, as faixas e as variações** (Fase 2, F2-B37; MD 3.6.10; ERP 8.2 "Alteração de
+     preço"; decisões 97, 100 e 160; `src/produtos/historico-precos.ts`, `src/produtos/gravacao.ts`,
+     `src/produtos/produtos.controller.ts`, `packages/shared/src/produtos.ts`; **sem migração**; PDV sem mudança; o ERP
+     é a decisão 71 do README do ERP).
+     - **`GET /produtos/:id/historico-precos`** (`produtos.ver`): a página (`pagina`, `tamanho`, com o total) das
+       mudanças do produto não excluído (404 senão), a mais recente primeiro (`criado_em desc, id desc`), com os
+       filtros **tipo** (`TIPOS_PRECO_HISTORICO`, agora no shared; `historico-precos.spec.ts` confere a lista com o
+       CHECK do schema), **loja** (uma loja ou `geral` = só as linhas sem loja) e **período** (`dataInicial`..
+       `dataFinal`, dias de calendário no fuso da empresa, as pontas incluídas, cada uma opcional), pelo
+       `ix_produtos_historico_precos_produto_id_criado_em`. Cada linha traz a loja e a variação pelo nome, o intervalo
+       da faixa, o anterior e o novo, a origem, o **documento** (o recebimento pelo `codigo`, a NF-e pelo `numero`, do
+       `origem_id`) e o nome do usuário.
+     - **O corte é na consulta** (o histórico não é redigido na leitura, como a auditoria da decisão 100): sem
+       `produtos.ver_custo` o tipo `custo` (`TIPOS_PRECO_HISTORICO_CUSTO`) fica fora do `where` e o filtro "Custo" é
+       403; a linha de uma loja fora das permitidas fica fora (a linha sem loja — o preço geral, o custo, a faixa de
+       todas as lojas — é de todos), e o filtro de uma loja fora delas é 403. O total conta só o que a sessão vê. O
+       número do documento aparece mesmo quando o documento é de uma loja não permitida (a linha é do preço geral; o
+       link do ERP exige a permissão do documento).
+     - **Faixa por quantidade (`quantidade`).** O formulário (`inserirProduto`/`atualizarProduto`) compara as faixas
+       vigentes **lidas do banco** antes e depois do "Gravar" (`precosFilhosGravados`, `linhasHistoricoFilhos`), pela
+       chave variação × loja × intervalo: uma linha por faixa criada (anterior nulo), removida (novo nulo) ou com o
+       preço trocado no mesmo intervalo; o intervalo trocado é uma removida e uma criada. Do banco, e não da entrada,
+       porque a gravação preserva a faixa de loja fora das permitidas (decisão 88) e recria a faixa alterada com outro
+       id. A tabela não tem coluna para o intervalo e o bloco é sem migração: **na linha `quantidade`, `origem_id` é a
+       faixa** (`produtos_precos_quantidade.id`: a atual, ou a removida, que continua na tabela com `excluido_em`), e a
+       consulta tira dela o intervalo. Nenhum documento muda faixa (o recebimento e a NF-e mudam o custo, a venda e o
+       preço da loja), então não há `origem_id` de documento numa linha `quantidade`; quem passar a mudar faixa por
+       documento precisa de uma coluna própria (migração).
+     - **Variação (`variacao_id`).** O mesmo diff lê o `preco_venda` e o `preco_custo` das variações e grava `venda`/
+       `custo` com a `variacao_id` quando mudam. Hoje o formulário não edita variação (só a partir do F2-B48), então
+       nada muda na prática; a variação nova sem preço não gera linha, e a excluída não é mudança de preço (fica na
+       auditoria).
+     - Custo do caminho do formulário e da importação: uma consulta curta a mais antes e outra depois do "Gravar" (a
+       criação só lê quando há faixa). A origem continua a do F2-B15 (`cadastro`/`importacao`, decisão 160), e o custo
+       do combo pelo banco segue a decisão 97.
+     - Testes: `historico-precos.test.ts` (o cadastro e a alteração com as faixas criada, trocada e removida, as lojas,
+       a página com o total, os filtros tipo, loja, geral e período no fuso — a virada do dia em horas fixas, 23:30 de
+       09/11 e 00:30 de 10/11 em Brasília, para não depender da hora em que o teste roda —, sem `ver_custo` sem custo e
+       com 403 no filtro, o restrito à Loja 1 sem a Loja 2 e com 403 no filtro dela, 404 e 422); a rota com a origem e
+       o documento em `recebimento-movimentar.test.ts` (o código), `notas-entrada-movimentar.test.ts` (o número) e
+       `importacao-dashboard.test.ts` (`importacao`, sem documento); `historico-precos.spec.ts` (o CHECK do tipo × shared
+       e o diff das faixas — com a `variacao_id` e a `loja_id` da faixa — e das variações); `produtos.spec.ts` no shared
+       (a query). O período usa o `inicioDoDiaNaEmpresa` (`comum/fuso.ts`), a mesma regra dos outros filtros de
+       período.
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

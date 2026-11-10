@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-7 e PR-8 juntados na `main` em 10/11/2026 com a liberação do dono, CI verde em `4edc0d6`; aguardando a implantação e o release do PDV 0.11.0; regra do bucket aplicada)._
+_Última atualização: 10/11/2026 (PR-9 em andamento: F2-B37 commitado; PR-7 e PR-8 implantados em 10/11/2026 e release `pdv-v0.11.0` publicado; falta a Implantação com `publicar_pdv` e atualizar os caixas; regra do bucket aplicada)._
 
 ## Repositório
 
@@ -54,7 +54,8 @@ _Última atualização: 10/11/2026 (PR-7 e PR-8 juntados na `main` em 10/11/2026
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
-| PR-9 em diante | | não iniciados |
+| PR-9 catálogo operacional | B37–B42 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8) |
+| PR-10 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -86,6 +87,12 @@ _Última atualização: 10/11/2026 (PR-7 e PR-8 juntados na `main` em 10/11/2026
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
 | F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
 
+### PR-9 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B37 histórico de preços: consulta e modal no produto (API: `GET /produtos/:id/historico-precos` em `apps/api/src/produtos/historico-precos.ts` — filtros tipo, loja (ou `geral`) e período nos dias do fuso da empresa, página com o total, a mais recente primeiro, a loja, a variação, o intervalo da faixa, o documento (recebimento pelo código, NF-e pelo número) e o usuário; sem `produtos.ver_custo` o `custo` fica fora e o filtro dele é 403, a linha de loja fora das permitidas fica fora e o filtro dela é 403; `registrarHistoricoPrecos` grava também o tipo `quantidade` (faixa criada, removida ou com o preço trocado, pelo diff do banco antes × depois do "Gravar", com o `origem_id` = a faixa, de onde sai o intervalo) e o `venda`/`custo` das variações com a `variacao_id` (o formulário ainda não edita variação, F2-B48); contratos `historicoPrecosQuerySchema`, `HistoricoPrecoProduto`, `TIPOS_PRECO_HISTORICO` e os rótulos no shared; ERP: botão "Histórico de preços" no formulário abrindo `ModalHistoricoPrecos` (`apps/erp-web/src/paginas/produtos/HistoricoPrecos.tsx`), com a variação em %, a faixa e o link do documento; **sem migração**; PDV sem mudança; README da API › decisão 183, do ERP › 71) | **commitado** |
+
 ## Próximo passo
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
@@ -100,8 +107,9 @@ _Última atualização: 10/11/2026 (PR-7 e PR-8 juntados na `main` em 10/11/2026
    `AbortIncompleteMultipartUpload` do bucket **já foi aplicada** (10/11/2026, as quatro regras; `infra/producao/README.md`
    › Backup). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
 3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
-   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8).
-4. Numeração das próximas decisões nos READMEs: **API 183**, **ERP 71**, **PDV 85** (confira o último número no próprio
+   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 commitado; o próximo é
+   o F2-B38 (relatório de EAN duplicado).
+4. Numeração das próximas decisões nos READMEs: **API 184**, **ERP 72**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D63** (D51, D52, D61 e D62 respondidas pelo dono
    em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`).

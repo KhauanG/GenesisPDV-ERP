@@ -50,6 +50,7 @@ import {
   IconAlertTriangle,
   IconBarcode,
   IconCalculator,
+  IconChartLine,
   IconCopy,
   IconPlus,
   IconTrash,
@@ -85,6 +86,7 @@ import {
   BlocoValidade,
   ModalAjustarEstoque,
 } from './BlocosProduto';
+import { ModalHistoricoPrecos } from './HistoricoPrecos';
 import { ROTA_PRODUTOS } from './ListaProdutos';
 import {
   decimalParaTela,
@@ -240,6 +242,8 @@ export function FormularioProduto() {
   const unidadePadrao = unidades.data?.find((u) => u.sigla === 'UN')?.id ?? null;
   const form = useForm<ValoresProduto>({ mode: 'controlled', initialValues: produtoVazio(lojas, null) });
   const confirmarEan = useRef(false);
+  // Modal "Histórico de preços" (F2-B37).
+  const [historicoPrecos, setHistoricoPrecos] = useState(false);
   const categorias = useCategorias();
   const marcas = useMarcas();
   const precoVolume = useQuery({
@@ -533,14 +537,30 @@ export function FormularioProduto() {
       aoRecarregar={c.recarregar}
       historico={p ? { entidade: 'produtos', registroId: p.id } : undefined}
       acoesExtras={
-        p && pode('produtos.criar') ? (
-          <Button
-            variant="default"
-            leftSection={<IconCopy size={16} />}
-            onClick={() => navigate(`${ROTA_PRODUTOS}/${p.id}/duplicar`)}
-          >
-            Duplicar
-          </Button>
+        p ? (
+          <>
+            <Button
+              variant="default"
+              leftSection={<IconChartLine size={16} />}
+              onClick={() => setHistoricoPrecos(true)}
+            >
+              Histórico de preços
+            </Button>
+            <ModalHistoricoPrecos
+              produtoId={p.id}
+              aberto={historicoPrecos}
+              aoFechar={() => setHistoricoPrecos(false)}
+            />
+            {pode('produtos.criar') && (
+              <Button
+                variant="default"
+                leftSection={<IconCopy size={16} />}
+                onClick={() => navigate(`${ROTA_PRODUTOS}/${p.id}/duplicar`)}
+              >
+                Duplicar
+              </Button>
+            )}
+          </>
         ) : undefined
       }
       abas={abas}

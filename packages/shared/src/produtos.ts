@@ -153,6 +153,98 @@ export const ORIGENS_HISTORICO_PRECO = [
   'api',
 ] as const;
 export type OrigemHistoricoPreco = (typeof ORIGENS_HISTORICO_PRECO)[number];
+export const ROTULOS_ORIGEM_HISTORICO_PRECO: Record<OrigemHistoricoPreco, string> = {
+  cadastro: 'Cadastro do produto',
+  importacao: 'Importação de planilha',
+  cadastro_massa: 'Cadastro em massa',
+  recebimento: 'Recebimento',
+  nota_entrada: 'NF-e de entrada',
+  api: 'Integração (API)',
+};
+
+/**
+ * Tipo de preço de uma linha do histórico (MD 3.6.10; `ck_produtos_historico_precos_tipo_preco`, a mesma lista do
+ * schema Drizzle, conferida em `historico-precos.spec.ts` da API): os preços do produto (e da variação, com
+ * `variacao_id`), `loja` (o preço só da loja, com `loja_id`) e `quantidade` (a faixa de preço por quantidade, com a
+ * loja da faixa ou nula = todas; F2-B37). O único tipo de custo é `custo` (`TIPOS_PRECO_HISTORICO_CUSTO`).
+ */
+export const TIPOS_PRECO_HISTORICO = [
+  'venda',
+  'custo',
+  'atacado',
+  'promocional',
+  'menu_digital',
+  'ifood',
+  'parcelado',
+  'loja',
+  'quantidade',
+] as const;
+export type TipoPrecoHistorico = (typeof TIPOS_PRECO_HISTORICO)[number];
+export const ROTULOS_TIPO_PRECO_HISTORICO: Record<TipoPrecoHistorico, string> = {
+  venda: 'Venda',
+  custo: 'Custo',
+  atacado: 'Atacado',
+  promocional: 'Promocional',
+  menu_digital: 'Menu digital',
+  ifood: 'iFood',
+  parcelado: 'Parcelado',
+  loja: 'Venda da loja',
+  quantidade: 'Por quantidade',
+};
+/** Os tipos de custo: fora da consulta sem `produtos.ver_custo` (o histórico não é redigido na leitura; decisão 100). */
+export const TIPOS_PRECO_HISTORICO_CUSTO: readonly TipoPrecoHistorico[] = ['custo'];
+
+/** Filtro "Loja" do histórico: só o geral (sem loja: os preços do produto e a faixa de todas as lojas). */
+export const LOJA_HISTORICO_GERAL = 'geral';
+
+/**
+ * `GET /produtos/:id/historico-precos` (F2-B37; MD 3.6.10): a página (`pagina`, `tamanho`), o **tipo** de preço, a
+ * **loja** (uma loja permitida, ou `geral`) e o **período** (`dataInicial`..`dataFinal`, dias de calendário no fuso da
+ * empresa, as pontas incluídas, cada uma opcional). A ordem é fixa: a mudança mais recente primeiro.
+ */
+export const historicoPrecosQuerySchema = paginacaoQuerySchema
+  .omit({ ordenar: true })
+  .extend({
+    tipo: z.preprocess(
+      (v) => (v === '' || v === null ? undefined : v),
+      z.enum(TIPOS_PRECO_HISTORICO, 'Tipo de preço inválido').optional(),
+    ),
+    loja: z.preprocess(
+      (v) => (v === '' || v === null ? undefined : v),
+      z.union([z.literal(LOJA_HISTORICO_GERAL), z.uuid()], 'Loja inválida').optional(),
+    ),
+    dataInicial: dataOpcionalValida,
+    dataFinal: dataOpcionalValida,
+  })
+  .superRefine((v, ctx) => {
+    if (v.dataInicial && v.dataFinal && v.dataFinal < v.dataInicial)
+      ctx.addIssue({ code: 'custom', path: ['dataFinal'], message: 'A data final é anterior à inicial' });
+  });
+export type HistoricoPrecosQuery = z.output<typeof historicoPrecosQuerySchema>;
+
+/** Uma mudança de preço (`GET /produtos/:id/historico-precos`). */
+export interface HistoricoPrecoProduto {
+  id: string;
+  /** Quando o preço mudou (a hora da gravação). */
+  criadoEm: string;
+  tipoPreco: TipoPrecoHistorico;
+  /** O preço da variação (MD 3.6.6); nulo = o do produto. */
+  variacaoId: string | null;
+  variacaoNome: string | null;
+  /** O preço só da loja (`loja`) ou a faixa de uma loja (`quantidade`); nulo = o geral (ou a faixa de todas). */
+  lojaId: string | null;
+  lojaNome: string | null;
+  /** A faixa (tipo `quantidade`): o intervalo, a final nula = sem limite. Nulos nos outros tipos. */
+  quantidadeInicial: string | null;
+  quantidadeFinal: string | null;
+  /** Nulo = não havia (preço novo, faixa criada) / deixou de haver (preço apagado, faixa removida). */
+  valorAnterior: string | null;
+  valorNovo: string | null;
+  origem: OrigemHistoricoPreco;
+  /** O documento que mudou o preço (o recebimento pelo código, a NF-e pelo número); nulo no cadastro e na importação. */
+  documento: { id: string; numero: string } | null;
+  usuarioNome: string | null;
+}
 
 // ---------------------------------------------------------------- Campos
 

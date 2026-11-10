@@ -26,6 +26,7 @@ import {
   criarProdutoSchema,
   criarRestricaoHorarioSchema,
   faixasSobrepostas,
+  historicoPrecosQuerySchema,
   MAXIMO_FORNECEDORES_PRODUTO,
   MAXIMO_LOTES_PRODUTO,
   motivoTipoProdutoBloqueado,
@@ -720,5 +721,38 @@ describe('lotes do bloco Validade (F2-B17; ERP 8.2.12)', () => {
         }),
       ),
     ).toEqual(['lotes.1.id', 'lotesExcluidos.0']);
+  });
+});
+
+describe('consulta do histórico de preços (F2-B37)', () => {
+  it('aceita a página, o tipo, a loja (ou o geral) e o período; vazio é sem filtro', () => {
+    expect(historicoPrecosQuerySchema.parse({})).toEqual({
+      pagina: 1,
+      tamanho: 20,
+      dataInicial: null,
+      dataFinal: null,
+    });
+    expect(
+      historicoPrecosQuerySchema.parse({
+        pagina: '2',
+        tamanho: '50',
+        tipo: 'quantidade',
+        loja: A,
+        dataInicial: '2026-11-01',
+        dataFinal: '2026-11-01',
+      }),
+    ).toMatchObject({ pagina: 2, tamanho: 50, tipo: 'quantidade', loja: A });
+    expect(historicoPrecosQuerySchema.parse({ loja: 'geral', tipo: '' })).toMatchObject({ loja: 'geral' });
+  });
+
+  it('recusa o tipo e a loja desconhecidos, a data que não existe e o período invertido', () => {
+    const caminhos = (v: unknown) => {
+      const r = historicoPrecosQuerySchema.safeParse(v);
+      return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+    };
+    expect(caminhos({ tipo: 'markup' })).toEqual(['tipo']);
+    expect(caminhos({ loja: 'loja-1' })).toEqual(['loja']);
+    expect(caminhos({ dataInicial: '2026-02-30' })).toEqual(['dataInicial']);
+    expect(caminhos({ dataInicial: '2026-11-10', dataFinal: '2026-11-01' })).toEqual(['dataFinal']);
   });
 });

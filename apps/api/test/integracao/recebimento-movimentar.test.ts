@@ -517,6 +517,26 @@ describe('movimentar o recebimento (F2-B15; ERP 13.3)', () => {
         origem_id: r.id,
       },
     ]);
+    // A consulta do histórico (F2-B37) mostra a origem e o recebimento pelo código.
+    const consulta = await amb
+      .http()
+      .get(`/api/produtos/${p}/historico-precos`)
+      .query({ dataInicial: '2026-01-01' })
+      .set(bearer());
+    expect(consulta.status, JSON.stringify(consulta.body)).toBe(200);
+    expect(
+      (consulta.body.itens as Array<Record<string, unknown>>).filter((h) => h.origem === 'recebimento'),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tipoPreco: 'venda',
+          valorAnterior: '8.0000',
+          valorNovo: '8.9000',
+          documento: { id: r.id, numero: String(r.codigo) },
+        }),
+        expect.objectContaining({ tipoPreco: 'custo', documento: { id: r.id, numero: String(r.codigo) } }),
+      ]),
+    );
     // O vínculo com o fornecedor nasce com a embalagem da compra, o último custo e a data do documento.
     expect(await vinculos(p)).toEqual([
       {

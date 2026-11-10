@@ -1280,7 +1280,9 @@ Regras:
 `marcas`, `categorias`, `saldos_estoque`, `saldos_lote`, `arquivos`.
 
 **API**: `/api/produtos` (CRUD), `POST /api/produtos/:id/duplicar`, `GET /api/produtos/verificar-ean?ean=…`,
-`POST /api/produtos/:id/variacoes/gerar`, `GET /api/ncms?busca=…`, `GET /api/produtos/:id/saldos`.
+`POST /api/produtos/:id/variacoes/gerar`, `GET /api/ncms?busca=…`, `GET /api/produtos/:id/saldos`,
+`GET /api/produtos/:id/historico-precos?tipo=&loja=&dataInicial=&dataFinal=` (botão e modal "Histórico de preços" do
+formulário, F2-B37: sem o custo para quem não tem `produtos.ver_custo` e só as lojas permitidas).
 
 ### 8.3 Cadastro em massa
 

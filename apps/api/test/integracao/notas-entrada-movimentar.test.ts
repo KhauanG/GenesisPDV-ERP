@@ -396,6 +396,20 @@ describe('movimentar (ERP 13.4): custo, fator, preço e vínculo aprendido', () 
     );
     expect(historico.length).toBeGreaterThanOrEqual(2);
     for (const h of historico) expect(h).toMatchObject({ origem: 'nota_entrada', origem_id: ids.nota01 });
+    // A consulta do histórico (F2-B37): a origem NF-e com o número da nota.
+    const [notaGravada] = await consultar<{ numero: number }>(
+      emp.nomeBanco,
+      'select numero from notas_entrada where id = $1',
+      [ids.nota01],
+    );
+    const consulta = await amb.http().get(`/api/produtos/${ids.cerveja}/historico-precos`).set(bearer());
+    expect(consulta.status, JSON.stringify(consulta.body)).toBe(200);
+    const daNota = (consulta.body.itens as Array<Record<string, unknown>>).filter(
+      (h) => h.origem === 'nota_entrada',
+    );
+    expect(daNota.map((h) => h.tipoPreco).sort()).toEqual(historico.map((h) => h.tipo_preco).sort());
+    for (const h of daNota)
+      expect(h.documento).toEqual({ id: ids.nota01, numero: String(notaGravada!.numero) });
 
     // O vínculo aprendido: fornecedor + cProd → produto, fator e uCom, com o custo e a data da emissão.
     expect(await vinculos(ids.cerveja)).toEqual([

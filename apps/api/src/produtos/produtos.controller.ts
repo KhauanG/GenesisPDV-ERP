@@ -21,6 +21,7 @@ import {
   exportacaoQuerySchema,
   filtroProdutosSchema,
   gerarCodigoInterno,
+  historicoPrecosQuerySchema,
   LIMITE_EXPORTACAO,
   limiteDeslocamento,
   ROTULOS_TIPO_PRODUTO,
@@ -29,6 +30,7 @@ import {
   type CriarProduto,
   type CriarProdutoEntrada,
   type FiltroProdutos,
+  type HistoricoPrecoProduto,
   type Pagina,
   type ProdutoDetalhe,
   type ProdutoOpcao,
@@ -73,6 +75,7 @@ import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
 import { buscarOpcoes, detalheProduto, fornecedoresDoProduto, lotesDoProduto } from './consultas.js';
+import { paginaHistoricoPrecos } from './historico-precos.js';
 import { ncmVigente } from './ncm.js';
 import {
   conferirEanDuplicado,
@@ -80,6 +83,7 @@ import {
   gravarFornecedores,
   gravarLotes,
   gravarRelacionados,
+  precosFilhosGravados,
   registrarHistoricoPrecos,
   type RelacaoInversaCriada,
   tiposHabilitados,
@@ -382,6 +386,23 @@ export class ProdutosController {
       .consulta((db) => detalheProduto(db, id, verCusto(sessao), sessao.lojas, sessao.estoques));
     if (!d) throw ErroApi.naoEncontrado('Produto não encontrado.');
     return d;
+  }
+
+  /**
+   * Histórico de preços do produto (F2-B37; MD 3.6.10; decisão 183): quando e por que o preço e o custo mudaram, por
+   * loja, com os filtros tipo, loja e período. Sem os tipos de custo para quem não tem `produtos.ver_custo` e só as
+   * linhas das lojas permitidas (o histórico não é redigido na leitura; `historico-precos.ts`).
+   */
+  @Permissao('produtos.ver')
+  @Get(':id/historico-precos')
+  async historicoPrecos(
+    @Param('id') idBruto: string,
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<Pagina<HistoricoPrecoProduto>> {
+    const id = validar(z.uuid(), idBruto);
+    const q = validar(historicoPrecosQuerySchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaHistoricoPrecos(db, sessao, id, q));
   }
 
   /**
@@ -979,6 +1000,10 @@ export async function inserirProduto(
       lojas: Object.fromEntries(dados.lojas.map((l) => [l.lojaId, l.precoVenda])),
     },
     origemHistorico(opcoes),
+    // As faixas criadas com o produto (F2-B37); o produto novo não tem variação.
+    dados.precosQuantidade.length
+      ? { antes: null, depois: await precosFilhosGravados(tx, p!.id) }
+      : undefined,
   );
   await s.auditoria.registrar(tx, origem, {
     acao: 'criar',
@@ -1024,6 +1049,8 @@ export async function atualizarProduto(
       : {}),
   };
   await garantirAlterarPreco(tx, sessao, antes, dados);
+  // As faixas e as variações como estão gravadas, para o histórico das filhas (F2-B37).
+  const filhosAntes = await precosFilhosGravados(tx, id);
   garantirCriarInversa(sessao, dados);
   await validarNoBanco(tx, dados, id, contexto, { ncmOpcional: opcoes.importacao });
   if (opcoes.importacao) await tx.execute(sql`set local genesis.ean_duplicado_importacao = 'on'`);
@@ -1062,6 +1089,7 @@ export async function atualizarProduto(
       ]),
     },
     origemHistorico(opcoes),
+    { antes: filhosAntes, depois: await precosFilhosGravados(tx, id) },
   );
   await s.auditoria.registrar(tx, origem, {
     acao: 'editar',
