@@ -1201,6 +1201,26 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       query; trocado na página 2 de 3, a chamada volta com a página 1; sem `ver_custo` não há "Custo"; sem a
       permissão da nota, o número sem o link).
 
+72. **Relatório de EAN duplicado e o atalho da listagem** (Fase 2, F2-B38; MD 3.6.5; ERP 8.2 "Regras", 16.3.1;
+    README da API › decisão 184; `src/paginas/relatorios/EanDuplicado.tsx`, `ListaProdutos.tsx`, `menu.ts`,
+    `rotas.tsx`).
+    - **Tela `/relatorios/ean-duplicado`** no `<Relatorio>` paginado no servidor (`pagina`, pelos códigos) com a
+      exportação pela API (Excel/CSV, uma linha por código × produto). Gera ao abrir: é leve (só os códigos repetidos)
+      e é a lista que a empresa revisita até zerar. Uma linha por código: o EAN, quantos produtos e os produtos (o link
+      "Editar" abre o produto; a variação, a Ref. interna, o selo "EAN principal" ou a embalagem com o fator, e
+      "Inativo"). Filtros: o começo do EAN e o produto (nome, código interno ou EAN: o código achado vem com todos os
+      produtos dele).
+    - **Cards**: "EAN repetidos" (o total) e "Regra de agora" (`geral.ean_duplicado`: Avisar/Bloquear), com a nota
+      "quando o relatório zerar, volte Configurações › Geral › EAN duplicado para Bloquear" (o link só para quem tem
+      `configuracoes.ver`).
+    - **Permissão `produtos.ver`** (a rota, o item do menu em Relatórios › Produtos e a API): quem vê o cadastro já vê
+      os mesmos produtos pelo filtro "EAN duplicado" da listagem. O item do menu sobrescreve a permissão
+      `relatorios.<nome>` do `rel(...)`.
+    - **Atalho**: na listagem de produtos, com o filtro "Situação de cadastro" = "EAN duplicado", o botão "Relatório de
+      EAN duplicado" ao lado do Exportar (a listagem mostra um produto por linha; o relatório agrupa os pares).
+    - Testes: `EanDuplicado.test.tsx` (as colunas, o link de editar, a embalagem com o fator, o inativo, os cards, a nota
+      com e sem `configuracoes.ver`, os filtros na query) e `Produtos.test.tsx` (o atalho só com o filtro).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação

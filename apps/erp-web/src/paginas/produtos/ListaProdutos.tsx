@@ -6,21 +6,28 @@ import {
   type Pagina,
   type ProdutoResumo,
 } from '@genesis/shared';
-import { Anchor, Badge, Group } from '@mantine/core';
+import { Anchor, Badge, Button, Group } from '@mantine/core';
+import { IconBarcode } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { useCategorias, useMarcas } from '../../api/produtos';
 import { Listagem, type ConfigListagem } from '../../componentes/listagem/Listagem';
+import { ROTA_EAN_DUPLICADO } from '../relatorios/EanDuplicado';
 import { decimalParaTela } from './valores';
 
 export const ROTA_PRODUTOS = '/produtos';
 
 const dinheiro = (v: string | null) => (v === null ? '—' : `R$ ${decimalParaTela(v)}`);
 
-/** Cadastro de produtos – listagem (ERP 8.1): filtros e colunas do Nuvem3 + Categoria e Situação de cadastro. */
+/**
+ * Cadastro de produtos – listagem (ERP 8.1): filtros e colunas do Nuvem3 + Categoria e Situação de cadastro. Com o
+ * filtro "EAN duplicado", o atalho para o relatório que agrupa por código (F2-B38; README do ERP › decisão 72).
+ */
 export function ListaProdutos() {
+  const [params] = useSearchParams();
+  const eanDuplicado = params.get('situacaoCadastro') === 'ean_duplicado';
   const marcas = useMarcas();
   const categorias = useCategorias();
   const config = useMemo<ConfigListagem<ProdutoResumo>>(
@@ -156,5 +163,21 @@ export function ListaProdutos() {
     }),
     [marcas.data, categorias.data],
   );
-  return <Listagem config={config} />;
+  return (
+    <Listagem
+      config={config}
+      acoes={
+        eanDuplicado && (
+          <Button
+            component={Link}
+            to={ROTA_EAN_DUPLICADO}
+            variant="default"
+            leftSection={<IconBarcode size={16} />}
+          >
+            Relatório de EAN duplicado
+          </Button>
+        )
+      }
+    />
+  );
 }

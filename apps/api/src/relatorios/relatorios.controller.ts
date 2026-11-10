@@ -13,10 +13,12 @@ import {
 } from '@nestjs/common';
 import {
   ajusteEstoqueRelatorioSchema,
+  consultaEanDuplicadoSchema,
   consultaEstoqueAtualSchema,
   consultaMovimentacaoEstoqueSchema,
   consultaMovimentacaoSinteticaSchema,
   type ExportacaoEmTarefa,
+  type RespostaEanDuplicado,
   type RespostaEstoqueAtual,
   type RespostaMovimentacaoEstoque,
   type RespostaMovimentacaoSintetica,
@@ -30,13 +32,14 @@ import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { ajustarEstoqueDefinir, resumoEfetivacao } from '../estoques/acertos.js';
 import type { Servicos } from '../servicos.js';
+import { paginaEanDuplicado } from './ean-duplicado.js';
 import { LOCALIZACAO_ESTOQUE_ATUAL, paginaEstoqueAtual } from './estoque-atual.js';
 import { paginaMovimentacao, paginaMovimentacaoSintetica } from './movimentacao.js';
 
 /**
  * Relatórios (ERP 16): o Estoque Atual com o modal de ajuste (16.4; F2-B31, README da API › decisão 178), a
- * Movimentação de Estoque analítica (16.5; F2-B32, decisão 179) e sintética (F2-B33, decisão 180) e a
- * exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
+ * Movimentação de Estoque analítica (16.5; F2-B32, decisão 179) e sintética (F2-B33, decisão 180), o EAN duplicado
+ * (MD 3.6.5; F2-B38, decisão 184) e a exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
  * `ExportacaoRelatorios` (`chave` do provedor). Até `LIMITE_EXPORTACAO` linhas responde o arquivo (`200`); acima,
  * `202` com a tarefa (`ExportacaoEmTarefa`), que o ERP acompanha no ícone Tarefas. A permissão do relatório é
  * conferida pelo provedor; aqui fica a comum.
@@ -129,6 +132,18 @@ export class RelatoriosController {
   ): Promise<RespostaMovimentacaoSintetica> {
     const q = validar(consultaMovimentacaoSinteticaSchema, query);
     return this.s.tenancy.cx().consulta((db) => paginaMovimentacaoSintetica(db, sessao, q));
+  }
+
+  /**
+   * EAN duplicado (MD 3.6.5; F2-B38, decisão 184): os códigos `gtin` em mais de um produto, com os produtos de cada
+   * um, a página pelos códigos com o total e o `geral.ean_duplicado` de agora. É `produtos.ver`: o filtro "EAN
+   * duplicado" da listagem já mostra os mesmos produtos a quem vê o cadastro.
+   */
+  @Permissao('produtos.ver')
+  @Get('ean-duplicado')
+  async eanDuplicado(@Query() query: unknown): Promise<RespostaEanDuplicado> {
+    const q = validar(consultaEanDuplicadoSchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaEanDuplicado(db, q));
   }
 
   @Permissao('relatorios.exportar')

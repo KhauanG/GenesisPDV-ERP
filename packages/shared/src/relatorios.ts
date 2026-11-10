@@ -464,3 +464,83 @@ export interface RespostaMovimentacaoSintetica {
   totais: { custoEntradas: string; custoSaidas: string } | null;
   referencias: RespostaMovimentacaoEstoque['referencias'];
 }
+
+/**
+ * **EAN duplicado** (Fase 2, F2-B38; MD 3.6.5; ERP 8.2 "Regras", 20 item 2): os códigos de barras `gtin` que estão em
+ * mais de um produto não excluído (`group by codigo having count(distinct produto_id) > 1`), com os produtos de cada
+ * um. É o relatório que a migração do Nuvem3 deixa para corrigir antes de voltar `geral.ean_duplicado` a "bloquear".
+ * Chave da rota comum da exportação: `GET /relatorios/ean-duplicado/exportar`.
+ */
+export const RELATORIO_EAN_DUPLICADO = 'ean-duplicado';
+
+const camposEanDuplicado = {
+  /** Começo do código de barras (só dígitos). */
+  ean: z.preprocess(
+    vazioIndefinido,
+    z
+      .string()
+      .trim()
+      .regex(/^\d{1,14}$/, 'Informe só os dígitos do código de barras (até 14)')
+      .optional(),
+  ),
+  /** Nome, código interno ou EAN de algum dos produtos do código (o código continua com todos os produtos). */
+  nome: z.preprocess(vazioIndefinido, z.string().trim().max(120).optional()),
+};
+
+/** Os filtros sem a página: os da exportação (`tarefas.parametros` guarda a entrada crua, validada de novo). */
+export const filtrosEanDuplicadoSchema = z.object(camposEanDuplicado);
+export type FiltrosEanDuplicado = z.output<typeof filtrosEanDuplicadoSchema>;
+
+/** `GET /relatorios/ean-duplicado`: os filtros e a página (`tamanho` de `TAMANHOS_PAGINA`, padrão 50). */
+export const consultaEanDuplicadoSchema = z.object({
+  ...camposEanDuplicado,
+  pagina: z.preprocess(vazioIndefinido, z.coerce.number().int().min(1).default(1)),
+  tamanho: z.preprocess(
+    vazioIndefinido,
+    z.coerce
+      .number()
+      .int()
+      .refine((t) => (TAMANHOS_PAGINA as readonly number[]).includes(t), {
+        message: `Tamanho de página inválido (${TAMANHOS_PAGINA.join(', ')})`,
+      })
+      .default(50),
+  ),
+});
+export type ConsultaEanDuplicado = z.output<typeof consultaEanDuplicadoSchema>;
+
+/** Um produto (ou variação) com o código repetido. */
+export interface ProdutoEanDuplicado {
+  /** Id da linha de `produtos_codigos_barras` (o mesmo produto pode ter o código no pai e numa variação). */
+  codigoBarrasId: string;
+  produtoId: string;
+  produtoCodigo: number;
+  produtoNome: string;
+  codigoInterno: string | null;
+  marcaNome: string | null;
+  ativo: boolean;
+  variacaoId: string | null;
+  variacaoNome: string | null;
+  /** O EAN principal do produto (o da listagem) ou um código a mais (embalagem, fardo). */
+  principal: boolean;
+  /** Descrição da embalagem ("Fardo 12") e o fator (`numeric(15,3)` em texto) com a sigla da unidade do código. */
+  descricao: string | null;
+  fator: string;
+  unidadeSigla: string;
+}
+
+export interface LinhaEanDuplicado {
+  codigo: string;
+  /** Produtos distintos com o código (2 ou mais). */
+  quantidadeProdutos: number;
+  produtos: ProdutoEanDuplicado[];
+}
+
+export interface RespostaEanDuplicado {
+  itens: LinhaEanDuplicado[];
+  /** Códigos repetidos com os filtros (sem filtro, o que falta zerar para voltar a "bloquear"). */
+  total: number;
+  pagina: number;
+  tamanho: number;
+  /** `geral.ean_duplicado` de agora: a tela lembra de voltar a "bloquear" quando o relatório zerar. */
+  modo: 'bloquear' | 'avisar';
+}

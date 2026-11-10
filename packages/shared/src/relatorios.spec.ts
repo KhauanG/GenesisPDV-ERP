@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   ajusteEstoqueRelatorioSchema,
+  consultaEanDuplicadoSchema,
   consultaEstoqueAtualSchema,
   consultaMovimentacaoEstoqueSchema,
   consultaMovimentacaoSinteticaSchema,
   exportacaoMovimentacaoEstoqueSchema,
+  filtrosEanDuplicadoSchema,
   filtrosEstoqueAtualSchema,
   filtrosMovimentacaoEstoqueSchema,
 } from './relatorios.js';
@@ -133,5 +135,23 @@ describe('Movimentação sintética e exportação (ERP 16.5; F2-B33)', () => {
     expect(f).toMatchObject({ visao: 'sintetica', tiposMovimento: ['RECEB_NFE', 'RECEB_MANUAL'] });
     expect(exportacaoMovimentacaoEstoqueSchema.parse(JSON.parse(JSON.stringify(entrada)))).toEqual(f);
     expect(exportacaoMovimentacaoEstoqueSchema.safeParse({ ...base, visao: 'diaria' }).success).toBe(false);
+  });
+});
+
+describe('filtros do EAN duplicado (MD 3.6.5; F2-B38)', () => {
+  it('vazio é sem filtro; o começo do EAN só com dígitos (até 14); a página padrão 50', () => {
+    expect(filtrosEanDuplicadoSchema.parse({ ean: '', nome: '' })).toEqual({});
+    expect(filtrosEanDuplicadoSchema.parse({ ean: ' 7891 ', nome: ' heineken ' })).toEqual({
+      ean: '7891',
+      nome: 'heineken',
+    });
+    expect(filtrosEanDuplicadoSchema.safeParse({ ean: '789-1' }).success).toBe(false);
+    expect(filtrosEanDuplicadoSchema.safeParse({ ean: '1'.repeat(15) }).success).toBe(false);
+    expect(consultaEanDuplicadoSchema.parse({})).toEqual({ pagina: 1, tamanho: 50 });
+    expect(consultaEanDuplicadoSchema.parse({ pagina: '2', tamanho: '20' })).toMatchObject({
+      pagina: 2,
+      tamanho: 20,
+    });
+    expect(consultaEanDuplicadoSchema.safeParse({ tamanho: 'todos' }).success).toBe(false);
   });
 });

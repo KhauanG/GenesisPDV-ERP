@@ -5201,6 +5201,47 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        (a query). O período usa o `inicioDoDiaNaEmpresa` (`comum/fuso.ts`), a mesma regra dos outros filtros de
        período.
 
+184. **Relatório de EAN duplicado: a regra do trigger, a página pelos códigos e a permissão do cadastro** (Fase 2,
+     F2-B38; MD 3.6.5; ERP 8.2 "Regras", 16.3.1 e 20 item 2; `src/relatorios/ean-duplicado.ts`,
+     `src/relatorios/relatorios.controller.ts`, `packages/shared/src/relatorios.ts`; **sem migração**; PDV sem
+     mudança; o ERP é a decisão 72 do README do ERP).
+     - **`GET /relatorios/ean-duplicado`**: os códigos repetidos (`group by codigo having count(distinct produto_id) >
+       1`) com os produtos de cada um, para a empresa limpar o que a importação e a migração do Nuvem3 deixaram e
+       voltar `geral.ean_duplicado` de `avisar` para `bloquear`. **A regra é a do trigger**
+       `tg_produtos_codigos_barras_ean_unico` e a do filtro "EAN duplicado" da listagem: só o tipo `gtin` (o
+       `interno` não entra na unicidade), a linha de código e o produto não excluídos, o produto **inativo incluído**
+       (ele também trava o cadastro do mesmo EAN com "bloquear") e o produto distinto (o código no pai e numa variação
+       do mesmo produto não é repetição). Diferente do item `catalogo.ean_duplicado` da prontidão (decisão 143), que
+       olha só os vendáveis ativos com `usa_venda` e conta também o interno: aquele avisa do que sai errado no
+       caixa; este é a lista para zerar a regra.
+     - **Página pelos códigos** (`pagina`, `tamanho` de `TAMANHOS_PAGINA`, padrão 50, com o total de códigos pela
+       janela numa ida ao banco; depois da última página, uma contagem à parte) e os produtos dos códigos da página
+       numa segunda leitura (`cb.codigo in (...)`), agrupados na API: cada linha é um código com a lista dos produtos
+       (o código, o nome, a Ref. interna, a marca, a variação, se é o EAN principal ou uma embalagem com o fator e a
+       sigla, e se está ativo), na ordem do código do produto, o pai antes das variações. A resposta traz o
+       `geral.ean_duplicado` de agora (`modo`), para a tela lembrar de voltar a "bloquear".
+     - **Filtros**: `ean` (o começo do código, só dígitos, até 14) filtra o código; `nome` (nome, código interno ou
+       EAN, pelo `produtos.busca`) filtra **pelo grupo** (`bool_or` no `having`): o código achado pelo nome de um
+       produto vem com todos os produtos dele, senão o par sumiria da tela.
+     - **Índice**: o agrupamento lê o `ix_produtos_codigos_barras_codigo` (`codigo where excluido_em is null`) em ordem
+       (`GroupAggregate` com o `Incremental Sort` pré-ordenado pelo código e o produto pelo `pk_produtos`, sem ordenar
+       a tabela inteira); com poucas linhas o planejador prefere ler a tabela, e o teste confere o plano sem a leitura
+       sequencial.
+     - **Permissão `produtos.ver`**, não uma `relatorios.ean_duplicado` nova: o filtro "EAN duplicado" da listagem já
+       mostra os mesmos produtos a quem vê o cadastro, o relatório não tem custo nem dado de loja (o código de barras é
+       da empresa), e uma permissão nova ficaria desligada nos perfis já gravados até alguém marcá-la. A exportação
+       (`provedorEanDuplicado` na rota comum do F2-B29, decisão 177; `Relatorio_EAN_Duplicado_DD_MM_AAAA_HH_MM`) exige
+       também `relatorios.exportar` e sai com uma linha por código × produto (o código repetido em cada linha, para a
+       planilha filtrar e ordenar); auditoria `exportar` em `produtos_codigos_barras`, "Relatórios › EAN duplicado".
+     - Só leitura: corrigir é editar o produto (o formulário e a regra da decisão 38 continuam iguais), e o par sai do
+       relatório na próxima consulta. Volume: o catálogo da Ice Beer tem dezenas de milhares de códigos, não milhões; a
+       consulta não precisa de carga própria.
+     - Testes: `relatorio-ean-duplicado.test.ts` (3 produtos e 2 códigos repetidos — um no fardo de um e no principal de
+       outro, inativo —, o interno repetido e o produto excluído fora, os filtros, a página depois da última com o
+       total, 422 dos filtros, `produtos.ver` sim e o financeiro 403, a exportação `.xlsx` e `.csv`, o EXPLAIN pelo
+       índice e a correção de dois produtos zerando o relatório com o `modo` de volta a "bloquear");
+       `relatorios.spec.ts` no shared (os filtros e a página).
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

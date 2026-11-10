@@ -2066,7 +2066,8 @@ migração do Nuvem3 pode trazer duplicados; com duplicidade, o PDV mostra a lis
   já existente em outro produto (checagem com `select … for update` no índice).
 - **Importação/migração do Nuvem3**: a importação de planilha e a migração de dados aceitam duplicados mesmo com
   `bloquear` e terminam com o relatório "EAN duplicado" (`group by codigo having count(distinct produto_id) > 1`)
-  para correção. Enquanto a empresa corrige, pode ligar `avisar` (o ERP pede confirmação e grava); a recomendação é
+  para correção (`GET /relatorios/ean-duplicado`, ERP 16.3.1, F2-B38: só o tipo `gtin`, a linha de código e o produto
+  não excluídos, o inativo incluído, agrupado pelo `ix_produtos_codigos_barras_codigo`). Enquanto a empresa corrige, pode ligar `avisar` (o ERP pede confirmação e grava); a recomendação é
   voltar a `bloquear` quando o relatório zerar. O valor `permitir` não existe.
 
 #### 3.6.6 Variações

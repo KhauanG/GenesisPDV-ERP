@@ -621,7 +621,7 @@ Correspondência com o Nuvem3 (seção 1.3 do levantamento) + o que acrescentamo
 | | Reforço de caixa | `/vendas/reforcos` · `/:id` | Consulta.aspx?id=63 | `movimentos_caixa.ver` | P3 |
 | | Sangria | `/vendas/sangrias` · `/:id` | Consulta.aspx?id=61 · Sangria.aspx | `movimentos_caixa.ver` | P3 |
 | | Vendas | `/vendas` · `/vendas/nova` · `/vendas/:id/:aba` | Consulta.aspx?id=13 · Venda.aspx | `vendas.ver` | P3 |
-| RELATÓRIOS | Produtos: Produtos geral · Histórico de produtos · NCMs inválidos | `/relatorios/produtos-geral` · `/relatorios/historico-produtos` · `/relatorios/ncm-invalidos` | RelatProduto*.aspx | `relatorios.<nome>` | P2 |
+| RELATÓRIOS | Produtos: Produtos geral · Histórico de produtos · NCMs inválidos · **EAN duplicado (Novo, 16.3.1)** | `/relatorios/produtos-geral` · `/relatorios/historico-produtos` · `/relatorios/ncm-invalidos` · `/relatorios/ean-duplicado` | RelatProduto*.aspx | `relatorios.<nome>` (o EAN duplicado: `produtos.ver`) | P2 |
 | | Estoque: Estoque Atual · Movimentação | `/relatorios/estoque-atual` · `/relatorios/movimentacao-estoque` | RelatEstoqueAtual · RelatMovimentacaoEstoque | idem | P2 |
 | | Financeiro: Financeiro geral · Fechamento de caixa · Sangria/Reforço | `/relatorios/financeiro-geral` · `/relatorios/fechamento-caixa` · `/relatorios/sangria-reforco` | RelatFinanceiro · RelatFechamentoCaixa · RelatSangriaReforco | idem | P5 |
 | | Vendas: Comissão · Evolução gráfico · Produtos x Clientes · Produtos x Vendedor · Produtos vendidos · Recibos x Cupons · Vendas geral · Por forma de pagamento | `/relatorios/comissao` · `/relatorios/evolucao-vendas` · `/relatorios/produtos-clientes` · `/relatorios/produtos-vendedor` · `/relatorios/produtos-vendidos` · `/relatorios/recibos-cupons` · `/relatorios/vendas-geral` · `/relatorios/vendas-forma-pagamento` | RelatVendas*.aspx | idem | P5 |
@@ -1266,7 +1266,7 @@ Regras:
 
 | Regra | Detalhe |
 |---|---|
-| EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório e filtro "EAN duplicado" sempre disponíveis |
+| EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório (16.3.1) e filtro "EAN duplicado" sempre disponíveis |
 | Alteração de preço | Grava auditoria com antes/depois e alimenta o histórico de preços (`produtos_historico_precos`: produto, loja, tipo de preço, valor anterior, novo, usuário, data) **(Novo)** |
 | Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV |
 | Sincronização | Segue o **modelo 6.2** (fluxo `catalogo`): descem **todos** os produtos, ativos e inativos (o PDV filtra `ativo` e `produtos_lojas.ativo_na_loja`), com as filhas (`produtos_codigos_barras`, variações, componentes, complementos, lotes…), `produtos_lojas` e `produtos_precos_quantidade` da loja do terminal, sem custo, markup, `descricao_longa`, preços de menu digital/iFood e dimensões; foto como `foto_url`. O saldo vai no fluxo `estoque` (`saldos_estoque` do estoque vinculado, tipos vendáveis) |
@@ -4189,6 +4189,26 @@ Visão da auditoria (17) filtrada às entidades de produto (`produtos` e sub-tab
 Colunas: Produto, Código interno, EAN, NCM atual, **Motivo (Novo)** (vazio, inexistente, fora de vigência, CEST
 incompatível), Ação **Editar**. Ação em lote **(Novo)**: selecionar produtos → **Definir NCM** (abre `<BuscaNcm>`),
 com auditoria por produto.
+
+#### 16.3.1 EAN duplicado (Novo) [P2]
+
+**Rota**: `/relatorios/ean-duplicado` · **Permissão**: `produtos.ver` (o mesmo de quem vê o filtro "EAN duplicado" da
+listagem, 8.1); exportar exige também `relatorios.exportar`. Fase 2, F2-B38; README da API › decisão 184, do ERP ›
+decisão 72.
+
+Os códigos de barras `gtin` em mais de um produto não excluído (MD 3.6.5: `group by codigo having count(distinct
+produto_id) > 1`, pelo `ix_produtos_codigos_barras_codigo`), o que a importação e a migração do Nuvem3 deixam para
+corrigir. O produto inativo conta (também trava o cadastro do mesmo EAN); o código `interno` e o produto excluído não.
+
+| Filtros | EAN (começo do código); Produto (nome, código interno ou EAN de algum produto do código: o código vem com todos) |
+|---|---|
+| Colunas | EAN, Produtos (quantos), Produtos com o EAN (código e nome com o link **Editar**, a variação, a Ref. interna, "EAN principal" ou a embalagem com o fator, "Inativo") |
+| Cards | EAN repetidos (o total com os filtros); Regra de agora (`geral.ean_duplicado`: Avisar/Bloquear) |
+| Exportação | uma linha por código × produto (EAN, Produtos no EAN, Código, Ref. Interna, Produto, Variação, Marca, EAN principal, Embalagem, Fator, Unidade, Ativo) |
+| Atalho | o botão "Relatório de EAN duplicado" na listagem de produtos com o filtro "EAN duplicado" |
+
+Corrigir o produto (tirar o código repetido ou trocar pelo certo) tira o par do relatório; quando ele zerar, a empresa
+volta `geral.ean_duplicado` de `avisar` para `bloquear` (a nota da tela leva a Configurações › Geral).
 
 ### 16.4 Estoque Atual [P2]
 

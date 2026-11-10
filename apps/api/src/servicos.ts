@@ -17,6 +17,7 @@ import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
 import { AtivacaoTerminais } from './sync/ativacao.js';
 import { CRON_TAREFAS_INTERROMPIDAS, VarreduraTarefasInterrompidas } from './tarefas/interrompidas.js';
 import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
+import { provedorEanDuplicado } from './relatorios/ean-duplicado.js';
 import { provedorEstoqueAtual } from './relatorios/estoque-atual.js';
 import { provedorMovimentacao } from './relatorios/movimentacao.js';
 import { TarefasSegundoPlano } from './tarefas/tarefas.js';
@@ -174,9 +175,10 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
   const notasEntrada = new NotasEntrada({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   const exportacoes = new ExportacaoRelatorios({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   // Os relatórios exportáveis pela rota comum (F2-B29): o Estoque Atual (F2-B31, decisão 178) e a Movimentação de
-  // Estoque, nas duas visões (F2-B33, decisão 180).
+  // Estoque, nas duas visões (F2-B33, decisão 180), e o EAN duplicado (F2-B38, decisão 184).
   exportacoes.registrar(provedorEstoqueAtual());
   exportacoes.registrar(provedorMovimentacao());
+  exportacoes.registrar(provedorEanDuplicado());
   const terminalAuth = new AutenticacaoTerminal(controle, resolvedor);
   const ativacao = new AtivacaoTerminais(controle, resolvedor, tenancy, auditoria, cifra);
   const manutencaoTerminais = new ManutencaoTerminais(controle, resolvedor, tenancy, auditoria, ativacao);

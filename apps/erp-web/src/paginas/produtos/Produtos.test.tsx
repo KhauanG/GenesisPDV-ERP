@@ -526,6 +526,22 @@ describe('<ListaProdutos> (ERP 8.1)', () => {
     expect(screen.getByText('7891149103102')).toBeInTheDocument();
     expect(screen.getByText('R$ 3,49')).toBeInTheDocument();
     expect(screen.queryByText('Preço custo')).toBeNull();
+    // Sem o filtro "EAN duplicado", sem o atalho do relatório.
+    expect(screen.queryByRole('link', { name: 'Relatório de EAN duplicado' })).toBeNull();
+  });
+
+  it('com o filtro "EAN duplicado", o atalho para o relatório (F2-B38)', async () => {
+    simularApi(
+      ...rotasSessao({ permissoes: ['produtos.ver', 'marcas.ver', 'categorias.ver'], lojas: LOJAS }),
+      ...referencias,
+      ({ url }) =>
+        url.pathname === '/api/produtos'
+          ? { corpo: { itens: [], total: 0, pagina: 1, tamanho: 20 } }
+          : undefined,
+    );
+    renderizar('/produtos?situacaoCadastro=ean_duplicado');
+    const atalho = await screen.findByRole('link', { name: 'Relatório de EAN duplicado' });
+    expect(atalho).toHaveAttribute('href', '/relatorios/ean-duplicado');
   });
 });
 

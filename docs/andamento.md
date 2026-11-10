@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 10/11/2026 (PR-9 em andamento: F2-B37 commitado; PR-7 e PR-8 implantados em 10/11/2026 e release `pdv-v0.11.0` publicado; falta a Implantação com `publicar_pdv` e atualizar os caixas; regra do bucket aplicada)._
+_Última atualização: 10/11/2026 (PR-9 em andamento: F2-B37 e F2-B38 commitados; PR-7 e PR-8 implantados em 10/11/2026, release `pdv-v0.11.0` publicado e na página de download; falta atualizar os caixas das lojas; regra do bucket aplicada)._
 
 ## Repositório
 
@@ -92,24 +92,24 @@ _Última atualização: 10/11/2026 (PR-9 em andamento: F2-B37 commitado; PR-7 e 
 | Bloco | Situação |
 |---|---|
 | F2-B37 histórico de preços: consulta e modal no produto (API: `GET /produtos/:id/historico-precos` em `apps/api/src/produtos/historico-precos.ts` — filtros tipo, loja (ou `geral`) e período nos dias do fuso da empresa, página com o total, a mais recente primeiro, a loja, a variação, o intervalo da faixa, o documento (recebimento pelo código, NF-e pelo número) e o usuário; sem `produtos.ver_custo` o `custo` fica fora e o filtro dele é 403, a linha de loja fora das permitidas fica fora e o filtro dela é 403; `registrarHistoricoPrecos` grava também o tipo `quantidade` (faixa criada, removida ou com o preço trocado, pelo diff do banco antes × depois do "Gravar", com o `origem_id` = a faixa, de onde sai o intervalo) e o `venda`/`custo` das variações com a `variacao_id` (o formulário ainda não edita variação, F2-B48); contratos `historicoPrecosQuerySchema`, `HistoricoPrecoProduto`, `TIPOS_PRECO_HISTORICO` e os rótulos no shared; ERP: botão "Histórico de preços" no formulário abrindo `ModalHistoricoPrecos` (`apps/erp-web/src/paginas/produtos/HistoricoPrecos.tsx`), com a variação em %, a faixa e o link do documento; **sem migração**; PDV sem mudança; README da API › decisão 183, do ERP › 71) | **commitado** |
+| F2-B38 relatório de EAN duplicado (API: `GET /relatorios/ean-duplicado` em `apps/api/src/relatorios/ean-duplicado.ts` — os códigos `gtin` em mais de um produto não excluído (`group by codigo having count(distinct produto_id) > 1`, a regra do trigger e do filtro da listagem: o produto inativo conta, o `interno` e o excluído não; o mesmo código no pai e numa variação do mesmo produto não é repetição), página pelos códigos com o total e os produtos de cada um (código, nome, Ref. interna, marca, variação, EAN principal ou embalagem com o fator, ativo) numa segunda leitura, o `geral.ean_duplicado` de agora (`modo`), filtros `ean` (começo) e `nome` (pelo grupo, o código vem com todos os produtos), o agrupamento pelo `ix_produtos_codigos_barras_codigo` (EXPLAIN no teste); permissão `produtos.ver` (a mesma do filtro da listagem; sem permissão nova nos perfis); provedor de exportação `ean-duplicado` (uma linha por código × produto, `Relatorio_EAN_Duplicado_…`); contratos `filtrosEanDuplicadoSchema`, `consultaEanDuplicadoSchema`, `RespostaEanDuplicado` no shared; ERP: `apps/erp-web/src/paginas/relatorios/EanDuplicado.tsx` no `<Relatorio>` (gera ao abrir, link Editar de cada produto, cards "EAN repetidos" e "Regra de agora", a nota para voltar a "Bloquear" com o link de Configurações › Geral), rota, item em Relatórios › Produtos e o botão "Relatório de EAN duplicado" na listagem com o filtro "EAN duplicado"; ERP 16.3.1 nova na especificação; **sem migração**; PDV sem mudança; README da API › decisão 184, do ERP › 72) | **commitado** |
 
 ## Próximo passo
 
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
-2. **Implantar o PR-7 e o PR-8 juntos (dono), nesta ordem:** (a) workflow **Implantação** na `main` (commit
-   `4edc0d6` ou mais novo, CI verde), aprovando o environment `producao`. A migração **0026** cria os dois índices do
-   razão com `concurrently` antes da transação (segundos no volume de hoje, sem travar as vendas); (b) **PDV release**
-   na `main` com "publicar" (tag `pdv-v0.11.0`); (c) Implantação de novo com `publicar_pdv`; (d) atualizar os caixas
-   das lojas e testar no caixa real (recusa da variação, produto com complementos vendendo, F4 com e sem cabo,
-   pesquisa F2). Permissões das telas novas do PR-7: `relatorios.estoque_atual`, `relatorios.movimentacao_estoque`,
-   `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar` (ajuste no clique). A regra
-   `AbortIncompleteMultipartUpload` do bucket **já foi aplicada** (10/11/2026, as quatro regras; `infra/producao/README.md`
-   › Backup). A versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+2. **PR-7 e PR-8 em produção (10/11/2026):** Implantação de `4edc0d6` (migração **0026**), release `pdv-v0.11.0` e a
+   Implantação com `publicar_pdv` (o instalador 0.11.0 na página de download), todos verdes. **Falta (dono):**
+   atualizar os caixas das lojas e testar no caixa real (recusa da variação, produto com complementos vendendo, F4 com
+   e sem cabo, pesquisa F2); dar as permissões das telas novas do PR-7 (`relatorios.estoque_atual`,
+   `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar`). A regra
+   `AbortIncompleteMultipartUpload` do bucket já foi aplicada (10/11/2026; `infra/producao/README.md` › Backup). A
+   versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
 3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
-   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 commitado; o próximo é
-   o F2-B38 (relatório de EAN duplicado).
-4. Numeração das próximas decisões nos READMEs: **API 184**, **ERP 72**, **PDV 85** (confira o último número no próprio
+   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 commitado e F2-B38
+   implementado; o próximo é o F2-B39 (cadastro em massa por estoque). Quando o relatório de EAN duplicado zerar na
+   Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano).
+4. Numeração das próximas decisões nos READMEs: **API 185**, **ERP 73**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D65** (D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;

@@ -37,6 +37,7 @@ import { FormularioProduto } from './paginas/produtos/FormularioProduto';
 import { FormularioGrupoPreco, ListaGruposPreco } from './paginas/produtos/GruposPreco';
 import { ListaProdutos } from './paginas/produtos/ListaProdutos';
 import { FormularioRestricaoHorario, ListaRestricoesHorario } from './paginas/produtos/RestricoesHorario';
+import { EanDuplicado, ROTA_EAN_DUPLICADO } from './paginas/relatorios/EanDuplicado';
 import { EstoqueAtual, ROTA_ESTOQUE_ATUAL } from './paginas/relatorios/EstoqueAtual';
 import { MovimentacaoEstoque, ROTA_MOVIMENTACAO_ESTOQUE } from './paginas/relatorios/MovimentacaoEstoque';
 import { FormularioUsuario } from './paginas/usuarios/FormularioUsuario';
@@ -315,6 +316,14 @@ export const rotas: RouteObject[] = [
                 element: (
                   <ExigePermissao permissao="relatorios.estoque_atual">
                     <EstoqueAtual />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_EAN_DUPLICADO,
+                element: (
+                  <ExigePermissao permissao="produtos.ver">
+                    <EanDuplicado />
                   </ExigePermissao>
                 ),
               },
