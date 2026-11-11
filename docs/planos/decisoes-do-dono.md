@@ -200,3 +200,21 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   caveman encurta as respostas (o contrário do que o dono pede), a memória do projeto já é o `andamento.md` e este
   arquivo (versionados; as sessões na nuvem são descartáveis e o repositório é público) e as diretrizes de código já
   estão cobertas pelo processo de bloco.
+
+## Documento da venda na fase fiscal (11/11/2026)
+
+- **D67 — RESPONDIDA: as três situações ("As três opções são ótimas para se ter").** Vale para a fase fiscal (3F);
+  nada muda antes dela.
+  1. **Loja de regime dispensado da NFC-e** (no PR, o MEI: Res. SEFA 145/2015, art. 7º;
+     `parametros_fiscais_uf.regime_dispensa_nfce`): o padrão é o comprovante "Não fiscal", com uma tecla no caixa
+     para **emitir a NFC-e só para o cliente que pedir**. A opção só aparece em loja desse regime: em loja obrigada o
+     ERP não deixa ligar.
+  2. **Loja obrigada a emitir:** a NFC-e sai em **toda venda**, em segundo plano. O CPF na nota só entra quando o
+     cliente pede (F5), e a impressão segue a forma mais curta que a UF permitir. **Não existe "venda sem nota"** em
+     loja obrigada: o dono perguntou pela nota só a pedido também nessas lojas, e foi explicado que isso é omissão de
+     receita (Lei 8.137/1990, art. 1º, V).
+  3. **Cliente PJ:** NF-e modelo 55 a pedido (`nfe_solicitada`, especificação do PDV, Fase 6).
+  - Para o dono, antes da fase fiscal: confirmar com o contador o regime de cada CNPJ da Ice Beer e se os produtos com
+    ICMS-ST e PIS/COFINS monofásico estão sendo separados no DAS.
+  - Roadmap §16, D67; especificação do PDV › 18.
+

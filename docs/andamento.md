@@ -123,7 +123,7 @@ _Última atualização: 11/11/2026 (PR-9 em andamento: F2-B37 a F2-B41 commitado
    o dono libera `produtos.cadastro_massa` a quem cadastra (o Gerente já tem; o Estoquista não) e confirma o limite
    de 100 linhas por gravação (D65; a especificação dizia 500).
 4. Numeração das próximas decisões nos READMEs: **API 188**, **ERP 76**, **PDV 85** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D67** (D66 registrada no F2-B40 como "vale a
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 aberta no F2-B39: 100 linhas por gravação do cadastro em massa, padrão até a confirmação do dono; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;

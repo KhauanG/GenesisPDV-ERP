@@ -2494,6 +2494,11 @@ parâmetros; seção 13, as perguntas ao contador e à SEFA-PR).
 | Alíquota interna, FCP, ST/MVA/pauta por NCM | Cadastro: `produtos` + `produtos_tributacao_uf` (vale na nota); referência da UF para sugerir/validar no ERP: `regras_icms_uf`, `pautas_st_uf` | 18.2 |
 | Tributos aproximados | `ncms_ibpt` (por NCM e UF) | 18.2 |
 
+**Documento por regime da loja (D67, dono, 11/11/2026).** (1) Loja de regime dispensado da NFC-e (no PR, o MEI;
+`parametros_fiscais_uf.regime_dispensa_nfce`): o padrão é o Não fiscal, com uma tecla para emitir a NFC-e do cliente que
+pedir. A opção só é oferecida nesse regime. (2) Loja obrigada: toda venda sai com NFC-e (17), com o CPF opcional (14.1).
+(3) Cliente PJ: NF-e a pedido (`nfe_solicitada`). Detalhes de tela e de chave ficam para a fase fiscal (3F).
+
 ### 18.1 Não fiscal — Fase PDV-1
 
 - Imprime o **Comprovante de venda** (seção 19.2) com a frase obrigatória "**NÃO É DOCUMENTO FISCAL**" no topo e no
