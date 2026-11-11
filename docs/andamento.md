@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do dono: F2-B37 a F2-B42 e a revisão de segurança do PR inteiro (D63) commitados, com a lista oficial do CEST pendente; PR-7 e PR-8 implantados em 10/11/2026, release `pdv-v0.11.0` publicado e na página de download; falta atualizar os caixas das lojas; regra do bucket aplicada)._
+_Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a liberação do dono, falta implantar; PR-10 "Arquivos, imagens e protocolo do PDV" iniciado no F2-B43; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -54,8 +54,9 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
-| PR-9 catálogo operacional | B37–B42 | **aberto (#7), aguardando a liberação do dono**; revisão de segurança do PR inteiro (D63) feita: 1 achado médio (prévia de clientes sem `pessoas.ver`) corrigido em `7fd9b8e` |
-| PR-10 em diante | | não iniciados |
+| PR-9 catálogo operacional | B37–B42 | concluído (#7, juntado em 11/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: 1 achado médio corrigido em `7fd9b8e`); **falta implantar** (sem migração, sem release do PDV) |
+| PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9); release R2 do PDV |
+| PR-11 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -87,6 +88,14 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
 | F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
 
+### PR-10 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B43 envio de arquivos e imagens, com a variante `pdv_256` | em andamento |
+| F2-B44 foto e imagens do produto, categorias e marcas completas | a fazer |
+| F2-B45 protocolo do PDV: `/sync/arquivos`, `foto_url` estável e as tabelas de complementos (F2-Q1 = D43: complementos sim), numa só volta de cursor | a fazer |
+
 ### PR-9 — blocos
 
 | Bloco | Situação |
@@ -109,21 +118,23 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
    `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar`). A regra
    `AbortIncompleteMultipartUpload` do bucket já foi aplicada (10/11/2026; `infra/producao/README.md` › Backup). A
    versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
-3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
-   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 a F2-B40
-   commitados (F2-B40: exportação de produtos de ida e volta); F2-B41 (Produtos geral e NCMs inválidos)
-   commitado; F2-B42 (Histórico de produtos) commitado, o último bloco do PR-9; a revisão de segurança do PR
-   inteiro (D63) achou 1 problema médio, corrigido (`7fd9b8e`), e o **PR-9 está aberto (#7)**, aguardando a liberação do dono. **Pendente do F2-B41**: a lista oficial do CEST
-   (Convênio ICMS 142/2018 e alterações, CONFAZ) não entrou — a sessão não conseguiu baixá-la; o
-   `apps/api/src/database/referencias/cests.csv` está só com o cabeçalho e, até a carga, o motivo "CEST incompatível"
-   não aparece. Quem tiver acesso converte os anexos para o formato da decisão 187 da API, anota a fonte e a data no
-   README e roda `db:referencias` (nunca linhas inventadas). **Pendente do F2-B40 (critério de pronto)**: a ida e volta com a planilha real da Ice Beer ainda
-   **não foi conferida** (a sessão não tinha o arquivo; só a massa inventada rodou). Antes do merge do PR-9, quem
-   testa põe o arquivo em `apps/api/test/fixtures/planilhas/reais/` (fora do Git), roda o `exportacao-catalogo.test.ts`
-   e registra aqui o resultado (100% "Sem alteração" ou o que divergiu). Quando o relatório de EAN
-   duplicado zerar na Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano). Para o cadastro em massa,
-   o dono libera `produtos.cadastro_massa` a quem cadastra (o Gerente já tem; o Estoquista não). O limite de 100 linhas por
-   gravação foi confirmado pelo dono em 11/11/2026 (D65, opção A; a especificação dizia 500).
+3. **PR-9 "Catálogo operacional" juntado (#7, 11/11/2026).** **Falta (dono):** Actions › Implantação na `main` com
+   a CI verde (sem migração, sem release do PDV); liberar nos cargos `produtos.cadastro_massa` (o Gerente já tem; o
+   Estoquista não), `relatorios.produtos_geral`, `relatorios.ncm_invalidos`, `relatorios.historico_produtos` e as de
+   exportar (`produtos.exportar`, `pessoas.exportar` ou `relatorios.exportar`). **Pendente do F2-B40 (critério de
+   pronto):** a ida e volta com a planilha real da Ice Beer — o dono exporta em Produtos › Exportação, importa o mesmo
+   arquivo e confere que a prévia sai toda "Sem alteração" (sem confirmar); ou, local, o arquivo em
+   `apps/api/test/fixtures/planilhas/reais/` (fora do Git) e o `exportacao-catalogo.test.ts`. Registrar aqui o
+   resultado. **Pendente do F2-B41:** a lista oficial do CEST (Convênio ICMS 142/2018 e alterações, CONFAZ) — o site
+   recusa a conexão vinda da sessão; o `apps/api/src/database/referencias/cests.csv` está só com o cabeçalho e, até a
+   carga, o motivo "CEST incompatível" não aparece. Quem tiver acesso converte os anexos para o formato da decisão 187
+   da API, anota a fonte e a data no README e roda `db:referencias` (nunca linhas inventadas). Quando o relatório de
+   EAN duplicado zerar na Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano). D65 respondida
+   (11/11/2026): 100 linhas por gravação do cadastro em massa.
+3b. **PR-10 "Arquivos, imagens e protocolo do PDV"** (F2-B43 a F2-B45; release R2 do PDV): workflow `genesis-bloco`
+   bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 em andamento. O
+   F2-B45 inclui as tabelas de complementos (F2-Q1 = D43: complementos sim) e uma única volta do cursor do `catalogo`;
+   a API vai para a produção antes do PDV.
 4. Numeração das próximas decisões nos READMEs: **API 189**, **ERP 77**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
