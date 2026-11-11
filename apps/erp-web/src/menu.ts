@@ -6,8 +6,10 @@
 export interface ItemMenu {
   rotulo: string;
   rota: string;
-  /** Permissão de acesso (`*.ver` na maioria). */
+  /** Permissão de acesso (`*.ver` na maioria); com `acesso`, é a que a tela "Sem permissão" cita. */
   permissao: string;
+  /** Acesso que não cabe numa permissão só (ex.: a Exportação, de produtos ou de clientes): vale no lugar de `permissao`. */
+  acesso?: (pode: (chave: string) => boolean) => boolean;
   fase: string;
   /** Rótulo do subgrupo dentro de RELATÓRIOS. */
   secao?: string;
@@ -21,6 +23,21 @@ export interface GrupoMenu {
   icone: 'inicio' | 'pessoas' | 'produtos' | 'cadastros' | 'estoque' | 'financeiro' | 'vendas' | 'relatorios';
   itens: ItemMenu[];
 }
+
+/**
+ * Exportação do catálogo (ERP 8.5, ERP 3.1; decisão 74): o ver do cadastro com a exportação dele ou a dos relatórios,
+ * a mesma regra da API (`garantirAcessoCadastro`).
+ */
+export function podeExportarCadastro(
+  pode: (chave: string) => boolean,
+  recurso: 'produtos' | 'pessoas',
+): boolean {
+  return pode(`${recurso}.ver`) && (pode(`${recurso}.exportar`) || pode('relatorios.exportar'));
+}
+
+/** A tela Produtos › Exportação abre para quem exporta produtos ou clientes. */
+export const podeAbrirExportacao = (pode: (chave: string) => boolean): boolean =>
+  podeExportarCadastro(pode, 'produtos') || podeExportarCadastro(pode, 'pessoas');
 
 const rel = (secao: string, rotulo: string, nome: string, fase: string): ItemMenu => ({
   secao,
@@ -69,6 +86,7 @@ export const MENU: GrupoMenu[] = [
         rota: '/produtos/cadastro-em-massa',
         permissao: 'produtos.cadastro_massa',
         fase: 'Fase 2',
+        pronto: true,
       },
       {
         rotulo: 'Categorias',
@@ -77,7 +95,14 @@ export const MENU: GrupoMenu[] = [
         fase: 'Fase 1',
         pronto: true,
       },
-      { rotulo: 'Exportação', rota: '/produtos/exportacao', permissao: 'produtos.exportar', fase: 'Fase 2' },
+      {
+        rotulo: 'Exportação',
+        rota: '/produtos/exportacao',
+        permissao: 'produtos.exportar',
+        acesso: podeAbrirExportacao,
+        fase: 'Fase 2',
+        pronto: true,
+      },
       {
         rotulo: 'Importação',
         rota: '/produtos/importacao',
@@ -296,9 +321,17 @@ export const MENU: GrupoMenu[] = [
     rotulo: 'Relatórios',
     icone: 'relatorios',
     itens: [
-      rel('Produtos', 'Produtos geral', 'produtos-geral', 'Fase 2'),
-      rel('Produtos', 'Histórico de produtos', 'historico-produtos', 'Fase 2'),
-      rel('Produtos', 'NCMs inválidos', 'ncm-invalidos', 'Fase 2'),
+      // F2-B41 (README do ERP › decisão 75).
+      { ...rel('Produtos', 'Produtos geral', 'produtos-geral', 'Fase 2'), pronto: true },
+      // F2-B42 (README do ERP › decisão 76).
+      { ...rel('Produtos', 'Histórico de produtos', 'historico-produtos', 'Fase 2'), pronto: true },
+      { ...rel('Produtos', 'NCMs inválidos', 'ncm-invalidos', 'Fase 2'), pronto: true },
+      // F2-B38 (README do ERP › decisão 72): de quem vê o cadastro, como o filtro "EAN duplicado" da listagem.
+      {
+        ...rel('Produtos', 'EAN duplicado', 'ean-duplicado', 'Fase 2'),
+        permissao: 'produtos.ver',
+        pronto: true,
+      },
       // F2-B31 (README do ERP › decisão 66).
       { ...rel('Estoque', 'Estoque Atual', 'estoque-atual', 'Fase 2'), pronto: true },
       // F2-B32 e F2-B33 (README do ERP › decisões 67 e 68): analítica, sintética, exportação e "Ver movimentação".
@@ -325,9 +358,13 @@ export const MENU: GrupoMenu[] = [
   },
 ];
 
+/** O item abre para quem tem a permissão de acesso (ou passa no `acesso`, quando o item o tem). */
+export const podeAcessar = (i: ItemMenu, pode: (chave: string) => boolean): boolean =>
+  i.acesso ? i.acesso(pode) : pode(i.permissao);
+
 /** Menu visível para quem tem estas permissões (grupos vazios somem). */
 export function menuVisivel(pode: (chave: string) => boolean): GrupoMenu[] {
-  return MENU.map((g) => ({ ...g, itens: g.itens.filter((i) => pode(i.permissao)) })).filter(
+  return MENU.map((g) => ({ ...g, itens: g.itens.filter((i) => podeAcessar(i, pode)) })).filter(
     (g) => g.itens.length > 0,
   );
 }

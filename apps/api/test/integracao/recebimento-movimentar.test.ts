@@ -128,6 +128,33 @@ const precoDaLoja = (produtoId: string) =>
     [produtoId, loja],
   );
 
+/** O Histórico de produtos (ERP 16.2; F2-B42) do produto, de ontem a hoje no fuso da empresa (o de Brasília). */
+async function historicoDoProduto(produtoId: string) {
+  const dia = (d: number) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(
+      new Date(Date.now() + d * 86_400_000),
+    );
+  const r = await amb
+    .http()
+    .get('/api/relatorios/historico-produtos')
+    .query({ produtoId, dataInicial: dia(-1), dataFinal: dia(0) })
+    .set(bearer());
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+  return r.body.itens as Array<{ localizacao: string; tipo: string; acao: string; historico: string }>;
+}
+
+/** A `descricao` da auditoria `editar` do produto gravada pela tela do recebimento. */
+const descricoesRecebimento = async (produtoId: string) =>
+  (
+    await consultar<{ descricao: string }>(
+      emp.nomeBanco,
+      `select descricao from auditoria
+        where entidade = 'produtos' and registro_id = $1 and acao = 'editar' and localizacao = 'Estoque › Recebimentos'
+        order by ocorrido_em`,
+      [produtoId],
+    )
+  ).map((l) => l.descricao);
+
 const movimentar = (id: string, corpo: Record<string, unknown> = {}, token = tokenAdmin) =>
   amb.http().post(`/api/recebimentos/${id}/movimentar`).set(bearer(token)).send(corpo);
 const estornar = (id: string, motivo: string, token = tokenAdmin, extra: Record<string, unknown> = {}) =>
@@ -517,6 +544,36 @@ describe('movimentar o recebimento (F2-B15; ERP 13.3)', () => {
         origem_id: r.id,
       },
     ]);
+    // A consulta do histórico (F2-B37) mostra a origem e o recebimento pelo código.
+    const consulta = await amb
+      .http()
+      .get(`/api/produtos/${p}/historico-precos`)
+      .query({ dataInicial: '2026-01-01' })
+      .set(bearer());
+    expect(consulta.status, JSON.stringify(consulta.body)).toBe(200);
+    expect(
+      (consulta.body.itens as Array<Record<string, unknown>>).filter((h) => h.origem === 'recebimento'),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tipoPreco: 'venda',
+          valorAnterior: '8.0000',
+          valorNovo: '8.9000',
+          documento: { id: r.id, numero: String(r.codigo) },
+        }),
+        expect.objectContaining({ tipoPreco: 'custo', documento: { id: r.id, numero: String(r.codigo) } }),
+      ]),
+    );
+    // A mudança de preço também no Histórico de produtos (F2-B42): a localização "Recebimento", o texto legível, e a
+    // `descricao` gravada com o documento e o custo só com o rótulo.
+    const doRecebimento = (await historicoDoProduto(p)).filter((l) => l.localizacao === 'Recebimento');
+    expect(doRecebimento).toHaveLength(1);
+    expect(doRecebimento[0]).toMatchObject({ tipo: 'G', acao: 'editar' });
+    expect(doRecebimento[0]!.historico).toMatch(/^Preço de custo: 4,00 → 5,10; Markup %: .+ → 74,5098; /);
+    expect(doRecebimento[0]!.historico).toContain('Preço de venda: 8,00 → 8,90');
+    expect(await descricoesRecebimento(p)).toEqual([
+      `Recebimento Nº ${r.codigo}: Preço de custo: (alterado); Markup %: (alterado); Preço de venda: 8,00 → 8,90`,
+    ]);
     // O vínculo com o fornecedor nasce com a embalagem da compra, o último custo e a data do documento.
     expect(await vinculos(p)).toEqual([
       {
@@ -677,6 +734,17 @@ describe('movimentar o recebimento (F2-B15; ERP 13.3)', () => {
       [p, loja],
     );
     expect(linhas).toEqual([{ preco_venda: '9.9000' }]);
+    // No Histórico de produtos (F2-B42): o preço da loja (nova e trocada), sem o preço geral, que não mudou.
+    expect(
+      (await historicoDoProduto(p)).filter((l) => l.localizacao === 'Recebimento').map((l) => l.historico),
+    ).toEqual([
+      'Loja Loja 1 - Centro: Preço de venda 9,50 → 9,90',
+      'Loja Loja 1 - Centro: Preço de venda — → 9,50',
+    ]);
+    expect(await descricoesRecebimento(p)).toEqual([
+      `Recebimento Nº ${r.codigo}: Dados de loja alterados`,
+      `Recebimento Nº ${r2.codigo}: Dados de loja alterados`,
+    ]);
   });
 
   it('o custo do combo recalculado pelo banco (0005) entra no histórico com a origem recebimento', async () => {

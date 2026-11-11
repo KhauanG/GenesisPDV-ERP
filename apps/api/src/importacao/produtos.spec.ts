@@ -458,3 +458,38 @@ describe('tipos sem suporte na planilha (F2-B1; D43)', () => {
     expect(v!.erros).toEqual(['Produto com variações não é criado pela planilha: cadastre a grade no ERP']);
   });
 });
+
+describe('serviço pela planilha (F2-B40)', () => {
+  it('serviço novo é criado sem controle de estoque (a regra do formulário); o já gravado fica sem alteração', () => {
+    const mapa = mapearColunas(['codigo', 'nome', 'tipo', 'preco_venda'], 'produtos');
+    const linhas: LinhaPlanilha[] = [{ numero: 2, valores: [700, 'ENTREGA TESTE', 'Serviço', 5] }];
+    const ref = referencias();
+    const [novo] = analisarProdutos(linhas, mapa.indices, ref, OPCOES);
+    expect(novo).toMatchObject({ acao: 'criar', erros: [] });
+    expect(novo!.dados.controlaEstoque).toBe(false);
+    const gravado: EstadoProduto = {
+      ...ATUAL,
+      id: PRODUTO,
+      codigo: 700,
+      nome: 'ENTREGA TESTE',
+      tipo: 'servico',
+      controlaEstoque: false,
+      precoVenda: '5.0000',
+      categoriaPrincipalId: null,
+      categorias: [],
+      codigosBarras: [],
+    };
+    const achado = { id: PRODUTO, nome: gravado.nome, tipo: 'servico', codigo: 700 };
+    const [igual] = analisarProdutos(
+      linhas,
+      mapa.indices,
+      {
+        ...ref,
+        porCodigo: new Map([[700, { ...achado, excluido: false }]]),
+        atuais: new Map([[PRODUTO, gravado]]),
+      },
+      OPCOES,
+    );
+    expect(igual).toMatchObject({ acao: 'sem_alteracao', alteracoes: [] });
+  });
+});

@@ -396,6 +396,48 @@ describe('movimentar (ERP 13.4): custo, fator, preço e vínculo aprendido', () 
     );
     expect(historico.length).toBeGreaterThanOrEqual(2);
     for (const h of historico) expect(h).toMatchObject({ origem: 'nota_entrada', origem_id: ids.nota01 });
+    // A consulta do histórico (F2-B37): a origem NF-e com o número da nota.
+    const [notaGravada] = await consultar<{ numero: number }>(
+      emp.nomeBanco,
+      'select numero from notas_entrada where id = $1',
+      [ids.nota01],
+    );
+    const consulta = await amb.http().get(`/api/produtos/${ids.cerveja}/historico-precos`).set(bearer());
+    expect(consulta.status, JSON.stringify(consulta.body)).toBe(200);
+    const daNota = (consulta.body.itens as Array<Record<string, unknown>>).filter(
+      (h) => h.origem === 'nota_entrada',
+    );
+    expect(daNota.map((h) => h.tipoPreco).sort()).toEqual(historico.map((h) => h.tipo_preco).sort());
+    for (const h of daNota)
+      expect(h.documento).toEqual({ id: ids.nota01, numero: String(notaGravada!.numero) });
+    // E no Histórico de produtos (F2-B42): a localização "NF-e" com o texto legível do preço.
+    const dia = (n: number) =>
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(
+        new Date(Date.now() + n * 86_400_000),
+      );
+    const hp = await amb
+      .http()
+      .get('/api/relatorios/historico-produtos')
+      .query({ produtoId: ids.cerveja, dataInicial: dia(-1), dataFinal: dia(0) })
+      .set(bearer());
+    expect(hp.status, JSON.stringify(hp.body)).toBe(200);
+    const daNfe = (hp.body.itens as Array<{ localizacao: string; historico: string }>).filter(
+      (l) => l.localizacao === 'NF-e',
+    );
+    expect(daNfe).toHaveLength(1);
+    expect(daNfe[0]!.historico).toContain('Preço de custo: 4,00 → 3,8847');
+    expect(daNfe[0]!.historico).toContain('Preço de venda: 8,00 → 6,50');
+    const [audPreco] = await consultar<{ descricao: string }>(
+      emp.nomeBanco,
+      `select descricao from auditoria
+        where entidade = 'produtos' and registro_id = $1 and acao = 'editar' and localizacao = 'Estoque › Recebimento de NFe'`,
+      [ids.cerveja],
+    );
+    expect(audPreco!.descricao).toMatch(
+      new RegExp(
+        `^NF-e Nº ${notaGravada!.numero}: Preço de custo: \\(alterado\\); .*Preço de venda: 8,00 → 6,50`,
+      ),
+    );
 
     // O vínculo aprendido: fornecedor + cProd → produto, fator e uCom, com o custo e a data da emissão.
     expect(await vinculos(ids.cerveja)).toEqual([
@@ -523,8 +565,9 @@ describe('movimentar (ERP 13.4): custo, fator, preço e vínculo aprendido', () 
       depois: { fornecedores: unknown[] };
     }>(
       emp.nomeBanco,
+      // A do vínculo movido (a do preço que a nota mudou, F2-B42, tem o `nome` no `depois`).
       `select descricao, antes, depois from auditoria
-        where entidade = 'produtos' and registro_id = $1 and acao = 'editar'`,
+        where entidade = 'produtos' and registro_id = $1 and acao = 'editar' and not depois ? 'nome'`,
       [ids.agua],
     );
     expect(audAgua).toHaveLength(1);
@@ -669,7 +712,8 @@ describe('movimentar (ERP 13.4): custo, fator, preço e vínculo aprendido', () 
     const auds = await consultar<{ registro_id: string; descricao: string }>(
       emp.nomeBanco,
       `select registro_id, descricao from auditoria
-        where entidade = 'produtos' and acao = 'editar' and registro_id = any($1) order by descricao`,
+        where entidade = 'produtos' and acao = 'editar' and registro_id = any($1) and not depois ? 'nome'
+        order by descricao`,
       [[ids.cerveja, ids.refri]],
     );
     expect(auds.map((a) => a.descricao)).toEqual([

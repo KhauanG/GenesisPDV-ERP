@@ -238,6 +238,22 @@ describe('importação de produtos (ERP 8.6)', () => {
       { tipo_preco: 'custo', valor_novo: '2.2000', origem: 'importacao' },
       { tipo_preco: 'venda', valor_novo: '3.3900', origem: 'importacao' },
     ]);
+    // A consulta do histórico (F2-B37) mostra a origem `importacao`, sem documento.
+    const consulta = await amb
+      .http()
+      .get(`/api/produtos/${existenteId}/historico-precos`)
+      .query({ loja: 'geral' })
+      .set(bearer(admin));
+    expect(consulta.status, JSON.stringify(consulta.body)).toBe(200);
+    expect(
+      (consulta.body.itens as Array<Record<string, unknown>>)
+        .filter((h) => h.origem === 'importacao')
+        .map((h) => ({ tipo: h.tipoPreco, novo: h.valorNovo, documento: h.documento }))
+        .sort((a, b) => String(a.tipo).localeCompare(String(b.tipo))),
+    ).toEqual([
+      { tipo: 'custo', novo: '2.2000', documento: null },
+      { tipo: 'venda', novo: '3.3900', documento: null },
+    ]);
     // EAN duplicado gravado (migração) e o inválido como código interno.
     const codigos = await consultar<{ codigo: string; tipo: string; nome: string }>(
       emp.nomeBanco,
@@ -383,7 +399,7 @@ describe('importação de produtos (ERP 8.6)', () => {
 });
 
 describe('importação de clientes (ERP 8.6)', () => {
-  it('cria pelo CPF, avisa documento inválido e cidade não encontrada; reimportar atualiza', async () => {
+  it('cria pelo CPF, avisa documento inválido e cidade não encontrada; reimportar igual fica "Sem alteração"', async () => {
     const csv = [
       'Cliente;CPF/CNPJ;Fone;E-mail;CEP;Endereço;Número;Bairro;Cidade;UF;Data Nascimento',
       'MARIA DA SILVA;529.982.247-25;(43) 99999-0000;maria@exemplo.com;86010-000;Rua Exemplo;100;Centro;Londrina;PR;15/03/1990',
@@ -436,8 +452,9 @@ describe('importação de clientes (ERP 8.6)', () => {
         cidade: 'Londrina',
       },
     ]);
+    // Os achados pelo CPF/CNPJ, iguais ao cadastro, não são gravados (decisão 103); o sem documento volta como novo.
     const p2 = await previa();
-    expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 2 });
+    expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 0, sem_alteracao: 2 });
   });
 });
 

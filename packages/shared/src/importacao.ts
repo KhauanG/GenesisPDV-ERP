@@ -24,6 +24,41 @@ export interface ColunaImportacao {
   aliases: readonly string[];
 }
 
+/**
+ * **Mapeamento provisório do Nuvem3** (F2-Q14 = roadmap §16, D66: vale a recomendação (b), sem resposta explícita do
+ * dono; README da API › decisões 95, 104 e 186). O único ponto do que ainda não foi validado com uma exportação real do
+ * Nuvem3: a coluna da balança (`UsaBalancaEtiquetadoraStr`, que veio vazia na planilha real) e o combo ("grupo de
+ * itens", que entra pela nossa coluna `composicao`). Quando os arquivos reais chegarem, só este objeto (os cabeçalhos,
+ * os textos aceitos e o formato da composição) muda: a análise da importação (`lerBalancaPlanilha`,
+ * `lerComposicao`), o reconhecimento das colunas e a exportação de ida e volta leem daqui.
+ */
+export const MAPEAMENTO_PROVISORIO_NUVEM3 = {
+  balanca: {
+    /** Cabeçalhos aceitos além de `balanca`/`Balança` (o nome do Nuvem3 e variações). */
+    aliases: [
+      'usabalancaetiquetadorastr',
+      'usabalancaetiquetadora',
+      'usa balanca etiquetadora',
+      'balanca etiquetadora',
+      'tipo balanca',
+    ],
+    /** Textos (comparados sem acento, caixa e pontuação) de cada tipo; o afirmativo genérico (`Sim`, `S`) = `peso`. */
+    peso: ['peso', 'pesavel', 'pesado', 'kg', 'balanca'],
+    unidade: ['unidade', 'unitario', 'un', 'porunidade'],
+    naoUsa: ['naousa', 'nenhum', 'nenhuma'],
+    /** O que a nossa exportação escreve (e a leitura acima reconhece): a ida e volta. */
+    rotulos: { nao_usa: 'Não usa', peso: 'Peso', unidade: 'Unidade' },
+  },
+  composicao: {
+    /** Cabeçalhos aceitos além de `composicao`/`Composição (combo)` ("grupo de itens" do Nuvem3, ERP 8.2.17). */
+    aliases: ['componentes', 'itens do grupo', 'grupo de itens', 'itens do combo', 'composicao do combo'],
+    /** Nomes do tipo que viram Combo / kit na coluna `tipo` (decisão 1 do dono: "grupo de itens" = combo). */
+    tiposCombo: ['combo', 'kit', 'grupo de itens'],
+    /** Separadores das posições: `código*qtd [rótulo] | código*qtd`. */
+    separadores: /[|;\n]+/,
+  },
+} as const;
+
 /** Layout de produtos (8.5) + nomes do Nuvem3 (Estoque Atual, Movimentação, cadastro). */
 export const COLUNAS_IMPORTACAO_PRODUTOS: readonly ColunaImportacao[] = [
   { chave: 'id', rotulo: 'Id (UUID)', aliases: ['uuid', 'idproduto_uuid'] },
@@ -124,7 +159,7 @@ export const COLUNAS_IMPORTACAO_PRODUTOS: readonly ColunaImportacao[] = [
     // Combo / kit ("grupo de itens" do Nuvem3, ERP 8.2.17): `código*qtd [rótulo]` separados por `|` ou `;`.
     chave: 'composicao',
     rotulo: 'Composição (combo)',
-    aliases: ['componentes', 'itens do grupo', 'grupo de itens', 'itens do combo', 'composicao do combo'],
+    aliases: MAPEAMENTO_PROVISORIO_NUVEM3.composicao.aliases,
   },
   // Colunas de edição em massa do Nuvem3 ("Exportar/Importar produtos"): `Excluir` marca o item para exclusão (aqui:
   // inativação), `UsaNoMenuDigital` e `UsaBalancaEtiquetadoraStr` ligam o menu digital e a balança.
@@ -137,13 +172,7 @@ export const COLUNAS_IMPORTACAO_PRODUTOS: readonly ColunaImportacao[] = [
   {
     chave: 'balanca',
     rotulo: 'Balança',
-    aliases: [
-      'usabalancaetiquetadorastr',
-      'usabalancaetiquetadora',
-      'usa balanca etiquetadora',
-      'balanca etiquetadora',
-      'tipo balanca',
-    ],
+    aliases: MAPEAMENTO_PROVISORIO_NUVEM3.balanca.aliases,
   },
 ];
 
@@ -402,19 +431,62 @@ export function lerExcluirPlanilha(valor: unknown): boolean | null {
 export type TipoBalancaPlanilha = 'nao_usa' | 'peso' | 'unidade';
 
 /**
- * Coluna de balança (`UsaBalancaEtiquetadoraStr` do Nuvem3 ou `Balança` do nosso layout): `Peso`/`Pesável`/`KG` ou um
- * afirmativo (`Sim`, `S`) = pesado na balança etiquetadora; `Unidade`/`Unitário` = vendido por unidade na balança;
- * negativo = não usa. Vazio = `null`; texto não reconhecido = `false`.
+ * Coluna de balança (`UsaBalancaEtiquetadoraStr` do Nuvem3 ou `Balança` do nosso layout), pelo mapeamento provisório
+ * (`MAPEAMENTO_PROVISORIO_NUVEM3.balanca`): `Peso`/`Pesável`/`KG` ou um afirmativo (`Sim`, `S`) = pesado na balança
+ * etiquetadora; `Unidade`/`Unitário` = vendido por unidade na balança; negativo = não usa. Vazio = `null`; texto não
+ * reconhecido = `false`.
  */
 export function lerBalancaPlanilha(valor: unknown): TipoBalancaPlanilha | null | false {
   if (valor === null || valor === undefined || (typeof valor === 'string' && !valor.trim())) return null;
+  const m = MAPEAMENTO_PROVISORIO_NUVEM3.balanca;
   const t = normalizarCabecalho(String(valor));
-  if (['peso', 'pesavel', 'pesado', 'kg', 'balanca'].includes(t)) return 'peso';
-  if (['unidade', 'unitario', 'un', 'porunidade'].includes(t)) return 'unidade';
-  if (['naousa', 'nenhum', 'nenhuma'].includes(t)) return 'nao_usa';
+  if ((m.peso as readonly string[]).includes(t)) return 'peso';
+  if ((m.unidade as readonly string[]).includes(t)) return 'unidade';
+  if ((m.naoUsa as readonly string[]).includes(t)) return 'nao_usa';
   const b = lerBooleanoPlanilha(valor);
   if (b === null) return false;
   return b ? 'peso' : 'nao_usa';
+}
+
+/** O texto da balança na exportação (`Peso`, `Unidade`, `Não usa`), que `lerBalancaPlanilha` lê de volta. */
+export function formatarBalancaPlanilha(tipo: string | null | undefined): string | null {
+  if (!tipo) return null;
+  return (MAPEAMENTO_PROVISORIO_NUVEM3.balanca.rotulos as Record<string, string>)[tipo] ?? null;
+}
+
+/** Posição do combo vinda da planilha: o componente é achado na gravação pelo código (interno, EAN ou número). */
+export interface ItemComposicao {
+  codigo: string;
+  quantidade: string;
+  rotulo: string | null;
+}
+
+/**
+ * Coluna `composicao` (ERP 8.2.17; decisão 95), pelo mapeamento provisório (`MAPEAMENTO_PROVISORIO_NUVEM3.composicao`):
+ * `7891149103102*1 | CERV-001*2 [Gelo de sabor]` — código interno, EAN ou código numérico do componente, `*` ou ` x `
+ * e a quantidade (padrão 1), rótulo opcional entre colchetes; separados por `|`, `;` ou quebra de linha. Sem
+ * alternativas: a troca de componente é cadastrada no ERP.
+ */
+export function lerComposicao(texto: string): { itens: ItemComposicao[]; erros: string[] } {
+  const itens: ItemComposicao[] = [];
+  const erros: string[] = [];
+  for (const parte of texto
+    .split(MAPEAMENTO_PROVISORIO_NUVEM3.composicao.separadores)
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    const m =
+      /^(.+?)(?:\s*\*\s*|\s+[xX×]\s+)([\d.,]+)\s*(?:\[(.*)\])?$/.exec(parte) ??
+      /^(.+?)()\s*(?:\[(.*)\])?$/.exec(parte);
+    const codigo = m?.[1]?.trim() ?? '';
+    const qtdTexto = m?.[2] ? m[2] : '1';
+    const n = lerNumeroPlanilha(qtdTexto);
+    if (!codigo || n === null || Number.isNaN(n) || !(n > 0)) {
+      erros.push(`Composição: "${parte}" inválida (use código*quantidade)`);
+      continue;
+    }
+    itens.push({ codigo, quantidade: String(n), rotulo: m?.[3]?.trim().slice(0, 60) || null });
+  }
+  return { itens, erros };
 }
 
 /** Valores decimais iguais como decimal (`2,5` = `2.50`), sem `number`; vazio só é igual a vazio. */
@@ -701,3 +773,71 @@ export function resumirLinhas(linhas: readonly LinhaPreviaImportacao[]): ResumoI
   }
   return r;
 }
+
+// ---------------------------------------------------------------- Exportação de ida e volta (F2-B40)
+
+/** Chaves dos provedores na exportação comum (F2-B29): `GET /produtos/exportacao` e `GET /pessoas/exportacao`. */
+export const EXPORTACAO_CATALOGO_PRODUTOS = 'catalogo-produtos';
+export const EXPORTACAO_CATALOGO_CLIENTES = 'catalogo-clientes';
+
+/** Acima disto a exportação do catálogo vira a tarefa do F2-B29 (ERP 8.5: "Gera tarefa acima de 5.000 linhas"). */
+export const LIMITE_EXPORTACAO_CATALOGO = 5_000;
+
+/**
+ * O cabeçalho que a exportação escreve para uma coluna do layout: o rótulo de `COLUNAS_IMPORTACAO_*` (que
+ * `mapearColunas` reconhece), para a planilha exportada voltar inteira na importação.
+ */
+export function rotuloColunaImportacao(tipo: TipoImportacao, chave: string): string {
+  const c = colunasImportacao(tipo).find((x) => x.chave === chave);
+  if (!c) throw new Error(`Coluna de importação desconhecida: ${tipo}.${chave}`);
+  return c.rotulo;
+}
+
+/** Booleano da query (`true`/`1`/`on` e `false`/`0`); vazio = o padrão. */
+const booleanoQuery = (padrao: boolean) =>
+  z.preprocess(
+    (v) =>
+      v === 'true' || v === 'on' || v === '1' || v === true
+        ? true
+        : v === 'false' || v === '0' || v === false
+          ? false
+          : v === '' || v === null || v === undefined
+            ? undefined
+            : v,
+    z.boolean('Use true ou false').default(padrao),
+  );
+
+/**
+ * Filtros da exportação de produtos (ERP 8.5). A loja (`lojaId`) dá o preço da loja, o estoque mínimo e o estoque atual
+ * (o do estoque da loja); o estoque sem loja (`estoqueId`, o CD) dá só o estoque atual; sem nenhum dos dois ("Todas"),
+ * a planilha sai sem as colunas da loja. `informacoesNf` acrescenta as colunas fiscais gravadas; `estoqueZerado`
+ * (saldo ≤ 0 no estoque) exige a loja ou o estoque. A entrada crua vai para a tarefa e é validada de novo lá.
+ */
+export const filtrosExportacaoProdutosSchema = z
+  .object({
+    lojaId: z.preprocess(vazioIndefinido, z.uuid('Loja inválida').optional()),
+    estoqueId: z.preprocess(vazioIndefinido, z.uuid('Estoque inválido').optional()),
+    informacoesNf: booleanoQuery(false),
+    ncmInvalido: booleanoQuery(false),
+    estoqueZerado: booleanoQuery(false),
+    somenteAtivos: booleanoQuery(true),
+  })
+  .superRefine((v, ctx) => {
+    if (v.lojaId && v.estoqueId)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['estoqueId'],
+        message: 'Escolha a loja ou o estoque, não os dois',
+      });
+    if (v.estoqueZerado && !v.lojaId && !v.estoqueId)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['estoqueZerado'],
+        message: 'Escolha a loja ou o estoque para o filtro de estoque zerado ou negativo',
+      });
+  });
+export type FiltrosExportacaoProdutos = z.output<typeof filtrosExportacaoProdutosSchema>;
+
+/** Filtros da exportação de clientes (ERP 8.5): as pessoas da categoria Cliente, não anonimizadas. */
+export const filtrosExportacaoClientesSchema = z.object({ somenteAtivos: booleanoQuery(true) });
+export type FiltrosExportacaoClientes = z.output<typeof filtrosExportacaoClientesSchema>;

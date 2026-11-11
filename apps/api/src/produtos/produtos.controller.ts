@@ -9,6 +9,7 @@ import {
   Post,
   Put,
   Query,
+  Res,
   type StreamableFile,
 } from '@nestjs/common';
 import {
@@ -18,9 +19,11 @@ import {
   combosMontaveis,
   criarProdutoSchema,
   dec,
+  EXPORTACAO_CATALOGO_PRODUTOS,
   exportacaoQuerySchema,
   filtroProdutosSchema,
   gerarCodigoInterno,
+  historicoPrecosQuerySchema,
   LIMITE_EXPORTACAO,
   limiteDeslocamento,
   ROTULOS_TIPO_PRODUTO,
@@ -28,7 +31,9 @@ import {
   validarGtin,
   type CriarProduto,
   type CriarProdutoEntrada,
+  type ExportacaoEmTarefa,
   type FiltroProdutos,
+  type HistoricoPrecoProduto,
   type Pagina,
   type ProdutoDetalhe,
   type ProdutoOpcao,
@@ -40,8 +45,10 @@ import {
   type VerificacaoEan,
 } from '@genesis/shared';
 import { and, count, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import type { Response } from 'express';
 import { z } from 'zod';
 import type { OrigemAcao } from '../auditoria/auditoria.service.js';
+import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, ordemDaQuery, ref } from '../comum/cadastro.js';
@@ -72,7 +79,14 @@ import { estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
-import { buscarOpcoes, detalheProduto, fornecedoresDoProduto, lotesDoProduto } from './consultas.js';
+import {
+  buscarOpcoes,
+  detalheProduto,
+  fornecedoresDoProduto,
+  lotesDoProduto,
+  precosPorLojaDoProduto,
+} from './consultas.js';
+import { paginaHistoricoPrecos } from './historico-precos.js';
 import { ncmVigente } from './ncm.js';
 import {
   conferirEanDuplicado,
@@ -80,6 +94,7 @@ import {
   gravarFornecedores,
   gravarLotes,
   gravarRelacionados,
+  precosFilhosGravados,
   registrarHistoricoPrecos,
   type RelacaoInversaCriada,
   tiposHabilitados,
@@ -294,6 +309,31 @@ export class ProdutosController {
     return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
   }
 
+  /**
+   * Exportação do catálogo de ida e volta (ERP 8.5; F2-B40, README da API › decisão 186): a planilha no layout da
+   * importação, com os filtros da tela Produtos › Exportação. Até 5.000 linhas responde o arquivo (`200`); acima, `202`
+   * com a tarefa (o ícone Tarefas). O acesso, o custo e as lojas/estoques permitidos são do provedor
+   * (`provedorCatalogoProdutos`).
+   */
+  @Permissao('produtos.ver')
+  @Get('exportacao')
+  async exportacao(
+    @Query() query: Record<string, unknown>,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile | ExportacaoEmTarefa> {
+    const r = await this.s.exportacoes.exportar(
+      sessao,
+      origemDaRequisicao(req),
+      EXPORTACAO_CATALOGO_PRODUTOS,
+      query ?? {},
+    );
+    if (r.tipo === 'arquivo') return r.arquivo;
+    res.status(202);
+    return r.tarefa;
+  }
+
   /** Busca resumida para os seletores (componente do combo, casco, membros do grupo de preço). */
   @Permissao('produtos.ver')
   @Get('busca')
@@ -382,6 +422,23 @@ export class ProdutosController {
       .consulta((db) => detalheProduto(db, id, verCusto(sessao), sessao.lojas, sessao.estoques));
     if (!d) throw ErroApi.naoEncontrado('Produto não encontrado.');
     return d;
+  }
+
+  /**
+   * Histórico de preços do produto (F2-B37; MD 3.6.10; decisão 183): quando e por que o preço e o custo mudaram, por
+   * loja, com os filtros tipo, loja e período. Sem os tipos de custo para quem não tem `produtos.ver_custo` e só as
+   * linhas das lojas permitidas (o histórico não é redigido na leitura; `historico-precos.ts`).
+   */
+  @Permissao('produtos.ver')
+  @Get(':id/historico-precos')
+  async historicoPrecos(
+    @Param('id') idBruto: string,
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<Pagina<HistoricoPrecoProduto>> {
+    const id = validar(z.uuid(), idBruto);
+    const q = validar(historicoPrecosQuerySchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaHistoricoPrecos(db, sessao, id, q));
   }
 
   /**
@@ -671,6 +728,8 @@ export class ProdutosController {
           entidade: 'produtos',
           registroId: id,
           localizacao: LOCALIZACAO,
+          // F2-B42: para o filtro "Histórico" do relatório (ERP 16.2).
+          descricao: `Produto ${antes.codigo} - ${antes.nome} excluído`,
           antes,
         });
       },
@@ -736,12 +795,14 @@ function textoBusca(d: CriarProduto, codigo: number | null) {
  * Filhas no `depois` da auditoria do produto. Os fornecedores são relidos do banco (F2-B13), no formato do `antes`
  * (`detalheProduto` com custo): sem `produtos.ver_custo` o custo do corpo é ignorado, e o corpo nunca traz o último
  * custo nem a última compra; copiar o corpo registraria mudanças que não aconteceram. Os lotes também (F2-B17): o corpo
- * traz só os lotes novos e os alterados, e o `antes` traz todos.
+ * traz só os lotes novos e os alterados, e o `antes` traz todos. E as lojas e as faixas (F2-B42): o corpo traz só as
+ * lojas permitidas de quem grava.
  */
 const filhasAuditoria = async (tx: DbEmpresa, produtoId: string, d: CriarProduto) => ({
   codigosBarras: d.codigosBarras,
-  lojas: d.lojas,
-  precosQuantidade: d.precosQuantidade,
+  // F2-B42 (decisão 188): as lojas e as faixas como ficaram, no formato do `antes`; o corpo de quem só vê algumas
+  // lojas não traz as outras, que a gravação preserva (o histórico as daria como removidas).
+  ...(await precosPorLojaDoProduto(tx, produtoId)),
   componentes: d.componentes,
   categorias: d.categorias,
   ...(d.relacionados !== undefined ? { relacionados: d.relacionados } : {}),
@@ -929,12 +990,46 @@ export interface OpcoesGravacaoProduto {
    * conhecem. Sem ele vale a sequência (`proximoCodigoProduto`, que pula os códigos já usados).
    */
   codigo?: number;
+  /**
+   * Cadastro em massa (ERP 8.3; F2-B39; README da API › decisão 185): o histórico de preços grava a origem
+   * `cadastro_massa` e a auditoria a localização "Produtos › Cadastro em massa". As regras são as do formulário (EAN
+   * duplicado pela `geral.ean_duplicado`, NCM conforme a loja), não as da importação.
+   */
+  cadastroMassa?: boolean;
+  /**
+   * O `validarNoBanco` destes mesmos dados já rodou nesta transação, com a 7300001 presa (a conferência do cadastro em
+   * massa, que junta os erros de todas as linhas antes de gravar): não repete as consultas (umas 3 por produto, com a
+   * trava presa). A troca de tipo valida mesmo assim (a conferência não confere o saldo nem as variações).
+   */
+  validado?: boolean;
+  /**
+   * A tela de onde veio a gravação, para a auditoria (ERP 16.2 "Localização"), quando não é o formulário nem o
+   * cadastro em massa: o "Definir NCM" em lote do relatório NCMs inválidos (F2-B41; decisão 187) grava "Relatórios ›
+   * NCMs inválidos". O histórico de preços fica com a origem `cadastro` (o NCM não mexe em preço).
+   */
+  localizacao?: string;
 }
 
 type DepsGravacao = Pick<Servicos, 'auditoria' | 'custoCombos'>;
 
-/** A origem do histórico de preços (F2-B15): a importação de planilha grava `importacao`; o formulário, `cadastro`. */
-const origemHistorico = (opcoes: OpcoesGravacaoProduto) => (opcoes.importacao ? 'importacao' : 'cadastro');
+/**
+ * A origem do histórico de preços (F2-B15): a importação de planilha grava `importacao`; o cadastro em massa,
+ * `cadastro_massa` (F2-B39); o formulário, `cadastro`.
+ */
+const origemHistorico = (opcoes: OpcoesGravacaoProduto) =>
+  opcoes.importacao ? 'importacao' : opcoes.cadastroMassa ? 'cadastro_massa' : 'cadastro';
+
+/** Localização da auditoria do produto: a tela de onde veio a gravação (ERP 16.2 "Localização"). */
+export const LOCALIZACAO_CADASTRO_MASSA = 'Produtos › Cadastro em massa';
+/** A da importação de planilha (F2-B42: antes ia a do formulário; o relatório também a reconhece pela origem). */
+export const LOCALIZACAO_IMPORTACAO_PRODUTOS = 'Produtos › Importação';
+const localizacaoDe = (opcoes: OpcoesGravacaoProduto) =>
+  opcoes.localizacao ??
+  (opcoes.cadastroMassa
+    ? LOCALIZACAO_CADASTRO_MASSA
+    : opcoes.importacao
+      ? LOCALIZACAO_IMPORTACAO_PRODUTOS
+      : LOCALIZACAO);
 
 /** Insere o produto com as filhas, o custo do combo, o histórico de preços e a auditoria (transação de quem chama). */
 export async function inserirProduto(
@@ -946,7 +1041,7 @@ export async function inserirProduto(
   opcoes: OpcoesGravacaoProduto = {},
 ): Promise<string> {
   garantirCriarInversa(sessao, dados);
-  await validarNoBanco(tx, dados, null, null, { ncmOpcional: opcoes.importacao });
+  if (!opcoes.validado) await validarNoBanco(tx, dados, null, null, { ncmOpcional: opcoes.importacao });
   if (opcoes.importacao) await tx.execute(sql`set local genesis.ean_duplicado_importacao = 'on'`);
   else await conferirEanDuplicado(tx, dados, null);
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
@@ -979,13 +1074,19 @@ export async function inserirProduto(
       lojas: Object.fromEntries(dados.lojas.map((l) => [l.lojaId, l.precoVenda])),
     },
     origemHistorico(opcoes),
+    // As faixas criadas com o produto (F2-B37); o produto novo não tem variação.
+    dados.precosQuantidade.length
+      ? { antes: null, depois: await precosFilhosGravados(tx, p!.id) }
+      : undefined,
   );
+  const depois = { ...p, ...(await filhasAuditoria(tx, p!.id, dados)) };
   await s.auditoria.registrar(tx, origem, {
     acao: 'criar',
     entidade: 'produtos',
     registroId: p!.id,
-    localizacao: LOCALIZACAO,
-    depois: { ...p, ...(await filhasAuditoria(tx, p!.id, dados)) },
+    localizacao: localizacaoDe(opcoes),
+    descricao: await descricaoGravacaoProduto(tx, null, depois),
+    depois,
   });
   await auditarInversas(s, tx, origem, p!.id, inversas);
   await auditarVinculosMovidos(s, tx, origem, p!.id, movidos);
@@ -1015,17 +1116,23 @@ export async function atualizarProduto(
   const antes = (await detalheProduto(tx, id, true))!;
   if (versao !== null && antes.versao !== versao)
     await conflitoVersao(tx, { ...linha, versao: antes.versao });
-  const contexto: ProdutoAntes = {
-    tipo: linha.tipo as TipoProduto,
-    temMovimento: antes.temMovimento,
-    saldoNaoZero: await saldoNaoZero(tx, id),
-    ...(linha.tipo === 'com_variacoes' && dados.tipo !== 'com_variacoes'
-      ? await situacaoVariacoes(tx, id)
-      : {}),
-  };
+  // O tipo de antes (a troca de tipo confere o saldo e as variações); sem a troca, a conferência que já rodou basta.
+  const validar = !opcoes.validado || dados.tipo !== linha.tipo;
+  const contexto: ProdutoAntes | null = validar
+    ? {
+        tipo: linha.tipo as TipoProduto,
+        temMovimento: antes.temMovimento,
+        saldoNaoZero: await saldoNaoZero(tx, id),
+        ...(linha.tipo === 'com_variacoes' && dados.tipo !== 'com_variacoes'
+          ? await situacaoVariacoes(tx, id)
+          : {}),
+      }
+    : null;
   await garantirAlterarPreco(tx, sessao, antes, dados);
+  // As faixas e as variações como estão gravadas, para o histórico das filhas (F2-B37).
+  const filhosAntes = await precosFilhosGravados(tx, id);
   garantirCriarInversa(sessao, dados);
-  await validarNoBanco(tx, dados, id, contexto, { ncmOpcional: opcoes.importacao });
+  if (contexto) await validarNoBanco(tx, dados, id, contexto, { ncmOpcional: opcoes.importacao });
   if (opcoes.importacao) await tx.execute(sql`set local genesis.ean_duplicado_importacao = 'on'`);
   else await conferirEanDuplicado(tx, dados, id);
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
@@ -1062,14 +1169,19 @@ export async function atualizarProduto(
       ]),
     },
     origemHistorico(opcoes),
+    { antes: filhosAntes, depois: await precosFilhosGravados(tx, id) },
   );
+  const depoisAuditoria = { ...depois, ...(await filhasAuditoria(tx, id, dados)) };
   await s.auditoria.registrar(tx, origem, {
     acao: 'editar',
     entidade: 'produtos',
     registroId: id,
-    localizacao: LOCALIZACAO,
+    localizacao: localizacaoDe(opcoes),
+    // F2-B42 (ERP 16.2; decisão 188): o texto legível para o filtro "Histórico", sem os valores de custo nem o que é
+    // de loja (a tela de auditoria o mostra a todos com `auditoria.ver`).
+    descricao: await descricaoGravacaoProduto(tx, antes, depoisAuditoria),
     antes,
-    depois: { ...depois, ...(await filhasAuditoria(tx, id, dados)) },
+    depois: depoisAuditoria,
   });
   await auditarInversas(s, tx, origem, id, inversas);
   await auditarVinculosMovidos(s, tx, origem, id, movidos);

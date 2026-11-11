@@ -1183,10 +1183,168 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       treino e sem custo; Não, o `F4` avisa que está desligada. Só o rótulo: o campo booleano, a gravação e a
       sobreposição por loja são os de sempre. Nenhuma tela nova no ERP.
 
+71. **Histórico de preços do produto: botão e modal no formulário** (Fase 2, F2-B37; MD 3.6.10; ERP 8.2 "Alteração de
+    preço"; README da API › decisão 183; `src/paginas/produtos/HistoricoPrecos.tsx`, `FormularioProduto.tsx`).
+    - **Botão "Histórico de preços"** nas ações do formulário (produto gravado; ao lado do Duplicar e do Histórico da
+      auditoria), abrindo um **modal** e não um bloco do acordeão: a consulta só roda com o modal aberto (`enabled`),
+      sem pesar na abertura do produto, e o formulário de 1.900 linhas não cresce.
+    - **Filtros:** Tipo (os tipos do `TIPOS_PRECO_HISTORICO`, sem "Custo" para quem não tem `produtos.ver_custo`), Loja
+      ("Geral (sem loja)" e as lojas do `/eu`, que já são só as permitidas) e o período De/Até (dias). Mudar um
+      filtro volta à primeira página; a página tem 20 linhas, com o total e a paginação.
+    - **Colunas:** data e hora, o preço (o tipo com a faixa — "6 a 11", "12 ou mais" —, a variação e a loja, ou "todas
+      as lojas" na faixa sem loja), anterior e novo ("—" quando não havia ou deixou de haver; o custo com até 4
+      casas, os preços com 2), a variação em % (`variacaoPct`, vazia sem um dos dois ou com o anterior zero), a origem
+      (o rótulo de `ROTULOS_ORIGEM_HISTORICO_PRECO`, com "nº" do documento e o link do recebimento ou da NF-e para quem
+      tem `recebimentos.ver`/`notas_entrada.ver`) e o usuário.
+    - O corte do custo e das lojas é da API; a tela não esconde linha nenhuma por conta própria.
+    - Testes: `HistoricoPrecos.test.tsx` (a faixa, a variação, o custo com 4 casas, o link da NF-e; o filtro de tipo na
+      query; trocado na página 2 de 3, a chamada volta com a página 1; sem `ver_custo` não há "Custo"; sem a
+      permissão da nota, o número sem o link).
+
+72. **Relatório de EAN duplicado e o atalho da listagem** (Fase 2, F2-B38; MD 3.6.5; ERP 8.2 "Regras", 16.3.1;
+    README da API › decisão 184; `src/paginas/relatorios/EanDuplicado.tsx`, `ListaProdutos.tsx`, `menu.ts`,
+    `rotas.tsx`).
+    - **Tela `/relatorios/ean-duplicado`** no `<Relatorio>` paginado no servidor (`pagina`, pelos códigos) com a
+      exportação pela API (Excel/CSV, uma linha por código × produto). Gera ao abrir: é leve (só os códigos repetidos)
+      e é a lista que a empresa revisita até zerar. Uma linha por código: o EAN, quantos produtos e os produtos (o link
+      "Editar" abre o produto; a variação, a Ref. interna, o selo "EAN principal" ou a embalagem com o fator, e
+      "Inativo"). Filtros: o começo do EAN e o produto (nome, código interno ou EAN: o código achado vem com todos os
+      produtos dele).
+    - **Cards**: "EAN repetidos" (o total) e "Regra de agora" (`geral.ean_duplicado`: Avisar/Bloquear), com a nota
+      "quando o relatório zerar, volte Configurações › Geral › EAN duplicado para Bloquear" (o link só para quem tem
+      `configuracoes.ver`).
+    - **Permissão `produtos.ver`** (a rota, o item do menu em Relatórios › Produtos e a API): quem vê o cadastro já vê
+      os mesmos produtos pelo filtro "EAN duplicado" da listagem. O item do menu sobrescreve a permissão
+      `relatorios.<nome>` do `rel(...)`.
+    - **Atalho**: na listagem de produtos, com o filtro "Situação de cadastro" = "EAN duplicado", o botão "Relatório de
+      EAN duplicado" ao lado do Exportar (a listagem mostra um produto por linha; o relatório agrupa os pares).
+    - Testes: `EanDuplicado.test.tsx` (as colunas, o link de editar, a embalagem com o fator, o inativo, os cards, a nota
+      com e sem `configuracoes.ver`, os filtros na query) e `Produtos.test.tsx` (o atalho só com o filtro).
+73. **Cadastro em massa por estoque: a grade, a Atualização em azul e o Gravar de uma vez** (Fase 2, F2-B39; ERP 8.3;
+    F2-Q13 = D54 (a), padrão até a confirmação do dono; README da API › decisão 185;
+    `src/paginas/produtos/CadastroEmMassa.tsx`, `src/paginas/produtos/cadastroMassa.ts`,
+    `src/componentes/grade/GradeItens.tsx` (o `destaque`), `menu.ts`, `rotas.tsx`).
+    - **Tela `/produtos/cadastro-em-massa`** (permissão `produtos.cadastro_massa`; o item do menu ficou pronto) sobre a
+      `<GradeItens>` (F9, Enter, colar do Excel: EAN, nome, custo, preço e estoque — só as colunas que a tela mostra:
+      sem `produtos.ver_custo` sai o custo e sem `estoque_acertos.criar` sai o estoque, para a colagem não preencher um
+      campo escondido que a API recusaria). **Estoque**: os estoques ativos
+      que o usuário vê (a API recusa o que ele não pode movimentar); o padrão é o da loja de contexto ou o primeiro
+      ("Todas as lojas" não escolhe o CD só por ele também não ter loja). O estoque recebe o estoque somado e dá a loja
+      do estoque mínimo; no CD a coluna fica recusada na linha.
+    - **Colunas**: EAN, Nome, Unidade (padrão UN), NCM, Marca (autocomplete; o nome que não existe mostra "nova" e é
+      criado ao gravar, com `marcas.criar`), Categoria (a árvore pelo caminho "Bebidas > Cervejas"), Preço custo e
+      Markup % (só com `produtos.ver_custo`), Preço venda, Estoque (+) (só com `estoque_acertos.criar`), Estoque mín. e
+      Situação. **Markup ⇄ preço** como no formulário: o markup refaz o preço, o preço refaz o markup, o custo refaz o
+      preço pelo markup que já está (`alterarPreco`, com `precoPeloMarkupTexto` e `markupPct` do shared).
+    - **Pesquisar EAN** (na base da empresa, sem base externa): ao sair do campo EAN, no botão (todas as linhas) e
+      depois de colar (as linhas que a colagem pôs na grade com EAN, quantas forem e de onde se colou). O código achado
+      vira **"Atualização"** (fundo azul pela prop nova `destaque` da grade, com o código do produto em link e o aviso
+      do fator quando o código é de uma embalagem) e **completa** a linha com o que está gravado: o que o usuário já
+      digitou ou colou fica (a lista nova de preços colada do Excel atualiza o produto; o markup gravado que não confere
+      com o custo e o preço colados sai da conta), só os campos vazios recebem o gravado (a unidade padrão conta como
+      vazia). O custo e o preço gravados aparecem com as 4 casas (`numeric(15,4)`: o custo de um recebimento,
+      3,4567, não vira 3,46). O EAN em mais de um produto e o de uma variação ficam com erro (o relatório de EAN
+      duplicado e o F2-B50). Trocar o estoque pesquisa de novo: os campos que ninguém mexeu recebem o gravado de agora
+      (o estoque mínimo da loja nova), o digitado fica; ao deixar de ser Atualização, só sai o que a pesquisa trouxe.
+    - **O que não mudou vai nulo**: a linha guarda os valores que a pesquisa pôs (`gravados`) e o `linhaParaApi` manda
+      nulo no campo igual a eles (o vazio mantém o gravado na API). Assim a linha só de estoque não regrava o produto
+      (sem versão nova, histórico de preço nem descida ao PDV), não arredonda o custo gravado, a Entrada sai ao custo
+      médio (o de referência sem saldo, decisão 185 da API) e não pede `produtos.editar` nem `produtos.alterar_preco`. A
+      marca que a Atualização trouxe também vai nula e não se procura na lista de marcas (quem não tem `marcas.ver`
+      não tem a lista, e a marca gravada não pode virar "inexistente" nem "nova").
+    - **Validação por linha** antes de gravar (`errosLinhaMassa`: o novo exige nome, unidade e preço, o EAN precisa da
+      pesquisa e do GTIN válido, o estoque inteiro sem fração, o mínimo só com loja); os erros da API (`linhas.N.campo`,
+      N entre as linhas preenchidas) voltam à linha e à coluna, e o "Linha N" das mensagens e do resultado (a API conta
+      só as enviadas) vira o número da grade, o da coluna "#", com as linhas vazias do meio. **Gravar** manda tudo de
+      uma vez (até `LIMITE_LINHAS_CADASTRO_MASSA` = 100 linhas, D65, confirmado pelo dono em 11/11/2026; acima, "grave em
+      partes"; o "Pesquisar EAN" aceita até 500 códigos); o EAN repetido com "avisar" pede a confirmação; o resultado
+      mostra quantos criados e atualizados, o link de cada produto e o do acerto de Entrada, e a grade volta vazia.
+      **Limpar** esvazia a grade com a confirmação.
+    - Testes: `CadastroEmMassa.test.tsx` (as contas da linha — a Atualização pela pesquisa, a pesquisa de novo do mesmo
+      produto, a linha nova limpa, markup ⇄ preço, a validação e o corpo da API com a marca existente e a nova — e a
+      tela: o EAN vira Atualização em azul ao sair do campo, a linha nova com a marca nova e o markup, o corpo do
+      Gravar, os links do resultado, os erros da API na coluna e o Limpar; e, da revisão do bloco: a linha só de estoque
+      com o cadastro nulo, o custo de 4 casas inteiro, a colagem com o EAN cadastrado que mantém os preços colados, a
+      marca gravada sem `marcas.ver`, a colagem de 2 linhas na grade nova que pesquisa, a colagem sem o acerto que não
+      preenche o estoque escondido e o "Linha N" da grade com a linha vazia no meio).
+
+74. **Exportação de produtos e clientes de ida e volta** (Fase 2, F2-B40; ERP 8.5; README da API › decisão 186;
+    `src/paginas/produtos/Exportacao.tsx`, `ExportacaoEmAndamento` exportado de `src/componentes/relatorio/Relatorio.tsx`,
+    `menu.ts`, `rotas.tsx`, `auth/RotaProtegida.tsx`).
+    - **Tela `/produtos/exportacao`** (o item do menu ficou pronto). **Acesso**: o item do menu e a rota abrem para
+      quem exporta produtos **ou** clientes (`podeAbrirExportacao`), com a regra da tela e da API
+      (`podeExportarCadastro`: o `<recurso>.ver` com o `<recurso>.exportar` ou o `relatorios.exportar`, ERP 3.1) — o
+      perfil Financeiro (`pessoas.ver` e `relatorios.exportar`, sem produtos) chega aos clientes pelo menu. Para isso o
+      `ItemMenu` ganhou o `acesso` opcional (uma regra no lugar da permissão única; `menuVisivel` e `ExigePermissao`
+      o usam, e `permissao` fica a citada no "Sem permissão", aqui `produtos.exportar`):
+      **Loja** com "Todas as lojas" (sem as colunas da loja), as lojas permitidas e os estoques sem loja (o CD, "só o
+      estoque", com `estoques.ver`); **Formato** Excel ou CSV; "Exportar informações da NF", "Com NCM inválido",
+      "Estoque zerado ou negativo" (desligado no "Todas") e "Somente ativos" (padrão Sim). O seletor ainda não mostra o
+      CNPJ de cada loja (a sessão não o traz; fica para quando o `<SeletorLoja>` o tiver).
+    - **Exportar Produtos** (com `produtos.ver` e `produtos.exportar` ou `relatorios.exportar`) e **Exportar Clientes**
+      (com `pessoas.ver` e `pessoas.exportar` ou `relatorios.exportar`; só o "Somente ativos" vale): até 5.000 linhas o
+      arquivo baixa na hora; acima, o `202` vira o aviso com o andamento e o link (o mesmo componente dos relatórios) e
+      a tarefa aparece no ícone Tarefas. A API confere de novo o acesso, a loja e o estoque permitidos, e tira o custo
+      de quem não o vê.
+    - O texto da tela lembra a ida e volta: nos produtos e nos clientes, o que não mudou fica "Sem alteração" e não é
+      gravado, e a prévia mostra o que muda (a decisão 186 da API estendeu o "Sem alteração" aos clientes); reimportar
+      o estoque pela Importação com a mesma loja (ou o mesmo estoque).
+    - Testes: `Exportacao.test.tsx` (os filtros na query com a loja, o CD como `estoqueId`, a tarefa acima do limite e o
+      Exportar Clientes só com a permissão de pessoas), o `menu.test.ts` (o item com cada combinação de permissões) e o
+      `Login.test.tsx` (Promoções como a tela "Em construção"; a Exportação sem permissão de exportar dá "Sem
+      permissão", e abre só com `pessoas.ver` e `relatorios.exportar`).
+75. **Relatórios Produtos geral e NCMs inválidos, com o "Definir NCM" em lote** (Fase 2, F2-B41; ERP 16.1, 16.3;
+    README da API › decisão 187; `src/paginas/relatorios/ProdutosGeral.tsx`, `src/paginas/relatorios/NcmInvalidos.tsx`,
+    `menu.ts`, `rotas.tsx`; os dois itens de Relatórios › Produtos ficaram prontos).
+    - **Produtos geral** (`/relatorios/produtos-geral`, `relatorios.produtos_geral`) no `<Relatorio>` paginado no
+      servidor, gerado no Filtrar: Produto (o link **Editar** e "Inativo"), Unidade, Código Interno, Código Barras,
+      Marca, NCM, Preço custo, Preço venda, Preço atacado, Lucro R$, Lucro %, Markup % (o negativo em vermelho) e
+      Departamentos; a WooComm fica escondida (Fase 7). Filtros: nome/código/EAN, marca, departamento (com os filhos),
+      **loja** (o filtro `loja` do `<Relatorio>`: começa na loja de contexto e, vazio, é o preço do produto), "Somente
+      sem preço" e situação. Os cards e a linha de totais mostram a quantidade e as **médias que a API calcula em
+      decimal** (o ERP não refaz a conta; só formata). Com `produtos.ver_custo`, os três cards de média e a linha de
+      totais seguem o mesmo critério (sem linhas, "—"); sem ela, as colunas, os cards e a nota de custo, lucro e markup
+      somem (a API já os manda nulos). Exportação Excel/CSV pela API.
+    - **NCMs inválidos** (`/relatorios/ncm-invalidos`, `relatorios.ncm_invalidos`): gera ao abrir, sem filtros, 50 por
+      página; Produto, Código interno, EAN, NCM atual (com a máscara 0000.00.00), CEST, **Motivo** (o selo com a cor e o
+      detalhe em texto da API) e a ação **Editar**; os cards por motivo, e o do CEST com "Tabela não carregada"
+      enquanto a tabela `cests` está vazia (o motivo não é conferido). Com `produtos.editar`, a **seleção de linhas** da
+      página (F2-B30) leva ao **"Definir NCM"**: o modal com o `<BuscaNcm>` e a lista dos marcados manda o NCM e a
+      versão de cada linha; o erro (versão mudada, regra do cadastro) fica no modal com a mensagem de cada produto (a
+      que não traz o produto ganha o "código - nome" do marcado pelo índice `produtos.N`; a chave da lista é a do campo,
+      sem colidir nas mensagens repetidas) e nada é gravado; no sucesso, o aviso com quantos foram gravados, a seleção limpa e o relatório gerado de novo.
+      Mais de `LIMITE_DEFINIR_NCM` (50) marcados desabilita o botão (a página tem no máximo 50).
+    - Testes: `ProdutosGeral.test.tsx` (as colunas e as médias com e sem `produtos.ver_custo`, os cards com "—" sem
+      linhas, sem a WooComm) e `NcmInvalidos.test.tsx` (os motivos e o detalhe, o Editar, o card do CEST, o "Definir
+      NCM" com as versões e o relatório gerado de novo, o erro no modal, a mensagem sem o produto identificada pelo
+      índice, sem seleção sem `produtos.editar`).
+
+76. **Relatório Histórico de produtos** (Fase 2, F2-B42; ERP 16.2; README da API › decisão 188;
+    `src/paginas/relatorios/HistoricoProdutos.tsx`, `menu.ts`, `rotas.tsx`; o item de Relatórios › Produtos ficou
+    pronto).
+    - `/relatorios/historico-produtos` (`relatorios.historico_produtos`) no `<Relatorio>` paginado no servidor, gerado
+      no Filtrar. **Período obrigatório** (padrão: do primeiro dia do mês até hoje, no fuso da empresa; até 366 dias, a
+      API recusa sem ele: a auditoria é particionada por mês). Filtros: **Histórico** (texto contido, sem acento — na
+      descrição gravada, sem os valores de custo nem os dados de loja, o que a nota da tela avisa; e no corte de quem
+      consulta: sem `produtos.ver_custo` não acha os rótulos de custo, com lojas restritas não acha o aviso de loja),
+      **Usuário** (com `usuarios.ver`), **Tipo** (a legenda G/E/R/I) e **Produto** (o `<SeletorProduto>`, com
+      `produtos.ver`).
+    - Colunas do Nuvem3 — Usuário, Tipo (o selo da letra com o significado na dica), Localização (a mapeada pela API:
+      "Cad. prod.", "Cadastro em massa", "Importação"…), Data/hora e Histórico (o texto legível) — mais o Produto (o
+      link para abrir, com `produtos.ver`; o excluído marcado e sem link) e a ação **Ver diferença**: o modal com a
+      tabela campo × antes × depois (`GET /relatorios/historico-produtos/:id?ocorridoEm=`). O texto e a tabela vêm
+      prontos da API, já no corte de quem consulta (o custo só com `produtos.ver_custo`, as lojas permitidas): o ERP
+      não recalcula nada. **Exportar** Excel/CSV pela API (`exportarPelaApi`, ERP 3.5; `relatorios.exportar`), com os
+      filtros da tela e o texto no corte de quem exporta, além do PDF/Imprimir da página aberta. A localização
+      "Recebimento"/"NF-e" mostra o preço mudado pela entrada (README da API › decisão 188); o aviso de cadastro do
+      caixa não entra (não muda o cadastro).
+    - Testes: `HistoricoProdutos.test.tsx` (as colunas, o texto, o link do produto e o excluído sem link, a legenda, o
+      período padrão na consulta, sem link sem `produtos.ver`, o modal com o `ocorridoEm` da linha, o Exportar pela
+      API com os filtros da tela).
+
 ## O que ainda não foi feito (Fase 0)
 
-Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); exportação
-em segundo plano acima de 5.000 linhas; "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
+Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
 `<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
 validade/lotes, foto e tributação por UF (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e

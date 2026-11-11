@@ -11,6 +11,7 @@ import {
   mapearColunas,
   resumirLinhas,
   ROTULOS_AVISO_IMPORTACAO,
+  type CriarPessoaEntrada,
   type CriarProdutoEntrada,
   type LinhaPreviaImportacao,
   type OpcoesImportacao,
@@ -108,6 +109,54 @@ interface Dependencias {
 }
 
 type LinhaAnalisada = LinhaProduto | LinhaCliente;
+
+/**
+ * Telefone/e-mail principal da planilha sobre os do cadastro: o que já existe (mesma chave) fica com o id e os outros
+ * campos e só ganha a marca de principal; o novo entra no fim. Os demais perdem a marca (um principal só).
+ */
+function principalDaPlanilha<T extends { principal?: boolean }>(
+  atuais: readonly T[],
+  daPlanilha: readonly T[],
+  chave: (v: T) => string,
+): T[] {
+  const principais = new Set(daPlanilha.filter((v) => v.principal).map(chave));
+  const resultado: T[] = atuais.map((v) => ({ ...v, principal: principais.has(chave(v)) }));
+  for (const v of daPlanilha) if (!resultado.some((x) => chave(x) === chave(v))) resultado.push(v);
+  return resultado;
+}
+
+type EnderecoPlanilha = NonNullable<CriarPessoaEntrada['enderecos']>[number];
+
+/**
+ * Endereço principal da planilha sobre o do cadastro: as colunas da planilha (CEP, logradouro, número, complemento,
+ * bairro, UF e cidade) sobrescrevem o principal no Brasil, que mantém o id e a referência. O principal no exterior
+ * (que a exportação não leva) não é apagado: passa a "Outro" e o da planilha entra como principal.
+ */
+function enderecoDaPlanilha<T extends EnderecoPlanilha>(
+  atuais: readonly T[],
+  daPlanilha: readonly EnderecoPlanilha[],
+): EnderecoPlanilha[] {
+  const novo = daPlanilha.find((e) => (e.tipo ?? 'principal') === 'principal');
+  if (!novo) return [...atuais, ...daPlanilha];
+  const colunas = {
+    tipo: 'principal' as const,
+    cep: novo.cep,
+    logradouro: novo.logradouro,
+    numero: novo.numero,
+    complemento: novo.complemento,
+    bairro: novo.bairro,
+    uf: novo.uf,
+    municipioIbge: novo.municipioIbge,
+  };
+  const principal = atuais.find((e) => e.tipo === 'principal' && !e.exterior);
+  return [
+    ...atuais.map((e): EnderecoPlanilha => {
+      if (e === principal) return { ...e, ...colunas };
+      return e.tipo === 'principal' ? { ...e, tipo: 'outro' } : e;
+    }),
+    ...(principal ? [] : [novo]),
+  ];
+}
 
 export class Importacoes {
   constructor(private readonly d: Dependencias) {
@@ -403,6 +452,10 @@ export class Importacoes {
             planilha.linhas,
             mapa.indices,
             await carregarReferenciasClientes(db, planilha.linhas, mapa.indices),
+            {
+              editarCredito: sessao.permissoes.has('pessoas.editar_credito'),
+              verPessoas: sessao.permissoes.has('pessoas.ver'),
+            },
           );
     // A planilha não faz o que o usuário não faria no formulário (decisão 85).
     for (const l of linhas) {
@@ -423,6 +476,9 @@ export class Importacoes {
             : 'Sem permissão para alterar pessoas ("Pessoas: Editar")',
         );
         l.acao = 'ignorar';
+        // A linha não será gravada: o "O que muda" (com os valores do cadastro) não vai para a prévia nem para o
+        // relatório de quem não poderia alterar o registro (revisão de segurança do PR-9, D63).
+        delete l.alteracoes;
       }
     }
     return { linhas, mapa };
@@ -723,20 +779,18 @@ export class Importacoes {
     const id = l.registroId!;
     const atual = await detalhePessoa(tx, id);
     if (!atual) throw ErroApi.naoEncontrado('Pessoa excluída depois da prévia.');
-    // Filhas: as da planilha substituem só quando vieram (endereço principal, telefone e e-mail principais).
-    const enderecos = l.dados.enderecos
-      ? [...atual.enderecos.filter((e) => e.tipo !== 'principal'), ...l.dados.enderecos]
-      : atual.enderecos;
+    // Filhas (a análise só deixa em `dados` as que mudaram): a da planilha vira a principal sem perder o resto do
+    // cadastro. Telefone ou e-mail que já existe só ganha a marca de principal (o registro e os outros campos ficam);
+    // o endereço principal recebe só as colunas da planilha e mantém o id, a referência e os demais campos.
     const telefones = l.dados.telefones
-      ? [...atual.telefones.map((t) => ({ ...t, principal: false })), ...l.dados.telefones].filter(
-          (t, i, todos) => todos.findIndex((x) => `${x.ddd}${x.numero}` === `${t.ddd}${t.numero}`) === i,
-        )
+      ? principalDaPlanilha(atual.telefones, l.dados.telefones, (t) => `${t.ddd ?? ''}${t.numero}`)
       : atual.telefones;
     const emails = l.dados.emails
-      ? [...atual.emails.map((m) => ({ ...m, principal: false })), ...l.dados.emails].filter(
-          (m, i, todos) => todos.findIndex((x) => x.email === m.email) === i,
-        )
+      ? principalDaPlanilha(atual.emails, l.dados.emails, (m) => m.email.toLowerCase())
       : atual.emails;
+    const enderecos = l.dados.enderecos
+      ? enderecoDaPlanilha(atual.enderecos, l.dados.enderecos)
+      : atual.enderecos;
     const r = criarPessoaSchema.safeParse({ ...atual, ...l.dados, enderecos, telefones, emails });
     if (!r.success)
       throw new ErroApi(

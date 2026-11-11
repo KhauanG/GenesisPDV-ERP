@@ -24,6 +24,9 @@
  *   segue o geral: o "só da loja" igual ao geral não fixa preço nenhum), com o markup refeito e o histórico de preços
  *   com a origem do documento (`recebimento`/`nota_entrada`) e o id dele. O custo do combo que o banco recalcula
  *   (trigger da 0005) entra no histórico com a mesma origem (`genesis.origem_preco`, migração 0006).
+ *   Os produtos com preço alterado voltam em `precosAlterados`, e quem chama grava a auditoria `editar` de cada um com
+ *   a localização da tela (`auditarPrecosEntrada`; o Histórico de produtos, ERP 16.2, os mostra como "Recebimento"
+ *   ou "NF-e"; F2-B42, decisão 188).
  *   As gravações de vários produtos vão em comandos de até 500 linhas (SYNC 6.13), na mesma transação do documento.
  *
  * Estornar (`estornarEntrada`): um estorno (`ESTORNO_RECEB_*`) de cada entrada ainda não estornada, no mesmo lote, e
@@ -47,6 +50,8 @@ import {
   type SaldoNegativoEstorno,
 } from '@genesis/shared';
 import { sql } from 'drizzle-orm';
+import type { AuditoriaService, OrigemAcao } from '../auditoria/auditoria.service.js';
+import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
 import { erroCampo } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
@@ -158,6 +163,20 @@ export interface ResultadoEntrada {
   vinculosAprendidos: number;
   /** Os vínculos fornecedor + cProd que a NF-e tirou de outro produto (para a auditoria dele, F2-B21). */
   vinculosMovidos: VinculoMovidoNfe[];
+  /** Os produtos com preço de custo, de venda geral ou da loja alterado (a auditoria de cada um, F2-B42). */
+  precosAlterados: PrecoAlteradoEntrada[];
+}
+
+/**
+ * O preço que a entrada mudou num produto, no formato do `antes`/`depois` da auditoria do produto (os campos do
+ * cadastro; o da loja na lista `lojas`, só a loja destinatária, como a diferença do cadastro a lê). O `nome`, igual
+ * dos dois lados, marca a linha como do cadastro inteiro: o Histórico de produtos monta o texto da diferença no
+ * escopo de quem consulta, em vez de mostrar a `descricao` gravada.
+ */
+export interface PrecoAlteradoEntrada {
+  produtoId: string;
+  antes: Record<string, unknown>;
+  depois: Record<string, unknown>;
 }
 
 /** Vínculo fornecedor + cProd que a NF-e tirou de **outro** produto (F2-B21), como o "mover vínculo" do cadastro. */
@@ -191,7 +210,13 @@ export async function podeAlterarPrecoNaEntrada(
   );
 }
 
-type ProdutoPreco = { id: string; nome: string; preco_custo: string; preco_venda: string };
+type ProdutoPreco = {
+  id: string;
+  nome: string;
+  preco_custo: string;
+  preco_venda: string;
+  markup_pct: string | null;
+};
 
 /** Os produtos dos itens, travados (`for update`, em ordem de id), com os preços de agora. */
 export async function lerPrecosProdutos(
@@ -199,7 +224,7 @@ export async function lerPrecosProdutos(
   produtoIds: Iterable<string>,
 ): Promise<Map<string, ProdutoPreco>> {
   const { rows } = await tx.execute<ProdutoPreco>(sql`
-    select id, nome, preco_custo::text, preco_venda::text from produtos
+    select id, nome, preco_custo::text, preco_venda::text, markup_pct::text from produtos
      where id = any(${lista(produtoIds)}::uuid[])
      order by id
        for update`);
@@ -479,21 +504,40 @@ export async function movimentarEntrada(
   const ultimo = ultimoCustoPorProduto(itens);
   const historico: LinhaHistoricoPreco[] = [];
   const alterados: Array<{ id: string; custo: string; venda: string; markup: string | null }> = [];
+  const precosAlterados: PrecoAlteradoEntrada[] = [];
   let precosCusto = 0;
   for (const [pid, p] of produtos) {
     const custoNovo = quem.atualizarPrecoCusto ? decTexto(ultimo.get(pid)!.custoUnitario, 4) : p.preco_custo;
     const vendaNova = novaGeral.get(pid) ?? p.preco_venda;
     const mudouCusto = !dec(custoNovo).eq(p.preco_custo);
     const mudouVenda = !dec(vendaNova).eq(p.preco_venda);
+    const markup = markupTexto(custoNovo, vendaNova);
     if (mudouCusto) precosCusto += 1;
-    if (mudouCusto || mudouVenda)
-      alterados.push({
-        id: pid,
-        custo: custoNovo,
-        venda: vendaNova,
-        markup: markupTexto(custoNovo, vendaNova),
-      });
+    if (mudouCusto || mudouVenda) alterados.push({ id: pid, custo: custoNovo, venda: vendaNova, markup });
     const lojaNova = novaLoja.get(pid);
+    // O preço só da loja que muda (o mesmo critério do `insert` em `produtos_lojas` abaixo).
+    const mudouLoja = lojaNova !== undefined && !dec(lojaNova).eq(lojaAntes.get(pid) ?? -1);
+    if (mudouCusto || mudouVenda || mudouLoja) {
+      const loja = (precoVenda: string | null) =>
+        mudouLoja ? { lojas: [{ lojaId: doc.lojaId, precoVenda }] } : {};
+      precosAlterados.push({
+        produtoId: pid,
+        antes: {
+          nome: p.nome,
+          precoCusto: p.preco_custo,
+          precoVenda: p.preco_venda,
+          markupPct: p.markup_pct,
+          ...loja(lojaAntes.get(pid) ?? null),
+        },
+        depois: {
+          nome: p.nome,
+          precoCusto: custoNovo,
+          precoVenda: vendaNova,
+          markupPct: mudouCusto || mudouVenda ? (markup ?? p.markup_pct) : p.markup_pct,
+          ...loja(lojaNova ?? null),
+        },
+      });
+    }
     historico.push(
       ...linhasHistoricoPrecos(
         quem.usuarioId,
@@ -602,7 +646,42 @@ export async function movimentarEntrada(
     vinculosCriados,
     vinculosAprendidos: aprendidos.gravados,
     vinculosMovidos: aprendidos.movidos,
+    precosAlterados,
   };
+}
+
+/**
+ * A auditoria do preço que a entrada mudou (F2-B42; ERP 16.2: o Histórico de produtos mostra a mudança de preço do
+ * recebimento e da NF-e, a mais comum da loja): uma linha `editar` do produto por produto alterado, com a localização
+ * da tela (`Estoque › Recebimentos` ou `Estoque › Recebimento de NFe`), o `antes`/`depois` de `PrecoAlteradoEntrada`
+ * e a `descricao` neutra da gravação do produto (`descricaoGravacaoProduto`: o custo só com o rótulo, o da loja no
+ * aviso "Dados de loja alterados") precedida do documento ("Recebimento Nº 12: Preço de venda: 9,90 → 10,90"). A
+ * linha é da empresa (sem `loja_id`, como a do cadastro): o preço da loja sai de quem não vê a loja pelo escopo.
+ * O histórico de preços (F2-B37) continua com a origem e o id do documento.
+ */
+export async function auditarPrecosEntrada(
+  auditoria: AuditoriaService,
+  tx: DbEmpresa,
+  origem: OrigemAcao,
+  documento: string,
+  localizacao: string,
+  alterados: readonly PrecoAlteradoEntrada[],
+): Promise<void> {
+  if (!alterados.length) return;
+  const registros = [];
+  for (const a of alterados) {
+    const texto = await descricaoGravacaoProduto(tx, a.antes, a.depois);
+    registros.push({
+      acao: 'editar' as const,
+      entidade: 'produtos',
+      registroId: a.produtoId,
+      localizacao,
+      descricao: texto ? `${documento}: ${texto}` : documento,
+      antes: a.antes,
+      depois: a.depois,
+    });
+  }
+  await auditoria.registrarVarios(tx, origem, registros);
 }
 
 /** Um array do Postgres em texto (`{"a","b"}`), com as aspas e as barras escapadas (o cProd vem do XML). */

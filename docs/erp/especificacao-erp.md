@@ -621,7 +621,7 @@ Correspondência com o Nuvem3 (seção 1.3 do levantamento) + o que acrescentamo
 | | Reforço de caixa | `/vendas/reforcos` · `/:id` | Consulta.aspx?id=63 | `movimentos_caixa.ver` | P3 |
 | | Sangria | `/vendas/sangrias` · `/:id` | Consulta.aspx?id=61 · Sangria.aspx | `movimentos_caixa.ver` | P3 |
 | | Vendas | `/vendas` · `/vendas/nova` · `/vendas/:id/:aba` | Consulta.aspx?id=13 · Venda.aspx | `vendas.ver` | P3 |
-| RELATÓRIOS | Produtos: Produtos geral · Histórico de produtos · NCMs inválidos | `/relatorios/produtos-geral` · `/relatorios/historico-produtos` · `/relatorios/ncm-invalidos` | RelatProduto*.aspx | `relatorios.<nome>` | P2 |
+| RELATÓRIOS | Produtos: Produtos geral · Histórico de produtos · NCMs inválidos · **EAN duplicado (Novo, 16.3.1)** | `/relatorios/produtos-geral` · `/relatorios/historico-produtos` · `/relatorios/ncm-invalidos` · `/relatorios/ean-duplicado` | RelatProduto*.aspx | `relatorios.<nome>` (o EAN duplicado: `produtos.ver`) | P2 |
 | | Estoque: Estoque Atual · Movimentação | `/relatorios/estoque-atual` · `/relatorios/movimentacao-estoque` | RelatEstoqueAtual · RelatMovimentacaoEstoque | idem | P2 |
 | | Financeiro: Financeiro geral · Fechamento de caixa · Sangria/Reforço | `/relatorios/financeiro-geral` · `/relatorios/fechamento-caixa` · `/relatorios/sangria-reforco` | RelatFinanceiro · RelatFechamentoCaixa · RelatSangriaReforco | idem | P5 |
 | | Vendas: Comissão · Evolução gráfico · Produtos x Clientes · Produtos x Vendedor · Produtos vendidos · Recibos x Cupons · Vendas geral · Por forma de pagamento | `/relatorios/comissao` · `/relatorios/evolucao-vendas` · `/relatorios/produtos-clientes` · `/relatorios/produtos-vendedor` · `/relatorios/produtos-vendidos` · `/relatorios/recibos-cupons` · `/relatorios/vendas-geral` · `/relatorios/vendas-forma-pagamento` | RelatVendas*.aspx | idem | P5 |
@@ -1266,7 +1266,7 @@ Regras:
 
 | Regra | Detalhe |
 |---|---|
-| EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório e filtro "EAN duplicado" sempre disponíveis |
+| EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório (16.3.1) e filtro "EAN duplicado" sempre disponíveis |
 | Alteração de preço | Grava auditoria com antes/depois e alimenta o histórico de preços (`produtos_historico_precos`: produto, loja, tipo de preço, valor anterior, novo, usuário, data) **(Novo)** |
 | Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV |
 | Sincronização | Segue o **modelo 6.2** (fluxo `catalogo`): descem **todos** os produtos, ativos e inativos (o PDV filtra `ativo` e `produtos_lojas.ativo_na_loja`), com as filhas (`produtos_codigos_barras`, variações, componentes, complementos, lotes…), `produtos_lojas` e `produtos_precos_quantidade` da loja do terminal, sem custo, markup, `descricao_longa`, preços de menu digital/iFood e dimensões; foto como `foto_url`. O saldo vai no fluxo `estoque` (`saldos_estoque` do estoque vinculado, tipos vendáveis) |
@@ -1280,7 +1280,9 @@ Regras:
 `marcas`, `categorias`, `saldos_estoque`, `saldos_lote`, `arquivos`.
 
 **API**: `/api/produtos` (CRUD), `POST /api/produtos/:id/duplicar`, `GET /api/produtos/verificar-ean?ean=…`,
-`POST /api/produtos/:id/variacoes/gerar`, `GET /api/ncms?busca=…`, `GET /api/produtos/:id/saldos`.
+`POST /api/produtos/:id/variacoes/gerar`, `GET /api/ncms?busca=…`, `GET /api/produtos/:id/saldos`,
+`GET /api/produtos/:id/historico-precos?tipo=&loja=&dataInicial=&dataFinal=` (botão e modal "Histórico de preços" do
+formulário, F2-B37: sem o custo para quem não tem `produtos.ver_custo` e só as lojas permitidas).
 
 ### 8.3 Cadastro em massa
 
@@ -1314,7 +1316,24 @@ Colunas da grade (`<GradeItens>`):
 Regras: validação por linha antes de gravar; **Gravar** processa tudo numa transação (ou nada); cria produtos tipo
 Simples com tributação padrão das Configurações; estoque gera um acerto "Entrada" automático com motivo "Cadastro em
 massa" e movimentos "Atualização pelo cadastro de produtos"; resultado mostra quantos criados/atualizados com link
-para cada um. Limite de 500 linhas por gravação.
+para cada um. Limite de 100 linhas por gravação (D65, confirmado pelo dono em 11/11/2026; era 500: a linha da grade
+grava várias linhas sincronizáveis e segura a trava de ordenação, MD 1.5).
+
+Implementação (F2-B39; README da API › decisão 185, do ERP › 73): o **Pesquisar EAN** procura só na base da empresa
+(F2-Q13 = D54 (a), sem base externa de GTIN até a confirmação do dono; a base externa é o F2-B47, no backlog), ao sair
+do campo EAN, no botão e depois de colar linhas; o código de uma embalagem acha o produto (o estoque é sempre na
+unidade do produto). A Atualização completa a linha com o gravado sem descartar o que foi digitado ou colado (a lista
+de preços colada atualiza o produto). Na Atualização, o campo vazio mantém o gravado, o que não mudou desde a pesquisa
+vai nulo (a linha só de estoque não regrava o produto) e a categoria digitada vira a principal. O preço
+da grade é o preço geral do produto; da loja do estoque a grade grava só o estoque mínimo (o preço próprio da loja
+continua no formulário). O EAN de
+produto novo que já está em outro produto segue a regra do formulário (`geral.ean_duplicado`: bloquear recusa,
+avisar confirma), não a da importação. As gravações exigem também as permissões do formulário (`produtos.criar` para o
+novo, `produtos.editar` para a Atualização que muda o cadastro, `marcas.criar` para a marca nova). Sem `produtos.ver_custo`
+não aparecem o custo nem o markup.
+
+**API**: `POST /api/produtos/cadastro-em-massa/pesquisar-ean` (`{ estoqueId, codigos }`) e
+`POST /api/produtos/cadastro-em-massa` (`{ estoqueId, linhas, confirmarEanDuplicado }`, uma transação).
 
 ### 8.4 Categorias
 
@@ -1349,17 +1368,22 @@ confirmação e remove apenas os vínculos (os produtos ficam).
 
 ### 8.5 Exportação
 
-**Rota**: `/produtos/exportacao` · **Permissão**: `produtos.exportar` (clientes: `pessoas.exportar`).
+**Rota**: `/produtos/exportacao` · **Permissão**: `produtos.exportar` (clientes: `pessoas.exportar`); `relatorios.exportar`
+também vale (3.1), sempre com o ver do cadastro (`produtos.ver`, `pessoas.ver`). O item do menu e a tela abrem para quem
+pode exportar produtos **ou** clientes (cada botão confere o seu). API: `GET /produtos/exportacao` e
+`GET /pessoas/exportacao` (Fase 2, F2-B40; README da API › decisão 186; README do ERP › decisão 74).
 
 | Campo | Tipo | Regra |
 |---|---|---|
-| Loja | seleção: Todas, CD, Lojas 1–3 (exibe CNPJ de cada uma) | define preço da loja, estoque e estoque mínimo exportados |
-| Exportar informações da NF | booleano | inclui colunas fiscais (NCM, CEST, CFOP, CST/CSOSN, origem, alíquotas) |
-| Com NCM inválido | booleano | só produtos com NCM vazio/inválido |
-| Estoque zerado ou negativo | booleano | só produtos com saldo ≤ 0 no estoque da loja |
-| Somente ativos **(Novo)** | booleano | padrão Sim |
+| Loja | seleção: Todas, as lojas permitidas e os estoques sem loja (o CD) | a loja define o preço da loja, o estoque mínimo e o estoque atual (o do estoque dela, se estiver entre os estoques permitidos do usuário; senão a planilha sai sem o estoque); o CD, só o estoque atual; "Todas", nenhum dos três. O CNPJ de cada loja ainda não aparece no seletor |
+| Formato **(Novo)** | Excel (`.xlsx`) ou CSV | |
+| Exportar informações da NF | booleano | inclui colunas fiscais (NCM, CEST, CFOP, CST/CSOSN, origem, alíquotas): só os valores gravados |
+| Com NCM inválido | booleano | só produtos com NCM vazio ou fora da tabela vigente (a regra do "Sem NCM" da listagem) |
+| Estoque zerado ou negativo | booleano | só produtos com saldo próprio e saldo ≤ 0 no estoque escolhido; exige a loja ou o CD |
+| Somente ativos **(Novo)** | booleano | padrão Sim (vale também para clientes); o excluído nunca sai |
 
-Botões: **Exportar Produtos**, **Exportar Clientes** (gera `.xlsx`). Gera tarefa (3.6) acima de 5.000 linhas.
+Botões: **Exportar Produtos**, **Exportar Clientes**. Gera tarefa (3.6) acima de 5.000 linhas (o link no ícone Tarefas).
+O custo e o markup só saem com `produtos.ver_custo`; a loja e o estoque fora dos permitidos são recusados.
 
 Layout da planilha de produtos (mesmo layout aceito pela importação — "ida e volta"):
 
@@ -1373,12 +1397,23 @@ Layout da planilha de produtos (mesmo layout aceito pela importação — "ida e
 | `preco_loja`, `estoque_minimo`, `estoque_atual` | da loja escolhida |
 | `ncm`, `cest`, `cfop_venda_estado`, `icms_situacao`, `icms_origem`, `icms_aliquota`, `pis_situacao`, `cofins_situacao`, `ipi_situacao` | se "Exportar informações da NF" |
 | `localizacao`, `peso_g`, `descricao_curta` | outros |
+| `usa_menu_digital`, `balanca` (`Não usa`/`Peso`/`Unidade`) **(Novo)** | menu digital e balança |
 
-Planilha de clientes: `id`, `codigo`, `tipo`, `nome`, `apelido`, `cpf_cnpj`, `rg_ie`, `nascimento`, `telefone`,
-`email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `limite_compras`, `categorias`.
+O cabeçalho de cada coluna é o rótulo que a importação reconhece ("Id (UUID)", "Código", "Código interno", "EAN"…). O
+`ean` é o código de barras principal (os demais ficam no cadastro); `categoria` é a lista dos caminhos, a principal
+primeiro, separados por vírgula sem espaço; os preços e as quantidades saem como número; os códigos fiscais, como texto
+(o zero à esquerda fica); `estoque_atual` é o saldo do tipo de estoque padrão (0 sem saldo; vazio no combo, serviço,
+produzido, com variações e sem controle de estoque). A composição do combo não é exportada (as posições são do ERP).
 
-"Ida e volta": a planilha exportada, reimportada sem mudanças, dá **Sem alteração** em todas as linhas (nada é
-gravado); editada, só as células mudadas viram **Atualizar** (8.6).
+Planilha de clientes (as pessoas da categoria Cliente, sem as anonimizadas): `id`, `codigo`, `tipo`, `nome`, `apelido`,
+`cpf_cnpj`, `rg_ie`, `nascimento`, `telefone`, `email`, `cep`, `logradouro`, `numero`, `complemento`, `bairro`, `cidade`,
+`uf`, `limite_compras`, `categorias` (o telefone e o e-mail principais, o endereço principal).
+
+"Ida e volta": a planilha exportada, reimportada sem mudanças (na Importação, a mesma loja ou o mesmo estoque), dá
+**Sem alteração** em todas as linhas (nada é gravado); editada, só as células mudadas viram **Atualizar** (8.6). Os
+clientes reimportados acham o próprio cadastro pelo Id e também ficam **Sem alteração** quando nada mudou; o que mudou
+aparece "de → para" na prévia e só isso é gravado (o telefone ou o e-mail que já existe no cadastro passa a principal; o
+endereço principal mantém o ponto de referência e os campos que a planilha não leva).
 
 ### 8.6 Importação
 
@@ -1421,7 +1456,7 @@ Id, código interno ou EAN.
 |---|---|---|
 | Criar | produto não encontrado e linha válida | o produto (com o código da linha, se houver) |
 | Atualizar | produto existente com alguma diferença | **só** os campos que mudaram (coluna "O que muda": `Preço de venda: 4,49 → 4,99`) |
-| Sem alteração **(Novo)** | produto existente igual à planilha (decimais comparados como decimal: 2,5 = 2,50) | nada: sem auditoria e sem versão nova para o sync |
+| Sem alteração **(Novo)** | produto (ou cliente, desde o F2-B40) existente igual à planilha (decimais comparados como decimal: 2,5 = 2,50) | nada: sem auditoria e sem versão nova para o sync |
 | Inativar **(Novo)** | coluna `Excluir` afirmativa em produto existente ativo | `ativo = Não` (o histórico fica; as outras colunas da linha não valem) |
 | Ignorar | erro na linha, ou `Excluir` em produto que não existe (aviso) | nada |
 
@@ -1453,7 +1488,7 @@ tarefa diz quais ficaram) (Fase 2, F2-B11). Célula vazia não muda o cadastro (
 | `Categoria` | categorias | lista com cada categoria seguida de vírgula (`CERVEJA,`, `MERCEARIA,PIPOCA,`); separa pela vírgula **não** seguida de espaço (`NICSALTS, JUICE E PODS,` é uma só), a 1ª é a principal, cada uma pode ser um caminho `PAI > FILHA`; comparação sem acento/caixa (`AGUA` = `ÁGUA`); nome único de subcategoria também é achado (e continua sendo ela mesmo quando outra categoria da célula é criada); inexistente é criada com "Criar marcas e categorias inexistentes" (e a permissão); no máximo 50 por célula (mais é erro da linha, antes de criar qualquer uma) |
 | `Unidade` | `unidade_id` | sigla ou descrição de Unidades, sem acento/caixa, e os nomes por extenso do Nuvem3: Unidade→UN, Conjunto→CJ, Pacote→PCT, Caixa→CX, Fardo→FD, Litro→L, Quilograma/Quilo→KG, Grama→G, Mililitro→ML, Metro→M, Dúzia→DZ, Peça→PC; vazio = UN no produto novo |
 | `UsaNoMenuDigital` | `usa_menu_digital` | Sim/Não |
-| `UsaBalancaEtiquetadoraStr` | `balanca_tipo` | **provisório** (a coluna veio vazia na exportação real; a confirmar com uma exportação do Nuvem3 com ela preenchida — pendência registrada na decisão 104): Peso/Sim → `peso`; Unidade → `unidade`; Não → `nao_usa`; outro texto = aviso |
+| `UsaBalancaEtiquetadoraStr` | `balanca_tipo` | **provisório** (a coluna veio vazia na exportação real; a confirmar com uma exportação do Nuvem3 com ela preenchida — pendência registrada na decisão 104; F2-Q14 = D66: até lá vale este mapeamento, isolado num ponto só, `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186): Peso/Sim → `peso`; Unidade → `unidade`; Não → `nao_usa`; outro texto = aviso |
 | `Excluir` | ação Inativar | afirmativo (S, Sim, X, 1, true) inativa o produto existente; vazio/Não = nada; outro texto = aviso |
 
 Valores numéricos do Excel (IdProduto, EAN, NCM) são lidos como texto inteiro, sem `.0` nem notação científica.
@@ -4168,6 +4203,16 @@ sobre o Nuvem3.
 | Ação | **Editar produto** (abre `/produtos/:id`) |
 | Totais | quantidade de produtos; médias de margem e markup |
 
+Fase 2, F2-B41 (README da API › decisão 187; README do ERP › decisão 75): `GET /relatorios/produtos-geral` (paginado
+no servidor) e a exportação pela rota comum `GET /relatorios/produtos-geral/exportar`. O **Preço custo** é o preço de
+custo do cadastro (o do markup do formulário); a **venda** com a Loja é a da loja quando ela tem preço próprio (senão a
+do produto), e a loja tem de estar entre as permitidas. Lucro R$, Lucro % e Markup % saem da API em decimal, com 2
+casas ("meio para longe do zero"); o Lucro % fica vazio sem venda e o Markup % sem custo. **Totais**: a quantidade e as
+médias simples do relatório inteiro (lucro, lucro % dos produtos com venda e markup % dos com custo), das linhas antes
+do arredondamento. "Sem preço" = a venda (da loja, com a loja) igual a zero; Situação começa em "ativos". Sem
+`produtos.ver_custo`, custo, lucro, porcentagens e médias não aparecem (nem no arquivo) e ordenar por eles é recusado.
+A coluna **WooComm** fica escondida até a integração (Fase 7).
+
 ### 16.2 Histórico de produtos [P2]
 
 **Rota**: `/relatorios/historico-produtos` · **Permissão**: `relatorios.historico_produtos`.
@@ -4180,6 +4225,23 @@ Visão da auditoria (17) filtrada às entidades de produto (`produtos` e sub-tab
 | Colunas | Usuário, Tipo, Localização (tela/origem: "Cad. prod.", "Cadastro em massa", "Importação", "Recebimento", "NF-e", "API", "PDV"), Data/hora, Histórico (texto legível, ex.: "Preço de venda: 9,90 → 10,90; Marca: — → HEINEKEN") |
 | Ação | abrir o produto; ver diferença completa (antes/depois) |
 
+Fase 2, F2-B42 (README da API › decisão 188; README do ERP › decisão 76): `GET /relatorios/historico-produtos` (50
+por página, com o total) e o "ver diferença completa" `GET /relatorios/historico-produtos/:id?ocorridoEm=`. O
+**período é obrigatório** (até 366 dias; a auditoria é particionada por mês e a consulta só lê as partições do
+período). Entram as linhas do produto e das filhas com as ações de cadastro (a exportação do catálogo não, nem o aviso
+de cadastro do caixa, que não muda o cadastro); **G** = criar/editar,
+**E** = excluir, **R** = restaurar, **I** = a gravação vinda da importação de planilha. O filtro Histórico procura na
+`descricao` gravada, sem acento: **a gravação do produto** (formulário, importação, cadastro em massa, "Definir NCM")
+**passa a gravar a descrição legível**, sem os valores de custo ("Preço de custo: (alterado)") e sem o que é de loja
+(um aviso "Dados de loja alterados"), porque a tela de auditoria (17.3) a mostra a todos com `auditoria.ver`; nada
+muda no produto nem na versão. A busca também é no corte de quem consulta: sem `produtos.ver_custo` ela não acha os
+rótulos de custo, e com lojas restritas não acha o aviso de loja. O texto da linha e a tabela campo × antes × depois
+são montados **para quem consulta**: o custo com os valores só com `produtos.ver_custo`, a loja, a faixa de uma loja e
+o lote de um estoque só das lojas e dos estoques permitidos; a linha com loja fora das permitidas não aparece. O preço
+mudado pelo **recebimento** e pela **NF-e** de fornecedor (13.3/13.4) entra como "Recebimento"/"NF-e" ("Recebimento
+Nº 12: Preço de venda: 8,00 → 8,90"), além do Histórico de preços. **Exportar** Excel/CSV pela API (3.5) com os
+mesmos filtros e o texto no corte de quem exporta.
+
 ### 16.3 NCMs inválidos [P2]
 
 **Rota**: `/relatorios/ncm-invalidos` · **Permissão**: `relatorios.ncm_invalidos`. Sem filtros (como no Nuvem3).
@@ -4187,6 +4249,39 @@ Visão da auditoria (17) filtrada às entidades de produto (`produtos` e sub-tab
 Colunas: Produto, Código interno, EAN, NCM atual, **Motivo (Novo)** (vazio, inexistente, fora de vigência, CEST
 incompatível), Ação **Editar**. Ação em lote **(Novo)**: selecionar produtos → **Definir NCM** (abre `<BuscaNcm>`),
 com auditoria por produto.
+
+Fase 2, F2-B41 (README da API › decisão 187; README do ERP › decisão 75): `GET /relatorios/ncm-invalidos` (50 por
+página, com a contagem por motivo) e a exportação `…/exportar`. Entram os produtos não excluídos, sem combo e serviço
+(o inativo entra), com **um** motivo nesta ordem: NCM vazio; inexistente (fora da tabela `ncms` ou excluído dela);
+fora de vigência (`vigencia_fim` no passado) — juntos, o contrário do "NCM existente e vigente" do cadastro —; e
+**CEST incompatível**, **só quando a tabela `cests` tem carga**: o CEST do produto fora da tabela vigente ou o NCM que
+não começa por nenhum dos NCMs listados no CEST (o convênio lista posições como "2203": a comparação é pelo começo do
+código). Sem a carga, a tela mostra "Tabela não carregada" e nada de CEST é conferido. **Definir NCM** (com
+`produtos.editar`): até 50 produtos marcados na página, o NCM existente e vigente, tudo ou nada; cada produto é gravado
+como no cadastro, com a versão que o relatório mostrou (se alguém mexeu depois, nada é gravado), a auditoria própria
+com a localização "Relatórios › NCMs inválidos" e a versão nova que desce aos caixas. A tabela `cests` vem de
+`apps/api/src/database/referencias/cests.csv` (Convênio ICMS 142/2018 e alterações; a lista oficial ainda não foi
+carregada, pendência da decisão 187); a atualização periódica é a do F2-B46.
+
+#### 16.3.1 EAN duplicado (Novo) [P2]
+
+**Rota**: `/relatorios/ean-duplicado` · **Permissão**: `produtos.ver` (o mesmo de quem vê o filtro "EAN duplicado" da
+listagem, 8.1); exportar exige também `relatorios.exportar`. Fase 2, F2-B38; README da API › decisão 184, do ERP ›
+decisão 72.
+
+Os códigos de barras `gtin` em mais de um produto não excluído (MD 3.6.5: `group by codigo having count(distinct
+produto_id) > 1`, pelo `ix_produtos_codigos_barras_codigo`), o que a importação e a migração do Nuvem3 deixam para
+corrigir. O produto inativo conta (também trava o cadastro do mesmo EAN); o código `interno` e o produto excluído não.
+
+| Filtros | EAN (começo do código); Produto (nome, código interno ou EAN de algum produto do código: o código vem com todos) |
+|---|---|
+| Colunas | EAN, Produtos (quantos), Produtos com o EAN (código e nome com o link **Editar**, a variação, a Ref. interna, "EAN principal" ou a embalagem com o fator, "Inativo") |
+| Cards | EAN repetidos (o total com os filtros); Regra de agora (`geral.ean_duplicado`: Avisar/Bloquear) |
+| Exportação | uma linha por código × produto (EAN, Produtos no EAN, Código, Ref. Interna, Produto, Variação, Marca, EAN principal, Embalagem, Fator, Unidade, Ativo) |
+| Atalho | o botão "Relatório de EAN duplicado" na listagem de produtos com o filtro "EAN duplicado" |
+
+Corrigir o produto (tirar o código repetido ou trocar pelo certo) tira o par do relatório; quando ele zerar, a empresa
+volta `geral.ean_duplicado` de `avisar` para `bloquear` (a nota da tela leva a Configurações › Geral).
 
 ### 16.4 Estoque Atual [P2]
 

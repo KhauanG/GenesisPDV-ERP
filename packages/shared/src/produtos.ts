@@ -153,6 +153,98 @@ export const ORIGENS_HISTORICO_PRECO = [
   'api',
 ] as const;
 export type OrigemHistoricoPreco = (typeof ORIGENS_HISTORICO_PRECO)[number];
+export const ROTULOS_ORIGEM_HISTORICO_PRECO: Record<OrigemHistoricoPreco, string> = {
+  cadastro: 'Cadastro do produto',
+  importacao: 'Importação de planilha',
+  cadastro_massa: 'Cadastro em massa',
+  recebimento: 'Recebimento',
+  nota_entrada: 'NF-e de entrada',
+  api: 'Integração (API)',
+};
+
+/**
+ * Tipo de preço de uma linha do histórico (MD 3.6.10; `ck_produtos_historico_precos_tipo_preco`, a mesma lista do
+ * schema Drizzle, conferida em `historico-precos.spec.ts` da API): os preços do produto (e da variação, com
+ * `variacao_id`), `loja` (o preço só da loja, com `loja_id`) e `quantidade` (a faixa de preço por quantidade, com a
+ * loja da faixa ou nula = todas; F2-B37). O único tipo de custo é `custo` (`TIPOS_PRECO_HISTORICO_CUSTO`).
+ */
+export const TIPOS_PRECO_HISTORICO = [
+  'venda',
+  'custo',
+  'atacado',
+  'promocional',
+  'menu_digital',
+  'ifood',
+  'parcelado',
+  'loja',
+  'quantidade',
+] as const;
+export type TipoPrecoHistorico = (typeof TIPOS_PRECO_HISTORICO)[number];
+export const ROTULOS_TIPO_PRECO_HISTORICO: Record<TipoPrecoHistorico, string> = {
+  venda: 'Venda',
+  custo: 'Custo',
+  atacado: 'Atacado',
+  promocional: 'Promocional',
+  menu_digital: 'Menu digital',
+  ifood: 'iFood',
+  parcelado: 'Parcelado',
+  loja: 'Venda da loja',
+  quantidade: 'Por quantidade',
+};
+/** Os tipos de custo: fora da consulta sem `produtos.ver_custo` (o histórico não é redigido na leitura; decisão 100). */
+export const TIPOS_PRECO_HISTORICO_CUSTO: readonly TipoPrecoHistorico[] = ['custo'];
+
+/** Filtro "Loja" do histórico: só o geral (sem loja: os preços do produto e a faixa de todas as lojas). */
+export const LOJA_HISTORICO_GERAL = 'geral';
+
+/**
+ * `GET /produtos/:id/historico-precos` (F2-B37; MD 3.6.10): a página (`pagina`, `tamanho`), o **tipo** de preço, a
+ * **loja** (uma loja permitida, ou `geral`) e o **período** (`dataInicial`..`dataFinal`, dias de calendário no fuso da
+ * empresa, as pontas incluídas, cada uma opcional). A ordem é fixa: a mudança mais recente primeiro.
+ */
+export const historicoPrecosQuerySchema = paginacaoQuerySchema
+  .omit({ ordenar: true })
+  .extend({
+    tipo: z.preprocess(
+      (v) => (v === '' || v === null ? undefined : v),
+      z.enum(TIPOS_PRECO_HISTORICO, 'Tipo de preço inválido').optional(),
+    ),
+    loja: z.preprocess(
+      (v) => (v === '' || v === null ? undefined : v),
+      z.union([z.literal(LOJA_HISTORICO_GERAL), z.uuid()], 'Loja inválida').optional(),
+    ),
+    dataInicial: dataOpcionalValida,
+    dataFinal: dataOpcionalValida,
+  })
+  .superRefine((v, ctx) => {
+    if (v.dataInicial && v.dataFinal && v.dataFinal < v.dataInicial)
+      ctx.addIssue({ code: 'custom', path: ['dataFinal'], message: 'A data final é anterior à inicial' });
+  });
+export type HistoricoPrecosQuery = z.output<typeof historicoPrecosQuerySchema>;
+
+/** Uma mudança de preço (`GET /produtos/:id/historico-precos`). */
+export interface HistoricoPrecoProduto {
+  id: string;
+  /** Quando o preço mudou (a hora da gravação). */
+  criadoEm: string;
+  tipoPreco: TipoPrecoHistorico;
+  /** O preço da variação (MD 3.6.6); nulo = o do produto. */
+  variacaoId: string | null;
+  variacaoNome: string | null;
+  /** O preço só da loja (`loja`) ou a faixa de uma loja (`quantidade`); nulo = o geral (ou a faixa de todas). */
+  lojaId: string | null;
+  lojaNome: string | null;
+  /** A faixa (tipo `quantidade`): o intervalo, a final nula = sem limite. Nulos nos outros tipos. */
+  quantidadeInicial: string | null;
+  quantidadeFinal: string | null;
+  /** Nulo = não havia (preço novo, faixa criada) / deixou de haver (preço apagado, faixa removida). */
+  valorAnterior: string | null;
+  valorNovo: string | null;
+  origem: OrigemHistoricoPreco;
+  /** O documento que mudou o preço (o recebimento pelo código, a NF-e pelo número); nulo no cadastro e na importação. */
+  documento: { id: string; numero: string } | null;
+  usuarioNome: string | null;
+}
 
 // ---------------------------------------------------------------- Campos
 
@@ -849,6 +941,181 @@ export function corpoProdutoRapido(
     codigosBarras: ean ? [{ codigo: ean, principal: true }] : [],
     confirmarEanDuplicado,
   };
+}
+
+// ---------------------------------------------------------------- Cadastro em massa (8.3; F2-B39)
+
+/**
+ * Linhas de uma gravação do cadastro em massa (ERP 8.3; MD 1.5 e SYNC 6.13: "blocos de até 500 linhas por
+ * transação"). A linha da grade grava várias linhas sincronizáveis (o produto, o código de barras, a categoria, a loja,
+ * o saldo e o movimento) com umas 25 a 50 idas ao banco, todas com a 7300001 presa: 100 linhas por gravação, e não as
+ * 500 da ERP 8.3 (D65, **padrão até a confirmação do dono**; README da API › decisão 185).
+ */
+export const LIMITE_LINHAS_CADASTRO_MASSA = 100;
+/** Códigos de um "Pesquisar EAN" (a grade colada pode passar do limite da gravação, que se faz em partes). */
+export const LIMITE_CODIGOS_PESQUISA_EAN_MASSA = 500;
+/** Motivo do acerto de Entrada que a gravação gera (ERP 8.3: "motivo Cadastro em massa"). */
+export const MOTIVO_CADASTRO_MASSA = 'Cadastro em massa';
+
+const eanCadastroMassa = z.preprocess(
+  (v) => (typeof v === 'string' ? v.replace(/\s/g, '') || null : (v ?? null)),
+  z.string().max(30, 'Código com no máximo 30 caracteres').nullable().default(null),
+);
+
+/**
+ * Uma linha da grade (ERP 8.3). `produtoId` nulo = **produto novo** (Simples, com o EAN principal, se houver); com o
+ * `produtoId` (e a `versao`) que o "Pesquisar EAN" achou pelo código, a linha é a **Atualização** dele: os campos vazios
+ * mantêm o gravado. `estoque` é a quantidade a **somar** no estoque escolhido (o acerto de Entrada); `estoqueMinimo` vai
+ * para `produtos_lojas` da loja do estoque.
+ */
+export const linhaCadastroMassaSchema = z
+  .object({
+    produtoId: uuidOpcional,
+    versao: z.number().int().nullable().default(null),
+    ean: eanCadastroMassa,
+    nome: textoOpcional(120),
+    unidadeId: uuidOpcional,
+    ncm: digitos(8, 'NCM com 8 dígitos'),
+    marcaId: uuidOpcional,
+    /** Marca digitada que não existe: criada na mesma transação (exige `marcas.criar`), ou reaproveitada pelo nome. */
+    marcaNova: textoOpcional(60),
+    categoriaId: uuidOpcional,
+    precoCusto: precoOpcional,
+    markupPct: opcional(decimal({ min: -100, max: 99_999, casas: 4, mensagem: 'Markup inválido' })),
+    precoVenda: precoOpcional,
+    estoque: quantidadeOpcional,
+    estoqueMinimo: quantidadeNaoNegativaOpcional,
+  })
+  .superRefine((l, ctx) => {
+    const erro = (campo: string, message: string) => ctx.addIssue({ code: 'custom', path: [campo], message });
+    if (l.produtoId === null) {
+      if (!l.nome || l.nome.length < 2) erro('nome', 'Informe o nome');
+      if (!l.unidadeId) erro('unidadeId', 'Escolha a unidade');
+      if (!(Number(l.precoVenda ?? 0) > 0)) erro('precoVenda', 'Informe o preço de venda');
+      if (l.ean && !validarGtin(l.ean))
+        erro(
+          'ean',
+          /^(\d{8}|\d{12,14})$/.test(l.ean)
+            ? 'Dígito verificador do GTIN inválido'
+            : 'GTIN deve ter 8, 12, 13 ou 14 dígitos',
+        );
+    } else {
+      if (!l.ean) erro('ean', 'A atualização é pelo EAN: informe o código');
+      if (l.versao === null) erro('ean', 'Pesquise o EAN de novo');
+      if (l.nome !== null && l.nome.length < 2) erro('nome', 'Mínimo de 2 caracteres');
+      if (l.precoVenda !== null && !(Number(l.precoVenda) > 0))
+        erro('precoVenda', 'Informe o preço de venda');
+    }
+    if (l.marcaId && l.marcaNova) erro('marcaNova', 'Escolha a marca ou digite uma nova, não as duas');
+  });
+export type LinhaCadastroMassaEntrada = z.input<typeof linhaCadastroMassaSchema>;
+export type LinhaCadastroMassa = z.output<typeof linhaCadastroMassaSchema>;
+
+/** `POST /produtos/cadastro-em-massa`: tudo numa transação (ou nada), até `LIMITE_LINHAS_CADASTRO_MASSA` linhas. */
+export const cadastroMassaSchema = z
+  .object({
+    estoqueId: z.uuid('Escolha o estoque'),
+    linhas: z
+      .array(linhaCadastroMassaSchema)
+      .min(1, 'Inclua ao menos uma linha')
+      .max(
+        LIMITE_LINHAS_CADASTRO_MASSA,
+        `No máximo ${LIMITE_LINHAS_CADASTRO_MASSA} linhas por gravação: grave em partes`,
+      ),
+    /** `geral.ean_duplicado = 'avisar'`: o ERP confirma e reenvia com `true` (a regra do formulário, ERP 8.2). */
+    confirmarEanDuplicado: z.boolean().default(false),
+  })
+  .superRefine((d, ctx) => {
+    // O mesmo EAN (ou o mesmo produto da Atualização) em duas linhas: sempre engano de digitação.
+    const eans = new Map<string, number>();
+    const produtos = new Map<string, number>();
+    d.linhas.forEach((l, i) => {
+      if (l.ean) {
+        const anterior = eans.get(l.ean);
+        if (anterior !== undefined)
+          ctx.addIssue({
+            code: 'custom',
+            path: ['linhas', i, 'ean'],
+            message: `EAN repetido na grade (linha ${anterior + 1})`,
+          });
+        else eans.set(l.ean, i);
+      }
+      if (l.produtoId) {
+        const chave = l.produtoId.toLowerCase();
+        const anterior = produtos.get(chave);
+        if (anterior !== undefined)
+          ctx.addIssue({
+            code: 'custom',
+            path: ['linhas', i, 'ean'],
+            message: `Produto repetido na grade (linha ${anterior + 1})`,
+          });
+        else produtos.set(chave, i);
+      }
+    });
+  });
+export type CadastroMassaEntrada = z.input<typeof cadastroMassaSchema>;
+export type CadastroMassa = z.output<typeof cadastroMassaSchema>;
+
+/** "Pesquisar EAN" (ERP 8.3; F2-Q13 = D54 (a)): os códigos da grade na base da empresa, sem base externa. */
+export const pesquisaEanCadastroMassaSchema = z.object({
+  estoqueId: z.uuid('Escolha o estoque'),
+  codigos: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .max(30)
+        .transform((v) => v.replace(/\s/g, '')),
+    )
+    .min(1)
+    .max(LIMITE_CODIGOS_PESQUISA_EAN_MASSA),
+});
+export type PesquisaEanCadastroMassa = z.input<typeof pesquisaEanCadastroMassaSchema>;
+
+/** Produto achado pelo código (a linha vira "Atualização" com os valores gravados). */
+export interface ProdutoEanCadastroMassa {
+  id: string;
+  codigo: number;
+  nome: string;
+  versao: number;
+  tipo: TipoProduto;
+  ativo: boolean;
+  unidadeId: string;
+  unidadeSigla: string;
+  permiteFracao: boolean;
+  ncm: string | null;
+  marcaId: string | null;
+  marcaNome: string | null;
+  categoriaId: string | null;
+  /** `null` sem `produtos.ver_custo`. */
+  precoCusto: string | null;
+  markupPct: string | null;
+  precoVenda: string;
+  /** O estoque mínimo da loja do estoque escolhido (`null` sem loja ou sem a linha da loja). */
+  estoqueMinimo: string | null;
+  /** O código achado é de uma variação (a grade ainda não atualiza variação: F2-B50). */
+  variacao: boolean;
+  /** Fator da embalagem do código (1 = a unidade do produto); o estoque da grade é sempre na unidade do produto. */
+  fator: string;
+  /** Tem saldo próprio (controla estoque e não é combo, serviço, produzido nem com variações). */
+  temEstoqueProprio: boolean;
+}
+
+export interface RespostaPesquisaEanCadastroMassa {
+  /** Só os códigos achados; cada um com os produtos vivos que o têm (mais de um = EAN duplicado). */
+  itens: Array<{ codigo: string; produtos: ProdutoEanCadastroMassa[] }>;
+}
+
+export interface ResultadoCadastroMassa {
+  criados: number;
+  atualizados: number;
+  /** Um por linha, na ordem da grade, para os links do resultado. */
+  produtos: Array<{ linha: number; id: string; codigo: number; nome: string; acao: 'criado' | 'atualizado' }>;
+  /** O acerto de Entrada (origem `cadastro_massa`), quando alguma linha somou estoque. */
+  acerto: { id: string; codigo: number; itens: number; movimentos: number } | null;
+  /** Marcas criadas na gravação (marca digitada que não existia). */
+  marcasCriadas: number;
 }
 
 // ---------------------------------------------------------------- Listagem (8.1)

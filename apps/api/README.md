@@ -584,7 +584,9 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
     e convertida em `src/database/referencias/ncms.csv` (descrição = posição/subposição + item, sem HTML); NCM que
     sair do arquivo é excluído logicamente. `paises` só com o Brasil (1058) até a tabela BACEN completa entrar com a
     NF-e (o cadastro de pessoa no exterior exige o país). `cests` existe vazia (não há fonte oficial em formato de
-    dados; a carga entra com a fase fiscal e, até lá, a regra "CEST de bem listado" não tem como ser checada).
+    dados; a carga entra com a fase fiscal e, até lá, a regra "CEST de bem listado" não tem como ser checada). F2-B41
+    (decisão 187): o carregador do `cests.csv` e o formato existem, e o relatório NCMs inválidos confere o CEST × NCM
+    quando houver carga; a lista oficial do CONFAZ ainda não entrou (pendência na decisão 187).
     `parametros_fiscais_uf`: só o PR, em `referencias/uf/PR/parametros-fiscais.json` (vigência a partir de 3.8.2026,
     data da redação atual do art. 25, VII), com os valores marcados **[oficial]** em `docs/fiscal/nfce-parana.md`; o
     que a pesquisa não confirmou fica nulo ou no padrão da coluna e listado em `pendencias` (urlChave, cancelamento
@@ -912,7 +914,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     é cadastrada no ERP). Sem a composição, o combo novo é criado **inativo** com o aviso `combo_sem_posicoes` (o
     schema aceita combo inativo sem posições; ativo exige ≥ 1). Combo existente só recebe a composição da planilha se
     ainda não tiver posições (as do ERP, com alternativas, não são trocadas). As colunas próprias da exportação de
-    "grupo de itens" do Nuvem3 entram quando o arquivo real for validado na homologação.
+    "grupo de itens" do Nuvem3 entram quando o arquivo real for validado na homologação (F2-Q14 = D66: até lá, o
+    mapeamento provisório fica num ponto só, `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186).
 96. **Projeção `produtos.custo_medio`** (MD 3.6.3; ERP 8.2.1). Migração `0006_produtos_custo_medio_historico`: trigger
     `tg_saldos_estoque_custo_medio` recalcula, na mesma transação, a média ponderada das linhas de `saldos_estoque`
     com saldo > 0 (sem nenhuma, fica o último custo médio); o `tg_produtos_custo_kit` leva a mudança aos combos.
@@ -976,7 +979,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
      `exclusao_sem_produto`. Resumo e resultado ganham `sem_alteracao`/`inativar` (`semAlteracao`/`inativados`).
      Produto que não controla estoque (`controla_estoque = false`): o estoque atual sai do diff (o acerto não o
      lançaria; sem isso a linha seria um `atualizar` fantasma a cada reimportação). A tela abre no filtro "Com erro"
-     só se alguma linha tem erro (`ignorar` também conta o Excluir sem produto, que não tem erro).
+     só se alguma linha tem erro (`ignorar` também conta o Excluir sem produto, que não tem erro). Os clientes ganharam
+     o mesmo "Sem alteração" e "O que muda" no F2-B40 (decisão 186).
 104. **Formato do Nuvem3 nas colunas** (`packages/shared/importacao.ts`). Categoria em lista (`CERVEJA,`,
      `MERCEARIA,PIPOCA,`) separada pela vírgula **não** seguida de espaço (`NICSALTS, JUICE E PODS,` é uma só), a 1ª é a
      principal, cada item pode ser caminho `A > B`; um nome só também acha a única subcategoria com esse nome — com o
@@ -993,7 +997,7 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
      `UsaNoMenuDigital` → `usa_menu_digital`; `UsaBalancaEtiquetadoraStr` → `balanca_tipo` (Peso/Sim = `peso`,
      Unidade = `unidade`, Não = `nao_usa`) — **provisório**: a coluna veio vazia na exportação real e não se sabe que
      textos o Nuvem3 escreve nela; **pendência**: confirmar com o dono uma exportação com a coluna preenchida (e só
-     então aceitar `S`/`N` ou outros textos). `PrecoPJ` não tem equivalente (não há preço para pessoa jurídica) e fica
+     então aceitar `S`/`N` ou outros textos; os textos ficam em `MAPEAMENTO_PROVISORIO_NUVEM3`, decisão 186). `PrecoPJ` não tem equivalente (não há preço para pessoa jurídica) e fica
      ignorada com o motivo na prévia (`COLUNAS_SEM_EQUIVALENTE`). Validado com a planilha real do cliente (1.664
      produtos, não versionada): 1.664 criar; reimportação 100% `sem_alteracao`.
 
@@ -5155,6 +5159,452 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        forjado com o id de um terminal e o segredo de outro → 401, o hardware divergente → 409 e o revogado → 401; o
        limite de 3 por minuto → 429 com `Retry-After` e outro terminal segue), `contratos.spec.ts` e
        `configuracoes.spec.ts` no shared.
+
+183. **Histórico de preços: a consulta, as faixas e as variações** (Fase 2, F2-B37; MD 3.6.10; ERP 8.2 "Alteração de
+     preço"; decisões 97, 100 e 160; `src/produtos/historico-precos.ts`, `src/produtos/gravacao.ts`,
+     `src/produtos/produtos.controller.ts`, `packages/shared/src/produtos.ts`; **sem migração**; PDV sem mudança; o ERP
+     é a decisão 71 do README do ERP).
+     - **`GET /produtos/:id/historico-precos`** (`produtos.ver`): a página (`pagina`, `tamanho`, com o total) das
+       mudanças do produto não excluído (404 senão), a mais recente primeiro (`criado_em desc, id desc`), com os
+       filtros **tipo** (`TIPOS_PRECO_HISTORICO`, agora no shared; `historico-precos.spec.ts` confere a lista com o
+       CHECK do schema), **loja** (uma loja ou `geral` = só as linhas sem loja) e **período** (`dataInicial`..
+       `dataFinal`, dias de calendário no fuso da empresa, as pontas incluídas, cada uma opcional), pelo
+       `ix_produtos_historico_precos_produto_id_criado_em`. Cada linha traz a loja e a variação pelo nome, o intervalo
+       da faixa, o anterior e o novo, a origem, o **documento** (o recebimento pelo `codigo`, a NF-e pelo `numero`, do
+       `origem_id`) e o nome do usuário.
+     - **O corte é na consulta** (o histórico não é redigido na leitura, como a auditoria da decisão 100): sem
+       `produtos.ver_custo` o tipo `custo` (`TIPOS_PRECO_HISTORICO_CUSTO`) fica fora do `where` e o filtro "Custo" é
+       403; a linha de uma loja fora das permitidas fica fora (a linha sem loja — o preço geral, o custo, a faixa de
+       todas as lojas — é de todos), e o filtro de uma loja fora delas é 403. O total conta só o que a sessão vê. O
+       número do documento aparece mesmo quando o documento é de uma loja não permitida (a linha é do preço geral; o
+       link do ERP exige a permissão do documento).
+     - **Faixa por quantidade (`quantidade`).** O formulário (`inserirProduto`/`atualizarProduto`) compara as faixas
+       vigentes **lidas do banco** antes e depois do "Gravar" (`precosFilhosGravados`, `linhasHistoricoFilhos`), pela
+       chave variação × loja × intervalo: uma linha por faixa criada (anterior nulo), removida (novo nulo) ou com o
+       preço trocado no mesmo intervalo; o intervalo trocado é uma removida e uma criada. Do banco, e não da entrada,
+       porque a gravação preserva a faixa de loja fora das permitidas (decisão 88) e recria a faixa alterada com outro
+       id. A tabela não tem coluna para o intervalo e o bloco é sem migração: **na linha `quantidade`, `origem_id` é a
+       faixa** (`produtos_precos_quantidade.id`: a atual, ou a removida, que continua na tabela com `excluido_em`), e a
+       consulta tira dela o intervalo. Nenhum documento muda faixa (o recebimento e a NF-e mudam o custo, a venda e o
+       preço da loja), então não há `origem_id` de documento numa linha `quantidade`; quem passar a mudar faixa por
+       documento precisa de uma coluna própria (migração).
+     - **Variação (`variacao_id`).** O mesmo diff lê o `preco_venda` e o `preco_custo` das variações e grava `venda`/
+       `custo` com a `variacao_id` quando mudam. Hoje o formulário não edita variação (só a partir do F2-B48), então
+       nada muda na prática; a variação nova sem preço não gera linha, e a excluída não é mudança de preço (fica na
+       auditoria).
+     - Custo do caminho do formulário e da importação: uma consulta curta a mais antes e outra depois do "Gravar" (a
+       criação só lê quando há faixa). A origem continua a do F2-B15 (`cadastro`/`importacao`, decisão 160), e o custo
+       do combo pelo banco segue a decisão 97.
+     - Testes: `historico-precos.test.ts` (o cadastro e a alteração com as faixas criada, trocada e removida, as lojas,
+       a página com o total, os filtros tipo, loja, geral e período no fuso — a virada do dia em horas fixas, 23:30 de
+       09/11 e 00:30 de 10/11 em Brasília, para não depender da hora em que o teste roda —, sem `ver_custo` sem custo e
+       com 403 no filtro, o restrito à Loja 1 sem a Loja 2 e com 403 no filtro dela, 404 e 422); a rota com a origem e
+       o documento em `recebimento-movimentar.test.ts` (o código), `notas-entrada-movimentar.test.ts` (o número) e
+       `importacao-dashboard.test.ts` (`importacao`, sem documento); `historico-precos.spec.ts` (o CHECK do tipo × shared
+       e o diff das faixas — com a `variacao_id` e a `loja_id` da faixa — e das variações); `produtos.spec.ts` no shared
+       (a query). O período usa o `inicioDoDiaNaEmpresa` (`comum/fuso.ts`), a mesma regra dos outros filtros de
+       período.
+
+184. **Relatório de EAN duplicado: a regra do trigger, a página pelos códigos e a permissão do cadastro** (Fase 2,
+     F2-B38; MD 3.6.5; ERP 8.2 "Regras", 16.3.1 e 20 item 2; `src/relatorios/ean-duplicado.ts`,
+     `src/relatorios/relatorios.controller.ts`, `packages/shared/src/relatorios.ts`; **sem migração**; PDV sem
+     mudança; o ERP é a decisão 72 do README do ERP).
+     - **`GET /relatorios/ean-duplicado`**: os códigos repetidos (`group by codigo having count(distinct produto_id) >
+       1`) com os produtos de cada um, para a empresa limpar o que a importação e a migração do Nuvem3 deixaram e
+       voltar `geral.ean_duplicado` de `avisar` para `bloquear`. **A regra é a do trigger**
+       `tg_produtos_codigos_barras_ean_unico` e a do filtro "EAN duplicado" da listagem: só o tipo `gtin` (o
+       `interno` não entra na unicidade), a linha de código e o produto não excluídos, o produto **inativo incluído**
+       (ele também trava o cadastro do mesmo EAN com "bloquear") e o produto distinto (o código no pai e numa variação
+       do mesmo produto não é repetição). Diferente do item `catalogo.ean_duplicado` da prontidão (decisão 143), que
+       olha só os vendáveis ativos com `usa_venda` e conta também o interno: aquele avisa do que sai errado no
+       caixa; este é a lista para zerar a regra.
+     - **Página pelos códigos** (`pagina`, `tamanho` de `TAMANHOS_PAGINA`, padrão 50, com o total de códigos pela
+       janela numa ida ao banco; depois da última página, uma contagem à parte) e os produtos dos códigos da página
+       numa segunda leitura (`cb.codigo in (...)`), agrupados na API: cada linha é um código com a lista dos produtos
+       (o código, o nome, a Ref. interna, a marca, a variação, se é o EAN principal ou uma embalagem com o fator e a
+       sigla, e se está ativo), na ordem do código do produto, o pai antes das variações. A resposta traz o
+       `geral.ean_duplicado` de agora (`modo`), para a tela lembrar de voltar a "bloquear".
+     - **Filtros**: `ean` (o começo do código, só dígitos, até 14) filtra o código; `nome` (nome, código interno ou
+       EAN, pelo `produtos.busca`) filtra **pelo grupo** (`bool_or` no `having`): o código achado pelo nome de um
+       produto vem com todos os produtos dele, senão o par sumiria da tela.
+     - **Índice**: o agrupamento lê o `ix_produtos_codigos_barras_codigo` (`codigo where excluido_em is null`) em ordem
+       (`GroupAggregate` com o `Incremental Sort` pré-ordenado pelo código e o produto pelo `pk_produtos`, sem ordenar
+       a tabela inteira); com poucas linhas o planejador prefere ler a tabela, e o teste confere o plano sem a leitura
+       sequencial.
+     - **Permissão `produtos.ver`**, não uma `relatorios.ean_duplicado` nova: o filtro "EAN duplicado" da listagem já
+       mostra os mesmos produtos a quem vê o cadastro, o relatório não tem custo nem dado de loja (o código de barras é
+       da empresa), e uma permissão nova ficaria desligada nos perfis já gravados até alguém marcá-la. A exportação
+       (`provedorEanDuplicado` na rota comum do F2-B29, decisão 177; `Relatorio_EAN_Duplicado_DD_MM_AAAA_HH_MM`) exige
+       também `relatorios.exportar` e sai com uma linha por código × produto (o código repetido em cada linha, para a
+       planilha filtrar e ordenar); auditoria `exportar` em `produtos_codigos_barras`, "Relatórios › EAN duplicado".
+     - Só leitura: corrigir é editar o produto (o formulário e a regra da decisão 38 continuam iguais), e o par sai do
+       relatório na próxima consulta. Volume: o catálogo da Ice Beer tem dezenas de milhares de códigos, não milhões; a
+       consulta não precisa de carga própria.
+     - Testes: `relatorio-ean-duplicado.test.ts` (3 produtos e 2 códigos repetidos — um no fardo de um e no principal de
+       outro, inativo —, o interno repetido e o produto excluído fora, os filtros, a página depois da última com o
+       total, 422 dos filtros, `produtos.ver` sim e o financeiro 403, a exportação `.xlsx` e `.csv`, o EXPLAIN pelo
+       índice e a correção de dois produtos zerando o relatório com o `modo` de volta a "bloquear");
+       `relatorios.spec.ts` no shared (os filtros e a página).
+185. **Cadastro em massa por estoque: a grade numa transação, as regras do formulário e um acerto de Entrada** (Fase
+     2, F2-B39; ERP 8.3; F2-Q13 = D54 (a), **padrão até a confirmação do dono**; `src/produtos/cadastro-massa.ts`,
+     `inserirProduto`/`atualizarProduto` em `src/produtos/produtos.controller.ts` (a opção `cadastroMassa`),
+     `sqlVersaoAgregada` em `src/produtos/consultas.ts`; contratos `cadastroMassaSchema`, `linhaCadastroMassaSchema`,
+     `pesquisaEanCadastroMassaSchema`, `ResultadoCadastroMassa`, `LIMITE_LINHAS_CADASTRO_MASSA` (100, D65),
+     `LIMITE_CODIGOS_PESQUISA_EAN_MASSA` (500) e `MOTIVO_CADASTRO_MASSA` no shared `produtos.ts`; **sem migração**; PDV sem mudança (os produtos e o saldo descem
+     pelo pull de sempre); o ERP é a decisão 73 do README do ERP).
+     - **`POST /produtos/cadastro-em-massa/pesquisar-ean`** (`{ estoqueId, codigos }`, até 500): os códigos na **base da
+       empresa** — qualquer código vivo do produto (o EAN, o interno, a embalagem com o fator) —, um por produto, o pai
+       antes da variação, com os valores que a "Atualização" mostra (nome, unidade, NCM, marca, categoria principal,
+       preço, o estoque mínimo da loja do estoque, a **versão agregada** do cadastro — a do 409 do formulário, decisão
+       47 — e se tem saldo próprio). Custo e markup só com `produtos.ver_custo` (o markup junto do preço revelaria o
+       custo). Sem base externa de GTIN: a F2-Q13 (D54) ficou sem resposta explícita e vale a recomendação (a); a base
+       externa é o F2-B47, no backlog. POST, e não GET, porque 500 códigos não cabem na URL.
+     - **`POST /produtos/cadastro-em-massa`** (`{ estoqueId, linhas, confirmarEanDuplicado }`): **uma transação** com a
+       7300001 (`travaVersao`), até **100 linhas** (D65, **confirmado pelo dono em 11/11/2026**; a ERP 8.3 dizia 500). A
+       espera pela trava tem o limite do ERP e, vencida, o 503 "sistema ocupado" amigável com nada gravado (C13). Com a
+       trava, os outros escritores (o push do PDV, o formulário) ficam em série: a conferência e a gravação veem o
+       mesmo banco.
+     - **Por que 100 e não 500** (revisão do bloco): a MD 1.5 e a SYNC 6.13 contam **linhas de tabela** por transação
+       ("blocos de até 500 linhas"), e uma linha da grade grava várias linhas sincronizáveis (o produto, o código de
+       barras, a categoria, a loja, o saldo e o movimento). Contadas as consultas com o Postgres local, a gravação faz
+       umas 26 idas ao banco por produto novo, umas 9 pela linha só de estoque e umas 51 pela Atualização que muda o
+       preço, todas com a trava presa; com os ~3 ms de ida e volta entre a VPS e o Cloud SQL (pelo Auth Proxy, D13),
+       500 linhas seguravam a trava por 40 a 75 s em horário de venda (o push dos caixas esperando, o ERP respondendo
+       "sistema ocupado" a qualquer gravação; medido pela revisão com um atraso simulado de 3 ms: 5,4 s → 42 s em 500
+       linhas novas). Com 100, uns 8 s (novos) a 15 s (Atualizações com preço), o tempo de uma importação de bloco.
+       Para voltar a 500 basta trocar a constante do shared (o ERP e a API a leem); a importação de planilha continua o
+       caminho para catálogos grandes (um produto por transação). Junto, a gravação deixou de repetir o que a
+       conferência já fez na mesma transação: o `validarNoBanco` (a opção `validado` do `inserirProduto` e do
+       `atualizarProduto`; a troca de tipo valida mesmo assim, com o saldo), o detalhe e a validação da linha só de
+       estoque (que não regrava o produto) e o código e o nome do resultado, numa consulta só (de ~30, ~24 e ~56 idas
+       por linha para as de cima). O `POST …/pesquisar-ean` aceita até 500 códigos (a grade colada pode passar do
+       limite da gravação, que se faz em partes).
+     - **A linha**: `produtoId` nulo = **produto novo** — um **Simples**, ativo, com controle de estoque e a tributação
+       vazia (a padrão da Fase 2, decisão 161), pelo `inserirProduto`, com o EAN (GTIN válido) como principal; com o
+       `produtoId` e a `versao` que a pesquisa achou, a **Atualização** pelo `atualizarProduto` sobre o detalhe gravado
+       (o que o usuário vê: as lojas e faixas fora das permitidas ficam como estão), com a versão, o "Altera Preço do
+       Produto no ERP" (`produtos.alterar_preco`), a auditoria e a descida ao PDV. Na Atualização, **o campo vazio
+       mantém o gravado**; a categoria digitada vira a principal (as outras ficam); a marca digitada que não existe é
+       **criada na mesma transação** (`marcaNova`, reaproveitada pelo nome sem acento e caixa, exige `marcas.criar`). O
+       markup gravado é o digitado ou o do preço sobre o custo (4 casas, a conta do formulário). O **preço da grade é o
+       preço geral** do produto (o do cabeçalho do formulário), não o da loja do estoque — onde a ERP 8.3 diz "destino
+       dos preços por loja", a grade grava da loja só o estoque mínimo: o CD não tem loja, e o preço próprio da loja
+       continua no formulário (bloco Lojas). A Atualização que não
+       muda o cadastro (só soma estoque) não regrava o produto (sem versão nova nem auditoria à toa, como a importação):
+       a linha sem nenhum campo do cadastro (o ERP manda nulo no que não mudou desde a pesquisa, decisão 73 do ERP) nem
+       lê o detalhe; a que traz os valores gravados de volta é comparada depois do contrato (os decimais com 4 casas).
+     - **Unicidade de EAN do formulário, não a da importação**: o EAN de um produto novo que já está em outro produto
+       segue `geral.ean_duplicado` — "bloquear" recusa (409 com `detalhes.eanDuplicado`, nada gravado, nem a marca
+       nova); "avisar" pede a confirmação (409 com `confirmar: true`, só quando nada mais está errado) e grava com
+       `confirmarEanDuplicado`. O EAN (ou o produto) repetido na própria grade é sempre recusado pelo contrato.
+     - **Estoque**: o estoque a somar vira **um** acerto de **Entrada** efetivado na hora, com a origem `cadastro_massa`
+       (`AJUSTE_CADASTRO`, lançado agora, `data_movimento = now()`, regra de data da decisão 148), o motivo "Cadastro
+       em massa", o tipo padrão (Disponível) e o custo da linha (com `produtos.ver_custo`; sem ele, o custo
+       médio/de referência da efetivação). O estoque é sempre **na unidade do produto** (o código de uma embalagem acha
+       o produto, e a tela avisa o fator). O produto sem saldo próprio (combo, serviço, produzido, com variações) e o
+       que não controla estoque são recusados na linha, e a quantidade fracionada só com a fração. O **estoque mínimo**
+       vai para `produtos_lojas` da loja do estoque (`lojaDoEstoque`, a de menor código); no estoque sem loja (o CD) é
+       recusado, e a loja fora das permitidas também. Auditoria do acerto (criar + efetivar) com a localização
+       "Produtos › Cadastro em massa", a mesma dos produtos e das marcas criadas. O histórico de preços grava a origem
+       `cadastro_massa` (`OpcoesGravacaoProduto.cadastroMassa`).
+     - **Erros por linha**: a conferência junta os erros de **todas** as linhas antes de gravar — o contrato, o
+       `validarNoBanco` do formulário (unidade, marca, categoria, NCM conforme a loja) e as regras do estoque — em
+       `linhas.N.campo` com o nome da coluna da grade (`codigosBarras.*` → `ean`, `categorias` → `categoriaId`,
+       `lojas.*` → `estoqueMinimo`), e responde 422 "Verifique as linhas destacadas" com nada gravado. O que só aparece
+       na gravação (com a trava, raro: o "Alterar preço" sem `produtos.alterar_preco`, que o `atualizarProduto` confere)
+       volta com "Linha N:" e o campo `linhas.N._linha` e desfaz tudo — N é a posição entre as linhas **enviadas**; o
+       ERP a traduz para a linha da grade. A Atualização com a versão diferente da
+       pesquisa é recusada na linha ("pesquise o EAN de novo"), não com o 409 do formulário.
+     - **Permissões**: `produtos.cadastro_massa` abre a tela e as duas rotas; as gravações seguem as do formulário e do
+       acerto — produto novo exige `produtos.criar`; a Atualização que muda o cadastro, `produtos.editar`; somar
+       estoque, `estoque_acertos.criar`; o estoque permitido para movimentar e ativo (`conferirCabecalhoAcerto`,
+       decisão 149). Assim o cadastro em massa não abre um caminho para quem não pode criar ou editar produto pelo
+       formulário. O perfil Gerente tem tudo pelo prefixo; o Estoquista não tem `produtos.cadastro_massa` (o dono
+       libera em Usuários › Perfis, se quiser).
+     - Resultado: quantos criados e atualizados, um item por linha (código, nome, criado/atualizado) para os links, o
+       acerto (código, itens, movimentos) e as marcas criadas.
+     - Testes: `cadastro-massa.test.ts` (o critério de pronto — 30 produtos novos com estoque no CD, a marca nova uma
+       vez para duas grafias, um acerto `cadastro_massa` com 30 `AJUSTE_CADASTRO` ao custo da linha, o histórico e a
+       auditoria —; a pesquisa com a embalagem e o fator; a Atualização com o preço, o estoque e o mínimo da loja, a
+       versão velha recusada e a linha só de estoque sem regravar; o mínimo no CD recusado; o limite de linhas com a
+       última errada na conferência sem gravar nada, as válidas gravando e uma a mais recusada; o erro que só aparece na
+       gravação (o preço da última linha sem "Alterar preço", com 99 produtos já inseridos) com "Linha 100:", o campo da
+       linha e nada gravado (nem produto, nem acerto); a linha só de estoque com o corpo inteiro de volta (o custo
+       3,4567) sem versão nova, histórico nem `produtos.editar`, e a Entrada a 3,4567; o EAN com "bloquear"
+       e "avisar"; o contrato; 403 sem a permissão e fora dos estoques; o perfil só com a tela e o acerto; 10 gravações
+       junto de 10 vendas do push do PDV; o razão refeito idêntico) e `produtos.spec.ts` no shared (o contrato).
+
+186. **Exportação do catálogo de ida e volta e o mapeamento provisório do Nuvem3 num ponto só** (Fase 2, F2-B40; ERP
+     8.5, 8.6; decisões 88, 95, 103 e 104; F2-Q14 = roadmap §16, D66: **vale a recomendação (b)**, sem resposta explícita
+     do dono; `src/produtos/exportacao.ts`, as rotas `GET /produtos/exportacao` e `GET /pessoas/exportacao`,
+     `src/tarefas/exportar-relatorio.ts` (`limiteNaHora` e `garantirAcesso` do provedor), `src/importacao/produtos.ts`;
+     contratos `filtrosExportacaoProdutosSchema`, `filtrosExportacaoClientesSchema`, `LIMITE_EXPORTACAO_CATALOGO`
+     (5.000), `rotuloColunaImportacao`, `MAPEAMENTO_PROVISORIO_NUVEM3`, `lerComposicao`, `formatarBalancaPlanilha` no
+     shared `importacao.ts`; **sem migração**; PDV sem mudança; o ERP é a decisão 74 do README do ERP).
+     - **Layout = o da importação**: os cabeçalhos são os rótulos de `COLUNAS_IMPORTACAO_*` (`rotuloColunaImportacao`;
+       o teste do shared confere que cada rótulo volta para a mesma coluna) e cada valor sai como a análise da
+       importação o lê e compara com o cadastro (decisão 103): `id`, `codigo`, `codigo_interno`, o EAN **principal**
+       sem as variações (os outros códigos ficam; a importação só acrescenta o que falta), nome, tipo pelo rótulo,
+       unidade pela sigla, ativo, marca, as categorias pelo **caminho** (`BEBIDAS > CERVEJA,PROMOÇÕES`: a principal
+       primeiro, vírgula sem espaço, a regra do Nuvem3 de `lerListaCategorias`, que aceita "GELO, CARVÃO E LENHA" como
+       uma só; só as não excluídas), todos os preços como **número** (o `numeric(15,4)` cabe no `double` sem perda; o
+       CSV sai com a vírgula decimal), localização, peso, descrição curta, menu digital e a balança pelo texto do
+       mapeamento (`Não usa`/`Peso`/`Unidade`). As colunas NF (`informacoesNf`) são só os valores gravados, os códigos
+       como **texto** (o `00` do CST e o `04022130` do NCM não perdem o zero). Sem a coluna `composicao`: a posição do
+       combo existente não muda pela planilha (decisão 95), e o código do componente não identifica o produto sem
+       ambiguidade (interno × EAN × número).
+     - **Loja, CD e "Todas"**: `lojaId` (entre as lojas permitidas, senão 403) dá `preco_loja` e `estoque_minimo`
+       (`produtos_lojas` da loja) e `estoque_atual` do estoque dela — **só se esse estoque estiver entre os permitidos
+       para ver** (decisão 149: a loja permitida não basta); senão a planilha sai sem a coluna do estoque, e o filtro
+       de estoque zerado é 403. `estoqueId` (o CD, estoque sem loja; fora dos permitidos, 403) dá só o `estoque_atual`.
+       Nenhum dos dois ("Todas"): sem as colunas da loja (a importação exige a loja para elas). Os dois juntos: 422. O
+       `estoque_atual` é o saldo do **tipo padrão**, sem variação, no estoque — o mesmo que a importação compara e o
+       "Definir" muda —, 0 sem saldo gravado e **vazio** no produto sem saldo próprio (combo, serviço, produzido, com
+       variações, sem controle de estoque), que a importação ignora. Para reimportar o estoque, escolhe-se na
+       Importação a mesma loja (ou o mesmo estoque, o CD).
+     - **Filtros** (ERP 8.5): "Somente ativos" (padrão Sim; o excluído nunca sai), "Com NCM inválido" (a regra do
+       "Sem NCM" da listagem: vazio ou fora da tabela vigente, `ncmVigente`) e "Estoque zerado ou negativo" (o
+       `estoque_atual` ≤ 0, só produto com saldo próprio; exige a loja ou o estoque, 422).
+     - **Na hora ou em tarefa**: são provedores da exportação comum do F2-B29 (decisão 177): lidos por cursor num
+       instantâneo, na hora até **5.000 linhas** (ERP 8.5; `limiteNaHora` novo do provedor, vale o menor entre ele e o
+       da instância) e acima disso a tarefa `exportar_relatorio` com o link de 7 dias no ícone Tarefas. A auditoria
+       `exportar` vai com a localização "Produtos › Exportação".
+     - **Acesso do cadastro** (`garantirAcesso` novo do provedor, no pedido e na execução da tarefa, no lugar do
+       `relatorios.exportar` + permissão do relatório): produtos exigem `produtos.ver` e `produtos.exportar` (ou
+       `relatorios.exportar`, ERP 3.1); clientes, `pessoas.ver` e `pessoas.exportar` (ou `relatorios.exportar`). A rota
+       comum `GET /relatorios/catalogo-*/exportar` passa pelo mesmo `garantirAcesso` (não contorna o cadastro). O custo e
+       o markup são `custo: true` (saem sem `produtos.ver_custo`; a importação de quem não vê o custo também não o
+       compara, então a planilha dele volta igual).
+     - **Clientes** ("Exportar Clientes" no mesmo mecanismo): as pessoas da categoria Cliente, não excluídas e **não
+       anonimizadas** (LGPD), com o telefone e o e-mail principais, o endereço principal no Brasil com a cidade pelo
+       IBGE, o nascimento em `dd/mm/aaaa` (texto, sem o fuso), o limite e as categorias pelos rótulos. Reimportada,
+       cada linha acha o próprio cliente pelo Id, sem erro nem cadastro novo.
+     - **"Sem alteração" e "O que muda" também nos clientes** (a decisão 103 estendida, para a ida e volta não regravar a
+       base): `carregarReferenciasClientes` lê o estado de cada cliente achado com as mesmas escolhas da exportação (o
+       telefone e o e-mail principais, senão o primeiro; o endereço principal no Brasil) e `compararClienteComAtual`
+       tira de `dados` o que não muda (o RG/IE em maiúsculas, o limite como decimal, as categorias como conjunto, o
+       telefone pelos dígitos, o e-mail sem caixa, o endereço pelas colunas da planilha). Sem diferença, a linha é
+       `sem_alteracao` e a confirmação não grava nada (nem versão nova para os PDVs nem auditoria); com diferença, só o
+       que mudou é gravado e a prévia mostra cada "de → para" (a planilha exportada antes de uma alteração no ERP aparece
+       como mudança, não sobrescreve calada). Sem `pessoas.editar_credito` o limite não é comparado (já não era gravado).
+       **Sem `pessoas.ver` a linha não é comparada** (revisão de segurança do PR-9, D63): a prévia só exige
+       `pessoas.importar`, e o "de" traria o CPF/CNPJ, o RG, o nascimento, o telefone, o e-mail e o endereço de qualquer
+       pessoa achada pelo código (o "Sem alteração" serviria de oráculo para adivinhá-los). A linha fica "Atualizar" com
+       o que veio na planilha, como antes do F2-B40. A linha que vira "ignorar" por falta de `pessoas.editar` (ou
+       `produtos.editar`) também sai sem o `alteracoes`, na prévia e no relatório do resultado.
+       **Correção na gravação** (`gravarCliente`): o telefone ou o e-mail da planilha que já existe no cadastro ficava
+       sem a marca de principal (o atual perdia a marca e o da planilha era descartado como repetido); agora o existente
+       só ganha a marca, com o id e os outros campos. O endereço principal recebia o da planilha sem id e perdia a
+       referência; agora as colunas da planilha sobrescrevem o principal, que mantém o id e a referência (o principal no
+       exterior, que a exportação não leva, passa a "Outro" em vez de ser apagado).
+     - **Mapeamento provisório do Nuvem3 num ponto só** (F2-Q14, D66, recomendação (b)): `MAPEAMENTO_PROVISORIO_NUVEM3`
+       no shared guarda os cabeçalhos e os textos da balança (`UsaBalancaEtiquetadoraStr`, decisão 104) e os do combo
+       (os aliases de `composicao`, os nomes do tipo que viram Combo, os separadores das posições; decisão 95). A
+       leitura (`lerBalancaPlanilha`, `lerComposicao`, agora só no shared), o reconhecimento das
+       colunas, o `TIPO_POR_NOME` da análise e a exportação (`formatarBalancaPlanilha`) leem dele: quando o dono mandar
+       as exportações reais, troca-se só esse objeto. O andamento da importação já aparece no ícone Tarefas (F2-B30).
+     - **Correção na importação**: o **serviço** novo da planilha caía em "controlaEstoque: Serviço não controla
+       estoque" (a regra do formulário) e era ignorado; agora o tipo decide (`controlaEstoque = false`), e o serviço já
+       gravado continua "Sem alteração".
+     - Testes: `exportacao-catalogo.test.ts` (a massa inventada — combo com posições, serviço, matéria-prima, inativo,
+       categorias em caminho e com vírgula, códigos fiscais com zero, preços de 4 casas, estoque negativo e
+       fracionado, EAN inválido, dois códigos de barras —: o `.xlsx` da loja com a NF, o `.csv` e o arquivo da tarefa
+       reimportados com 100% "Sem alteração", confirmados sem versão nova nem acerto; a célula editada vira um só
+       "Atualizar"; o CD só com o estoque; os três filtros; sem `produtos.ver_custo`; a loja e o estoque fora dos
+       permitidos; o estoque da loja fora dos permitidos; o acesso do cadastro, também pela rota comum; os clientes; e
+       a ida e volta dos clientes confirmada sem gravar nada (versão, filhas, referência e auditoria iguais), a
+       edição de uma célula (só ela gravada; o telefone que já existia passa a principal; o endereço mantém o id e a
+       referência); o limite de 5.000 do provedor abaixo do da instância (um provedor de teste igual ao de produtos com o
+       limite baixo vai para a tarefa com a instância em 100.000); e a **planilha real só local**: o arquivo fica em
+       `test/fixtures/planilhas/reais/` (no `.gitignore`, D60) e o teste é pulado sem ele — carga numa empresa nova,
+       exportação e reimportação com 100% "Sem alteração", com 9 min para cada espera de tarefa), o
+       `importacao.spec.ts` do shared (o mapeamento, a balança de ida e volta, a composição, os rótulos, os filtros e o
+       `LIMITE_EXPORTACAO_CATALOGO`), o `produtos.spec.ts` da API (o serviço) e o `clientes.spec.ts` (o "Sem alteração"
+       e o "O que muda" dos clientes).
+     - **Pendente: a ida e volta com a planilha real.** O critério de pronto do plano ("a exportação completa da Ice
+       Beer, reimportada, dá 100% 'Sem alteração'") **ainda não foi conferido**: nesta sessão não havia a planilha real,
+       e o teste dela foi pulado; só a massa inventada rodou. Fica para quem tiver o arquivo rodar
+       `exportacao-catalogo.test.ts` com ele em `test/fixtures/planilhas/reais/` (antes do merge do PR-9) e registrar o
+       resultado no andamento.
+187. **Relatórios Produtos geral e NCMs inválidos, o "Definir NCM" em lote e a carga do CEST** (Fase 2, F2-B41; ERP
+     16.1, 16.3; decisões 41, 47, 67, 88, 98, 177; `src/relatorios/produtos-geral.ts`, `src/relatorios/ncm-invalidos.ts`,
+     as rotas `GET /relatorios/produtos-geral`, `GET /relatorios/ncm-invalidos`, `POST
+     /relatorios/ncm-invalidos/definir-ncm` e as exportações `…/exportar` pela rota comum; `lerCests`/`carregarCests`
+     em `src/database/referencias/carregar.ts`; a opção `localizacao` do `atualizarProduto`; contratos no shared
+     `relatorios-produtos.ts`; **sem migração** (a tabela `cests` existe desde a 1A); PDV sem mudança: `cests` não
+     desce; o ERP é a decisão 75 do README do ERP).
+     - **Produtos geral** (`relatorios.produtos_geral`): uma linha por produto não excluído (todos os tipos), com o
+       **preço de custo do cadastro** (`preco_custo`, o do markup do formulário; o custo médio do estoque é o do Estoque
+       Atual e a `produtos.custo_base_margem` da D49 continua só a base do markup da compra), a venda (com `lojaId`, a da
+       loja quando ela tem preço próprio, senão a do produto; a loja tem de estar entre as permitidas, 403), o atacado,
+       o **lucro R$** (venda − custo), o **lucro %** (lucro ÷ venda; nulo sem venda) e o **markup %** (lucro ÷ custo;
+       nulo sem custo), o EAN principal e os departamentos (os `caminho_nomes`, a principal primeiro). Filtros: nome
+       (nome, código interno ou EAN), marca, departamento (a categoria e as filhas pelo `caminho`), sem preço (a venda,
+       com a loja, = 0), loja e situação (padrão ativos); ordenação por nome, código, código interno, venda, custo,
+       lucro, lucro % e markup %. A coluna WooComm fica fora (integração da Fase 7).
+     - **Contas em decimal no banco**: tudo em `numeric`, o lucro e as porcentagens com `round(…, 2)` ("meio para longe
+       do zero", o ADR-05). Os **totais** são do relatório inteiro, numa segunda consulta: a quantidade e a **média
+       simples** do lucro, do lucro % (só dos produtos com venda) e do markup % (só dos com custo), tiradas das linhas
+       **antes** do arredondamento de cada uma e arredondadas no fim. O teste confere a média 3,005 → 3,01, que o
+       `float` dá 3,00.
+     - **Custo só com `produtos.ver_custo`**: sem ela, o custo, o lucro, as porcentagens e as médias voltam nulos (o
+       lucro com a venda revelaria o custo) e ordenar por eles é 403; no arquivo, as colunas são `custo: true`.
+     - **NCMs inválidos** (`relatorios.ncm_invalidos`, sem filtros como no Nuvem3): os produtos não excluídos, sem
+       combo e serviço (não vão para a NFC-e, decisão 67; o inativo entra), com **um motivo** nesta ordem: NCM
+       **vazio**; **inexistente** (fora de `ncms` ou excluído dela, o que saiu da Nomenclatura); **fora de vigência**
+       (`vigencia_fim` no passado) — os três juntos saem do próprio `not ncmVigente` da decisão 98 no SQL (o que não é
+       vigente fica "inexistente" sem a linha em `ncms` e "fora de vigência" com ela; o teste compara o conjunto com o
+       helper), então mudam junto se a regra dele mudar —; e **CEST incompatível**, só quando `cests` tem algum CEST não excluído: o CEST do produto fora da
+       tabela vigente (`vigencia_inicio`/`vigencia_fim`) ou o NCM que não começa por nenhum NCM da lista do CEST. O
+       convênio lista capítulos, posições, subposições e itens, então a comparação é pelo **começo do código** (o
+       2203.00.00 cabe no CEST que lista "2203"): sem isso, todo CEST de posição seria falso positivo. Com a tabela
+       vazia nada de CEST é conferido. A resposta traz o detalhe em texto ("Vigência até 31/12/2020", "O NCM não está
+       na lista do CEST …"), a versão agregada de cada produto (decisão 47), a contagem por motivo e o `cestCarregado`.
+       O "CEST obrigatório para NCM listado" (`exige_cest_bem_listado`) não entra: é regra de emissão (fase fiscal).
+     - **"Definir NCM" em lote** (`relatorios.ncm_invalidos` + `produtos.editar`): o NCM (existente e vigente, 422) para
+       até `LIMITE_DEFINIR_NCM` = **50** produtos (uma página do relatório; cada produto faz dezenas de idas ao banco
+       com a trava 7300001 presa, como no cadastro em massa, D65), cada um com a versão que o relatório mostrou, numa
+       transação com `travaVersao` (o 503 "sistema ocupado" amigável), **tudo ou nada**. Primeiro confere todos e junta
+       os erros por produto (`produtos.N`, cada um com o "código - nome": o excluído depois de abrir o relatório
+       também; versão mudada — só conflitos = 409, senão 422 —, as regras do formulário pelo `validarNoBanco`); depois grava cada um pelo **`atualizarProduto`** com a entrada montada do
+       detalhe **como o formulário o vê** (as lojas e os estoques permitidos: as linhas das lojas de fora ficam, como no
+       PUT, decisão 88) e só o NCM trocado: a versão de novo com a linha travada, a auditoria `editar` própria com a
+       localização **"Relatórios › NCMs inválidos"** (opção `localizacao` nova do `atualizarProduto`) e a versão nova
+       do produto, que desce ao PDV. O produto que já tem o NCM não é regravado (`semMudanca`). O histórico de preços
+       fica com a origem `cadastro` (nenhum preço muda).
+     - **Carga do CEST** (`cests.csv`, `lerCests` e `carregarCests` no `carregarReferencias`, idempotente como a dos
+       NCMs): `codigo;descricao;segmento;ncms;vigencia_inicio;vigencia_fim`, com a lista de NCMs separada por vírgula
+       (os pontos do convênio podem vir, são tirados; 2 a 8 dígitos) e a descrição entre aspas quando tem `;`. Linha
+       fora do formato derruba a carga com o número dela. Só as linhas novas ou diferentes são gravadas; o CEST que sair
+       do arquivo é excluído logicamente; **o arquivo vazio (ou ausente) não mexe na tabela** ("ainda sem a lista", não
+       "revogados"). É tabela de referência pública do Convênio ICMS 142/2018 e alterações, não emissão fiscal. A
+       atualização periódica pela plataforma é o F2-B46.
+     - **Pendente: a lista oficial do CEST.** O `cests.csv` versionado está **só com o cabeçalho**: a sessão do
+       F2-B41 não conseguiu baixar o Convênio ICMS 142/2018 do CONFAZ (`www.confaz.fazenda.gov.br` recusou a conexão
+       a partir do ambiente da sessão), e as linhas nunca são inventadas. Até a carga, o motivo "CEST incompatível" não
+       aparece (o card da tela mostra "Tabela não carregada"). Quem tiver acesso converte os anexos do convênio
+       vigente para o formato acima, anota aqui **a fonte (URL do CONFAZ) e a data da redação** e roda `db:referencias`.
+       Os testes usam a fixture **inventada** `test/fixtures/referencias/cests-inventado.csv` (CEST 99xxxxx, que não
+       existem no convênio).
+     - Testes: `relatorios-produtos.test.ts` (as médias em decimal, a loja, os filtros, a ordenação que inverte a do
+       nome, sem `produtos.ver_custo`, a loja fora das permitidas, as exportações; os motivos e o conjunto do próprio
+       `ncmVigente`, o CEST que some com a tabela vazia — esvaziada pelo teste, para valer também depois da lista
+       oficial — e aparece com a carga, a exclusão lógica do CEST que sai do arquivo e a volta dele, a posição que
+       aceita o item; o "Definir NCM" de 50 produtos com a versão nova, uma auditoria por produto e as filhas
+       preservadas; tudo ou nada com um produto válido no lote, só conflitos 409 e conflito + não encontrado 422, o
+       excluído identificado, o NCM fora da tabela 422, o mesmo NCM sem regravar; as permissões, inclusive só o
+       relatório sem `produtos.editar`), `cests.spec.ts` (o arquivo versionado lido sem erro, o formato e os erros por
+       linha) e o `relatorios-produtos.spec.ts` do shared. As checagens repetidas dentro do `definirNcmEmLote`
+       (`produtos.editar`) e do `sqlProdutosGeral` (ordenar por custo) são defensivas: as rotas já barram antes.
+
+188. **Relatório Histórico de produtos e a descrição legível da gravação do produto** (Fase 2, F2-B42; ERP 16.2, 17;
+     MD 3.1.7; decisões 87, 88, 100, 187; `src/relatorios/historico-produtos.ts`, `src/auditoria/diferenca-produto.ts`,
+     as rotas `GET /relatorios/historico-produtos` e `GET /relatorios/historico-produtos/:id?ocorridoEm=`, a gravação
+     em `src/produtos/produtos.controller.ts`, `precosPorLojaDoProduto` em `src/produtos/consultas.ts`,
+     `auditarPrecosEntrada` em `src/entradas/entrada.ts`, a exportação pelo `provedorHistoricoProdutos` com o
+     `converterLote` de `src/tarefas/exportar-relatorio.ts`; contratos no shared `relatorios-produtos.ts`; **sem
+     migração**; PDV sem mudança; o ERP é a decisão 76 do README do ERP).
+     - **Sobre a auditoria** (`relatorios.historico_produtos`): as linhas das entidades do produto e das filhas
+       (`ENTIDADES_HISTORICO_PRODUTOS`: hoje as filhas vão no `antes`/`depois` do próprio `produtos`; as sub-tabelas
+       ficam na lista para quando tiverem linha própria) e só as ações de cadastro (`criar`, `editar`, `excluir`,
+       `restaurar`, `importar`; a exportação do catálogo, `exportar`, fica fora). Fica fora também o **aviso de
+       cadastro do caixa** (`alerta.cadastro`, SYNC 9.24: a auditoria `criar` do produto com a origem `pdv` e a
+       localização `LOCALIZACAO_ALERTA_CADASTRO_PDV`, "PDV › Alerta de cadastro"): ele não muda nada no cadastro, e
+       entraria como gravação "G" do caixa, com "Tipo alerta" e "Detalhes" como campos do produto no "ver diferença"
+       (o aviso continua na tela de auditoria e no painel de alertas). A legenda: **G** = criar/editar,
+       **E** = excluir, **R** = restaurar, **I** = a gravação de origem `importacao` (ou a ação `importar`). A
+       **localização** é mapeada ("Cad. prod.", "Cadastro em massa", "Importação", "Recebimento", "NF-e", "NCMs
+       inválidos"); a origem que não é o ERP vence ("API", "PDV", "Integração", "Sistema", "Suporte": a chamada pela
+       API ao `PUT /produtos` grava a localização do formulário). O produto vem pelo `registro_id`, também o excluído
+       (marcado). A linha com `loja_id` fora das lojas permitidas não aparece (a do produto não tem loja).
+     - **Período obrigatório** (`dataInicial`..`dataFinal`, dias no fuso da empresa, até 366 dias como a Movimentação;
+       422 sem ele): a tabela é particionada por mês em `ocorrido_em`, então os limites vão como **parâmetros** e o
+       fuso é lido antes, numa ida própria (com o `fusoDaEmpresa` dentro do `where`, uma subconsulta, as partições só
+       seriam descartadas na execução, não no plano). O teste confere com `EXPLAIN` que só a partição do período entra. Paginação
+       por página com o total (a contagem com o mesmo `where`); a ordem é fixa, a mais recente primeiro (`ocorrido_em`,
+       `id`). Filtros: **texto** (contido em `descricao`, sem acento nem caixa — `fn_unaccent` + `ilike`, o `%`/`_`
+       literais), **usuário**, **tipo** e **produto** (`registro_id`, pelo `ix_auditoria_entidade_registro_id`).
+       O texto é procurado **no escopo de quem consulta** (`textoPesquisavel`): sem `produtos.ver_custo`, a
+       `descricao` sem os trechos de custo (`TRECHO_CUSTO_GRAVADO`: "Preço de custo: (alterado)", "Markup %:
+       (preenchido)", "Custo do fornecedor (alterado)", tirados com `regexp_replace` antes do `ilike`); com lojas ou
+       estoques restritos, sem o aviso "Dados de loja alterados" (que pode ser de uma loja de fora). Sem isso, procurar
+       "custo" ou "dados de loja" diria em qual produto e quando mudou o que a permissão esconde (o valor nunca vaza:
+       o texto gravado não o tem), mesmo com o texto da linha sem citá-lo.
+     - **A descrição legível passa a ser gravada** (ERP 16.2: "a edição de produto passa a gravar a `descricao`
+       legível, para o filtro de texto funcionar"): o `inserirProduto` e o `atualizarProduto` — o formulário, a
+       importação, o cadastro em massa (F2-B39) e o "Definir NCM" (F2-B41), todos por eles — gravam em
+       `auditoria.descricao` o texto de `descricaoGravacaoProduto`, e a exclusão grava "Produto N - NOME excluído".
+       **Nada muda no produto nem na versão**: só a linha de auditoria ganha o texto. Como a tela de auditoria (17.3)
+       mostra a `descricao` a todos com `auditoria.ver`, o texto gravado é o **neutro** (`ESCOPO_GRAVADO`): o custo só
+       com o rótulo ("Preço de custo: (alterado)") e o que é de loja (a linha da loja, a faixa de uma loja, o lote de
+       um estoque) num aviso só, "Dados de loja alterados", sem loja nem valor. Até 2.000 caracteres (o "ver diferença
+       completa" recalcula tudo do `antes`/`depois`). As linhas de antes do F2-B42 não têm o texto (o filtro de texto
+       não as acha; o relatório as mostra mesmo assim, com o texto montado na leitura).
+     - **O formatador** (`diferenca-produto.ts`, puro e com teste próprio): compara `antes` (o detalhe do produto) e
+       `depois` (a linha gravada mais as filhas) com os rótulos dos campos do formulário ("Preço de venda: 9,90 →
+       10,90"; o decimal `"9.9000"` do banco é igual ao `"9.9"` do corpo), as referências pelo nome ("Marca: — →
+       HEINEKEN", a categoria pelo caminho, a loja, o produto "código - nome", o fornecedor, o estoque; os nomes numa
+       ida por cadastro para a página inteira, também os excluídos) e as **filhas** com a chave natural de cada uma
+       (o código de barras pelo código, a loja pela loja, a faixa pela loja + quantidade inicial, o componente pelo
+       tipo + produto + variação, o relacionado pelo produto + tipo, o fornecedor pelo (fornecedor, código), o lote pelo
+       id, as categorias pelo id): adicionada ("EAN adicionado 789…", com o resumo), removida e alterada ("Loja Centro:
+       Preço de venda 9,90 → 10,90"). Só entram os campos presentes **dos dois lados** (o detalhe e a linha gravada
+       têm campos diferentes, como `unidadeSigla` e `grupoPreco`, que não são mudança); na criação, os preenchidos fora
+       do padrão. **Campo desconhecido** entra com o nome da chave ("Campo novo: A → B"; objeto só "(alterado)"; o de
+       nome com "custo"/"markup" segue a regra do custo).
+     - **O `depois` das lojas e das faixas vem do banco** (`precosPorLojaDoProduto`, no formato do `antes`): o corpo
+       de quem só vê algumas lojas não traz as outras, que a gravação preserva (decisão 88), e o histórico as daria
+       como removidas. Muda só o conteúdo dessas duas listas no `depois` da auditoria (como já era com os fornecedores
+       e os lotes, F2-B13 e F2-B17); as linhas gravadas antes do F2-B42 por quem tinha lojas restritas podem mostrar
+       a loja de fora como "removida" (só a quem a vê).
+     - **O que se mostra é montado para quem consulta** (`escopoDaSessao`), na linha e no "ver diferença completa":
+       o `antes`/`depois` passa por `redigirParaVisao` (decisão 100) e a diferença pelo escopo — o custo com os
+       valores só com `produtos.ver_custo` (sem ela, nem o rótulo), só as lojas e os estoques permitidos (a faixa de
+       todas as lojas e o lote sem estoque são de todos). Os nomes buscados também respeitam o escopo (a loja de fora
+       nem é lida). A linha com uma filha só (a relação inversa criada por outro produto, o vínculo de fornecedor
+       movido por outro produto ou pela NF-e) mostra a `descricao` gravada, que conta de onde veio.
+     - **"Ver diferença completa"** (`GET /relatorios/historico-produtos/:id?ocorridoEm=`): a tabela campo × antes ×
+       depois de todos os campos que mudaram (a filha no rótulo, "Loja Centro › Preço de venda"); na exclusão, o
+       cadastro que existia. O `ocorridoEm` escolhe a partição (uma janela de 1 ms: a página o manda em milissegundos e
+       o banco guarda microssegundos); fora do produto, das ações ou das lojas permitidas (e no aviso do caixa), 404.
+       A rota fica depois de `:relatorio/exportar`, para `historico-produtos/exportar` não cair nela.
+     - **A importação** passa a gravar a localização "Produtos › Importação" na auditoria do produto (antes ia a do
+       formulário; o relatório também a reconhece pela origem `importacao`).
+     - **O preço mudado pela entrada** (o recebimento manual e a NF-e de fornecedor, ERP 13.3/13.4 "Altera Preço do
+       Produto"/"Atualiza Preço de Custo") passa a ter a auditoria do produto, a mudança de preço mais comum da loja:
+       antes só ia ao Histórico de preços (F2-B37), e a localização "Recebimento"/"NF-e" do relatório nunca aparecia.
+       `movimentarEntrada` devolve `precosAlterados` (os produtos com o custo, a venda geral ou o preço da loja
+       destinatária mudados, no formato do `antes`/`depois` do cadastro: `precoCusto`, `precoVenda`, `markupPct` e a
+       loja em `lojas`, com o `nome` igual dos dois lados, que marca a linha como do cadastro inteiro), e o
+       controlador grava, na mesma transação, uma linha `editar` de `produtos` por produto
+       (`auditarPrecosEntrada`), com a localização da tela (`Estoque › Recebimentos` ou `Estoque › Recebimento de
+       NFe`) e a `descricao` neutra precedida do documento ("Recebimento Nº 12: Preço de custo: (alterado); Preço de
+       venda: 8,00 → 8,90"). A linha é da empresa, sem `loja_id` (como a do cadastro): o preço da loja sai do texto
+       de quem não vê a loja pelo escopo. O Histórico de preços continua com a origem e o id do documento.
+     - **Exportação** (Excel/CSV pela rota comum, ERP 3.5; F2-B29, decisão 177): `GET
+       /relatorios/historico-produtos/exportar` (`relatorios.exportar` e `relatorios.historico_produtos`), com os
+       filtros da tela (a página é ignorada) e as colunas Usuário, Tipo, Localização, Data/hora, Código, Produto e
+       Histórico. O texto do Histórico é montado **no escopo de quem exporta**, como na tela: o provedor ganhou dois
+       opcionais, `converterLote` (cada lote lido do cursor vira as linhas das colunas, com os nomes citados numa ida
+       por cadastro por lote, na conexão e no instantâneo do cursor) e `linhasPorLote` (1.000 aqui: cada linha traz o
+       `antes`/`depois` inteiros do produto; vale o menor entre ele e o da instância).
+     - **Uma base só para a página, a exportação e o detalhe** (`sqlLinhas`, as colunas e o `left join produtos`, e
+       `condicaoBase`, as entidades, as ações, o aviso do caixa de fora e as lojas da sessão): uma coluna ou um filtro
+       de visão novo vale nas três consultas.
+     - Testes: `diferenca-produto.spec.ts` (o critério de pronto, o decimal igual, a referência pelo nome, filhas
+       adicionadas, removidas e alteradas, campos desconhecidos, o custo nos três escopos, o que é de loja com as
+       permitidas e o aviso do texto gravado, os trechos de custo que o filtro tira, a criação, a tabela),
+       `historico-produtos.test.ts` (a edição pelo formulário com o texto do critério de pronto, a `descricao`
+       gravada sem custo nem loja, o usuário de uma loja que não deixa a outra "removida", o escopo sem
+       `produtos.ver_custo` e só com uma loja no texto e no detalhe, a linha de loja de fora e o 404, a outra entidade e a exportação de fora, a legenda e a localização, os filtros e
+       a paginação, o filtro de texto sem achar o custo nem o aviso de loja para quem não os vê, o aviso do caixa de
+       fora (e o 404) com outra linha do PDV dentro, a exportação CSV com o escopo de quem exporta, o período
+       obrigatório e o teto, a linha antiga fora do período, o `EXPLAIN` com as partições; as consultas de ontem a
+       hoje, para a meia-noite de Brasília no meio da execução não tirar as linhas do período),
+       `recebimento-movimentar.test.ts` e `notas-entrada-movimentar.test.ts` (a mudança de preço como "Recebimento" e
+       "NF-e", com o texto legível e a `descricao` gravada com o documento), `importacao-nuvem3.test.ts` (a
+       localização "Produtos › Importação" e a `descricao` da criação e da edição pela planilha),
+       `cadastro-massa.test.ts` (a `descricao` do cadastro em massa) e o `relatorios-produtos.spec.ts` do shared.
 
 ### Operação – tarefas em segundo plano (API)
 

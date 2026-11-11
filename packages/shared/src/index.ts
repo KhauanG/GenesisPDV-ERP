@@ -23,6 +23,7 @@ export * from './precos.js';
 export * from './produtos.js';
 export * from './recebimentos.js';
 export * from './relatorios.js';
+export * from './relatorios-produtos.js';
 export * from './sync/contratos.js';
 export * from './sync/eventos.js';
 export * from './tarefas.js';

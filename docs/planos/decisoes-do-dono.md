@@ -164,3 +164,58 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   só quantidades e nunca o custo, desligável por `pdv.consulta_outras_lojas` (padrão Sim, por loja). Implementado no
   F2-B35 (README da API › decisão 182, do ERP › 70, do PDV › 82; roadmap §16, D53). Se o dono preferir (b) — também
   avaria e vasilhame vazio — ou (c) — só com permissão de supervisor —, muda a consulta da API e o diálogo do PDV.
+
+## Catálogo operacional — PR-9 (10/11/2026)
+
+- **F2-Q13 (D54) — vale a recomendação (sem resposta explícita do dono).** Pela regra acima ("Demais (F2-Q2, Q4, Q6,
+  Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano"), a opção (a): a Ice Beer não contrata agora uma
+  base externa de códigos de barras; o "Pesquisar EAN" do cadastro em massa procura só na base da empresa (o código já
+  cadastrado vira "Atualização"). Implementado no F2-B39 (README da API › decisão 185, do ERP › 73; roadmap §16, D54).
+  Se o dono preferir (b) — contratar um serviço como o Cosmos —, ele indica o serviço e quem contrata, e o F2-B47 sai
+  do backlog para sugerir nome, NCM, marca e foto na mesma pesquisa.
+- **F2-Q14 (D66) — vale a recomendação (sem resposta explícita do dono).** Pela regra acima ("Demais (F2-Q2, Q4, Q6,
+  Q7, Q9–Q14): sem resposta explícita; vale a recomendação do plano"), a opção (b): até o dono mandar exportações reais
+  do Nuvem3 com a coluna `UsaBalancaEtiquetadoraStr` preenchida e com o "grupo de itens" (combo), a importação mantém o
+  mapeamento provisório da balança (Peso/Sim = pesado, Unidade = por unidade, Não = não usa; README da API › decisão
+  104) e o combo pela coluna `composicao` (decisão 95), isolados num ponto só (`MAPEAMENTO_PROVISORIO_NUVEM3`).
+  Implementado no F2-B40 (README da API › decisão 186; roadmap §16, D66). Se o dono mandar os arquivos — opção (a) —,
+  fecha-se o mapeamento definitivo trocando só esse ponto.
+- **D65 — RESPONDIDA (11/11/2026): (A) 100 linhas por gravação do cadastro em massa, tudo ou nada.** A ERP 8.3
+  dizia 500; a revisão do F2-B39 mediu que cada linha da grade faz de 9 a ~50 idas ao banco com a trava de ordenação
+  presa, e 500 linhas prenderiam os caixas e o ERP por 40 a 75 s na produção (100 ficam em 8 a 15 s). Opções
+  apresentadas: (a) 100 linhas, tudo ou nada (recomendada, a escolhida); (b) voltar a 500, aceitando a espera; (c)
+  gravar em partes de 100 sem o "tudo ou nada" da grade inteira. Catálogos grandes continuam pela importação de
+  planilha. README da API › decisão 185; roadmap §16, D65.
+
+## Segurança: revisão por PR e auditoria completa (10/11/2026)
+
+- **D63 — RESPONDIDA: (A) sim, a partir do PR-9.** Antes de abrir cada PR, além da revisão por bloco do
+  `genesis-bloco`, roda a revisão de segurança do PR inteiro (skill `security-review`, já disponível nas sessões). Os
+  achados confirmados são corrigidos no próprio PR e citados no corpo dele. Roadmap §16, D63; CLAUDE.md › Regras de
+  trabalho.
+- **D64 — RESPONDIDA: (A) no fim da Fase 2.** Auditoria completa de segurança do sistema inteiro antes de levá-lo a
+  todas as lojas: principal pelo plugin oficial `claude-security` (catálogo da Anthropic; o dono instala na hora) e,
+  como segunda opinião, a skill `cloudflare/security-audit-skill`. Nada a instalar antes. Roadmap §16, D64;
+  `docs/andamento.md` › Pendências.
+- **Plugins sugeridos pelo dono (caveman, claude-mem, karpathy-guidelines):** não adotados, pela recomendação — o
+  caveman encurta as respostas (o contrário do que o dono pede), a memória do projeto já é o `andamento.md` e este
+  arquivo (versionados; as sessões na nuvem são descartáveis e o repositório é público) e as diretrizes de código já
+  estão cobertas pelo processo de bloco.
+
+## Documento da venda na fase fiscal (11/11/2026)
+
+- **D67 — RESPONDIDA: as três situações ("As três opções são ótimas para se ter").** Vale para a fase fiscal (3F);
+  nada muda antes dela.
+  1. **Loja de regime dispensado da NFC-e** (no PR, o MEI: Res. SEFA 145/2015, art. 7º;
+     `parametros_fiscais_uf.regime_dispensa_nfce`): o padrão é o comprovante "Não fiscal", com uma tecla no caixa
+     para **emitir a NFC-e só para o cliente que pedir**. A opção só aparece em loja desse regime: em loja obrigada o
+     ERP não deixa ligar.
+  2. **Loja obrigada a emitir:** a NFC-e sai em **toda venda**, em segundo plano. O CPF na nota só entra quando o
+     cliente pede (F5), e a impressão segue a forma mais curta que a UF permitir. **Não existe "venda sem nota"** em
+     loja obrigada: o dono perguntou pela nota só a pedido também nessas lojas, e foi explicado que isso é omissão de
+     receita (Lei 8.137/1990, art. 1º, V).
+  3. **Cliente PJ:** NF-e modelo 55 a pedido (`nfe_solicitada`, especificação do PDV, Fase 6).
+  - Para o dono, antes da fase fiscal: confirmar com o contador o regime de cada CNPJ da Ice Beer e se os produtos com
+    ICMS-ST e PIS/COFINS monofásico estão sendo separados no DAS.
+  - Roadmap §16, D67; especificação do PDV › 18.
+

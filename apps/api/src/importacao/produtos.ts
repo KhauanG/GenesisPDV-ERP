@@ -13,6 +13,7 @@ import {
   lerBooleanoPlanilha,
   lerCodigoPlanilha,
   lerDecimalPlanilha,
+  lerComposicao,
   lerExcluirPlanilha,
   lerListaCategorias,
   lerNcmPlanilha,
@@ -26,7 +27,9 @@ import {
   TIPOS_PRODUTO,
   validarGtin,
   type AlteracaoImportacao,
+  MAPEAMENTO_PROVISORIO_NUVEM3,
   type CriarProdutoEntrada,
+  type ItemComposicao,
   type LinhaPreviaImportacao,
   type OcorrenciaImportacao,
   type OpcoesImportacao,
@@ -74,13 +77,6 @@ export interface CategoriaDaLinha {
   caminho: string[];
 }
 
-/** Posição do combo vinda da planilha: o componente é achado na gravação pelo código (interno, EAN ou número). */
-export interface ItemComposicao {
-  codigo: string;
-  quantidade: string;
-  rotulo: string | null;
-}
-
 /** O que a sessão pode criar junto com os produtos (decisão 85). */
 export interface PermissoesAnaliseProdutos {
   criarMarcas: boolean;
@@ -92,33 +88,6 @@ export interface PermissoesAnaliseProdutos {
    * (a mesma regra da Saída manual).
    */
   estoqueNegativo: boolean;
-}
-
-/**
- * Coluna `composicao` (ERP 8.2.17; decisão 95): `7891149103102*1 | CERV-001*2 [Gelo de sabor]` — código interno, EAN
- * ou código numérico do componente, `*` ou ` x ` e a quantidade (padrão 1), rótulo opcional entre colchetes;
- * separados por `|`, `;` ou quebra de linha. Sem alternativas: a troca de componente é cadastrada no ERP.
- */
-export function lerComposicao(texto: string): { itens: ItemComposicao[]; erros: string[] } {
-  const itens: ItemComposicao[] = [];
-  const erros: string[] = [];
-  for (const parte of texto
-    .split(/[|;\n]+/)
-    .map((p) => p.trim())
-    .filter(Boolean)) {
-    const m =
-      /^(.+?)(?:\s*\*\s*|\s+[xX×]\s+)([\d.,]+)\s*(?:\[(.*)\])?$/.exec(parte) ??
-      /^(.+?)()\s*(?:\[(.*)\])?$/.exec(parte);
-    const codigo = m?.[1]?.trim() ?? '';
-    const qtdTexto = m?.[2] ? m[2] : '1';
-    const n = lerNumeroPlanilha(qtdTexto);
-    if (!codigo || n === null || Number.isNaN(n) || !(n > 0)) {
-      erros.push(`Composição: "${parte}" inválida (use código*quantidade)`);
-      continue;
-    }
-    itens.push({ codigo, quantidade: String(n), rotulo: m?.[3]?.trim().slice(0, 60) || null });
-  }
-  return { itens, erros };
 }
 
 /** Produto existente como está gravado (base da comparação com a planilha). */
@@ -218,9 +187,7 @@ const TIPO_POR_NOME = new Map<string, TipoProduto>([
   ),
   ['produto', 'simples'],
   ['normal', 'simples'],
-  ['combo', 'kit'],
-  ['kit', 'kit'],
-  ['grupo de itens', 'kit'],
+  ...MAPEAMENTO_PROVISORIO_NUVEM3.composicao.tiposCombo.map((t) => [t, 'kit'] as [string, TipoProduto]),
   ['materia prima', 'materia_prima'],
   ['servico', 'servico'],
   ['produzido', 'produzido'],
@@ -688,6 +655,10 @@ export function analisarProdutos(
         dados.tipo = t;
       }
     }
+    // Serviço não controla estoque (a regra do formulário, `criarProdutoSchema`): a planilha não tem a coluna, então o
+    // tipo decide — sem isso o serviço novo da planilha caía em "controlaEstoque: Serviço não controla estoque"
+    // (F2-B40). No serviço já gravado o valor é o mesmo e não entra no "O que muda".
+    if (tipo === 'servico' && (!existente || dados.tipo === 'servico')) dados.controlaEstoque = false;
     // Combo: posições pela coluna `composicao`; sem ela o combo novo é criado inativo e avisado (decisão 95).
     let composicao: ItemComposicao[] | null = null;
     const composicaoTexto = texto(cel('composicao'));

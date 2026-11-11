@@ -164,11 +164,27 @@ describe('fluxo de login do ERP', () => {
   it('rota de tela sem a permissão mostra "Sem permissão"; tela futura mostra "Em construção"', async () => {
     simularApi(
       rota('POST', '/api/auth/refresh', () => ({ corpo: respostaLogin() })),
-      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'produtos.exportar']) })),
+      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'produtos.ver']) })),
     );
     const { router } = renderizarRotas(rotas, '/cadastros/usuarios');
     expect(await screen.findByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument();
+    await router.navigate('/produtos/promocoes');
+    expect(await screen.findByText('Em construção · Fase 3')).toBeInTheDocument();
+    // Exportação sem permissão de exportar (só o ver de produtos): "Sem permissão".
     await router.navigate('/produtos/exportacao');
-    expect(await screen.findByText('Em construção · Fase 2')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument();
+  });
+
+  it('a Exportação abre para quem exporta só os clientes, sem produtos.ver (o menu: menu.test.ts)', async () => {
+    simularApi(
+      rota('POST', '/api/auth/refresh', () => ({ corpo: respostaLogin() })),
+      rota('GET', '/api/auth/eu', () => ({
+        corpo: eu(['dashboard.ver', 'pessoas.ver', 'relatorios.exportar']),
+      })),
+    );
+    renderizarRotas(rotas, '/produtos/exportacao');
+    expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Exportar clientes/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Exportar produtos/i })).toBeDisabled();
   });
 });

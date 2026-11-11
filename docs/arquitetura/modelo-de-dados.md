@@ -2066,7 +2066,8 @@ migração do Nuvem3 pode trazer duplicados; com duplicidade, o PDV mostra a lis
   já existente em outro produto (checagem com `select … for update` no índice).
 - **Importação/migração do Nuvem3**: a importação de planilha e a migração de dados aceitam duplicados mesmo com
   `bloquear` e terminam com o relatório "EAN duplicado" (`group by codigo having count(distinct produto_id) > 1`)
-  para correção. Enquanto a empresa corrige, pode ligar `avisar` (o ERP pede confirmação e grava); a recomendação é
+  para correção (`GET /relatorios/ean-duplicado`, ERP 16.3.1, F2-B38: só o tipo `gtin`, a linha de código e o produto
+  não excluídos, o inativo incluído, agrupado pelo `ix_produtos_codigos_barras_codigo`). Enquanto a empresa corrige, pode ligar `avisar` (o ERP pede confirmação e grava); a recomendação é
   voltar a `bloquear` quando o relatório zerar. O valor `permitir` não existe.
 
 #### 3.6.6 Variações
@@ -2208,10 +2209,15 @@ Histórico de alterações de preço (alimenta relatórios e auditoria).
 | `valor_anterior` | `numeric(15,4)` | sim | — | |
 | `valor_novo` | `numeric(15,4)` | sim | — | |
 | `origem` | `varchar(15)` | não | — | `cadastro`, `recebimento`, `nota_entrada`, `importacao`, `cadastro_massa`, `api` (quem mudou o preço; até o F2-B15 o formulário e a importação gravavam `cadastro`, desde ele a importação grava `importacao` e o recebimento `recebimento`) |
-| `origem_id` | `uuid` | sim | — | Documento (o recebimento ou a NF-e que mudou o preço; nulo no cadastro, na importação e no custo do combo recalculado pelo banco) |
+| `origem_id` | `uuid` | sim | — | Documento (o recebimento ou a NF-e que mudou o preço; nulo no cadastro, na importação e no custo do combo recalculado pelo banco). Na linha `quantidade` (F2-B37) é a **faixa** (`produtos_precos_quantidade.id`, a atual ou a removida), de onde a consulta tira o intervalo: nenhum documento muda faixa |
 | `usuario_id` | `uuid` | sim | — | |
 
 - `ix_produtos_historico_precos_produto_id_criado_em`.
+- Gravação das filhas (F2-B37; README da API › decisão 183): o formulário e a importação comparam as faixas e os preços
+  das variações gravados antes e depois do "Gravar": `quantidade` com a `loja_id` e a `variacao_id` da faixa (criada,
+  removida ou com o preço trocado no mesmo intervalo) e `venda`/`custo` com a `variacao_id`. Consulta:
+  `GET /produtos/:id/historico-precos` (tipo, loja, período), sem `custo` para quem não tem `produtos.ver_custo` e só com
+  as linhas sem loja ou das lojas permitidas.
 
 #### 3.6.11 `promocoes` e `promocoes_itens` (C, ↓)
 

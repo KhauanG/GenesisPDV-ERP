@@ -3,7 +3,7 @@ import { Outlet, type RouteObject } from 'react-router';
 import { ExigePermissao, RotaProtegida } from './auth/RotaProtegida';
 import { ProvedorSessao } from './auth/sessao';
 import { Layout } from './layout/Layout';
-import { ITENS_MENU } from './menu';
+import { ITENS_MENU, podeAbrirExportacao } from './menu';
 import { Dashboard } from './paginas/Dashboard';
 import { EmConstrucao } from './paginas/EmConstrucao';
 import { NaoEncontrado, SemPermissao } from './paginas/Erros';
@@ -33,12 +33,18 @@ import { FormularioLoja, ListaLojas } from './paginas/lojas/Lojas';
 import { FormularioMarca, ListaMarcas } from './paginas/marcas/Marcas';
 import { FormularioPerfil, ListaPerfis } from './paginas/perfis/Perfis';
 import { FormularioPessoa, ListaPessoas } from './paginas/pessoas/Pessoas';
+import { CadastroEmMassa, ROTA_CADASTRO_MASSA } from './paginas/produtos/CadastroEmMassa';
+import { Exportacao, ROTA_EXPORTACAO } from './paginas/produtos/Exportacao';
 import { FormularioProduto } from './paginas/produtos/FormularioProduto';
 import { FormularioGrupoPreco, ListaGruposPreco } from './paginas/produtos/GruposPreco';
 import { ListaProdutos } from './paginas/produtos/ListaProdutos';
 import { FormularioRestricaoHorario, ListaRestricoesHorario } from './paginas/produtos/RestricoesHorario';
+import { EanDuplicado, ROTA_EAN_DUPLICADO } from './paginas/relatorios/EanDuplicado';
 import { EstoqueAtual, ROTA_ESTOQUE_ATUAL } from './paginas/relatorios/EstoqueAtual';
+import { HistoricoProdutos, ROTA_HISTORICO_PRODUTOS } from './paginas/relatorios/HistoricoProdutos';
 import { MovimentacaoEstoque, ROTA_MOVIMENTACAO_ESTOQUE } from './paginas/relatorios/MovimentacaoEstoque';
+import { NcmInvalidos, ROTA_NCM_INVALIDOS } from './paginas/relatorios/NcmInvalidos';
+import { ProdutosGeral, ROTA_PRODUTOS_GERAL } from './paginas/relatorios/ProdutosGeral';
 import { FormularioUsuario } from './paginas/usuarios/FormularioUsuario';
 import { DetalheFechamentoCaixa, ListaFechamentosCaixa } from './paginas/vendas/FechamentosCaixa';
 import {
@@ -111,7 +117,7 @@ function consulta(
 /** Telas do menu ainda não entregues: a rota existe (e respeita a permissão) e mostra "Em construção". */
 const emConstrucao: RouteObject[] = ITENS_MENU.filter((i) => !i.pronto).flatMap((i) => {
   const element = (
-    <ExigePermissao permissao={i.permissao}>
+    <ExigePermissao permissao={i.permissao} acesso={i.acesso}>
       <EmConstrucao item={i} />
     </ExigePermissao>
   );
@@ -204,6 +210,24 @@ export const rotas: RouteObject[] = [
                 <FormularioRestricaoHorario />,
               ),
               ...cadastro('/produtos/marcas', 'marcas', <ListaMarcas />, <FormularioMarca />),
+              {
+                path: ROTA_CADASTRO_MASSA,
+                element: (
+                  <ExigePermissao permissao="produtos.cadastro_massa">
+                    <CadastroEmMassa />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                // Abre para quem exporta produtos ou clientes (o `acesso` do item do menu); os botões conferem cada
+                // um, e a API também.
+                path: ROTA_EXPORTACAO,
+                element: (
+                  <ExigePermissao permissao="produtos.exportar" acesso={podeAbrirExportacao}>
+                    <Exportacao />
+                  </ExigePermissao>
+                ),
+              },
               {
                 path: '/produtos/categorias',
                 element: (
@@ -315,6 +339,38 @@ export const rotas: RouteObject[] = [
                 element: (
                   <ExigePermissao permissao="relatorios.estoque_atual">
                     <EstoqueAtual />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_PRODUTOS_GERAL,
+                element: (
+                  <ExigePermissao permissao="relatorios.produtos_geral">
+                    <ProdutosGeral />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_HISTORICO_PRODUTOS,
+                element: (
+                  <ExigePermissao permissao="relatorios.historico_produtos">
+                    <HistoricoProdutos />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_NCM_INVALIDOS,
+                element: (
+                  <ExigePermissao permissao="relatorios.ncm_invalidos">
+                    <NcmInvalidos />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_EAN_DUPLICADO,
+                element: (
+                  <ExigePermissao permissao="produtos.ver">
+                    <EanDuplicado />
                   </ExigePermissao>
                 ),
               },

@@ -9,12 +9,14 @@ import {
   Post,
   Put,
   Query,
+  Res,
   type StreamableFile,
 } from '@nestjs/common';
 import {
   alterarPessoaSchema,
   cadastroRapidoFornecedorSchema,
   criarPessoaSchema,
+  EXPORTACAO_CATALOGO_CLIENTES,
   exportacaoQuerySchema,
   filtroPessoasSchema,
   formatarCpfCnpj,
@@ -24,6 +26,7 @@ import {
   ROTULOS_CATEGORIA_PESSOA,
   type CategoriaPessoa,
   type CriarPessoa,
+  type ExportacaoEmTarefa,
   type FiltroPessoas,
   type Pagina,
   type PessoaDetalhe,
@@ -32,6 +35,7 @@ import {
 } from '@genesis/shared';
 import { and, count, eq, gt, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import type { Response } from 'express';
 import { z } from 'zod';
 import type { OrigemAcao } from '../auditoria/auditoria.service.js';
 import type { SessaoErp } from '../auth/auth.service.js';
@@ -217,6 +221,30 @@ export class PessoasController {
       return linhas;
     });
     return arquivoExportacao(q.formato, 'Pessoas', COLUNAS_EXPORTACAO, linhas);
+  }
+
+  /**
+   * Exportação de clientes de ida e volta (ERP 8.5; F2-B40, README da API › decisão 186): o botão "Exportar Clientes" de
+   * Produtos › Exportação, no layout da importação de clientes. Até 5.000 linhas responde o arquivo (`200`); acima,
+   * `202` com a tarefa. Exige `pessoas.ver` e `pessoas.exportar` (ou `relatorios.exportar`), pelo provedor.
+   */
+  @Permissao('pessoas.ver')
+  @Get('exportacao')
+  async exportacao(
+    @Query() query: Record<string, unknown>,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile | ExportacaoEmTarefa> {
+    const r = await this.s.exportacoes.exportar(
+      sessao,
+      origemDaRequisicao(req),
+      EXPORTACAO_CATALOGO_CLIENTES,
+      query ?? {},
+    );
+    if (r.tipo === 'arquivo') return r.arquivo;
+    res.status(202);
+    return r.tarefa;
   }
 
   @Permissao('pessoas.ver')

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PERMISSOES } from '@genesis/shared';
@@ -46,6 +46,134 @@ function lerNcms(): Array<{ codigo: string; descricao: string; inicio: string | 
       const [codigo, descricao, inicio, fim] = l.split(';');
       return { codigo: codigo!, descricao: descricao!, inicio: inicio || null, fim: fim || null };
     });
+}
+
+/** Cabeçalho do `cests.csv` (F2-B41; README da API › decisão 187), conferido na leitura. */
+export const CABECALHO_CESTS = 'codigo;descricao;segmento;ncms;vigencia_inicio;vigencia_fim';
+
+export interface LinhaCest {
+  codigo: string;
+  descricao: string;
+  segmento: string | null;
+  /** NCMs do CEST como o convênio lista (capítulo, posição, subposição ou item: 2 a 8 dígitos), só os dígitos. */
+  ncms: string[];
+  inicio: string | null;
+  fim: string | null;
+}
+
+/**
+ * Campos de uma linha separada por `;` com aspas duplas opcionais (`"a;b"`, e `""` dentro delas é uma aspa): a
+ * descrição do convênio tem ponto e vírgula.
+ */
+export function camposCsv(linha: string): string[] {
+  const campos: string[] = [];
+  let atual = '';
+  let aspas = false;
+  for (let i = 0; i < linha.length; i++) {
+    const c = linha[i]!;
+    if (aspas) {
+      if (c === '"' && linha[i + 1] === '"') {
+        atual += '"';
+        i++;
+      } else if (c === '"') aspas = false;
+      else atual += c;
+    } else if (c === '"' && atual === '') aspas = true;
+    else if (c === ';') {
+      campos.push(atual);
+      atual = '';
+    } else atual += c;
+  }
+  if (aspas) throw new Error('aspas sem fechar');
+  campos.push(atual);
+  return campos;
+}
+
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * CEST (Convênio ICMS 142/2018 e alterações; F2-B41, decisão 187): `cests.csv` com o cabeçalho `CABECALHO_CESTS`, a
+ * lista de NCMs separada por vírgula (os pontos do convênio podem vir: são tirados). É tabela de referência pública,
+ * não emissão fiscal: o relatório "NCMs inválidos" confere o CEST do produto com ela. O arquivo ausente, ou só com o
+ * cabeçalho, é "sem carga" (lista vazia). Linha fora do formato derruba a carga com o número da linha (o arquivo é
+ * versionado: o erro aparece no teste, não na produção).
+ */
+export function lerCests(caminho = join(PASTA, 'cests.csv')): LinhaCest[] {
+  if (!existsSync(caminho)) return [];
+  const linhas = readFileSync(caminho, 'utf8')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/);
+  if (linhas[0]?.trim() !== CABECALHO_CESTS)
+    throw new Error(`cests.csv: o cabeçalho tem de ser "${CABECALHO_CESTS}"`);
+  const vistos = new Set<string>();
+  const resultado: LinhaCest[] = [];
+  linhas.slice(1).forEach((l, i) => {
+    if (!l.trim()) return;
+    const n = i + 2;
+    let campos: string[];
+    try {
+      campos = camposCsv(l);
+    } catch (e) {
+      throw new Error(`cests.csv, linha ${n}: ${(e as Error).message}`, { cause: e });
+    }
+    if (campos.length !== 6) throw new Error(`cests.csv, linha ${n}: 6 colunas (veio ${campos.length})`);
+    const [codigo, descricao, segmento, ncms, inicio, fim] = campos.map((c) => c.trim()) as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    if (!/^\d{7}$/.test(codigo)) throw new Error(`cests.csv, linha ${n}: CEST com 7 dígitos`);
+    if (vistos.has(codigo)) throw new Error(`cests.csv, linha ${n}: CEST ${codigo} repetido`);
+    vistos.add(codigo);
+    if (!descricao) throw new Error(`cests.csv, linha ${n}: descrição vazia`);
+    const lista = ncms
+      .split(',')
+      .map((x) => x.replace(/\./g, '').trim())
+      .filter(Boolean);
+    if (!lista.length || lista.some((x) => !/^\d{2,8}$/.test(x)))
+      throw new Error(`cests.csv, linha ${n}: NCMs com 2 a 8 dígitos, separados por vírgula`);
+    for (const d of [inicio, fim])
+      if (d && !DATA_ISO.test(d)) throw new Error(`cests.csv, linha ${n}: data no formato AAAA-MM-DD`);
+    resultado.push({
+      codigo,
+      descricao,
+      segmento: segmento || null,
+      ncms: [...new Set(lista)],
+      inicio: inicio || null,
+      fim: fim || null,
+    });
+  });
+  return resultado;
+}
+
+/**
+ * Upsert de `cests` (como o dos NCMs): só as linhas novas ou diferentes, e o CEST que saiu do arquivo excluído
+ * logicamente. **Sem linhas, não mexe na tabela**: o arquivo vazio é "ainda sem a lista oficial", não "o convênio
+ * revogou todos os CEST". Devolve as linhas alteradas.
+ */
+export async function carregarCests(cliente: pg.ClientBase, linhas: readonly LinhaCest[]): Promise<number> {
+  if (!linhas.length) return 0;
+  let alteradas = await upsert(
+    cliente,
+    'cests',
+    { nome: 'codigo', tipo: 'varchar' },
+    [
+      { nome: 'descricao', tipo: 'text' },
+      { nome: 'segmento', tipo: 'varchar' },
+      { nome: 'ncms', tipo: 'text', expressao: "string_to_array(u.ncms, ',')" },
+      { nome: 'vigencia_inicio', tipo: 'date' },
+      { nome: 'vigencia_fim', tipo: 'date' },
+    ],
+    linhas.map((c) => [c.codigo, c.descricao, c.segmento, c.ncms.join(','), c.inicio, c.fim]),
+  );
+  const removidos = await cliente.query(
+    'update cests set excluido_em = now() where excluido_em is null and not (codigo = any($1::varchar[]))',
+    [linhas.map((c) => c.codigo)],
+  );
+  alteradas += removidos.rowCount ?? 0;
+  return alteradas;
 }
 
 /** Linhas de `parametros_fiscais_uf` (snake_case, como no banco) das UFs pesquisadas (`uf/<UF>/`). */
@@ -144,6 +272,11 @@ async function upsertParametrosFiscais(
 interface Coluna {
   nome: string;
   tipo: string;
+  /**
+   * Expressão sobre `u.<nome>` quando o valor chega num formato e é gravado em outro: o `unnest` de um array de
+   * arrays achata tudo, então a lista de NCMs do CEST chega em texto (`a,b,c`) e vira `text[]` aqui.
+   */
+  expressao?: string;
 }
 
 /**
@@ -162,12 +295,13 @@ async function upsert(
   const params = todas.map((_, i) => linhas.map((l) => l[i]));
   const unnest = todas.map((c, i) => `$${i + 1}::${c.tipo}[]`).join(', ');
   const nomes = todas.map((c) => c.nome).join(', ');
+  const valor = (c: Coluna) => c.expressao ?? `u.${c.nome}`;
   const comparacao = `(${colunas.map((c) => `t.${c.nome}`).join(', ')}, t.excluido_em) is not distinct from (${colunas
-    .map((c) => `u.${c.nome}`)
+    .map(valor)
     .join(', ')}, null)`;
   const r = await cliente.query(
     `insert into ${tabela} (${nomes})
-     select ${todas.map((c) => `u.${c.nome}`).join(', ')} from unnest(${unnest}) as u(${nomes})
+     select ${todas.map(valor).join(', ')} from unnest(${unnest}) as u(${nomes})
      where not exists (select 1 from ${tabela} t where t.${chave.nome} = u.${chave.nome} and ${comparacao})
      on conflict (${chave.nome}) do update set ${colunas.map((c) => `${c.nome} = excluded.${c.nome}`).join(', ')}, excluido_em = null`,
     params,
@@ -185,6 +319,8 @@ export interface ResumoReferencias {
   permissoes: number;
   paises: number;
   ncms: number;
+  /** Linhas do `cests.csv` (0 = sem a lista oficial ainda: a tabela fica como está). */
+  cests: number;
   parametrosFiscaisUf: number;
   alteradas: number;
 }
@@ -306,6 +442,8 @@ export async function carregarReferencias(cliente: pg.ClientBase): Promise<Resum
     [ncms.map((n) => n.codigo)],
   );
   alteradas += ncmsRemovidos.rowCount ?? 0;
+  const cests = lerCests();
+  alteradas += await carregarCests(cliente, cests);
   const parametros = await upsertParametrosFiscais(cliente);
   alteradas += parametros.alteradas;
 
@@ -326,6 +464,7 @@ export async function carregarReferencias(cliente: pg.ClientBase): Promise<Resum
     permissoes: PERMISSOES.length,
     paises: PAISES.length,
     ncms: ncms.length,
+    cests: cests.length,
     parametrosFiscaisUf: parametros.linhas,
     alteradas,
   };

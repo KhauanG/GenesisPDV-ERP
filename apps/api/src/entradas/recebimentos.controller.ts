@@ -29,7 +29,7 @@ import { lerConfiguracao } from '../configuracoes/valores.js';
 import { recebimentos } from '../database/empresa/schema/index.js';
 import { lojaDoEstoque } from '../estoques/acertos.js';
 import { estoqueVisivel } from '../estoques/permitidos.js';
-import { textoSaldosNegativos } from './entrada.js';
+import { auditarPrecosEntrada, textoSaldosNegativos } from './entrada.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import {
@@ -307,6 +307,15 @@ export class RecebimentosController {
           lojaId: r.lojaId,
           descricao: `Recebimento Nº ${r.codigo} movimentado: ${resumoMovimentacao(resultado)}`,
         });
+        // O preço que o recebimento mudou, no histórico de cada produto (F2-B42, ERP 16.2 "Recebimento").
+        await auditarPrecosEntrada(
+          this.s.auditoria,
+          tx,
+          origemDaRequisicao(req),
+          `Recebimento Nº ${r.codigo}`,
+          LOCALIZACAO,
+          resultado.precosAlterados,
+        );
       },
       { travaVersao: true },
     );

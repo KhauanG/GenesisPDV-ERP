@@ -1160,7 +1160,120 @@ export function linhasHistoricoPrecos(
   return linhas;
 }
 
-/** Histórico de preços de um produto com a origem de quem mudou (`linhasHistoricoPrecos`). */
+/** Faixa de preço por quantidade vigente, como o histórico a compara (`PrecosFilhos`). */
+interface FaixaHistorico {
+  id: string;
+  variacaoId: string | null;
+  lojaId: string | null;
+  preco: string;
+}
+
+/**
+ * Os preços das filhas que o histórico acompanha (F2-B37; MD 3.6.10), lidos do banco antes e depois do "Gravar": as
+ * **faixas por quantidade** vigentes, pela chave variação × loja × intervalo (o `numeric(15,3)` em texto tem sempre 3
+ * casas, então a chave não depende de como a tela escreveu a quantidade), e o preço de venda e o de custo de cada
+ * **variação** não excluída. Lidos do banco, e não da entrada, porque a gravação preserva o que o usuário não vê (a
+ * faixa de loja fora das permitidas, decisão 88) e as variações ainda não são editadas pelo formulário (F2-B48): só o
+ * que de fato mudou vira linha.
+ */
+export interface PrecosFilhos {
+  faixas: Map<string, FaixaHistorico>;
+  variacoes: Map<string, { venda: string | null; custo: string | null }>;
+}
+
+/** As faixas e as variações gravadas do produto, numa ida ao banco (`PrecosFilhos`). */
+export async function precosFilhosGravados(tx: DbEmpresa, produtoId: string): Promise<PrecosFilhos> {
+  const { rows } = await tx.execute<{
+    k: 'f' | 'v';
+    id: string;
+    variacao_id: string | null;
+    loja_id: string | null;
+    qi: string | null;
+    qf: string | null;
+    venda: string | null;
+    custo: string | null;
+  }>(sql`
+    select 'f' as k, id, variacao_id, loja_id, quantidade_inicial::text as qi, quantidade_final::text as qf,
+           preco::text as venda, null::text as custo
+      from produtos_precos_quantidade where produto_id = ${produtoId} and excluido_em is null
+    union all
+    select 'v', id, null, null, null, null, preco_venda::text, preco_custo::text
+      from produtos_variacoes where produto_id = ${produtoId} and excluido_em is null`);
+  const faixas = new Map<string, FaixaHistorico>();
+  const variacoes = new Map<string, { venda: string | null; custo: string | null }>();
+  for (const r of rows) {
+    if (r.k === 'v') variacoes.set(r.id, { venda: r.venda, custo: r.custo });
+    else
+      faixas.set(`${r.variacao_id ?? ''}|${r.loja_id ?? ''}|${r.qi}|${r.qf ?? ''}`, {
+        id: r.id,
+        variacaoId: r.variacao_id,
+        lojaId: r.loja_id,
+        preco: r.venda!,
+      });
+  }
+  return { faixas, variacoes };
+}
+
+/**
+ * As linhas do histórico das filhas (F2-B37): uma `quantidade` por faixa criada (anterior nulo), removida (novo nulo)
+ * ou com o preço trocado no mesmo intervalo, com a `loja_id` e a `variacao_id` da faixa; e uma `venda`/`custo` com a
+ * `variacao_id` por preço de variação que mudou. A faixa não tem coluna própria no histórico (sem migração): **na
+ * linha `quantidade`, `origem_id` é a faixa** (`produtos_precos_quantidade.id`, a atual, ou a removida, que fica com
+ * `excluido_em`), de onde a consulta tira o intervalo. Nenhum documento muda faixa (o recebimento e a NF-e mudam o
+ * preço de venda, o de custo e o da loja), então o `origem_id` do documento não se confunde com ela.
+ */
+export function linhasHistoricoFilhos(
+  usuarioId: string | null,
+  produtoId: string,
+  antes: PrecosFilhos | null,
+  depois: PrecosFilhos,
+  origem: OrigemHistoricoPreco,
+): LinhaHistoricoPreco[] {
+  const linhas: LinhaHistoricoPreco[] = [];
+  const num = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
+  const chaves = new Set([...(antes?.faixas.keys() ?? []), ...depois.faixas.keys()]);
+  for (const chave of chaves) {
+    const a = antes?.faixas.get(chave);
+    const d = depois.faixas.get(chave);
+    if (num(a?.preco) === num(d?.preco)) continue;
+    const faixa = (d ?? a)!;
+    linhas.push({
+      produtoId,
+      variacaoId: faixa.variacaoId,
+      lojaId: faixa.lojaId,
+      tipoPreco: 'quantidade',
+      valorAnterior: a?.preco ?? null,
+      valorNovo: d?.preco ?? null,
+      origem,
+      origemId: faixa.id,
+      usuarioId,
+    });
+  }
+  for (const [variacaoId, d] of depois.variacoes) {
+    const a = antes?.variacoes.get(variacaoId);
+    for (const tipoPreco of ['venda', 'custo'] as const) {
+      const anterior = a?.[tipoPreco] ?? null;
+      const novo = d[tipoPreco];
+      if (num(anterior) === num(novo)) continue;
+      linhas.push({
+        produtoId,
+        variacaoId,
+        tipoPreco,
+        valorAnterior: anterior,
+        valorNovo: novo,
+        origem,
+        origemId: null,
+        usuarioId,
+      });
+    }
+  }
+  return linhas;
+}
+
+/**
+ * Histórico de preços de um produto com a origem de quem mudou (`linhasHistoricoPrecos`), e o das filhas
+ * (`linhasHistoricoFilhos`: as faixas e as variações) quando quem chama passa os `PrecosFilhos` de antes e de depois.
+ */
 export async function registrarHistoricoPrecos(
   tx: DbEmpresa,
   sessao: SessaoErp,
@@ -1168,7 +1281,13 @@ export async function registrarHistoricoPrecos(
   antes: { produto: Precos; lojas: Record<string, string | null> } | null,
   depois: { produto: Precos; lojas: Record<string, string | null> },
   origem: OrigemHistoricoPreco,
+  filhos?: { antes: PrecosFilhos | null; depois: PrecosFilhos },
 ): Promise<void> {
-  const linhas = linhasHistoricoPrecos(sessao.usuarioId, produtoId, antes, depois, origem);
+  const linhas = [
+    ...linhasHistoricoPrecos(sessao.usuarioId, produtoId, antes, depois, origem),
+    ...(filhos
+      ? linhasHistoricoFilhos(sessao.usuarioId, produtoId, filhos.antes, filhos.depois, origem)
+      : []),
+  ];
   if (linhas.length) await tx.insert(produtosHistoricoPrecos).values(linhas);
 }

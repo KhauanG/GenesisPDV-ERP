@@ -18,6 +18,7 @@ import { CONFIGURACOES_POR_CHAVE } from './configuracoes.js';
 import { ajusteEstoqueProdutoSchema } from './estoque.js';
 import { cadastroRapidoFornecedorSchema, tipoPessoaDoDocumento } from './pessoas.js';
 import {
+  cadastroMassaSchema,
   CHAVES_TIPO_PRODUTO,
   chaveFornecedorProduto,
   chaveLoteProduto,
@@ -26,9 +27,13 @@ import {
   criarProdutoSchema,
   criarRestricaoHorarioSchema,
   faixasSobrepostas,
+  historicoPrecosQuerySchema,
+  LIMITE_CODIGOS_PESQUISA_EAN_MASSA,
+  LIMITE_LINHAS_CADASTRO_MASSA,
   MAXIMO_FORNECEDORES_PRODUTO,
   MAXIMO_LOTES_PRODUTO,
   motivoTipoProdutoBloqueado,
+  pesquisaEanCadastroMassaSchema,
   TIPOS_PRODUTO,
   TIPOS_SEM_SALDO_PROPRIO,
   tiposProdutoHabilitados,
@@ -42,6 +47,81 @@ const LOJA = '0190a000-0000-7000-8000-0000000000f1';
 
 const campos = (r: { success: boolean; error?: { issues: Array<{ path: PropertyKey[] }> } }) =>
   r.success ? [] : r.error!.issues.map((i) => i.path.join('.')).sort();
+
+describe('cadastro em massa (ERP 8.3; F2-B39)', () => {
+  const gtin = (base: string) => `${base}${calcularDvGtin(base)}`;
+  const EAN = gtin('789980000001');
+  const novo = { ean: EAN, nome: 'AGUA FICTICIA 500ML', unidadeId: UN, precoVenda: '2,50', estoque: '12' };
+
+  it('a linha nova exige nome, unidade, preço e o GTIN válido; os decimais saem com ponto', () => {
+    const r = cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: [novo] });
+    expect(r.success).toBe(true);
+    expect(r.data!.linhas[0]).toMatchObject({ produtoId: null, precoVenda: '2.5000', estoque: '12.000' });
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [{ ean: '7899800000010', precoVenda: '0' }],
+        }),
+      ),
+    ).toEqual(['linhas.0.ean', 'linhas.0.nome', 'linhas.0.precoVenda', 'linhas.0.unidadeId']);
+  });
+
+  it('a Atualização exige o EAN e a versão; os vazios ficam nulos (mantêm o gravado)', () => {
+    const r = cadastroMassaSchema.safeParse({
+      estoqueId: LOJA,
+      linhas: [{ produtoId: A, versao: 7, ean: 'FD12-INTERNO', estoque: '1', precoVenda: '' }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data!.linhas[0]).toMatchObject({ nome: null, precoVenda: null, unidadeId: null });
+    expect(
+      campos(cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: [{ produtoId: A, estoque: '1' }] })),
+    ).toEqual(['linhas.0.ean', 'linhas.0.ean']);
+  });
+
+  it('o EAN e o produto repetidos na grade, a marca escolhida e nova juntas e o limite de linhas', () => {
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [novo, { ...novo, marcaId: B, marcaNova: 'Outra' }],
+        }),
+      ),
+    ).toEqual(['linhas.1.ean', 'linhas.1.marcaNova']);
+    expect(
+      campos(
+        cadastroMassaSchema.safeParse({
+          estoqueId: LOJA,
+          linhas: [
+            { produtoId: A, versao: 1, ean: EAN },
+            { produtoId: A, versao: 1, ean: gtin('789980000002') },
+          ],
+        }),
+      ),
+    ).toEqual(['linhas.1.ean']);
+    const muitas = Array.from({ length: LIMITE_LINHAS_CADASTRO_MASSA + 1 }, (_, i) => ({
+      ...novo,
+      ean: gtin(`7899800${String(i).padStart(5, '0')}`),
+    }));
+    expect(campos(cadastroMassaSchema.safeParse({ estoqueId: LOJA, linhas: muitas }))).toEqual(['linhas']);
+    // O "Pesquisar EAN" aceita a grade colada maior que uma gravação (que se faz em partes).
+    const codigos = (n: number) =>
+      Array.from({ length: n }, (_, i) => gtin(`7899800${String(i).padStart(5, '0')}`));
+    expect(LIMITE_CODIGOS_PESQUISA_EAN_MASSA).toBeGreaterThan(LIMITE_LINHAS_CADASTRO_MASSA);
+    expect(
+      pesquisaEanCadastroMassaSchema.safeParse({
+        estoqueId: LOJA,
+        codigos: codigos(LIMITE_CODIGOS_PESQUISA_EAN_MASSA),
+      }).success,
+    ).toBe(true);
+    expect(
+      pesquisaEanCadastroMassaSchema.safeParse({
+        estoqueId: LOJA,
+        codigos: codigos(LIMITE_CODIGOS_PESQUISA_EAN_MASSA + 1),
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe('cadastro rápido de produto (ERP 13.3; F2-B16)', () => {
   const valores = {
@@ -720,5 +800,38 @@ describe('lotes do bloco Validade (F2-B17; ERP 8.2.12)', () => {
         }),
       ),
     ).toEqual(['lotes.1.id', 'lotesExcluidos.0']);
+  });
+});
+
+describe('consulta do histórico de preços (F2-B37)', () => {
+  it('aceita a página, o tipo, a loja (ou o geral) e o período; vazio é sem filtro', () => {
+    expect(historicoPrecosQuerySchema.parse({})).toEqual({
+      pagina: 1,
+      tamanho: 20,
+      dataInicial: null,
+      dataFinal: null,
+    });
+    expect(
+      historicoPrecosQuerySchema.parse({
+        pagina: '2',
+        tamanho: '50',
+        tipo: 'quantidade',
+        loja: A,
+        dataInicial: '2026-11-01',
+        dataFinal: '2026-11-01',
+      }),
+    ).toMatchObject({ pagina: 2, tamanho: 50, tipo: 'quantidade', loja: A });
+    expect(historicoPrecosQuerySchema.parse({ loja: 'geral', tipo: '' })).toMatchObject({ loja: 'geral' });
+  });
+
+  it('recusa o tipo e a loja desconhecidos, a data que não existe e o período invertido', () => {
+    const caminhos = (v: unknown) => {
+      const r = historicoPrecosQuerySchema.safeParse(v);
+      return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+    };
+    expect(caminhos({ tipo: 'markup' })).toEqual(['tipo']);
+    expect(caminhos({ loja: 'loja-1' })).toEqual(['loja']);
+    expect(caminhos({ dataInicial: '2026-02-30' })).toEqual(['dataInicial']);
+    expect(caminhos({ dataInicial: '2026-11-10', dataFinal: '2026-11-01' })).toEqual(['dataFinal']);
   });
 });

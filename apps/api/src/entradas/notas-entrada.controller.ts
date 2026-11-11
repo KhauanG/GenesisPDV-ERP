@@ -58,7 +58,7 @@ import { lojaDoEstoque, resolverTipoEstoque } from '../estoques/acertos.js';
 import { estoquePermitido, estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
-import { textoSaldosNegativos } from './entrada.js';
+import { auditarPrecosEntrada, textoSaldosNegativos } from './entrada.js';
 import {
   auditarVinculosMovidosNfe,
   estornarNotaEntrada,
@@ -577,6 +577,15 @@ export class NotasEntradaController {
           n,
           LOCALIZACAO_NOTAS_ENTRADA,
           resultado.vinculosMovidos,
+        );
+        // O preço que a nota mudou, no histórico de cada produto (F2-B42, ERP 16.2 "NF-e").
+        await auditarPrecosEntrada(
+          this.s.auditoria,
+          tx,
+          origemDaRequisicao(req),
+          `NF-e Nº ${n.numero}`,
+          LOCALIZACAO_NOTAS_ENTRADA,
+          resultado.precosAlterados,
         );
       },
       { travaVersao: true },

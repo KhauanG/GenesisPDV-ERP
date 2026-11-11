@@ -26,6 +26,7 @@ import { FormasPagamentoController } from './formas-pagamento/formas-pagamento.c
 import { CaixasController } from './lojas/caixas.controller.js';
 import { LojasController } from './lojas/lojas.controller.js';
 import { PessoasController } from './pessoas/pessoas.controller.js';
+import { CadastroMassaController } from './produtos/cadastro-massa.js';
 import { GruposPrecoController } from './produtos/grupos-preco.controller.js';
 import { ProdutosController } from './produtos/produtos.controller.js';
 import { RestricoesHorarioController } from './produtos/restricoes-horario.controller.js';
@@ -104,6 +105,7 @@ export class AppModule {
         PessoasController,
         MarcasController,
         CategoriasController,
+        CadastroMassaController,
         ProdutosController,
         GruposPrecoController,
         RestricoesHorarioController,
