@@ -180,11 +180,12 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   104) e o combo pela coluna `composicao` (decisão 95), isolados num ponto só (`MAPEAMENTO_PROVISORIO_NUVEM3`).
   Implementado no F2-B40 (README da API › decisão 186; roadmap §16, D66). Se o dono mandar os arquivos — opção (a) —,
   fecha-se o mapeamento definitivo trocando só esse ponto.
-- **D65 — EM ABERTO (padrão até a confirmação do dono): 100 linhas por gravação do cadastro em massa.** A ERP 8.3
+- **D65 — RESPONDIDA (11/11/2026): (A) 100 linhas por gravação do cadastro em massa, tudo ou nada.** A ERP 8.3
   dizia 500; a revisão do F2-B39 mediu que cada linha da grade faz de 9 a ~50 idas ao banco com a trava de ordenação
-  presa, e 500 linhas prendiam os caixas e o ERP por 40 a 75 s na produção. Opções: (a) 100 linhas, tudo ou nada
-  (recomendada, a aplicada); (b) voltar a 500, aceitando a espera; (c) gravar em partes de 100 sem o "tudo ou nada" da
-  grade inteira. README da API › decisão 185; roadmap §16, D65.
+  presa, e 500 linhas prenderiam os caixas e o ERP por 40 a 75 s na produção (100 ficam em 8 a 15 s). Opções
+  apresentadas: (a) 100 linhas, tudo ou nada (recomendada, a escolhida); (b) voltar a 500, aceitando a espera; (c)
+  gravar em partes de 100 sem o "tudo ou nada" da grade inteira. Catálogos grandes continuam pela importação de
+  planilha. README da API › decisão 185; roadmap §16, D65.
 
 ## Segurança: revisão por PR e auditoria completa (10/11/2026)
 

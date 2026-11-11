@@ -1256,7 +1256,7 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       pesquisa e do GTIN válido, o estoque inteiro sem fração, o mínimo só com loja); os erros da API (`linhas.N.campo`,
       N entre as linhas preenchidas) voltam à linha e à coluna, e o "Linha N" das mensagens e do resultado (a API conta
       só as enviadas) vira o número da grade, o da coluna "#", com as linhas vazias do meio. **Gravar** manda tudo de
-      uma vez (até `LIMITE_LINHAS_CADASTRO_MASSA` = 100 linhas, D65, padrão até a confirmação do dono; acima, "grave em
+      uma vez (até `LIMITE_LINHAS_CADASTRO_MASSA` = 100 linhas, D65, confirmado pelo dono em 11/11/2026; acima, "grave em
       partes"; o "Pesquisar EAN" aceita até 500 códigos); o EAN repetido com "avisar" pede a confirmação; o resultado
       mostra quantos criados e atualizados, o link de cada produto e o do acerto de Entrada, e a grade volta vazia.
       **Limpar** esvazia a grade com a confirmação.

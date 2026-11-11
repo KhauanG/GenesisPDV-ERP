@@ -1316,7 +1316,7 @@ Colunas da grade (`<GradeItens>`):
 Regras: validação por linha antes de gravar; **Gravar** processa tudo numa transação (ou nada); cria produtos tipo
 Simples com tributação padrão das Configurações; estoque gera um acerto "Entrada" automático com motivo "Cadastro em
 massa" e movimentos "Atualização pelo cadastro de produtos"; resultado mostra quantos criados/atualizados com link
-para cada um. Limite de 100 linhas por gravação (D65, padrão até a confirmação do dono; era 500: a linha da grade
+para cada um. Limite de 100 linhas por gravação (D65, confirmado pelo dono em 11/11/2026; era 500: a linha da grade
 grava várias linhas sincronizáveis e segura a trava de ordenação, MD 1.5).
 
 Implementação (F2-B39; README da API › decisão 185, do ERP › 73): o **Pesquisar EAN** procura só na base da empresa

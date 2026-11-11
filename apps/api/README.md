@@ -5260,7 +5260,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        custo). Sem base externa de GTIN: a F2-Q13 (D54) ficou sem resposta explícita e vale a recomendação (a); a base
        externa é o F2-B47, no backlog. POST, e não GET, porque 500 códigos não cabem na URL.
      - **`POST /produtos/cadastro-em-massa`** (`{ estoqueId, linhas, confirmarEanDuplicado }`): **uma transação** com a
-       7300001 (`travaVersao`), até **100 linhas** (D65, **padrão até a confirmação do dono**; a ERP 8.3 dizia 500). A
+       7300001 (`travaVersao`), até **100 linhas** (D65, **confirmado pelo dono em 11/11/2026**; a ERP 8.3 dizia 500). A
        espera pela trava tem o limite do ERP e, vencida, o 503 "sistema ocupado" amigável com nada gravado (C13). Com a
        trava, os outros escritores (o push do PDV, o formulário) ficam em série: a conferência e a gravação veem o
        mesmo banco.
