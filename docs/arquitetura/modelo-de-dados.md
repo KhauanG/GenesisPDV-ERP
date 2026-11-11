@@ -2159,6 +2159,14 @@ Maracujá.
 | `produtos_grupos_complementos` (↓) | `produto_id uuid not null → produtos` (tipo `com_complementos`), `nome varchar(40) not null` ("Gelo", "Adicionais"), `minimo smallint not null default 0`, `maximo smallint not null default 1`, `obrigatorio boolean not null default false`, `ordem integer not null default 0` | `ck_… (minimo >= 0 and maximo >= minimo and (not obrigatorio or minimo >= 1))` |
 | `produtos_complementos` (↓) | `grupo_id uuid not null → produtos_grupos_complementos`, `produto_id uuid null → produtos` (vinculado) ou `descricao varchar(60) null` (livre), `preco_adicional numeric(15,4) not null default 0`, `baixa_estoque boolean not null default false`, `quantidade_baixa numeric(15,3) not null default 1`, `ordem integer not null default 0`, `ativo boolean not null default true` | `ck_produtos_complementos_origem (produto_id is not null or descricao is not null)`; `ck_… (not baixa_estoque or produto_id is not null)` |
 
+Implementadas na **Fase 2, F2-B45** (migração `0028_complementos`; README da API › decisão 191), com os nomes
+`ck_produtos_grupos_complementos_quantidades`, `ck_produtos_complementos_origem`, `ck_produtos_complementos_baixa` e
+`ck_produtos_complementos_valores` (`preco_adicional >= 0 and quantidade_baixa > 0`). Descem no fluxo `catalogo` com
+todas as colunas (`fn_versao`, índice de versão, autoria). **Só inativação:** a exclusão física (DELETE e TRUNCATE) é
+recusada por trigger (`EXCLUSAO_FISICA_PROIBIDA`), para um PDV offline nunca citar um id que a nuvem não tem;
+`itens_venda_complementos.complemento_id` → `produtos_complementos` com `on delete set null`, e o handler da venda grava
+nulo o id desconhecido. O cadastro no ERP é o F2-B51; o uso na venda, a Fase 3.
+
 #### 3.6.9 Demais filhas de `produtos`
 
 | Tabela | Colunas (além de CP, AU) | Restrições | Sync |
@@ -4951,7 +4959,7 @@ X = loja do terminal; E = `lojas.estoque_id` de X; T = o terminal. "Todas" = sem
 | `regras_icms_uf`, `pautas_st_uf`, `beneficios_fiscais_uf` | — (não descem: uso do ERP, 3.4) | — |
 | `cfops`, `cfops_grupos`, `meios_pagamento_fiscais`, `ufs`, `municipios`, `paises`, `cst_ibs_cbs`, `classificacoes_tributarias_ibs_cbs` | todas | — |
 | `aliquotas_ibs_cbs` | `ente = 'uniao'`, ou `ente = 'uf'` e `codigo_ibge` = UF de X, ou `ente = 'municipio'` e `codigo_ibge = lojas.municipio_ibge` de X | Mudança de UF/município da loja → ressincronizar `referencia` |
-| `marcas`, `categorias` | todas | `logotipo_arquivo_id`/`imagem_arquivo_id` → campos calculados `imagem_url` e `imagem_sha256` |
+| `marcas`, `categorias` | todas | `logotipo_arquivo_id`/`imagem_arquivo_id` → campos calculados `logotipo_url`/`logotipo_sha256` (marcas) e `imagem_url`/`imagem_sha256` (categorias) (F2-B45, sincronizacao.md 6.12) |
 | `produtos` | todas | `preco_custo`, `custo_medio`, `markup_pct` (custo não vai para o caixa), `descricao_longa`, `material`, `busca`, `preco_menu_digital`, `preco_ifood`, dimensões, `reposicao_rodizio`; campos calculados `foto_url` e `foto_sha256` (3.6.3) |
 | `produtos_codigos_barras`, `produtos_categorias`, `produtos_variacoes`, `produtos_variacoes_valores`, `atributos_variacao`, `atributos_variacao_valores`, `produtos_componentes`, `produtos_componentes_alternativas`, `produtos_grupos_complementos`, `produtos_complementos`, `produtos_relacionados` | todas | `produtos_variacoes.preco_custo` não desce |
 | `produtos_lotes` | `estoque_id is null or estoque_id = E` | — |

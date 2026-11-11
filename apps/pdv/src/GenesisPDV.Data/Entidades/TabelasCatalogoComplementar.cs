@@ -37,6 +37,12 @@ public class CategoriaRegistro : LinhaEspelho
     public bool ExibeSite { get; set; }
     public Guid? ImagemArquivoId { get; set; }
     public string? Cor { get; set; }
+
+    /// <summary>Campo calculado do pull (F2-B45; SYNC 6.12): caminho estável da imagem (variante <c>pdv_256</c>).</summary>
+    public string? ImagemUrl { get; set; }
+
+    /// <summary>Campo calculado do pull: sha256 da variante, a chave do cache local de imagens.</summary>
+    public string? ImagemSha256 { get; set; }
 }
 
 /// <summary><c>marcas</c>: Marcas.</summary>
@@ -48,6 +54,12 @@ public class MarcaRegistro : LinhaEspelho
     public bool ExibeSite { get; set; }
     public int Ordem { get; set; }
     public Guid? LogotipoArquivoId { get; set; }
+
+    /// <summary>Campo calculado do pull (F2-B45; SYNC 6.12): caminho estável do logotipo (variante <c>pdv_256</c>).</summary>
+    public string? LogotipoUrl { get; set; }
+
+    /// <summary>Campo calculado do pull: sha256 da variante, a chave do cache local de imagens.</summary>
+    public string? LogotipoSha256 { get; set; }
 }
 
 /// <summary><c>produtos_categorias</c>: Categorias de cada produto.</summary>
@@ -114,4 +126,31 @@ public class ProdutoVariacaoValorRegistro : LinhaEspelho
 {
     public Guid VariacaoId { get; set; }
     public Guid AtributoValorId { get; set; }
+}
+
+/// <summary>
+/// <c>produtos_grupos_complementos</c> (MD 3.6.8; F2-B45; F2-Q1 = D43): grupos de complementos do produto
+/// <c>com_complementos</c> ("Gelo", "Adicionais"). Só o espelho: o uso na venda é da Fase 3.
+/// </summary>
+public class ProdutoGrupoComplementosRegistro : LinhaEspelho
+{
+    public Guid ProdutoId { get; set; }
+    public string Nome { get; set; } = string.Empty;
+    public short Minimo { get; set; }
+    public short Maximo { get; set; }
+    public bool Obrigatorio { get; set; }
+    public int Ordem { get; set; }
+}
+
+/// <summary><c>produtos_complementos</c> (MD 3.6.8): opções de um grupo, vinculadas a um produto ou livres.</summary>
+public class ProdutoComplementoRegistro : LinhaEspelho
+{
+    public Guid GrupoId { get; set; }
+    public Guid? ProdutoId { get; set; }
+    public string? Descricao { get; set; }
+    [Escala(4)] public decimal PrecoAdicional { get; set; }
+    public bool BaixaEstoque { get; set; }
+    [Escala(3)] public decimal QuantidadeBaixa { get; set; }
+    public int Ordem { get; set; }
+    public bool Ativo { get; set; }
 }

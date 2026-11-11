@@ -141,4 +141,7 @@ export const TABELAS_COM_AUTORIA = [
   'recebimentos',
   'notas_entrada',
   'transferencias_estoque',
+  // Fase 2, F2-B45: complementos (MD 3.6.8), cadastrados no ERP pelo F2-B51
+  'produtos_grupos_complementos',
+  'produtos_complementos',
 ] as const;

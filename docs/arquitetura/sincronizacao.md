@@ -1056,6 +1056,7 @@ A ressincronização **nunca** mexe em `eventos_saida`, tabelas de movimento ou 
 | Quando baixar | Logotipo e banners: **antes de liberar vendas** (o cupom precisa do logo offline). Fotos de produto: sob demanda (exibição no painel do item/consulta) e em segundo plano com prioridade mínima, só se `pdv.exibe_foto_produto = true`, limitado a 2 downloads simultâneos e 2 MB/s |
 | Offline | Sem a imagem no cache: placeholder (nunca bloqueia) |
 | Mudança | Nova foto = novo `arquivo_id`/`sha256` → a linha do produto ganha `versao` nova → o PDV baixa a imagem nova quando precisar |
+| **Fase 2, F2-B45** (README da API › decisões 191 e 192; README do PDV › decisões 85 e 86) | **Campos calculados** do pull: `foto_url`/`foto_sha256` (produtos), `imagem_url`/`imagem_sha256` (categorias) e `logotipo_url`/`logotipo_sha256` (marcas), com o caminho estável acima e o sha256 **da variante** `pdv_256`; nulos sem imagem; no `Esquema.g.cs` como colunas projetadas e anuláveis. **Endpoint** só com a variante `pdv_256` e só do arquivo ligado a um produto, categoria ou marca **vivos**, com a categoria do destino; fora disso (outra empresa, envio solto, cadastro excluído, logotipo/foto da loja, XML, planilha) **`404 NAO_ENCONTRADO`**, em vez do 403 acima (não confirma que o id existe). O conteúdo sai pela própria API em vez do `302` (a variante tem 10–20 KB): `Content-Type: image/webp` fixo, `nosniff`, CSP `default-src 'none'; sandbox`, nome gerado e `ETag` = sha256 (`If-None-Match` → `304`); limite de 120 downloads/min por terminal (`SYNC_ARQUIVOS_POR_MINUTO`, 429). Não exige o hardware registrado (são os cadastros que o pull já entrega); terminal em desativação → 403. **PDV:** do `*_url` só aproveita o id (formato exato, a rota é montada pelo cliente), grava `<sha256>.webp` em `<dados>\cache\imagens` só depois de conferir o sha256, com limite de 512 KB; falha = placeholder, nunca trava a venda nem a sincronização. O logotipo e os banners da loja, a `cupom_mono`, o LRU e a exibição da foto (`pdv.exibe_foto_produto = false`) ficam para depois |
 
 ### 6.13 Catálogos grandes
 
@@ -4088,6 +4089,13 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   gravado desde a atualização (coluna nula), todo tipo vale como aceito: a implantação é sempre API primeiro e o caixa
   nunca trava por falta de internet (O18); se a API ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO`
   (transitório). Padrão até a confirmação do dono (README do PDV › decisão 51).
+- **Release R2 do PDV (Fase 2, F2-B45):** as mudanças de `Esquema.g.cs` da Fase 2 (as colunas calculadas das imagens
+  em 6.12 e os espelhos `produtos_grupos_complementos`/`produtos_complementos`, MD 3.6.8) entram numa **única** migração
+  EF (`FaseDois`), com uma só volta do cursor do `catalogo` (17.4.2; a versão local das marcas e das categorias também
+  volta a 0). `venda.finalizada` continua v1 e `versoes_schema` não muda; o PDV 0.11.0 continua sincronizando com a API
+  nova (campos e tabelas desconhecidos descartados, 6.10), e a API vai para a produção antes do 0.12.0 (17.2). O
+  `itens_venda_complementos.complemento_id` ganha a FK para `produtos_complementos` (`on delete set null`, exclusão
+  física bloqueada), e o handler grava nulo o id que a nuvem não conhece (README da API › decisão 191).
 - **Consultas online não passam pelo T13** (Fase 2, F2-B35): o `GET /sync/consultas/saldos-outras-lojas` do `F4` (1.4)
   não grava evento nem anuncia tipo ou versão; o PDV novo diante da API antiga recebe 404 e mostra "requer conexão". A
   Fase 2 inteira mantém `venda.finalizada` v1 (a `variacao_id` e o `lote_id` já existem nele) e não acrescenta nada a
@@ -4254,7 +4262,7 @@ contingência à SEFAZ corre em paralelo, pelo módulo fiscal (não depende da A
 | `/sync/*` da própria empresa, filtrado pela loja/estoque/terminal do token | Qualquer rota do ERP (`/api/*`), que exige JWT de usuário |
 | Endpoints online do PDV (1.4) restritos à loja do token; `GET /sync/consultas/saldos-outras-lojas` lê o saldo vendável das lojas reais e do CD (só quantidades, sem a loja de treino; PDV 10.3, F2-B35) | Ler dados de outra empresa, de outra loja (exceto saldos), custos, financeiro |
 | Receber segredos da **própria loja** (CSC, certificado, token TEF), **cifrados para a `chave_publica_terminal`** | Receber segredos de outra loja; receber qualquer segredo em claro (mesmo dentro do TLS); receber segredos com `HARDWARE_ALTERADO` pendente |
-| `GET /sync/arquivos/{id}` só das categorias e escopos de 6.12 (imagens de cadastro; logotipo/banner da loja; XML fiscal da loja e do próprio terminal) | Baixar XML de NF-e de fornecedor, XML/logs de outras lojas ou terminais, anexos financeiros, planilhas (`403 ESCOPO_INVALIDO`) |
+| `GET /sync/arquivos/{id}` só das categorias e escopos de 6.12 (imagens de cadastro; logotipo/banner da loja; XML fiscal da loja e do próprio terminal) | Baixar XML de NF-e de fornecedor, XML/logs de outras lojas ou terminais, anexos financeiros, planilhas (`403 ESCOPO_INVALIDO`; na Fase 2, F2-B45, só as imagens de produto, categoria e marca, e o resto é `404`, 6.12) |
 | Enviar eventos com `loja_id`/`caixa_id`/`terminal_id` iguais aos do token | Enviar evento "em nome" de outro terminal (`ESCOPO_INVALIDO`), exceto pela recuperação assistida com código do ERP (22.3) |
 
 **Entrega de segredos** (`certificados_digitais` arquivo e senha, `lojas.*_cifrado`, CSC, token TEF):

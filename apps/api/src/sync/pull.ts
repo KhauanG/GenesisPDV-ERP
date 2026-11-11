@@ -66,6 +66,8 @@ function consultaTabela(
       const proj = def.projecao?.[c.name];
       return sql`${proj ? proj(escopo) : expressaoColuna(c)} as ${sql.identifier(c.name)}`;
     });
+  for (const [nome, campo] of Object.entries(def.calculadas ?? {}))
+    colunas.push(sql`${campo.expressao()} as ${sql.identifier(nome)}`);
   const filtro = def.filtro ? sql` and (${def.filtro(escopo)})` : sql``;
   return sql`select ${sql.join(colunas, sql`, `)} from ${sql.identifier(cfg.name)} t
     where t.versao > ${desde} and t.versao <= ${teto}${filtro}

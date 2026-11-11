@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43 e F2-B44 commitados, próximo F2-B45; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43, F2-B44 e F2-B45 commitados — fecha o PR-10 e a release R2 do PDV, 0.12.0; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -94,7 +94,7 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 |---|---|
 | F2-B43 envio de arquivos e imagens, com a variante `pdv_256` (API: `POST /api/arquivos?destino=` multipart com o destino na query — `produto_foto`, `categoria_imagem`, `marca_logotipo` (1 MB), `loja_logotipo` (1 MB) e `loja_foto`, com `lojaId` —, a permissão do destino, o `Content-Length` e o limite por usuário antes de ler o corpo e a vaga do semáforo do processo só com o corpo lido, o multer cortando o stream no limite (2 MB; 1 MB no logotipo), o tipo pelos magic bytes (PNG/JPEG/WebP; PDF reconhecido e nenhum destino o aceita; SVG nunca), 415 `TIPO_NAO_SUPORTADO` e 413 `ARQUIVO_GRANDE` novos; a imagem decodificada com o **sharp 0.35.5** (versão exata, libvips pré-compilado glibc; `pnpm deploy --prod` conferido, o `docker build` não rodou na sessão) só com os leitores PNG/JPEG/WebP liberados, uma por vez, o limite de pixels pelo cabeçalho (36 MP) contra a bomba de descompressão e a `pdv_256` WebP até 256 px sem EXIF; chave do servidor, sha256 no banco e no objeto; `GET /api/arquivos/:id[/conteudo?variante=pdv_256]` com o tipo gravado, `nosniff`, CSP `sandbox` e o nome `<id>.<ext>`, 404 para outra empresa e para quem não vê o cadastro dono; os Anexos no `PUT /lojas/:id` com o envio da própria loja; migração **0027_arquivos_variantes** (`arquivos.variantes jsonb`, sem reescrever a tabela); ERP: `<UploadArquivo>` (envia ao arrastar ou escolher, confere o tamanho e o tipo pelo conteúdo, a miniatura `pdv_256` como blob) e a aba Anexos da loja (logotipo e foto); PDV sem mudança, sem `Esquema.g.cs`; README da API › decisão 189, do ERP › 77) | commitado |
 | F2-B44 foto e imagens do produto, categorias e marcas completas (shared: `idArquivoAnexo` — o id de um envio, `null` tira, ausente mantém —, `fotoPrincipalArquivoId` e `imagens` no produto com `MAXIMO_IMAGENS_PRODUTO` = 10, `imagemArquivoId` na categoria, `logotipoArquivoId` na marca, `reordenarCategoriasSchema`, `FichaMarca`; API: a foto e a galeria (`produtos_imagens`) conferidas e ligadas por `vincularArquivo` antes da linha (o id do registro novo gerado antes; outro destino, outro cadastro, outra empresa ou inexistente = 422 no campo), a galeria inteira na ordem (ausente mantém: importação, cadastro em massa e "Definir NCM" não apagam), a galeria na versão do cadastro (409) e na auditoria legível; `POST /categorias/reordenar` com a lista inteira das irmãs e a versão de cada uma (ordem 10, 20, 30…; versão velha, irmã fora da lista, movida ou excluída no meio = 409 e nada muda; id de outra empresa 404; só as que mudaram ganham versão e auditoria; a árvore não muda de forma), o `mover` de sempre para o soltar dentro; a imagem da categoria e o logotipo da marca; `GET /marcas/:id/ficha` com `marcas.ver` + `produtos.ver`, sem custo, até 5.000 produtos; ERP: bloco "Foto e imagens" do produto (`<GaleriaImagens>`; a cópia sai sem imagens), arrastar e soltar nativo nas categorias (dentro / faixa entre duas; `planejarSoltura` recusa ciclo, 5 níveis e nome repetido na tela; Subir/Descer no ⋮; sem arrastar com a busca), a imagem no painel, o logotipo e o Imprimir da marca (ficha pelo navegador); **sem migração**, PDV sem mudança, sem `Esquema.g.cs`; README da API › decisão 190, do ERP › 78) | commitado |
-| F2-B45 protocolo do PDV: `/sync/arquivos`, `foto_url` estável e as tabelas de complementos (F2-Q1 = D43: complementos sim), numa só volta de cursor | a fazer |
+| F2-B45 protocolo do PDV: `/sync/arquivos`, `foto_url` estável e as tabelas de complementos (F2-Q1 = D43: complementos sim), numa só volta de cursor (API: migração **`0028_complementos`** — `produtos_grupos_complementos` e `produtos_complementos` com os CHECKs da MD 3.6.8, `fn_versao`, autoria, no fluxo `catalogo`, exclusão física recusada por trigger, `itens_venda_complementos.complemento_id` com FK `on delete set null` e o handler da venda gravando nulo o id desconhecido, README da API › decisão 191; `GET /sync/arquivos/{id}?variante=pdv_256` em `apps/api/src/sync/arquivos.ts` — o token do terminal, só a variante do caixa de produto/categoria/marca vivos, outra empresa ou fora do escopo 404, `image/webp` fixo, `nosniff`, `ETag` = sha256 e `304`, 120/min por terminal — e os campos calculados `foto_url`/`foto_sha256`, `imagem_*` e `logotipo_*` no pull (`TabelaFluxo.calculadas`, projetados no `Esquema.g.cs`), decisão 192; PDV **0.12.0**: espelhos dos complementos, as colunas das marcas e categorias, a migração EF única `FaseDois` (cursor do `catalogo` e versão das marcas e categorias a 0), README do PDV › decisão 85; `CacheImagens` com o id tirado só da URL estável, `<sha256>.webp` gerado pelo PDV, 512 KB, sha256 conferido antes de gravar e falha = placeholder, decisão 86; `venda.finalizada` v1 e `versoes_schema` sem mudança; `VERSAO_PDV_GUARDA_VARIACOES` fica em 0.11.0) | commitado |
 
 ### PR-9 — blocos
 
@@ -117,7 +117,8 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    e sem cabo, pesquisa F2); dar as permissões das telas novas do PR-7 (`relatorios.estoque_atual`,
    `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar`). A regra
    `AbortIncompleteMultipartUpload` do bucket já foi aplicada (10/11/2026; `infra/producao/README.md` › Backup). A
-   versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
+   `VERSAO_PDV_GUARDA_VARIACOES` (shared) é a primeira versão com a guarda (0.11.0) e não acompanha as releases
+   seguintes (PDV 84 e 85).
 3. **PR-9 "Catálogo operacional" juntado (#7) e implantado (11/11/2026, Implantação manual verde).** **Falta (dono):**
    liberar nos cargos `produtos.cadastro_massa` (o Gerente já tem; o
    Estoquista não), `relatorios.produtos_geral`, `relatorios.ncm_invalidos`, `relatorios.historico_produtos` e as de
@@ -133,10 +134,24 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    (11/11/2026): 100 linhas por gravação do cadastro em massa.
 3b. **PR-10 "Arquivos, imagens e protocolo do PDV"** (F2-B43 a F2-B45; release R2 do PDV): workflow `genesis-bloco`
    bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 e F2-B44 commitados
-   (foto e galeria do produto, imagem e arrastar e soltar das categorias, logotipo e ficha da marca); próximo: F2-B45. O
-   F2-B45 inclui as tabelas de complementos (F2-Q1 = D43: complementos sim) e uma única volta do cursor do `catalogo`;
-   a API vai para a produção antes do PDV.
-4. Numeração das próximas decisões nos READMEs: **API 191**, **ERP 79**, **PDV 85** (confira o último número no próprio
+   (foto e galeria do produto, imagem e arrastar e soltar das categorias, logotipo e ficha da marca); F2-B45
+   commitado (o `/sync/arquivos`, os campos `foto_url`/`foto_sha256`, as tabelas de complementos e o PDV 0.12.0 com
+   uma única volta do cursor do `catalogo`). Falta: a revisão de segurança do PR inteiro (D63) e abrir o PR-10.
+   **Roteiro da release R2 para o dono, nesta ordem (a API sempre antes do PDV, SYNC 17.2):**
+   1. Liberar o merge do PR-10 na `main` e esperar a CI da `main` verde (inclusive o PDV no `windows-latest`).
+   2. Rodar a **Implantação** (API e ERP) e aprovar o environment `producao`: ela aplica a migração **0028**
+      (complementos; não mexe em dado existente) e publica o `/sync/arquivos`. Conferir a saúde em
+      https://erp.grupoicebeer.com.br/saude. Os caixas 0.11.0 continuam vendendo e sincronizando normalmente: eles só
+      ignoram os campos e as tabelas novas.
+   3. Rodar o workflow **"PDV release"** na `main` com "publicar" marcado (a versão vazia já pega a **0.12.0** do
+      `Directory.Build.props`): ele gera o instalador, testa e cria o release `pdv-v0.12.0`.
+   4. Rodar a **Implantação** com `publicar_pdv` para pôr o instalador 0.12.0 na página de download.
+   5. Atualizar um caixa de cada vez, fora do horário de pico: na abertura, o 0.12.0 faz o backup, aplica a migração e
+      baixa o catálogo de novo em segundo plano (o caixa vende durante a descida; com milhares de produtos leva alguns
+      minutos). Conferir na Central do PDV › Sincronização que o fluxo `catalogo` voltou a "em dia".
+   6. Teste no caixa: enviar uma foto num produto e o logotipo numa marca no ERP; depois do próximo ciclo, o caixa
+      recebe os campos (a foto ainda não aparece na tela: `pdv.exibe_foto_produto` continua desligada, fora da Fase 2).
+4. Numeração das próximas decisões nos READMEs: **API 193**, **ERP 79**, **PDV 87** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo

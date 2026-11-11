@@ -39,6 +39,7 @@ import {
   gruposPrecoQuantidade,
   produtos,
   produtosCodigosBarras,
+  produtosComplementos,
   produtosComponentes,
   produtosComponentesAlternativas,
   produtosLotes,
@@ -463,7 +464,11 @@ export const itensVenda = pgTable(
   ],
 );
 
-/** Complementos/adicionais escolhidos no item (MD 3.11.3); `complemento_id` → `produtos_complementos` (futuro). */
+/**
+ * Complementos/adicionais escolhidos no item (MD 3.11.3). `complemento_id` → `produtos_complementos` (0028, F2-B45) com
+ * `on delete set null`: a opção nunca é excluída fisicamente (trigger), e o handler da venda grava nulo o id que a
+ * nuvem não conhece (`conferirDocumentoVenda`); o nome do grupo e a descrição ficam gravados no item.
+ */
 export const itensVendaComplementos = pgTable(
   'itens_venda_complementos',
   {
@@ -482,7 +487,13 @@ export const itensVendaComplementos = pgTable(
       columns: [t.itemVendaId],
       foreignColumns: [itensVenda.id],
     }),
+    foreignKey({
+      name: 'fk_itens_venda_complementos_complemento_id',
+      columns: [t.complementoId],
+      foreignColumns: [produtosComplementos.id],
+    }).onDelete('set null'),
     index('ix_itens_venda_complementos_item_venda_id').on(t.itemVendaId),
+    index('ix_itens_venda_complementos_complemento_id').on(t.complementoId),
   ],
 );
 

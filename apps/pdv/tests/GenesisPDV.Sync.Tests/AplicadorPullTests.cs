@@ -339,6 +339,97 @@ public sealed class AplicadorPullTests
     }
 
     [Fact]
+    public async Task Pdv_011_descarta_imagens_das_marcas_e_complementos_sem_travar_e_a_FaseDois_traz_tudo_numa_volta()
+    {
+        // Release R2 (F2-B45; SYNC 17.4.2): a API nova vai à produção antes do PDV 0.12.0. O 0.11.0 (banco até a
+        // `BuscaProdutosFts`) recebe as colunas calculadas e as tabelas de complementos: grava o produto com a foto (as
+        // colunas já existiam no espelho), descarta a coluna da marca e as duas tabelas que não conhece e avança o cursor.
+        // A migração `FaseDois` volta o cursor do `catalogo` a 0 e a versão das marcas e categorias, e o app novo grava a
+        // mesma página inteira.
+        using var amb = await AmbienteSync.CriarAteAsync("20261110145032_BuscaProdutosFts");
+        var marca = Guid.CreateVersion7().ToString("D");
+        var grupo = Guid.CreateVersion7().ToString("D");
+        var opcao = Guid.CreateVersion7().ToString("D");
+        var arquivo = Guid.CreateVersion7().ToString("D");
+        var sha = new string('b', 64);
+        var produto = ProdutoLinha("CERVEJA COM FOTO", "4.9900");
+        produto["foto_principal_arquivo_id"] = arquivo;
+        produto["foto_url"] = $"/sync/arquivos/{arquivo}?variante=pdv_256";
+        produto["foto_sha256"] = sha;
+        var pagina = Pagina(
+            "catalogo", 90,
+            ("marcas", 10, new JsonObject
+            {
+                ["id"] = marca,
+                ["codigo"] = 7,
+                ["descricao"] = "CERVEJARIA FICTICIA",
+                ["sem_marca"] = false,
+                ["exibe_site"] = false,
+                ["ordem"] = 0,
+                ["logotipo_arquivo_id"] = arquivo,
+                ["logotipo_url"] = $"/sync/arquivos/{arquivo}?variante=pdv_256",
+                ["logotipo_sha256"] = sha,
+                ["criado_em"] = "2026-11-11T12:00:00.000Z",
+                ["atualizado_em"] = "2026-11-11T12:00:00.000Z",
+                ["excluido_em"] = null,
+            }),
+            ("produtos", 11, produto),
+            ("produtos_grupos_complementos", 12, new JsonObject
+            {
+                ["id"] = grupo,
+                ["produto_id"] = Produto,
+                ["nome"] = "Gelo",
+                ["minimo"] = 1,
+                ["maximo"] = 2,
+                ["obrigatorio"] = true,
+                ["ordem"] = 0,
+                ["criado_em"] = "2026-11-11T12:00:00.000Z",
+                ["atualizado_em"] = "2026-11-11T12:00:00.000Z",
+                ["excluido_em"] = null,
+            }),
+            ("produtos_complementos", 13, new JsonObject
+            {
+                ["id"] = opcao,
+                ["grupo_id"] = grupo,
+                ["produto_id"] = null,
+                ["descricao"] = "Limão",
+                ["preco_adicional"] = "1.5000",
+                ["baixa_estoque"] = false,
+                ["quantidade_baixa"] = "1.000",
+                ["ordem"] = 0,
+                ["ativo"] = true,
+                ["criado_em"] = "2026-11-11T12:00:00.000Z",
+                ["atualizado_em"] = "2026-11-11T12:00:00.000Z",
+                ["excluido_em"] = null,
+            }));
+
+        var antiga = await amb.Aplicador.AplicarAsync(pagina, ct: Ct);
+        Assert.Equal((2, 2), (antiga.Gravadas, antiga.Ignoradas));
+        Assert.Equal(90L, await CursorAsync(amb, "catalogo"));
+        Assert.Equal(sha, amb.Escalar($"select foto_sha256 from produtos where id = '{Produto}'"));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("logotipo_url", StringComparison.Ordinal));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("produtos_grupos_complementos", StringComparison.Ordinal) && l.Contains("desconhecida", StringComparison.Ordinal));
+
+        await amb.MigrarAsync();
+        Assert.Equal(0L, await CursorAsync(amb, "catalogo"));
+        Assert.Equal(0L, amb.Escalar($"select versao from marcas where id = '{marca}'"));
+        // O produto mantém a versão: a foto já tinha descido (a coluna existia desde a 1A).
+        Assert.Equal(11L, amb.Escalar($"select versao from produtos where id = '{Produto}'"));
+
+        var aplicador = new AplicadorPull(amb.Fabrica, amb.Relogio, NullLogger<AplicadorPull>.Instance);
+        var nova = await aplicador.AplicarAsync(pagina, ct: Ct);
+        Assert.Equal((3, 1), (nova.Gravadas, nova.Ignoradas));
+        Assert.Equal($"/sync/arquivos/{arquivo}?variante=pdv_256", amb.Escalar($"select logotipo_url from marcas where id = '{marca}'"));
+        Assert.Equal(sha, amb.Escalar($"select logotipo_sha256 from marcas where id = '{marca}'"));
+        await using var db = amb.Fabrica.CreateDbContext();
+        var g = await db.Set<ProdutoGrupoComplementosRegistro>().SingleAsync(Ct);
+        Assert.Equal(("Gelo", (short)1, (short)2, true), (g.Nome, g.Minimo, g.Maximo, g.Obrigatorio));
+        var o = await db.Set<ProdutoComplementoRegistro>().SingleAsync(Ct);
+        Assert.Equal(("Limão", 1.5m, 1m, (Guid?)null), (o.Descricao, o.PrecoAdicional, o.QuantidadeBaixa, o.ProdutoId));
+        Assert.Equal(90L, await CursorAsync(amb, "catalogo"));
+    }
+
+    [Fact]
     public async Task Lotes_e_saldo_por_lote_descidos_sao_gravados_e_a_venda_dividida_em_FEFO_na_nuvem_atualiza_cada_lote()
     {
         // Fase 2 (F2-B6): o motor da nuvem passa a gravar `saldos_lote` (a venda do PDV-1, sem lote, é dividida em FEFO

@@ -28,7 +28,7 @@ public class MigracaoFormasPagamentoLojasTests
         {
             // Terminal ativado no PDV anterior, com o pull já além das versões que a 0014 da API criou.
             Executar(conexao, "insert into estado_sincronizacao (fluxo, cursor, carga_inicial_concluida, linhas_recebidas, ressincronizar) "
-                + "values ('configuracao', 5000, 1, 120, 0), ('catalogo', 7000, 1, 900, 0), ('acesso', 300, 1, 10, 1)");
+                + "values ('configuracao', 5000, 1, 120, 0), ('pessoas', 7000, 1, 900, 0), ('acesso', 300, 1, 10, 1)");
             InserirForma(conexao, formaId, versao: 4990);
         }
 
@@ -39,8 +39,9 @@ public class MigracaoFormasPagamentoLojasTests
         // A carga inicial continua concluída (o caixa segue vendendo) e a marca de "esperar o suporte" não é usada.
         Assert.Equal(1L, banco.Escalar("select carga_inicial_concluida from estado_sincronizacao where fluxo = 'configuracao'"));
         Assert.Equal(0L, banco.Escalar("select ressincronizar from estado_sincronizacao where fluxo = 'configuracao'"));
-        // Outros fluxos ficam como estavam, inclusive o que espera o suporte.
-        Assert.Equal(7000L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'catalogo'"));
+        // Outros fluxos ficam como estavam, inclusive o que espera o suporte (o `catalogo` não serve de exemplo: a
+        // `FaseDois`, aplicada na mesma abertura, volta o cursor dele).
+        Assert.Equal(7000L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'pessoas'"));
         Assert.Equal(1L, banco.Escalar("select ressincronizar from estado_sincronizacao where fluxo = 'acesso'"));
         // Versão 0: a mesma linha da nuvem (versão 4990, com o `exige_supervisor` real) volta a ser gravada.
         Assert.Equal(0L, banco.Escalar($"select versao from formas_pagamento where id = '{formaId}'"));

@@ -149,23 +149,31 @@ public class IndiceBuscaProdutosTests
         }
 
         await AtivarAsync(banco);
-        // Sem a estrutura, a gravação do espelho não mexe no índice (nem falha).
-        await new RepositorioEspelhos(banco.Fabrica).GravarAsync(Catalogo(), Ct);
+        // Sem a estrutura, a gravação do espelho não mexe no índice (nem falha). A marca e a categoria vão por SQL, no
+        // esquema daquela versão: o modelo EF atual já tem as colunas de imagem da `FaseDois` (F2-B45).
+        await new RepositorioEspelhos(banco.Fabrica).GravarAsync(Catalogo().Where(l => l is not (MarcaRegistro or CategoriaRegistro)), Ct);
         using (var conexao = banco.AbrirConexao())
         {
+            Executar(conexao, "insert into marcas (id, codigo, descricao, sem_marca, exibe_site, ordem, criado_em, atualizado_em, versao) "
+                + $"values ('{Heineken:D}', 1, 'Heineken', 0, 0, 0, '2026-11-01T12:00:00.000Z', '2026-11-01T12:00:00.000Z', 1)");
+            Executar(conexao, "insert into categorias (id, nome, caminho, caminho_nomes, nivel, ordem, ativa, exibe_pdv, exibe_menu_digital, exibe_totem, exibe_site, criado_em, atualizado_em, versao) "
+                + $"values ('{Cervejas:D}', 'Cervejas', '1', 'Cervejas', 0, 0, 1, 0, 0, 0, 0, '2026-11-01T12:00:00.000Z', '2026-11-01T12:00:00.000Z', 1)");
             Executar(conexao, "update estado_sincronizacao set cursor = 7000, carga_inicial_concluida = 1 where fluxo = 'catalogo'");
         }
 
+        // A busca em memória sem o índice não é conferida aqui: o app atual lê o modelo EF atual, que o banco antigo só
+        // tem depois da abertura (as colunas da `FaseDois`); o teste da busca em memória × índice cobre o mesmo resultado.
         Assert.Equal(0L, banco.Escalar("select count(*) from sqlite_master where name = 'produtos_busca'"));
-        // Sem o índice, a busca em memória responde do mesmo jeito.
-        Assert.Equal(["CERV LN 600ML"], await NomesAsync(new CatalogoLocal(banco.Fabrica), "heineken 600"));
 
         var resultado = await banco.InicializarAsync();
         Assert.Contains(resultado.MigracoesAplicadas, m => m.EndsWith("_BuscaProdutosFts", StringComparison.Ordinal));
         Assert.NotNull(resultado.ArquivoBackup);
         Assert.Equal(new ResultadoIndiceBusca(true, "contagem diferente do espelho", 6), resultado.IndiceBusca);
         Assert.Null(resultado.ErroIndiceBusca);
-        Assert.Equal(7000L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'catalogo'"));
+        // A `BuscaProdutosFts` não volta o cursor (o índice sai do espelho); quem o volta, na mesma abertura, é a
+        // `FaseDois` (F2-B45, a volta única da release R2). A carga inicial continua concluída: o caixa segue vendendo.
+        Assert.Equal(0L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'catalogo'"));
+        Assert.Equal(1L, banco.Escalar("select carga_inicial_concluida from estado_sincronizacao where fluxo = 'catalogo'"));
         Assert.Equal(6L, banco.Escalar("select count(*) from produtos_busca_texto"));
         Assert.True(await ProntoAsync(banco));
         Assert.Equal(["CERV LN 600ML"], await NomesAsync(new CatalogoLocal(banco.Fabrica), "heineken 600"));

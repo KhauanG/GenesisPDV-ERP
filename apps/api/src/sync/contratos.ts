@@ -8,6 +8,7 @@ import { ErroSync } from './erros.js';
 
 export {
   ALFABETO_ATIVACAO,
+  arquivoSyncQuerySchema,
   ativarSchema,
   envelopeRecuperadoSchema,
   eventoSchema,

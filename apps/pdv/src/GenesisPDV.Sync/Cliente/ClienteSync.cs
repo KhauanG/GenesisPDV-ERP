@@ -53,6 +53,15 @@ public interface IClienteSync
     Task<RespostaSaldosOutrasLojas> SaldosOutrasLojasAsync(Guid produtoId, CancellationToken ct = default);
 
     /// <summary>
+    /// <c>GET /sync/arquivos/{id}?variante=pdv_256</c> (Fase 2, F2-B45; SYNC 6.12): a imagem de um cadastro do catálogo,
+    /// com <c>If-None-Match</c> quando <paramref name="etag"/> vem (o <c>304</c> volta como
+    /// <see cref="ArquivoBaixado.NaoModificado"/>). A rota é montada aqui pelo id: o PDV nunca segue uma URL que veio na
+    /// linha. Só <c>image/webp</c> e no máximo <paramref name="limiteBytes"/> (o corpo maior é cortado e recusado); quem
+    /// chama confere o sha256 antes de gravar (<see cref="CacheImagens"/>).
+    /// </summary>
+    Task<ArquivoBaixado> BaixarArquivoAsync(Guid arquivoId, string? etag, int limiteBytes, CancellationToken ct = default);
+
+    /// <summary>
     /// Chamada online que altera estado (reservas, comandas, PIX, renovação de token — SYNC 20.4): o
     /// <paramref name="requisicaoId"/> é gerado uma vez por operação lógica e repetido em toda nova tentativa, para a API
     /// devolver a mesma resposta. Na renovação de token ele fica em <c>configuracao_terminal['token.pendente']</c>.
@@ -61,6 +70,12 @@ public interface IClienteSync
 
     Task<bool> SaudeAsync(Uri urlApi, CancellationToken ct = default);
 }
+
+/// <summary>
+/// Resultado do <see cref="IClienteSync.BaixarArquivoAsync"/>: o conteúdo, ou <see cref="NaoModificado"/> (o <c>304</c> do
+/// <c>If-None-Match</c>); <see cref="Etag"/> é o sha256 que a API mandou no <c>ETag</c>, sem aspas.
+/// </summary>
+public sealed record ArquivoBaixado(byte[]? Conteudo, bool NaoModificado, string? Etag);
 
 /// <summary>Erro devolvido pela API no envelope padrão (2.4, 2.5).</summary>
 public sealed class ErroSyncException(HttpStatusCode status, ErroApi? erro, string mensagem, TimeSpan? repetirApos = null) : Exception(mensagem)
@@ -106,6 +121,9 @@ public sealed record TemposLimiteSync
     /// "requer conexão" em vez de esperar o prazo do pull.
     /// </summary>
     public TimeSpan Consulta { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>Download de uma imagem do catálogo (F2-B45; a <c>pdv_256</c> tem 10–20 KB).</summary>
+    public TimeSpan Arquivo { get; init; } = TimeSpan.FromSeconds(15);
 }
 
 /// <summary>
@@ -206,6 +224,64 @@ public sealed class ClienteSyncHttp(
         return EnviarAsync<RespostaSaldosOutrasLojas>(HttpMethod.Get, new Uri(rota, UriKind.Relative), null, null, autenticar: true, _tempos.Consulta, ct);
     }
 
+    /// <summary><c>Content-Type</c> fixo da variante do caixa (a API sempre grava a <c>pdv_256</c> em WebP).</summary>
+    public const string TipoImagemPdv = "image/webp";
+
+    public Task<ArquivoBaixado> BaixarArquivoAsync(Guid arquivoId, string? etag, int limiteBytes, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limiteBytes);
+        var rota = string.Create(CultureInfo.InvariantCulture, $"sync/arquivos/{arquivoId:D}?variante=pdv_256");
+        return EnviarAsync(
+            HttpMethod.Get, new Uri(rota, UriKind.Relative), null, null, autenticar: true, _tempos.Arquivo, ct,
+            (resposta, c) => LerArquivoAsync(resposta, limiteBytes, c),
+            m =>
+            {
+                if (etag is not null)
+                {
+                    m.Headers.TryAddWithoutValidation("If-None-Match", $"\"{etag}\"");
+                }
+            });
+    }
+
+    /// <summary>
+    /// O corpo da imagem: <c>304</c> sem corpo, ou o <c>image/webp</c> lido em blocos até <paramref name="limite"/> (o
+    /// <c>Content-Length</c> maior nem é lido). Tipo ou tamanho fora disso é recusado como resposta inválida.
+    /// </summary>
+    private static async Task<ArquivoBaixado> LerArquivoAsync(HttpResponseMessage resposta, int limite, CancellationToken ct)
+    {
+        var etag = resposta.Headers.ETag?.Tag.Trim('"');
+        if (resposta.StatusCode == HttpStatusCode.NotModified)
+        {
+            return new ArquivoBaixado(null, NaoModificado: true, etag);
+        }
+
+        if (!string.Equals(resposta.Content.Headers.ContentType?.MediaType, TipoImagemPdv, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ErroSyncException(resposta.StatusCode, null, $"Imagem com tipo inesperado ({resposta.Content.Headers.ContentType?.MediaType ?? "sem tipo"}).");
+        }
+
+        if (resposta.Content.Headers.ContentLength > limite)
+        {
+            throw new ErroSyncException(resposta.StatusCode, null, $"Imagem acima de {limite} bytes.");
+        }
+
+        await using var corpo = await resposta.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var memoria = new MemoryStream();
+        var bloco = new byte[16 * 1024];
+        int lidos;
+        while ((lidos = await corpo.ReadAsync(bloco, ct).ConfigureAwait(false)) > 0)
+        {
+            if (memoria.Length + lidos > limite)
+            {
+                throw new ErroSyncException(resposta.StatusCode, null, $"Imagem acima de {limite} bytes.");
+            }
+
+            memoria.Write(bloco, 0, lidos);
+        }
+
+        return new ArquivoBaixado(memoria.ToArray(), NaoModificado: false, etag);
+    }
+
     public Task<T> AlterarAsync<T>(HttpMethod metodo, string rota, object? corpo, Guid requisicaoId, CancellationToken ct = default)
     {
         if (requisicaoId == Guid.Empty)
@@ -279,13 +355,24 @@ public sealed class ClienteSyncHttp(
     /// com o atual da lista antiga, que já virou o anterior e a API trataria como cópia do terminal. Sem candidato
     /// (terminal sem identidade), vai sem <c>Authorization</c> e a API responde 401.
     /// </summary>
-    private async Task<T> EnviarAsync<T>(HttpMethod metodo, Uri uri, object? corpo, Guid? requisicaoId, bool autenticar, TimeSpan limite, CancellationToken ct)
+    /// <param name="ler">Leitura da resposta de sucesso (e do <c>304</c>); nula = o JSON do contrato.</param>
+    /// <param name="ajustar">Cabeçalhos a mais na requisição (o <c>If-None-Match</c> do download).</param>
+    private async Task<T> EnviarAsync<T>(
+        HttpMethod metodo,
+        Uri uri,
+        object? corpo,
+        Guid? requisicaoId,
+        bool autenticar,
+        TimeSpan limite,
+        CancellationToken ct,
+        Func<HttpResponseMessage, CancellationToken, Task<T>>? ler = null,
+        Action<HttpRequestMessage>? ajustar = null)
     {
         using var prazo = CancellationTokenSource.CreateLinkedTokenSource(ct);
         prazo.CancelAfter(limite);
         try
         {
-            return await EnviarComPrazoAsync<T>(metodo, uri, corpo, requisicaoId, autenticar, prazo.Token).ConfigureAwait(false);
+            return await EnviarComPrazoAsync(metodo, uri, corpo, requisicaoId, autenticar, prazo.Token, ler, ajustar).ConfigureAwait(false);
         }
         catch (OperationCanceledException e) when (prazo.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -295,7 +382,15 @@ public sealed class ClienteSyncHttp(
         }
     }
 
-    private async Task<T> EnviarComPrazoAsync<T>(HttpMethod metodo, Uri uri, object? corpo, Guid? requisicaoId, bool autenticar, CancellationToken ct)
+    private async Task<T> EnviarComPrazoAsync<T>(
+        HttpMethod metodo,
+        Uri uri,
+        object? corpo,
+        Guid? requisicaoId,
+        bool autenticar,
+        CancellationToken ct,
+        Func<HttpResponseMessage, CancellationToken, Task<T>>? ler,
+        Action<HttpRequestMessage>? ajustar)
     {
         IReadOnlyList<string> candidatos = autenticar ? await tokens.CandidatosAsync(ct).ConfigureAwait(false) : [];
         var tentados = new HashSet<string>(StringComparer.Ordinal);
@@ -304,14 +399,20 @@ public sealed class ClienteSyncHttp(
         while (true)
         {
             using var mensagem = Criar(metodo, uri, corpo, requisicaoId, token);
+            ajustar?.Invoke(mensagem);
             var enviadaEm = relogio.Agora;
             var cronometro = Stopwatch.StartNew();
-            using var resposta = await http.SendAsync(mensagem, ct).ConfigureAwait(false);
+            // Com leitura própria (o download), o corpo é lido em blocos por ela, com o limite de tamanho, e não juntado
+            // inteiro na memória antes.
+            using var resposta = await http.SendAsync(
+                mensagem, ler is null ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             RegistrarAmostra(resposta, enviadaEm, cronometro.Elapsed);
-            if (resposta.IsSuccessStatusCode)
+            if (resposta.IsSuccessStatusCode || (ler is not null && resposta.StatusCode == HttpStatusCode.NotModified))
             {
-                var r = await resposta.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false)
-                        ?? throw new ErroSyncException(resposta.StatusCode, null, "Resposta vazia da API.");
+                var r = ler is not null
+                    ? await ler(resposta, ct).ConfigureAwait(false)
+                    : await resposta.Content.ReadFromJsonAsync<T>(Json, ct).ConfigureAwait(false)
+                      ?? throw new ErroSyncException(resposta.StatusCode, null, "Resposta vazia da API.");
                 if (token is not null)
                 {
                     await tokens.SucessoAsync(token, ct).ConfigureAwait(false);

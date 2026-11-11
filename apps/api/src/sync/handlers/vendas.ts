@@ -243,6 +243,11 @@ export interface DocumentoConferido {
   /** `pessoa_id` recebido (minúsculas) → o definitivo (`pessoas_aliases`, MD 3.5.2). */
   pessoas: Map<string, string>;
   clienteId: string | null;
+  /**
+   * Os `complemento_id` do documento que existem em `produtos_complementos` (minúsculas). O que a nuvem não conhece é
+   * gravado nulo (FK da 0028, F2-B45): a venda nunca é recusada por isso, e o grupo e a descrição ficam no item.
+   */
+  complementos: Set<string>;
 }
 
 interface VendaPreparada extends DocumentoConferido {
@@ -406,7 +411,27 @@ export async function conferirDocumentoVenda(
     );
   }
   const pessoas = await resolverAliases(tx, pessoasDaVenda(p));
-  return { pessoas, clienteId: resolverPessoa({ pessoas }, v.cliente_id) };
+  return {
+    pessoas,
+    clienteId: resolverPessoa({ pessoas }, v.cliente_id),
+    complementos: await complementosConhecidos(tx, p),
+  };
+}
+
+/** Os `complemento_id` citados pelo documento que existem na nuvem (a exclusão física é bloqueada, 0028). */
+async function complementosConhecidos(tx: DbEmpresa, p: DocumentoVendaCaixa): Promise<Set<string>> {
+  const ids = [
+    ...new Set(
+      p.itens_venda_complementos.flatMap((c) => (c.complemento_id ? [minusculo(c.complemento_id)] : [])),
+    ),
+  ];
+  if (!ids.length) return new Set();
+  const { rows } = await tx.execute<{ id: string }>(sql`
+    select id::text from produtos_complementos where id in (${sql.join(
+      ids.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    )})`);
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
@@ -536,7 +561,13 @@ export function montarLinhas(
       relogioConfiavel: ctx.evento.relogio_confiavel ?? true,
     },
     itens: p.itens_venda.map((i) => paraColunas(itensVenda, i)),
-    complementos: p.itens_venda_complementos.map((c) => paraColunas(itensVendaComplementos, c)),
+    complementos: p.itens_venda_complementos.map((c) => ({
+      ...paraColunas(itensVendaComplementos, c),
+      complementoId:
+        c.complemento_id && prep.complementos.has(minusculo(c.complemento_id))
+          ? minusculo(c.complemento_id)
+          : null,
+    })),
     pagamentos: p.pagamentos_venda.map((pg) => ({
       ...paraColunas(pagamentosVenda, pg),
       pessoaId: resolverPessoa(prep, pg.pessoa_id),

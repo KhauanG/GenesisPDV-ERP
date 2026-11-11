@@ -30,6 +30,7 @@ import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
 import { TerminaisErp } from './terminais/terminais.service.js';
 import { HeartbeatSync } from './sync/heartbeat.js';
+import { ArquivosSync } from './sync/arquivos.js';
 import { ConsultasSync } from './sync/consultas.js';
 import { RecuperarSync } from './sync/recuperar.js';
 import { PullSync } from './sync/pull.js';
@@ -91,6 +92,8 @@ export interface Servicos {
   recuperar: RecuperarSync;
   /** Consultas online do caixa no `/sync/*` (F2-B35): o saldo das outras lojas no F4 da pesquisa. */
   consultas: ConsultasSync;
+  /** `GET /sync/arquivos/{id}` (F2-B45, decisão 192): a variante `pdv_256` das imagens do catálogo para o caixa. */
+  arquivosSync: ArquivosSync;
   token: TokenTerminal;
   fila: FilaTrabalhos;
   armazenamento: ArmazenamentoObjetos;
@@ -270,6 +273,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     heartbeat: new HeartbeatSync(controle, tenancy, auditoria),
     recuperar: new RecuperarSync(tenancy),
     consultas: new ConsultasSync(tenancy),
+    arquivosSync: new ArquivosSync({ tenancy, armazenamento }),
     token: new TokenTerminal(controle, tenancy, auditoria),
     fila,
     armazenamento,

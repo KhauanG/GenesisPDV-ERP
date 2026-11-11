@@ -4341,7 +4341,7 @@ Fonte das flags: levantamento do Nuvem3 (seções indicadas). "ERP" = a flag nã
 | Imprime sangria automaticamente | Comprovante automático (2 vias) de sangria, reforço e abertura | 20, 8.2 | PDV-1 |
 | Valor limite para bloquear PDV e fazer sangria | Bloqueio de novas vendas até a sangria | 20.4 | PDV-1 |
 | Impressoras de cozinha | Tabela `impressoras_destino` (destinos lógicos); a impressora física de cada destino é configurada por terminal | 6.2.1, 19.3, 25 | FUT |
-| Exibe foto do produto no PDV | Foto no painel do item e na consulta (imagens baixadas sob demanda e cacheadas) | 9.1 | PDV-2 |
+| Exibe foto do produto no PDV | Foto no painel do item e na consulta (imagens baixadas sob demanda e cacheadas). Fase 2, F2-B45 (PDV 0.12.0; README do PDV › decisões 85 e 86): os campos `foto_url`/`foto_sha256` já descem e o cache local (`<dados>\cache\imagens\<sha256>.webp`, sha256 conferido antes de gravar, falha = placeholder) está pronto; a exibição e o descarte LRU entram quando a chave for ligada (padrão desligada) | 9.1 | PDV-2 |
 | PDV Mobile: Usa Comanda, Usa Pedido, Imprime pelo Mobile, Abertura, Reforço, Sangria | PDV mobile | — | FUT |
 | Pesquisa de satisfação: URL da imagem | Proposta: QR/imagem no fim do cupom levando à pesquisa (a confirmar) | 19 | FUT |
 | iFood Mercado, WooCommerce, 99Food, NuvemShop, e-mail de produtos vencendo | ERP / integrações | — | FUT |

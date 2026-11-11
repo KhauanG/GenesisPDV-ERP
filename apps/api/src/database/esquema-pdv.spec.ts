@@ -18,6 +18,39 @@ describe('gerador do Esquema.g.cs do PDV (MD 4.1)', () => {
     expect(() => tipoClr('point')).toThrow(/sem mapeamento/);
   });
 
+  it('lista os campos calculados do pull (F2-B45) no fim, projetados e anuláveis, e as tabelas de complementos', () => {
+    const tabelas = tabelasPdv(schema);
+    for (const [tabela, campo] of [
+      ['produtos', 'foto'],
+      ['categorias', 'imagem'],
+      ['marcas', 'logotipo'],
+    ] as const) {
+      const colunas = tabelas.find((t) => t.nome === tabela)!.colunas;
+      expect(colunas.slice(-2)).toEqual([
+        {
+          nome: `${campo}_url`,
+          tipoNuvem: 'text',
+          tipoClr: 'string',
+          nulo: true,
+          escala: null,
+          descida: 'projetada',
+          gerada: false,
+        },
+        {
+          nome: `${campo}_sha256`,
+          tipoNuvem: 'varchar(64)',
+          tipoClr: 'string',
+          nulo: true,
+          escala: null,
+          descida: 'projetada',
+          gerada: false,
+        },
+      ]);
+    }
+    for (const nome of ['produtos_grupos_complementos', 'produtos_complementos'])
+      expect(tabelas.find((t) => t.nome === nome)).toMatchObject({ papel: 'espelho', fluxo: 'catalogo' });
+  });
+
   it('descreve as tabelas dos fluxos com nulidade, escala e CHECKs, em ordem estável', () => {
     const tabelas = tabelasPdv(schema);
     const usuarios = tabelas.find((t) => t.nome === 'usuarios')!;

@@ -5777,6 +5777,84 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        foto e a galeria ausentes, o repetido e o teto) e `cadastros.spec.ts` (o `reordenarCategoriasSchema`). Imagens
        inventadas, geradas no teste.
 
+191. **Complementos do produto: as tabelas, a FK segura da venda e só inativação** (Fase 2, F2-B45; F2-Q1 = roadmap D43:
+     complementos sim; MD 3.6.8; migração **`0028_complementos`**; `src/database/empresa/schema/produtos.ts`
+     (`produtosGruposComplementos`, `produtosComplementos`), `vendas.ts` (a FK de `itens_venda_complementos`),
+     `src/sync/fluxos.ts` (as duas no `catalogo`) e `src/sync/handlers/vendas.ts` (`complementosConhecidos`)).
+     - **As tabelas**: `produtos_grupos_complementos` (`produto_id` → produtos, `nome` varchar(40), `minimo`/`maximo`
+       smallint, `obrigatorio`, `ordem`) e `produtos_complementos` (`grupo_id` → grupos, `produto_id` → produtos
+       anulável — a opção vinculada — ou `descricao` varchar(60) — a livre —, `preco_adicional` numeric(15,4),
+       `baixa_estoque`, `quantidade_baixa` numeric(15,3), `ordem`, `ativo`), com CP e AU. CHECKs da MD 3.6.8:
+       `ck_produtos_grupos_complementos_quantidades` (`minimo >= 0 and maximo >= minimo and (not obrigatorio or minimo >=
+       1)`), `ck_produtos_complementos_origem` (vinculada ou livre), `_baixa` (baixa estoque só a vinculada) e
+       `_valores` (preço adicional ≥ 0 e quantidade da baixa > 0). Que o grupo seja de um produto `com_complementos`
+       fica para a gravação do ERP (F2-B51), como as outras regras de tipo das filhas do produto.
+     - **Descem no `catalogo`** com todas as colunas e sem filtro (o produto desce a todas as lojas): `fn_versao` (trava
+       de ordenação), `ix_<tabela>_versao` e as FKs de autoria, como as demais filhas; `TABELAS_COM_AUTORIA` e o
+       `Esquema.g.cs` (espelhos novos no PDV 0.12.0, decisão 85 do README do PDV) acompanham. O PDV anterior descarta as
+       tabelas que não conhece sem travar o cursor (SYNC 6.10). Até o F2-B51 elas ficam vazias e
+       `produtos.complementos_habilitados` continua desligada.
+     - **Exclusão física recusada** (`fn_exclusao_fisica_proibida`, `before delete` por linha e `before truncate` por
+       comando, nas duas): o erro `P0001 EXCLUSAO_FISICA_PROIBIDA`. Só a exclusão lógica (`excluido_em`, que desce como
+       tombstone) e o `ativo`: o caixa offline pode ter na venda o id de uma opção, e a nuvem continua conhecendo esse
+       id quando o evento chegar. O `truncate ... cascade` também para no trigger (antes de esvaziar as vendas).
+     - **`itens_venda_complementos.complemento_id` → `produtos_complementos` com `on delete set null`** (antes sem FK,
+       "futuro"), com o índice da FK. A migração zera o id que existisse antes de criar a FK (nenhum caixa publicado manda
+       complementos: a lista vai vazia, então em produção nada muda). Para a FK nunca recusar uma venda, o
+       `conferirDocumentoVenda` lê quais `complemento_id` do documento existem (`complementosConhecidos`, uma consulta) e
+       o `montarLinhas` grava **nulo** o que a nuvem não conhece (o nome do grupo e a descrição ficam no item). O reenvio
+       do mesmo evento passa pela mesma regra, então a conferência da camada 2 (SYNC 8.4) não acusa divergência. Era o
+       que o plano deixava para a Fase 3; entrou aqui porque a FK nasce aqui.
+     - `venda.finalizada` continua v1 e `versoes_schema` não muda (SYNC 17.5): o bloco `itens_venda_complementos` já
+       existia no payload.
+     - Testes: `sync-arquivos.test.ts` (as duas tabelas no pull com todas as colunas; os CHECKs, cada um pelo nome; o
+       DELETE e o TRUNCATE recusados com o código; a inativação que desce como tombstone; a FK com `set null`),
+       `venda-eventos.test.ts` (o `complemento_id` conhecido gravado, o desconhecido nulo, o reenvio `ja_existia`),
+       `versionamento.test.ts` e `sync-triggers.test.ts` (os triggers e a autoria pelas listas) e `esquema-pdv.spec.ts`.
+
+192. **`GET /sync/arquivos/{id}?variante=pdv_256` e os campos calculados das imagens no pull** (Fase 2, F2-B45; SYNC
+     6.12, 17.2; MD 6.2; decisões 189 e 190; `src/sync/arquivos.ts` (`camposImagemPdv`, `ArquivosSync`),
+     `src/sync/sync.controller.ts`, `fluxos.ts` (`calculadas`), `pull.ts`, `src/database/esquema-pdv.ts`; contrato
+     `arquivoSyncQuerySchema` no shared `sync/contratos.ts`; sem migração).
+     - **Campos calculados** (`TabelaFluxo.calculadas`): campos que descem na linha sem existir na tabela, depois das
+       colunas. `foto_url`/`foto_sha256` nos produtos, `imagem_url`/`imagem_sha256` nas categorias e
+       `logotipo_url`/`logotipo_sha256` nas marcas: o caminho **estável** `/sync/arquivos/{arquivo_id}?variante=pdv_256`
+       (nunca uma URL assinada, que expiraria e mudaria a linha) e o sha256 **da variante** (`arquivos.variantes`), por
+       uma subconsulta pela PK de `arquivos` que exige o envio vivo do destino certo (categoria e entidade) e com a
+       variante; senão os dois descem nulos. O arquivo não muda depois do envio: trocar a imagem troca o id na linha do
+       cadastro, que ganha versão nova e desce (a projeção sozinha nunca muda a linha, então dois pulls dão o mesmo
+       valor). O gerador do `Esquema.g.cs` lista cada campo calculado no fim da tabela como coluna **projetada e
+       anulável** (o PDV confere tipo e nulidade como as outras; o nome que colide com uma coluna é erro do gerador). O
+       `logotipo` e a `foto` da loja não descem (pendência do cupom, `docs/andamento.md`).
+     - **O endpoint** (`EndpointSync` `arquivos`): o token do terminal, como o pull; não exige o hardware registrado
+       (são os mesmos cadastros que o pull entrega a ele), e o terminal em desativação recebe 403 `ESCOPO_INVALIDO` como
+       no pull do `catalogo`. Só a variante `pdv_256` (outra ou ausente: 400 `REQUISICAO_INVALIDA`); o id no caminho,
+       sem diferença de caixa. **Escopo:** só o arquivo ligado a um cadastro **vivo** que desce ao terminal — a foto
+       principal de um produto, a imagem de uma categoria ou o logotipo de uma marca —, com a categoria e a entidade do
+       destino (a mesma regra dos campos calculados). A empresa é a do banco do terminal: o arquivo de outra empresa, o
+       envio solto, o do produto excluído, o de outra categoria (logotipo e foto da loja, XML, planilhas, anexos) e o id
+       inválido dão **404 `NAO_ENCONTRADO`**, sem dizer qual (a SYNC 6.12 falava em 403 para a outra categoria; o 404
+       não confirma que o id existe). A galeria (`produtos_imagens`) não desce.
+     - **A resposta**: o conteúdo sai pela própria API, e não pelo `302` para a URL assinada da SYNC 6.12: a variante tem
+       10–20 KB, e assim o `Content-Type` é o **fixo** do caixa (`image/webp`; a variante gravada com outro tipo, com o
+       sha256 fora do formato ou acima de `LIMITE_BYTES_VARIANTE_PDV` = 512 KB é 404), com `X-Content-Type-Options:
+       nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition: inline;
+       filename="<id>.pdv_256.webp"` (nunca o nome do cliente), `Cache-Control: private, no-cache` e o **`ETag` com o
+       sha256**: o `If-None-Match` com ele (ou `*`) responde `304` sem ler o objeto. O PDV confere o sha256 do que
+       baixou antes de gravar no disco (decisão 86 do README do PDV).
+     - **Limite por terminal** (`SYNC_ARQUIVOS_POR_MINUTO`, padrão 120 por minuto, na memória da instância como o da
+       consulta de saldos): `429 LIMITE_TAXA` com `Retry-After: 60`. O caixa baixa sob demanda, 2 por vez.
+     - **Compatibilidade**: campo novo na linha do pull e rota nova são mudanças compatíveis (SYNC 17.2): o PDV 0.11.0
+       grava `foto_url`/`foto_sha256` (as colunas existem no espelho dele desde a 1A) e descarta os campos das marcas e
+       das categorias e as tabelas de complementos; a API vai para a produção **antes** do PDV 0.12.0.
+     - Testes: `sync-arquivos.test.ts` (o critério de pronto: `foto_url`/`foto_sha256` no pull, o sha256 da variante e
+       não o do original, nulos sem foto, `imagem_*` e `logotipo_*`; estável entre dois pulls e sem versão nova; trocar a
+       foto desce a URL e o sha256 novos; o download com o tipo fixo, `nosniff`, a CSP, o nome gerado, o `ETag` e o
+       `304`; a marca, a categoria e o terminal de outra loja da mesma empresa; outra empresa, o envio solto, o logotipo
+       da loja, o produto excluído e os ids inválido e desconhecido 404; a variante ausente ou outra 400, sem token 401;
+       o terminal em desativação 403; o limite 429 por terminal) e `esquema-pdv.spec.ts` (os campos calculados no fim,
+       projetados e anuláveis). Imagens inventadas, geradas no teste.
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;
