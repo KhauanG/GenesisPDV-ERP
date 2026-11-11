@@ -298,6 +298,55 @@ export async function lotesDoProduto(
   }));
 }
 
+/**
+ * As linhas por loja (`produtos_lojas`) e as faixas de preço por quantidade do produto (sem variação), no formato do
+ * detalhe. `lojasVisiveis` (lojas permitidas; `null` = todas) esconde as de outras lojas (decisão 88). Também é o
+ * `depois` dessas filhas na auditoria da gravação (F2-B42; decisão 188): o corpo traz só as lojas permitidas de quem
+ * grava e a gravação preserva as outras, então copiar o corpo registraria como removidas as que só não vieram.
+ */
+export async function precosPorLojaDoProduto(
+  db: DbEmpresa,
+  id: string,
+  lojasVisiveis: readonly string[] | null = null,
+): Promise<Pick<ProdutoDetalhe, 'lojas' | 'precosQuantidade'>> {
+  const lojaVisivel =
+    lojasVisiveis === null
+      ? sql``
+      : lojasVisiveis.length
+        ? sql` and (loja_id is null or loja_id in (${sql.join(
+            lojasVisiveis.map((l) => sql`${l}::uuid`),
+            sql`, `,
+          )}))`
+        : sql` and loja_id is null`;
+  const lojas = await db.execute<Linha>(sql`
+    select loja_id, estoque_minimo::text as estoque_minimo, estoque_maximo::text as estoque_maximo,
+           preco_venda::text as preco_venda, ativo_na_loja, acrescimo_gelada::text as acrescimo_gelada
+      from produtos_lojas where produto_id = ${id} and excluido_em is null${lojaVisivel}
+     order by criado_em`);
+  const faixas = await db.execute<Linha>(sql`
+    select id, loja_id, quantidade_inicial::text as qi, quantidade_final::text as qf, preco::text as preco
+      from produtos_precos_quantidade
+     where produto_id = ${id} and variacao_id is null and excluido_em is null${lojaVisivel}
+     order by loja_id nulls first, quantidade_inicial`);
+  return {
+    lojas: lojas.rows.map((l) => ({
+      lojaId: l.loja_id as string,
+      estoqueMinimo: txt(l.estoque_minimo),
+      estoqueMaximo: txt(l.estoque_maximo),
+      precoVenda: txt(l.preco_venda),
+      ativoNaLoja: l.ativo_na_loja as boolean,
+      acrescimoGelada: txt(l.acrescimo_gelada),
+    })),
+    precosQuantidade: faixas.rows.map((f) => ({
+      id: f.id as string,
+      lojaId: txt(f.loja_id),
+      quantidadeInicial: f.qi as string,
+      quantidadeFinal: txt(f.qf),
+      preco: f.preco as string,
+    })),
+  };
+}
+
 /** Detalhe do produto com as filhas (sem custo quando o usuário não tem `produtos.ver_custo`). */
 /**
  * Detalhe do produto. `lojasVisiveis` (lojas permitidas da sessão; `null` = todas) esconde `produtos_lojas` e
@@ -336,16 +385,7 @@ export async function detalheProduto(
       from produtos_codigos_barras
      where produto_id = ${id} and variacao_id is null and excluido_em is null
      order by principal desc, criado_em`);
-  const lojas = await db.execute<Linha>(sql`
-    select loja_id, estoque_minimo::text as estoque_minimo, estoque_maximo::text as estoque_maximo,
-           preco_venda::text as preco_venda, ativo_na_loja, acrescimo_gelada::text as acrescimo_gelada
-      from produtos_lojas where produto_id = ${id} and excluido_em is null${lojaVisivel('loja_id')}
-     order by criado_em`);
-  const faixas = await db.execute<Linha>(sql`
-    select id, loja_id, quantidade_inicial::text as qi, quantidade_final::text as qf, preco::text as preco
-      from produtos_precos_quantidade
-     where produto_id = ${id} and variacao_id is null and excluido_em is null${lojaVisivel('loja_id')}
-     order by loja_id nulls first, quantidade_inicial`);
+  const { lojas, precosQuantidade } = await precosPorLojaDoProduto(db, id, lojasVisiveis);
   const categorias = await db.execute<{ categoria_id: string }>(sql`
     select categoria_id from produtos_categorias where produto_id = ${id} and excluido_em is null
      order by principal desc, criado_em`);
@@ -545,21 +585,8 @@ export async function detalheProduto(
     servicoCodigoLc116: txt(p.servico_codigo_lc116),
     ean: codigosBarras.find((c) => c.principal)?.codigo ?? null,
     codigosBarras,
-    lojas: lojas.rows.map((l) => ({
-      lojaId: l.loja_id as string,
-      estoqueMinimo: txt(l.estoque_minimo),
-      estoqueMaximo: txt(l.estoque_maximo),
-      precoVenda: txt(l.preco_venda),
-      ativoNaLoja: l.ativo_na_loja as boolean,
-      acrescimoGelada: txt(l.acrescimo_gelada),
-    })),
-    precosQuantidade: faixas.rows.map((f) => ({
-      id: f.id as string,
-      lojaId: txt(f.loja_id),
-      quantidadeInicial: f.qi as string,
-      quantidadeFinal: txt(f.qf),
-      preco: f.preco as string,
-    })),
+    lojas,
+    precosQuantidade,
     componentes,
     relacionados,
     fornecedores,

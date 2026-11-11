@@ -89,6 +89,17 @@ export interface ProvedorRelatorio<F = Record<string, unknown>, L = Record<strin
    */
   consulta(sessao: SessaoErp, filtros: F): SQL;
   /**
+   * Opcional (F2-B42, decisão 188): converte cada lote lido do cursor nas linhas `L` das colunas, quando a linha
+   * precisa de outra leitura (o Histórico de produtos monta o texto com os nomes dos cadastros citados, numa ida por
+   * cadastro por lote). `db` é a conexão do cursor, no mesmo instantâneo `repeatable read read only`.
+   */
+  converterLote?(db: DbEmpresa, sessao: SessaoErp, filtros: F, lote: unknown[]): Promise<L[]>;
+  /**
+   * Opcional (F2-B42): linhas por `fetch`, quando a linha é grande (o `antes`/`depois` inteiro do produto); vale o
+   * menor entre ele e o da instância.
+   */
+  linhasPorLote?: number;
+  /**
    * Lê o cursor com `set local jit = off` (F2-B31, decisão 178): a consulta com muitas CTEs e subconsultas tem custo
    * estimado alto e o PostgreSQL gasta mais compilando o JIT do que executando (1,5 s de 1,8 s no Estoque Atual).
    */
@@ -241,8 +252,24 @@ export class ExportacaoRelatorios {
     this.provedores.set(provedor.chave, provedor as unknown as ProvedorRelatorio<unknown, unknown>);
   }
 
-  private get linhasPorLote(): number {
-    return this.opcoes.linhasPorLote ?? LINHAS_POR_LOTE_EXPORTACAO;
+  /** Linhas por `fetch`: a da instância, ou a do provedor quando é menor. */
+  private linhasPorLote(provedor: ProvedorRelatorio<unknown, unknown>): number {
+    return Math.min(
+      this.opcoes.linhasPorLote ?? LINHAS_POR_LOTE_EXPORTACAO,
+      provedor.linhasPorLote ?? Number.POSITIVE_INFINITY,
+    );
+  }
+
+  /** O lote lido do cursor nas linhas das colunas (`converterLote` do provedor, quando ele tem). */
+  private async linhasDoLote(
+    provedor: ProvedorRelatorio<unknown, unknown>,
+    db: DbEmpresa,
+    sessao: SessaoErp,
+    filtros: unknown,
+    lote: unknown[],
+  ): Promise<unknown[]> {
+    const converter = provedor.converterLote;
+    return converter ? converter.call(provedor, db, sessao, filtros, lote) : lote;
   }
 
   private provedor(chave: string): ProvedorRelatorio<unknown, unknown> {
@@ -374,14 +401,14 @@ export class ExportacaoRelatorios {
     filtros: unknown,
   ): Promise<StreamableFile> {
     const cx = this.d.tenancy.cx();
-    const linhas = await cx.consulta(async (_db, cliente) => {
+    const linhas = await cx.consulta(async (db, cliente) => {
       const todas: unknown[] = [];
       await lerPorCursor<unknown>(
         cliente,
         provedor.consulta(sessao, filtros),
-        this.linhasPorLote,
-        (lote) => {
-          todas.push(...lote);
+        this.linhasPorLote(provedor),
+        async (lote) => {
+          todas.push(...(await this.linhasDoLote(provedor, db, sessao, filtros, lote)));
         },
         { semJit: provedor.semJit },
       );
@@ -461,13 +488,13 @@ export class ExportacaoRelatorios {
         let lidas = 0;
         let ultimoPct = 1;
         // A conexão do cursor fica presa só durante a leitura; fechar o zip e terminar o envio vêm depois.
-        await cx.consulta((_db, cliente) =>
+        await cx.consulta((db, cliente) =>
           lerPorCursor<unknown>(
             cliente,
             provedor.consulta(sessao, filtros),
-            this.linhasPorLote,
+            this.linhasPorLote(provedor),
             async (lote) => {
-              await escritor.escrever(lote);
+              await escritor.escrever(await this.linhasDoLote(provedor, db, sessao, filtros, lote));
               lidas += lote.length;
               const pct = Math.min(95, 1 + (lidas / Math.max(1, p.linhas)) * 94);
               if (pct - ultimoPct >= 1) {

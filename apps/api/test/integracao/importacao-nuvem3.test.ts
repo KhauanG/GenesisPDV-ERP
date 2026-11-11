@@ -235,6 +235,16 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
 
     const r = await confirmar(p.arquivoId);
     expect(r).toMatchObject({ criados: 4, atualizados: 0, comErro: 0, acertoCodigo: expect.any(Number) });
+    // A auditoria da criação com a localização da importação e a descrição legível (F2-B42, decisão 188).
+    const criacoes = await consultar<{ localizacao: string; descricao: string | null }>(
+      emp.nomeBanco,
+      "select localizacao, descricao from auditoria where entidade = 'produtos' and acao = 'criar' and origem = 'importacao'",
+    );
+    expect(criacoes).toHaveLength(4);
+    for (const c of criacoes) {
+      expect(c.localizacao).toBe('Produtos › Importação');
+      expect(c.descricao).toMatch(/^Nome: /);
+    }
     const produtos = await consultar<{
       codigo: number;
       unidade: string;
@@ -355,13 +365,22 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
     const mudaram = [...depois].filter(([c, v]) => antes.get(c) !== v).map(([c]) => c);
     expect(mudaram.sort()).toEqual([91000202, 91000205]);
     expect(await auditorias()).toBe(auditoriasAntes + 2);
-    const [aud] = await consultar<{ antes: string; depois: string }>(
+    const [aud] = await consultar<{
+      antes: string;
+      depois: string;
+      localizacao: string;
+      descricao: string | null;
+    }>(
       emp.nomeBanco,
-      `select a.antes->>'precoVenda' as antes, a.depois->>'precoVenda' as depois from auditoria a
+      `select a.antes->>'precoVenda' as antes, a.depois->>'precoVenda' as depois, a.localizacao, a.descricao
+         from auditoria a
         where a.entidade = 'produtos' and a.acao = 'editar' and a.registro_id = (select id from produtos where codigo = 91000202)`,
     );
     expect(Number(aud!.antes)).toBe(4.49);
     expect(Number(aud!.depois)).toBe(4.99);
+    // A localização da importação e a descrição legível da gravação (F2-B42, decisão 188).
+    expect(aud!.localizacao).toBe('Produtos › Importação');
+    expect(aud!.descricao).toBe('Preço de venda: 4,49 → 4,99');
     const [agua] = await consultar<{ nome: string; preco_venda: string; preco_custo: string }>(
       emp.nomeBanco,
       'select nome, preco_venda::text, preco_custo::text from produtos where codigo = 91000205',

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  consultaHistoricoProdutosSchema,
   consultaNcmInvalidosSchema,
   consultaProdutosGeralSchema,
   definirNcmLoteSchema,
+  detalheHistoricoProdutoSchema,
   filtrosProdutosGeralSchema,
   LIMITE_DEFINIR_NCM,
+  MAXIMO_DIAS_HISTORICO_PRODUTOS,
 } from './relatorios-produtos.js';
 
 const id = (n: number) => `0190a000-0000-7000-8000-0000000004${String(n).padStart(2, '0')}`;
@@ -58,5 +61,56 @@ describe('"Definir NCM" em lote (ERP 16.3; F2-B41)', () => {
       definirNcmLoteSchema.safeParse({ ncm: '22030000', produtos: muitos.slice(0, LIMITE_DEFINIR_NCM) })
         .success,
     ).toBe(true);
+  });
+});
+
+describe('filtros do Histórico de produtos (ERP 16.2; F2-B42)', () => {
+  it('o período é obrigatório (a auditoria é particionada por mês); vazio = sem filtro', () => {
+    expect(consultaHistoricoProdutosSchema.safeParse({}).success).toBe(false);
+    expect(consultaHistoricoProdutosSchema.safeParse({ dataInicial: '2026-11-01' }).success).toBe(false);
+    expect(
+      consultaHistoricoProdutosSchema.parse({
+        dataInicial: '2026-11-01',
+        dataFinal: '2026-11-30',
+        texto: '   ',
+        usuarioId: '',
+        tipo: '',
+        produtoId: '',
+      }),
+    ).toEqual({ dataInicial: '2026-11-01', dataFinal: '2026-11-30', pagina: 1, tamanho: 50 });
+  });
+
+  it('a data final não vem antes da inicial, e o período vai até o teto (contando as pontas)', () => {
+    const r = consultaHistoricoProdutosSchema.safeParse({
+      dataInicial: '2026-11-02',
+      dataFinal: '2026-11-01',
+    });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.message).toBe('A data final é anterior à inicial');
+    expect(MAXIMO_DIAS_HISTORICO_PRODUTOS).toBe(366);
+    expect(
+      consultaHistoricoProdutosSchema.safeParse({ dataInicial: '2026-01-01', dataFinal: '2027-01-01' })
+        .success,
+    ).toBe(true);
+    expect(
+      consultaHistoricoProdutosSchema.safeParse({ dataInicial: '2026-01-01', dataFinal: '2027-01-02' })
+        .success,
+    ).toBe(false);
+    expect(
+      consultaHistoricoProdutosSchema.safeParse({ dataInicial: '2026-02-30', dataFinal: '2026-03-01' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('o tipo da legenda (G/E/R/I), o usuário e o produto em UUID', () => {
+    const base = { dataInicial: '2026-11-01', dataFinal: '2026-11-01' };
+    expect(consultaHistoricoProdutosSchema.parse({ ...base, tipo: 'I' }).tipo).toBe('I');
+    expect(consultaHistoricoProdutosSchema.safeParse({ ...base, tipo: 'X' }).success).toBe(false);
+    expect(consultaHistoricoProdutosSchema.safeParse({ ...base, produtoId: '12' }).success).toBe(false);
+    expect(consultaHistoricoProdutosSchema.parse({ ...base, usuarioId: id(1) }).usuarioId).toBe(id(1));
+    expect(detalheHistoricoProdutoSchema.safeParse({ ocorridoEm: '2026-11-03T17:02:00.123Z' }).success).toBe(
+      true,
+    );
+    expect(detalheHistoricoProdutoSchema.safeParse({ ocorridoEm: '2026-11-03' }).success).toBe(false);
   });
 });

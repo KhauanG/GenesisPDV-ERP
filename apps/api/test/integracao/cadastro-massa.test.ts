@@ -415,12 +415,15 @@ describe('cadastro em massa (F2-B39; ERP 8.3)', () => {
       { tipo_preco: 'custo', valor_novo: '3.0000', origem: 'cadastro_massa' },
       { tipo_preco: 'venda', valor_novo: '4.5000', origem: 'cadastro_massa' },
     ]);
-    const aud = await consultar<{ entidade: string; acao: string }>(
+    const aud = await consultar<{ entidade: string; acao: string; descricao: string | null }>(
       emp.nomeBanco,
-      `select entidade, acao from auditoria where localizacao = 'Produtos › Cadastro em massa'
+      `select entidade, acao, descricao from auditoria where localizacao = 'Produtos › Cadastro em massa'
         order by entidade, acao`,
     );
     expect(aud.filter((x) => x.entidade === 'produtos')).toHaveLength(30);
+    // A descrição legível da gravação do produto (F2-B42, decisão 188), com o custo só com o rótulo.
+    for (const x of aud.filter((y) => y.entidade === 'produtos'))
+      expect(x.descricao).toMatch(/^Nome: .+; .*Preço de custo: \(preenchido\)/);
     expect(aud.filter((x) => x.entidade === 'marcas')).toHaveLength(1);
     expect(aud.filter((x) => x.entidade === 'acertos_estoque').map((x) => x.acao)).toEqual([
       'criar',

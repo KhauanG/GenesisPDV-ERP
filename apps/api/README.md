@@ -5492,6 +5492,115 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        linha) e o `relatorios-produtos.spec.ts` do shared. As checagens repetidas dentro do `definirNcmEmLote`
        (`produtos.editar`) e do `sqlProdutosGeral` (ordenar por custo) são defensivas: as rotas já barram antes.
 
+188. **Relatório Histórico de produtos e a descrição legível da gravação do produto** (Fase 2, F2-B42; ERP 16.2, 17;
+     MD 3.1.7; decisões 87, 88, 100, 187; `src/relatorios/historico-produtos.ts`, `src/auditoria/diferenca-produto.ts`,
+     as rotas `GET /relatorios/historico-produtos` e `GET /relatorios/historico-produtos/:id?ocorridoEm=`, a gravação
+     em `src/produtos/produtos.controller.ts`, `precosPorLojaDoProduto` em `src/produtos/consultas.ts`,
+     `auditarPrecosEntrada` em `src/entradas/entrada.ts`, a exportação pelo `provedorHistoricoProdutos` com o
+     `converterLote` de `src/tarefas/exportar-relatorio.ts`; contratos no shared `relatorios-produtos.ts`; **sem
+     migração**; PDV sem mudança; o ERP é a decisão 76 do README do ERP).
+     - **Sobre a auditoria** (`relatorios.historico_produtos`): as linhas das entidades do produto e das filhas
+       (`ENTIDADES_HISTORICO_PRODUTOS`: hoje as filhas vão no `antes`/`depois` do próprio `produtos`; as sub-tabelas
+       ficam na lista para quando tiverem linha própria) e só as ações de cadastro (`criar`, `editar`, `excluir`,
+       `restaurar`, `importar`; a exportação do catálogo, `exportar`, fica fora). Fica fora também o **aviso de
+       cadastro do caixa** (`alerta.cadastro`, SYNC 9.24: a auditoria `criar` do produto com a origem `pdv` e a
+       localização `LOCALIZACAO_ALERTA_CADASTRO_PDV`, "PDV › Alerta de cadastro"): ele não muda nada no cadastro, e
+       entraria como gravação "G" do caixa, com "Tipo alerta" e "Detalhes" como campos do produto no "ver diferença"
+       (o aviso continua na tela de auditoria e no painel de alertas). A legenda: **G** = criar/editar,
+       **E** = excluir, **R** = restaurar, **I** = a gravação de origem `importacao` (ou a ação `importar`). A
+       **localização** é mapeada ("Cad. prod.", "Cadastro em massa", "Importação", "Recebimento", "NF-e", "NCMs
+       inválidos"); a origem que não é o ERP vence ("API", "PDV", "Integração", "Sistema", "Suporte": a chamada pela
+       API ao `PUT /produtos` grava a localização do formulário). O produto vem pelo `registro_id`, também o excluído
+       (marcado). A linha com `loja_id` fora das lojas permitidas não aparece (a do produto não tem loja).
+     - **Período obrigatório** (`dataInicial`..`dataFinal`, dias no fuso da empresa, até 366 dias como a Movimentação;
+       422 sem ele): a tabela é particionada por mês em `ocorrido_em`, então os limites vão como **parâmetros** e o
+       fuso é lido antes, numa ida própria (com o `fusoDaEmpresa` dentro do `where`, uma subconsulta, as partições só
+       seriam descartadas na execução, não no plano). O teste confere com `EXPLAIN` que só a partição do período entra. Paginação
+       por página com o total (a contagem com o mesmo `where`); a ordem é fixa, a mais recente primeiro (`ocorrido_em`,
+       `id`). Filtros: **texto** (contido em `descricao`, sem acento nem caixa — `fn_unaccent` + `ilike`, o `%`/`_`
+       literais), **usuário**, **tipo** e **produto** (`registro_id`, pelo `ix_auditoria_entidade_registro_id`).
+       O texto é procurado **no escopo de quem consulta** (`textoPesquisavel`): sem `produtos.ver_custo`, a
+       `descricao` sem os trechos de custo (`TRECHO_CUSTO_GRAVADO`: "Preço de custo: (alterado)", "Markup %:
+       (preenchido)", "Custo do fornecedor (alterado)", tirados com `regexp_replace` antes do `ilike`); com lojas ou
+       estoques restritos, sem o aviso "Dados de loja alterados" (que pode ser de uma loja de fora). Sem isso, procurar
+       "custo" ou "dados de loja" diria em qual produto e quando mudou o que a permissão esconde (o valor nunca vaza:
+       o texto gravado não o tem), mesmo com o texto da linha sem citá-lo.
+     - **A descrição legível passa a ser gravada** (ERP 16.2: "a edição de produto passa a gravar a `descricao`
+       legível, para o filtro de texto funcionar"): o `inserirProduto` e o `atualizarProduto` — o formulário, a
+       importação, o cadastro em massa (F2-B39) e o "Definir NCM" (F2-B41), todos por eles — gravam em
+       `auditoria.descricao` o texto de `descricaoGravacaoProduto`, e a exclusão grava "Produto N - NOME excluído".
+       **Nada muda no produto nem na versão**: só a linha de auditoria ganha o texto. Como a tela de auditoria (17.3)
+       mostra a `descricao` a todos com `auditoria.ver`, o texto gravado é o **neutro** (`ESCOPO_GRAVADO`): o custo só
+       com o rótulo ("Preço de custo: (alterado)") e o que é de loja (a linha da loja, a faixa de uma loja, o lote de
+       um estoque) num aviso só, "Dados de loja alterados", sem loja nem valor. Até 2.000 caracteres (o "ver diferença
+       completa" recalcula tudo do `antes`/`depois`). As linhas de antes do F2-B42 não têm o texto (o filtro de texto
+       não as acha; o relatório as mostra mesmo assim, com o texto montado na leitura).
+     - **O formatador** (`diferenca-produto.ts`, puro e com teste próprio): compara `antes` (o detalhe do produto) e
+       `depois` (a linha gravada mais as filhas) com os rótulos dos campos do formulário ("Preço de venda: 9,90 →
+       10,90"; o decimal `"9.9000"` do banco é igual ao `"9.9"` do corpo), as referências pelo nome ("Marca: — →
+       HEINEKEN", a categoria pelo caminho, a loja, o produto "código - nome", o fornecedor, o estoque; os nomes numa
+       ida por cadastro para a página inteira, também os excluídos) e as **filhas** com a chave natural de cada uma
+       (o código de barras pelo código, a loja pela loja, a faixa pela loja + quantidade inicial, o componente pelo
+       tipo + produto + variação, o relacionado pelo produto + tipo, o fornecedor pelo (fornecedor, código), o lote pelo
+       id, as categorias pelo id): adicionada ("EAN adicionado 789…", com o resumo), removida e alterada ("Loja Centro:
+       Preço de venda 9,90 → 10,90"). Só entram os campos presentes **dos dois lados** (o detalhe e a linha gravada
+       têm campos diferentes, como `unidadeSigla` e `grupoPreco`, que não são mudança); na criação, os preenchidos fora
+       do padrão. **Campo desconhecido** entra com o nome da chave ("Campo novo: A → B"; objeto só "(alterado)"; o de
+       nome com "custo"/"markup" segue a regra do custo).
+     - **O `depois` das lojas e das faixas vem do banco** (`precosPorLojaDoProduto`, no formato do `antes`): o corpo
+       de quem só vê algumas lojas não traz as outras, que a gravação preserva (decisão 88), e o histórico as daria
+       como removidas. Muda só o conteúdo dessas duas listas no `depois` da auditoria (como já era com os fornecedores
+       e os lotes, F2-B13 e F2-B17); as linhas gravadas antes do F2-B42 por quem tinha lojas restritas podem mostrar
+       a loja de fora como "removida" (só a quem a vê).
+     - **O que se mostra é montado para quem consulta** (`escopoDaSessao`), na linha e no "ver diferença completa":
+       o `antes`/`depois` passa por `redigirParaVisao` (decisão 100) e a diferença pelo escopo — o custo com os
+       valores só com `produtos.ver_custo` (sem ela, nem o rótulo), só as lojas e os estoques permitidos (a faixa de
+       todas as lojas e o lote sem estoque são de todos). Os nomes buscados também respeitam o escopo (a loja de fora
+       nem é lida). A linha com uma filha só (a relação inversa criada por outro produto, o vínculo de fornecedor
+       movido por outro produto ou pela NF-e) mostra a `descricao` gravada, que conta de onde veio.
+     - **"Ver diferença completa"** (`GET /relatorios/historico-produtos/:id?ocorridoEm=`): a tabela campo × antes ×
+       depois de todos os campos que mudaram (a filha no rótulo, "Loja Centro › Preço de venda"); na exclusão, o
+       cadastro que existia. O `ocorridoEm` escolhe a partição (uma janela de 1 ms: a página o manda em milissegundos e
+       o banco guarda microssegundos); fora do produto, das ações ou das lojas permitidas (e no aviso do caixa), 404.
+       A rota fica depois de `:relatorio/exportar`, para `historico-produtos/exportar` não cair nela.
+     - **A importação** passa a gravar a localização "Produtos › Importação" na auditoria do produto (antes ia a do
+       formulário; o relatório também a reconhece pela origem `importacao`).
+     - **O preço mudado pela entrada** (o recebimento manual e a NF-e de fornecedor, ERP 13.3/13.4 "Altera Preço do
+       Produto"/"Atualiza Preço de Custo") passa a ter a auditoria do produto, a mudança de preço mais comum da loja:
+       antes só ia ao Histórico de preços (F2-B37), e a localização "Recebimento"/"NF-e" do relatório nunca aparecia.
+       `movimentarEntrada` devolve `precosAlterados` (os produtos com o custo, a venda geral ou o preço da loja
+       destinatária mudados, no formato do `antes`/`depois` do cadastro: `precoCusto`, `precoVenda`, `markupPct` e a
+       loja em `lojas`, com o `nome` igual dos dois lados, que marca a linha como do cadastro inteiro), e o
+       controlador grava, na mesma transação, uma linha `editar` de `produtos` por produto
+       (`auditarPrecosEntrada`), com a localização da tela (`Estoque › Recebimentos` ou `Estoque › Recebimento de
+       NFe`) e a `descricao` neutra precedida do documento ("Recebimento Nº 12: Preço de custo: (alterado); Preço de
+       venda: 8,00 → 8,90"). A linha é da empresa, sem `loja_id` (como a do cadastro): o preço da loja sai do texto
+       de quem não vê a loja pelo escopo. O Histórico de preços continua com a origem e o id do documento.
+     - **Exportação** (Excel/CSV pela rota comum, ERP 3.5; F2-B29, decisão 177): `GET
+       /relatorios/historico-produtos/exportar` (`relatorios.exportar` e `relatorios.historico_produtos`), com os
+       filtros da tela (a página é ignorada) e as colunas Usuário, Tipo, Localização, Data/hora, Código, Produto e
+       Histórico. O texto do Histórico é montado **no escopo de quem exporta**, como na tela: o provedor ganhou dois
+       opcionais, `converterLote` (cada lote lido do cursor vira as linhas das colunas, com os nomes citados numa ida
+       por cadastro por lote, na conexão e no instantâneo do cursor) e `linhasPorLote` (1.000 aqui: cada linha traz o
+       `antes`/`depois` inteiros do produto; vale o menor entre ele e o da instância).
+     - **Uma base só para a página, a exportação e o detalhe** (`sqlLinhas`, as colunas e o `left join produtos`, e
+       `condicaoBase`, as entidades, as ações, o aviso do caixa de fora e as lojas da sessão): uma coluna ou um filtro
+       de visão novo vale nas três consultas.
+     - Testes: `diferenca-produto.spec.ts` (o critério de pronto, o decimal igual, a referência pelo nome, filhas
+       adicionadas, removidas e alteradas, campos desconhecidos, o custo nos três escopos, o que é de loja com as
+       permitidas e o aviso do texto gravado, os trechos de custo que o filtro tira, a criação, a tabela),
+       `historico-produtos.test.ts` (a edição pelo formulário com o texto do critério de pronto, a `descricao`
+       gravada sem custo nem loja, o usuário de uma loja que não deixa a outra "removida", o escopo sem
+       `produtos.ver_custo` e só com uma loja no texto e no detalhe, a linha de loja de fora e o 404, a outra entidade e a exportação de fora, a legenda e a localização, os filtros e
+       a paginação, o filtro de texto sem achar o custo nem o aviso de loja para quem não os vê, o aviso do caixa de
+       fora (e o 404) com outra linha do PDV dentro, a exportação CSV com o escopo de quem exporta, o período
+       obrigatório e o teto, a linha antiga fora do período, o `EXPLAIN` com as partições; as consultas de ontem a
+       hoje, para a meia-noite de Brasília no meio da execução não tirar as linhas do período),
+       `recebimento-movimentar.test.ts` e `notas-entrada-movimentar.test.ts` (a mudança de preço como "Recebimento" e
+       "NF-e", com o texto legível e a `descricao` gravada com o documento), `importacao-nuvem3.test.ts` (a
+       localização "Produtos › Importação" e a `descricao` da criação e da edição pela planilha),
+       `cadastro-massa.test.ts` (a `descricao` do cadastro em massa) e o `relatorios-produtos.spec.ts` do shared.
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

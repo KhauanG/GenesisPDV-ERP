@@ -2,7 +2,8 @@
  * Relatórios de produto (ERP 16.1 e 16.3; Fase 2, F2-B41): o **Produtos geral** — as margens do catálogo, com o
  * custo, a venda (a da loja escolhida), o atacado, o lucro em R$, o lucro %, o markup % e os departamentos, e as médias
  * do relatório inteiro em decimal — e o **NCMs inválidos** — os produtos com o NCM vazio, inexistente ou fora de
- * vigência e, com a tabela `cests` carregada, o CEST incompatível com o NCM —, com a ação em lote "Definir NCM".
+ * vigência e, com a tabela `cests` carregada, o CEST incompatível com o NCM —, com a ação em lote "Definir NCM". E o
+ * **Histórico de produtos** (ERP 16.2; F2-B42): quem mudou o quê no cadastro, sobre a auditoria, em texto legível.
  */
 import { z } from 'zod';
 import { TAMANHOS_PAGINA } from './paginacao.js';
@@ -227,4 +228,117 @@ export interface ResultadoDefinirNcm {
   atualizados: Array<{ id: string; codigo: number; nome: string }>;
   /** Os que já tinham o NCM (não regravados). */
   semMudanca: number;
+}
+
+// ---------------------------------------------------------------- Histórico de produtos (ERP 16.2)
+
+/** Chave do relatório (rota `GET /relatorios/historico-produtos`). */
+export const RELATORIO_HISTORICO_PRODUTOS = 'historico-produtos';
+
+/**
+ * A legenda do Nuvem3 e as letras novas (ERP 16.2): **G** = Gravação (a criação ou a alteração do cadastro), **E** =
+ * Exclusão, **R** = Restauração e **I** = Importação (a gravação que veio da planilha, origem `importacao`).
+ */
+export const TIPOS_HISTORICO_PRODUTO = ['G', 'E', 'R', 'I'] as const;
+export type TipoHistoricoProduto = (typeof TIPOS_HISTORICO_PRODUTO)[number];
+export const ROTULOS_TIPO_HISTORICO_PRODUTO: Record<TipoHistoricoProduto, string> = {
+  G: 'Gravação (criação ou alteração)',
+  E: 'Exclusão',
+  R: 'Restauração',
+  I: 'Importação',
+};
+
+/**
+ * Maior período do relatório, contando os dois dias das pontas (o da Movimentação). A auditoria é particionada por mês
+ * (MD 3.1.7): o período é obrigatório e a consulta só lê as partições dele.
+ */
+export const MAXIMO_DIAS_HISTORICO_PRODUTOS = 366;
+
+/** A data `AAAA-MM-DD` existe no calendário (o `Date.parse` aceita 30/02 e devolve 02/03). */
+const dataDoCalendario = (d: unknown): d is string =>
+  typeof d === 'string' &&
+  /^\d{4}-\d{2}-\d{2}$/.test(d) &&
+  !Number.isNaN(Date.parse(`${d}T00:00:00Z`)) &&
+  new Date(`${d}T00:00:00Z`).toISOString().startsWith(d);
+
+/**
+ * `GET /relatorios/historico-produtos`: o **período** obrigatório (`dataInicial`..`dataFinal`, dias de calendário no
+ * fuso da empresa, as pontas incluídas, até `MAXIMO_DIAS_HISTORICO_PRODUTOS`), o **histórico** (texto contido na
+ * descrição gravada), o **usuário**, o **tipo** (G/E/R/I), o **produto** e a página. A ordem é fixa: o mais recente
+ * primeiro.
+ */
+export const consultaHistoricoProdutosSchema = z
+  .object({
+    dataInicial: z.preprocess(vazioIndefinido, z.iso.date('Informe a data inicial')),
+    dataFinal: z.preprocess(vazioIndefinido, z.iso.date('Informe a data final')),
+    texto: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : vazioIndefinido(v)),
+      z.string().trim().max(100).optional(),
+    ),
+    usuarioId: uuidOpcional,
+    tipo: z.preprocess(vazioIndefinido, z.enum(TIPOS_HISTORICO_PRODUTO, 'Tipo inválido').optional()),
+    produtoId: uuidOpcional,
+    ...camposPagina,
+  })
+  .superRefine((v, ctx) => {
+    // As datas inválidas já têm o erro do campo (o zod 4 roda o refinamento mesmo assim).
+    if (!dataDoCalendario(v.dataInicial) || !dataDoCalendario(v.dataFinal)) return;
+    const dias = Math.round(
+      (Date.parse(`${v.dataFinal}T00:00:00Z`) - Date.parse(`${v.dataInicial}T00:00:00Z`)) / 86_400_000,
+    );
+    if (dias < 0)
+      ctx.addIssue({ code: 'custom', path: ['dataFinal'], message: 'A data final é anterior à inicial' });
+    else if (dias + 1 > MAXIMO_DIAS_HISTORICO_PRODUTOS)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['dataFinal'],
+        message: `O período vai até ${MAXIMO_DIAS_HISTORICO_PRODUTOS} dias`,
+      });
+  });
+export type ConsultaHistoricoProdutos = z.output<typeof consultaHistoricoProdutosSchema>;
+
+/**
+ * Uma linha do Histórico de produtos: uma linha da auditoria do produto. `historico` é o texto legível das
+ * diferenças ("Preço de venda: 9,90 → 10,90; EAN adicionado 7891234567895") montado **para quem consulta**: o custo
+ * só com `produtos.ver_custo` e o que é de loja (o preço da loja, a faixa da loja, o lote de um estoque) só das lojas
+ * e dos estoques permitidos.
+ */
+export interface LinhaHistoricoProduto {
+  id: string;
+  /** Instante do fato (ISO 8601); com o `id`, a chave do "ver diferença completa". */
+  ocorridoEm: string;
+  usuarioId: string | null;
+  usuarioNome: string | null;
+  tipo: TipoHistoricoProduto;
+  /** A ação da auditoria (`criar`, `editar`, `excluir`, `restaurar`, `importar`). */
+  acao: string;
+  /** De onde veio, mapeado ("Cad. prod.", "Cadastro em massa", "Importação", "Recebimento", "NF-e", "API", "PDV"). */
+  localizacao: string;
+  /** O produto (também o excluído, marcado); `null` se a linha não aponta para um. */
+  produto: { id: string; codigo: number; nome: string; excluido: boolean } | null;
+  historico: string;
+}
+
+export interface RespostaHistoricoProdutos {
+  itens: LinhaHistoricoProduto[];
+  total: number;
+  pagina: number;
+  tamanho: number;
+}
+
+/** `GET /relatorios/historico-produtos/:id`: o instante da linha (o `ocorridoEm` dela), que escolhe a partição. */
+export const detalheHistoricoProdutoSchema = z.object({
+  ocorridoEm: z.iso.datetime({ offset: true, message: 'Informe o instante da linha (ocorridoEm)' }),
+});
+
+/** Um campo do "ver diferença completa": o rótulo (com a filha: "Loja Centro › Preço de venda"), antes e depois. */
+export interface AlteracaoHistoricoProduto {
+  campo: string;
+  antes: string;
+  depois: string;
+}
+
+/** O "ver diferença completa": a linha e todos os campos que mudaram, com o mesmo corte de custo e de loja. */
+export interface DetalheHistoricoProduto extends LinhaHistoricoProduto {
+  alteracoes: AlteracaoHistoricoProduto[];
 }

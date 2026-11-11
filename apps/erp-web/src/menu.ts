@@ -323,7 +323,8 @@ export const MENU: GrupoMenu[] = [
     itens: [
       // F2-B41 (README do ERP › decisão 75).
       { ...rel('Produtos', 'Produtos geral', 'produtos-geral', 'Fase 2'), pronto: true },
-      rel('Produtos', 'Histórico de produtos', 'historico-produtos', 'Fase 2'),
+      // F2-B42 (README do ERP › decisão 76).
+      { ...rel('Produtos', 'Histórico de produtos', 'historico-produtos', 'Fase 2'), pronto: true },
       { ...rel('Produtos', 'NCMs inválidos', 'ncm-invalidos', 'Fase 2'), pronto: true },
       // F2-B38 (README do ERP › decisão 72): de quem vê o cadastro, como o filtro "EAN duplicado" da listagem.
       {

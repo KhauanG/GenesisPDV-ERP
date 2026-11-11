@@ -23,6 +23,12 @@ import { gravarAlerta, registrarAuditoriaPdv, type CatalogoHandlers, type Contex
 /** SYNC 9.24: um tipo de alerta para todos os avisos de cadastro do caixa; o motivo vai em `dados.tipo_alerta`. */
 export const ALERTA_CADASTRO_PRODUTO = 'CADASTRO_PRODUTO';
 
+/**
+ * Localização da auditoria do aviso (entidade `produtos`, ação `criar`): o aviso não muda o cadastro, e o Histórico de
+ * produtos (F2-B42, decisão 188) o deixa de fora por ela.
+ */
+export const LOCALIZACAO_ALERTA_CADASTRO_PDV = 'PDV › Alerta de cadastro';
+
 const TITULOS: Record<(typeof TIPOS_ALERTA_CADASTRO)[number], string> = {
   ncm_rejeitado: 'NCM rejeitado',
   gtin_rejeitado: 'GTIN rejeitado',
@@ -136,7 +142,7 @@ async function aplicarAlerta(ctx: ContextoHandler, p: PayloadAlertaCadastro, pre
     entidade: 'produtos',
     registroId: produtoId,
     acao: 'criar',
-    localizacao: 'PDV › Alerta de cadastro',
+    localizacao: LOCALIZACAO_ALERTA_CADASTRO_PDV,
     descricao: `${titulo} avisado pelo caixa ${caixa}: ${p.descricao}`,
     depois: { tipo_alerta: p.tipo_alerta, alerta_novo: novo, detalhes: p.detalhes },
   });

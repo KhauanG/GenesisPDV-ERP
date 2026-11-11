@@ -48,6 +48,7 @@ import { and, count, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Response } from 'express';
 import { z } from 'zod';
 import type { OrigemAcao } from '../auditoria/auditoria.service.js';
+import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, ordemDaQuery, ref } from '../comum/cadastro.js';
@@ -78,7 +79,13 @@ import { estoqueVisivel } from '../estoques/permitidos.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
-import { buscarOpcoes, detalheProduto, fornecedoresDoProduto, lotesDoProduto } from './consultas.js';
+import {
+  buscarOpcoes,
+  detalheProduto,
+  fornecedoresDoProduto,
+  lotesDoProduto,
+  precosPorLojaDoProduto,
+} from './consultas.js';
 import { paginaHistoricoPrecos } from './historico-precos.js';
 import { ncmVigente } from './ncm.js';
 import {
@@ -721,6 +728,8 @@ export class ProdutosController {
           entidade: 'produtos',
           registroId: id,
           localizacao: LOCALIZACAO,
+          // F2-B42: para o filtro "Histórico" do relatório (ERP 16.2).
+          descricao: `Produto ${antes.codigo} - ${antes.nome} excluído`,
           antes,
         });
       },
@@ -786,12 +795,14 @@ function textoBusca(d: CriarProduto, codigo: number | null) {
  * Filhas no `depois` da auditoria do produto. Os fornecedores são relidos do banco (F2-B13), no formato do `antes`
  * (`detalheProduto` com custo): sem `produtos.ver_custo` o custo do corpo é ignorado, e o corpo nunca traz o último
  * custo nem a última compra; copiar o corpo registraria mudanças que não aconteceram. Os lotes também (F2-B17): o corpo
- * traz só os lotes novos e os alterados, e o `antes` traz todos.
+ * traz só os lotes novos e os alterados, e o `antes` traz todos. E as lojas e as faixas (F2-B42): o corpo traz só as
+ * lojas permitidas de quem grava.
  */
 const filhasAuditoria = async (tx: DbEmpresa, produtoId: string, d: CriarProduto) => ({
   codigosBarras: d.codigosBarras,
-  lojas: d.lojas,
-  precosQuantidade: d.precosQuantidade,
+  // F2-B42 (decisão 188): as lojas e as faixas como ficaram, no formato do `antes`; o corpo de quem só vê algumas
+  // lojas não traz as outras, que a gravação preserva (o histórico as daria como removidas).
+  ...(await precosPorLojaDoProduto(tx, produtoId)),
   componentes: d.componentes,
   categorias: d.categorias,
   ...(d.relacionados !== undefined ? { relacionados: d.relacionados } : {}),
@@ -1010,8 +1021,15 @@ const origemHistorico = (opcoes: OpcoesGravacaoProduto) =>
 
 /** Localização da auditoria do produto: a tela de onde veio a gravação (ERP 16.2 "Localização"). */
 export const LOCALIZACAO_CADASTRO_MASSA = 'Produtos › Cadastro em massa';
+/** A da importação de planilha (F2-B42: antes ia a do formulário; o relatório também a reconhece pela origem). */
+export const LOCALIZACAO_IMPORTACAO_PRODUTOS = 'Produtos › Importação';
 const localizacaoDe = (opcoes: OpcoesGravacaoProduto) =>
-  opcoes.localizacao ?? (opcoes.cadastroMassa ? LOCALIZACAO_CADASTRO_MASSA : LOCALIZACAO);
+  opcoes.localizacao ??
+  (opcoes.cadastroMassa
+    ? LOCALIZACAO_CADASTRO_MASSA
+    : opcoes.importacao
+      ? LOCALIZACAO_IMPORTACAO_PRODUTOS
+      : LOCALIZACAO);
 
 /** Insere o produto com as filhas, o custo do combo, o histórico de preços e a auditoria (transação de quem chama). */
 export async function inserirProduto(
@@ -1061,12 +1079,14 @@ export async function inserirProduto(
       ? { antes: null, depois: await precosFilhosGravados(tx, p!.id) }
       : undefined,
   );
+  const depois = { ...p, ...(await filhasAuditoria(tx, p!.id, dados)) };
   await s.auditoria.registrar(tx, origem, {
     acao: 'criar',
     entidade: 'produtos',
     registroId: p!.id,
     localizacao: localizacaoDe(opcoes),
-    depois: { ...p, ...(await filhasAuditoria(tx, p!.id, dados)) },
+    descricao: await descricaoGravacaoProduto(tx, null, depois),
+    depois,
   });
   await auditarInversas(s, tx, origem, p!.id, inversas);
   await auditarVinculosMovidos(s, tx, origem, p!.id, movidos);
@@ -1151,13 +1171,17 @@ export async function atualizarProduto(
     origemHistorico(opcoes),
     { antes: filhosAntes, depois: await precosFilhosGravados(tx, id) },
   );
+  const depoisAuditoria = { ...depois, ...(await filhasAuditoria(tx, id, dados)) };
   await s.auditoria.registrar(tx, origem, {
     acao: 'editar',
     entidade: 'produtos',
     registroId: id,
     localizacao: localizacaoDe(opcoes),
+    // F2-B42 (ERP 16.2; decisão 188): o texto legível para o filtro "Histórico", sem os valores de custo nem o que é
+    // de loja (a tela de auditoria o mostra a todos com `auditoria.ver`).
+    descricao: await descricaoGravacaoProduto(tx, antes, depoisAuditoria),
     antes,
-    depois: { ...depois, ...(await filhasAuditoria(tx, id, dados)) },
+    depois: depoisAuditoria,
   });
   await auditarInversas(s, tx, origem, id, inversas);
   await auditarVinculosMovidos(s, tx, origem, id, movidos);

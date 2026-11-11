@@ -14,14 +14,18 @@ import {
 import {
   ajusteEstoqueRelatorioSchema,
   consultaEanDuplicadoSchema,
+  consultaHistoricoProdutosSchema,
   consultaEstoqueAtualSchema,
   consultaMovimentacaoEstoqueSchema,
   consultaMovimentacaoSinteticaSchema,
   consultaNcmInvalidosSchema,
   consultaProdutosGeralSchema,
   definirNcmLoteSchema,
+  detalheHistoricoProdutoSchema,
+  type DetalheHistoricoProduto,
   type ExportacaoEmTarefa,
   type RespostaEanDuplicado,
+  type RespostaHistoricoProdutos,
   type RespostaNcmInvalidos,
   type RespostaProdutosGeral,
   type ResultadoDefinirNcm,
@@ -36,10 +40,12 @@ import { Permissao } from '../autorizacao/decorators.js';
 import { origemDaRequisicao, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
+import { z } from 'zod';
 import { ajustarEstoqueDefinir, resumoEfetivacao } from '../estoques/acertos.js';
 import type { Servicos } from '../servicos.js';
 import { paginaEanDuplicado } from './ean-duplicado.js';
 import { LOCALIZACAO_ESTOQUE_ATUAL, paginaEstoqueAtual } from './estoque-atual.js';
+import { detalheHistoricoProduto, paginaHistoricoProdutos } from './historico-produtos.js';
 import { paginaMovimentacao, paginaMovimentacaoSintetica } from './movimentacao.js';
 import { definirNcmEmLote, paginaNcmInvalidos } from './ncm-invalidos.js';
 import { paginaProdutosGeral } from './produtos-geral.js';
@@ -48,7 +54,7 @@ import { paginaProdutosGeral } from './produtos-geral.js';
  * Relatórios (ERP 16): o Estoque Atual com o modal de ajuste (16.4; F2-B31, README da API › decisão 178), a
  * Movimentação de Estoque analítica (16.5; F2-B32, decisão 179) e sintética (F2-B33, decisão 180), o EAN duplicado
  * (MD 3.6.5; F2-B38, decisão 184), o Produtos geral e os NCMs inválidos com o "Definir NCM" em lote (16.1, 16.3;
- * F2-B41, decisão 187) e a exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
+ * F2-B41, decisão 187), o Histórico de produtos (16.2; F2-B42, decisão 188) e a exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
  * `ExportacaoRelatorios` (`chave` do provedor). Até `LIMITE_EXPORTACAO` linhas responde o arquivo (`200`); acima,
  * `202` com a tarefa (`ExportacaoEmTarefa`), que o ERP acompanha no ícone Tarefas. A permissão do relatório é
  * conferida pelo provedor; aqui fica a comum.
@@ -200,6 +206,21 @@ export class RelatoriosController {
       });
   }
 
+  /**
+   * Histórico de produtos (ERP 16.2; F2-B42, decisão 188): a auditoria do produto e das filhas num período obrigatório
+   * (a tabela é particionada por mês), com o texto legível montado para quem consulta (o custo só com
+   * `produtos.ver_custo`, o que é de loja só das permitidas), a legenda G/E/R/I e a localização mapeada.
+   */
+  @Permissao('relatorios.historico_produtos')
+  @Get('historico-produtos')
+  async historicoProdutos(
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<RespostaHistoricoProdutos> {
+    const q = validar(consultaHistoricoProdutosSchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaHistoricoProdutos(db, sessao, q));
+  }
+
   @Permissao('relatorios.exportar')
   @Get(':relatorio/exportar')
   async exportar(
@@ -213,5 +234,22 @@ export class RelatoriosController {
     if (r.tipo === 'arquivo') return r.arquivo;
     res.status(202);
     return r.tarefa;
+  }
+
+  /**
+   * "Ver diferença completa" de uma linha do Histórico de produtos (F2-B42): todos os campos que mudaram, antes e
+   * depois, no mesmo escopo. Depois do `:relatorio/exportar`, para `historico-produtos/exportar` (a exportação deste
+   * relatório, pelo provedor comum) não cair aqui.
+   */
+  @Permissao('relatorios.historico_produtos')
+  @Get('historico-produtos/:id')
+  async historicoProdutoDetalhe(
+    @Param('id') idBruto: string,
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<DetalheHistoricoProduto> {
+    const id = validar(z.uuid(), idBruto);
+    const { ocorridoEm } = validar(detalheHistoricoProdutoSchema, query);
+    return this.s.tenancy.cx().consulta((db) => detalheHistoricoProduto(db, sessao, id, ocorridoEm));
   }
 }

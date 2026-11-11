@@ -1319,9 +1319,32 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       NCM" com as versões e o relatório gerado de novo, o erro no modal, a mensagem sem o produto identificada pelo
       índice, sem seleção sem `produtos.editar`).
 
+76. **Relatório Histórico de produtos** (Fase 2, F2-B42; ERP 16.2; README da API › decisão 188;
+    `src/paginas/relatorios/HistoricoProdutos.tsx`, `menu.ts`, `rotas.tsx`; o item de Relatórios › Produtos ficou
+    pronto).
+    - `/relatorios/historico-produtos` (`relatorios.historico_produtos`) no `<Relatorio>` paginado no servidor, gerado
+      no Filtrar. **Período obrigatório** (padrão: do primeiro dia do mês até hoje, no fuso da empresa; até 366 dias, a
+      API recusa sem ele: a auditoria é particionada por mês). Filtros: **Histórico** (texto contido, sem acento — na
+      descrição gravada, sem os valores de custo nem os dados de loja, o que a nota da tela avisa; e no corte de quem
+      consulta: sem `produtos.ver_custo` não acha os rótulos de custo, com lojas restritas não acha o aviso de loja),
+      **Usuário** (com `usuarios.ver`), **Tipo** (a legenda G/E/R/I) e **Produto** (o `<SeletorProduto>`, com
+      `produtos.ver`).
+    - Colunas do Nuvem3 — Usuário, Tipo (o selo da letra com o significado na dica), Localização (a mapeada pela API:
+      "Cad. prod.", "Cadastro em massa", "Importação"…), Data/hora e Histórico (o texto legível) — mais o Produto (o
+      link para abrir, com `produtos.ver`; o excluído marcado e sem link) e a ação **Ver diferença**: o modal com a
+      tabela campo × antes × depois (`GET /relatorios/historico-produtos/:id?ocorridoEm=`). O texto e a tabela vêm
+      prontos da API, já no corte de quem consulta (o custo só com `produtos.ver_custo`, as lojas permitidas): o ERP
+      não recalcula nada. **Exportar** Excel/CSV pela API (`exportarPelaApi`, ERP 3.5; `relatorios.exportar`), com os
+      filtros da tela e o texto no corte de quem exporta, além do PDF/Imprimir da página aberta. A localização
+      "Recebimento"/"NF-e" mostra o preço mudado pela entrada (README da API › decisão 188); o aviso de cadastro do
+      caixa não entra (não muda o cadastro).
+    - Testes: `HistoricoProdutos.test.tsx` (as colunas, o texto, o link do produto e o excluído sem link, a legenda, o
+      período padrão na consulta, sem link sem `produtos.ver`, o modal com o `ocorridoEm` da linha, o Exportar pela
+      API com os filtros da tela).
+
 ## O que ainda não foi feito (Fase 0)
 
-Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico; "Mostrar
+Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
 `<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
 validade/lotes, foto e tributação por UF (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e

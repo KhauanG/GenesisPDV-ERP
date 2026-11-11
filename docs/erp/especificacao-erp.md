@@ -4225,6 +4225,23 @@ Visão da auditoria (17) filtrada às entidades de produto (`produtos` e sub-tab
 | Colunas | Usuário, Tipo, Localização (tela/origem: "Cad. prod.", "Cadastro em massa", "Importação", "Recebimento", "NF-e", "API", "PDV"), Data/hora, Histórico (texto legível, ex.: "Preço de venda: 9,90 → 10,90; Marca: — → HEINEKEN") |
 | Ação | abrir o produto; ver diferença completa (antes/depois) |
 
+Fase 2, F2-B42 (README da API › decisão 188; README do ERP › decisão 76): `GET /relatorios/historico-produtos` (50
+por página, com o total) e o "ver diferença completa" `GET /relatorios/historico-produtos/:id?ocorridoEm=`. O
+**período é obrigatório** (até 366 dias; a auditoria é particionada por mês e a consulta só lê as partições do
+período). Entram as linhas do produto e das filhas com as ações de cadastro (a exportação do catálogo não, nem o aviso
+de cadastro do caixa, que não muda o cadastro); **G** = criar/editar,
+**E** = excluir, **R** = restaurar, **I** = a gravação vinda da importação de planilha. O filtro Histórico procura na
+`descricao` gravada, sem acento: **a gravação do produto** (formulário, importação, cadastro em massa, "Definir NCM")
+**passa a gravar a descrição legível**, sem os valores de custo ("Preço de custo: (alterado)") e sem o que é de loja
+(um aviso "Dados de loja alterados"), porque a tela de auditoria (17.3) a mostra a todos com `auditoria.ver`; nada
+muda no produto nem na versão. A busca também é no corte de quem consulta: sem `produtos.ver_custo` ela não acha os
+rótulos de custo, e com lojas restritas não acha o aviso de loja. O texto da linha e a tabela campo × antes × depois
+são montados **para quem consulta**: o custo com os valores só com `produtos.ver_custo`, a loja, a faixa de uma loja e
+o lote de um estoque só das lojas e dos estoques permitidos; a linha com loja fora das permitidas não aparece. O preço
+mudado pelo **recebimento** e pela **NF-e** de fornecedor (13.3/13.4) entra como "Recebimento"/"NF-e" ("Recebimento
+Nº 12: Preço de venda: 8,00 → 8,90"), além do Histórico de preços. **Exportar** Excel/CSV pela API (3.5) com os
+mesmos filtros e o texto no corte de quem exporta.
+
 ### 16.3 NCMs inválidos [P2]
 
 **Rota**: `/relatorios/ncm-invalidos` · **Permissão**: `relatorios.ncm_invalidos`. Sem filtros (como no Nuvem3).
