@@ -584,7 +584,9 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
     e convertida em `src/database/referencias/ncms.csv` (descrição = posição/subposição + item, sem HTML); NCM que
     sair do arquivo é excluído logicamente. `paises` só com o Brasil (1058) até a tabela BACEN completa entrar com a
     NF-e (o cadastro de pessoa no exterior exige o país). `cests` existe vazia (não há fonte oficial em formato de
-    dados; a carga entra com a fase fiscal e, até lá, a regra "CEST de bem listado" não tem como ser checada).
+    dados; a carga entra com a fase fiscal e, até lá, a regra "CEST de bem listado" não tem como ser checada). F2-B41
+    (decisão 187): o carregador do `cests.csv` e o formato existem, e o relatório NCMs inválidos confere o CEST × NCM
+    quando houver carga; a lista oficial do CONFAZ ainda não entrou (pendência na decisão 187).
     `parametros_fiscais_uf`: só o PR, em `referencias/uf/PR/parametros-fiscais.json` (vigência a partir de 3.8.2026,
     data da redação atual do art. 25, VII), com os valores marcados **[oficial]** em `docs/fiscal/nfce-parana.md`; o
     que a pesquisa não confirmou fica nulo ou no padrão da coluna e listado em `pendencias` (urlChave, cancelamento
@@ -5419,6 +5421,76 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        e o teste dela foi pulado; só a massa inventada rodou. Fica para quem tiver o arquivo rodar
        `exportacao-catalogo.test.ts` com ele em `test/fixtures/planilhas/reais/` (antes do merge do PR-9) e registrar o
        resultado no andamento.
+187. **Relatórios Produtos geral e NCMs inválidos, o "Definir NCM" em lote e a carga do CEST** (Fase 2, F2-B41; ERP
+     16.1, 16.3; decisões 41, 47, 67, 88, 98, 177; `src/relatorios/produtos-geral.ts`, `src/relatorios/ncm-invalidos.ts`,
+     as rotas `GET /relatorios/produtos-geral`, `GET /relatorios/ncm-invalidos`, `POST
+     /relatorios/ncm-invalidos/definir-ncm` e as exportações `…/exportar` pela rota comum; `lerCests`/`carregarCests`
+     em `src/database/referencias/carregar.ts`; a opção `localizacao` do `atualizarProduto`; contratos no shared
+     `relatorios-produtos.ts`; **sem migração** (a tabela `cests` existe desde a 1A); PDV sem mudança: `cests` não
+     desce; o ERP é a decisão 75 do README do ERP).
+     - **Produtos geral** (`relatorios.produtos_geral`): uma linha por produto não excluído (todos os tipos), com o
+       **preço de custo do cadastro** (`preco_custo`, o do markup do formulário; o custo médio do estoque é o do Estoque
+       Atual e a `produtos.custo_base_margem` da D49 continua só a base do markup da compra), a venda (com `lojaId`, a da
+       loja quando ela tem preço próprio, senão a do produto; a loja tem de estar entre as permitidas, 403), o atacado,
+       o **lucro R$** (venda − custo), o **lucro %** (lucro ÷ venda; nulo sem venda) e o **markup %** (lucro ÷ custo;
+       nulo sem custo), o EAN principal e os departamentos (os `caminho_nomes`, a principal primeiro). Filtros: nome
+       (nome, código interno ou EAN), marca, departamento (a categoria e as filhas pelo `caminho`), sem preço (a venda,
+       com a loja, = 0), loja e situação (padrão ativos); ordenação por nome, código, código interno, venda, custo,
+       lucro, lucro % e markup %. A coluna WooComm fica fora (integração da Fase 7).
+     - **Contas em decimal no banco**: tudo em `numeric`, o lucro e as porcentagens com `round(…, 2)` ("meio para longe
+       do zero", o ADR-05). Os **totais** são do relatório inteiro, numa segunda consulta: a quantidade e a **média
+       simples** do lucro, do lucro % (só dos produtos com venda) e do markup % (só dos com custo), tiradas das linhas
+       **antes** do arredondamento de cada uma e arredondadas no fim. O teste confere a média 3,005 → 3,01, que o
+       `float` dá 3,00.
+     - **Custo só com `produtos.ver_custo`**: sem ela, o custo, o lucro, as porcentagens e as médias voltam nulos (o
+       lucro com a venda revelaria o custo) e ordenar por eles é 403; no arquivo, as colunas são `custo: true`.
+     - **NCMs inválidos** (`relatorios.ncm_invalidos`, sem filtros como no Nuvem3): os produtos não excluídos, sem
+       combo e serviço (não vão para a NFC-e, decisão 67; o inativo entra), com **um motivo** nesta ordem: NCM
+       **vazio**; **inexistente** (fora de `ncms` ou excluído dela, o que saiu da Nomenclatura); **fora de vigência**
+       (`vigencia_fim` no passado) — os três juntos saem do próprio `not ncmVigente` da decisão 98 no SQL (o que não é
+       vigente fica "inexistente" sem a linha em `ncms` e "fora de vigência" com ela; o teste compara o conjunto com o
+       helper), então mudam junto se a regra dele mudar —; e **CEST incompatível**, só quando `cests` tem algum CEST não excluído: o CEST do produto fora da
+       tabela vigente (`vigencia_inicio`/`vigencia_fim`) ou o NCM que não começa por nenhum NCM da lista do CEST. O
+       convênio lista capítulos, posições, subposições e itens, então a comparação é pelo **começo do código** (o
+       2203.00.00 cabe no CEST que lista "2203"): sem isso, todo CEST de posição seria falso positivo. Com a tabela
+       vazia nada de CEST é conferido. A resposta traz o detalhe em texto ("Vigência até 31/12/2020", "O NCM não está
+       na lista do CEST …"), a versão agregada de cada produto (decisão 47), a contagem por motivo e o `cestCarregado`.
+       O "CEST obrigatório para NCM listado" (`exige_cest_bem_listado`) não entra: é regra de emissão (fase fiscal).
+     - **"Definir NCM" em lote** (`relatorios.ncm_invalidos` + `produtos.editar`): o NCM (existente e vigente, 422) para
+       até `LIMITE_DEFINIR_NCM` = **50** produtos (uma página do relatório; cada produto faz dezenas de idas ao banco
+       com a trava 7300001 presa, como no cadastro em massa, D65), cada um com a versão que o relatório mostrou, numa
+       transação com `travaVersao` (o 503 "sistema ocupado" amigável), **tudo ou nada**. Primeiro confere todos e junta
+       os erros por produto (`produtos.N`, cada um com o "código - nome": o excluído depois de abrir o relatório
+       também; versão mudada — só conflitos = 409, senão 422 —, as regras do formulário pelo `validarNoBanco`); depois grava cada um pelo **`atualizarProduto`** com a entrada montada do
+       detalhe **como o formulário o vê** (as lojas e os estoques permitidos: as linhas das lojas de fora ficam, como no
+       PUT, decisão 88) e só o NCM trocado: a versão de novo com a linha travada, a auditoria `editar` própria com a
+       localização **"Relatórios › NCMs inválidos"** (opção `localizacao` nova do `atualizarProduto`) e a versão nova
+       do produto, que desce ao PDV. O produto que já tem o NCM não é regravado (`semMudanca`). O histórico de preços
+       fica com a origem `cadastro` (nenhum preço muda).
+     - **Carga do CEST** (`cests.csv`, `lerCests` e `carregarCests` no `carregarReferencias`, idempotente como a dos
+       NCMs): `codigo;descricao;segmento;ncms;vigencia_inicio;vigencia_fim`, com a lista de NCMs separada por vírgula
+       (os pontos do convênio podem vir, são tirados; 2 a 8 dígitos) e a descrição entre aspas quando tem `;`. Linha
+       fora do formato derruba a carga com o número dela. Só as linhas novas ou diferentes são gravadas; o CEST que sair
+       do arquivo é excluído logicamente; **o arquivo vazio (ou ausente) não mexe na tabela** ("ainda sem a lista", não
+       "revogados"). É tabela de referência pública do Convênio ICMS 142/2018 e alterações, não emissão fiscal. A
+       atualização periódica pela plataforma é o F2-B46.
+     - **Pendente: a lista oficial do CEST.** O `cests.csv` versionado está **só com o cabeçalho**: a sessão do
+       F2-B41 não conseguiu baixar o Convênio ICMS 142/2018 do CONFAZ (`www.confaz.fazenda.gov.br` recusou a conexão
+       a partir do ambiente da sessão), e as linhas nunca são inventadas. Até a carga, o motivo "CEST incompatível" não
+       aparece (o card da tela mostra "Tabela não carregada"). Quem tiver acesso converte os anexos do convênio
+       vigente para o formato acima, anota aqui **a fonte (URL do CONFAZ) e a data da redação** e roda `db:referencias`.
+       Os testes usam a fixture **inventada** `test/fixtures/referencias/cests-inventado.csv` (CEST 99xxxxx, que não
+       existem no convênio).
+     - Testes: `relatorios-produtos.test.ts` (as médias em decimal, a loja, os filtros, a ordenação que inverte a do
+       nome, sem `produtos.ver_custo`, a loja fora das permitidas, as exportações; os motivos e o conjunto do próprio
+       `ncmVigente`, o CEST que some com a tabela vazia — esvaziada pelo teste, para valer também depois da lista
+       oficial — e aparece com a carga, a exclusão lógica do CEST que sai do arquivo e a volta dele, a posição que
+       aceita o item; o "Definir NCM" de 50 produtos com a versão nova, uma auditoria por produto e as filhas
+       preservadas; tudo ou nada com um produto válido no lote, só conflitos 409 e conflito + não encontrado 422, o
+       excluído identificado, o NCM fora da tabela 422, o mesmo NCM sem regravar; as permissões, inclusive só o
+       relatório sem `produtos.editar`), `cests.spec.ts` (o arquivo versionado lido sem erro, o formato e os erros por
+       linha) e o `relatorios-produtos.spec.ts` do shared. As checagens repetidas dentro do `definirNcmEmLote`
+       (`produtos.editar`) e do `sqlProdutosGeral` (ordenar por custo) são defensivas: as rotas já barram antes.
 
 ### Operação – tarefas em segundo plano (API)
 

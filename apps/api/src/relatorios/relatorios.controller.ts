@@ -17,8 +17,14 @@ import {
   consultaEstoqueAtualSchema,
   consultaMovimentacaoEstoqueSchema,
   consultaMovimentacaoSinteticaSchema,
+  consultaNcmInvalidosSchema,
+  consultaProdutosGeralSchema,
+  definirNcmLoteSchema,
   type ExportacaoEmTarefa,
   type RespostaEanDuplicado,
+  type RespostaNcmInvalidos,
+  type RespostaProdutosGeral,
+  type ResultadoDefinirNcm,
   type RespostaEstoqueAtual,
   type RespostaMovimentacaoEstoque,
   type RespostaMovimentacaoSintetica,
@@ -35,11 +41,14 @@ import type { Servicos } from '../servicos.js';
 import { paginaEanDuplicado } from './ean-duplicado.js';
 import { LOCALIZACAO_ESTOQUE_ATUAL, paginaEstoqueAtual } from './estoque-atual.js';
 import { paginaMovimentacao, paginaMovimentacaoSintetica } from './movimentacao.js';
+import { definirNcmEmLote, paginaNcmInvalidos } from './ncm-invalidos.js';
+import { paginaProdutosGeral } from './produtos-geral.js';
 
 /**
  * Relatórios (ERP 16): o Estoque Atual com o modal de ajuste (16.4; F2-B31, README da API › decisão 178), a
  * Movimentação de Estoque analítica (16.5; F2-B32, decisão 179) e sintética (F2-B33, decisão 180), o EAN duplicado
- * (MD 3.6.5; F2-B38, decisão 184) e a exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
+ * (MD 3.6.5; F2-B38, decisão 184), o Produtos geral e os NCMs inválidos com o "Definir NCM" em lote (16.1, 16.3;
+ * F2-B41, decisão 187) e a exportação comum (ERP 3.5, 3.6; F2-B29, decisão 177): uma rota para todos os relatórios registrados em
  * `ExportacaoRelatorios` (`chave` do provedor). Até `LIMITE_EXPORTACAO` linhas responde o arquivo (`200`); acima,
  * `202` com a tarefa (`ExportacaoEmTarefa`), que o ERP acompanha no ícone Tarefas. A permissão do relatório é
  * conferida pelo provedor; aqui fica a comum.
@@ -144,6 +153,51 @@ export class RelatoriosController {
   async eanDuplicado(@Query() query: unknown): Promise<RespostaEanDuplicado> {
     const q = validar(consultaEanDuplicadoSchema, query);
     return this.s.tenancy.cx().consulta((db) => paginaEanDuplicado(db, q));
+  }
+
+  /**
+   * Produtos geral (ERP 16.1; F2-B41, decisão 187): a página com o total, o custo, a venda (a da loja escolhida), o
+   * atacado, o lucro, o lucro %, o markup % e os departamentos, e as médias do relatório inteiro em decimal. Custo,
+   * lucro e markup só com `produtos.ver_custo`; a loja tem de estar entre as permitidas.
+   */
+  @Permissao('relatorios.produtos_geral')
+  @Get('produtos-geral')
+  async produtosGeral(@Query() query: unknown, @Sessao() sessao: SessaoErp): Promise<RespostaProdutosGeral> {
+    const q = validar(consultaProdutosGeralSchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaProdutosGeral(db, sessao, q));
+  }
+
+  /**
+   * NCMs inválidos (ERP 16.3; F2-B41, decisão 187): os produtos (sem combo e serviço) com o NCM vazio, inexistente ou
+   * fora de vigência e, com a tabela `cests` carregada, o CEST incompatível; a página com o total e a contagem por
+   * motivo.
+   */
+  @Permissao('relatorios.ncm_invalidos')
+  @Get('ncm-invalidos')
+  async ncmInvalidos(@Query() query: unknown): Promise<RespostaNcmInvalidos> {
+    const q = validar(consultaNcmInvalidosSchema, query);
+    return this.s.tenancy.cx().consulta((db) => paginaNcmInvalidos(db, q));
+  }
+
+  /**
+   * "Definir NCM" em lote (ERP 16.3): o NCM para os produtos marcados (até `LIMITE_DEFINIR_NCM`), cada um pelo
+   * `atualizarProduto` com a versão do relatório, a auditoria própria e a descida ao PDV, tudo ou nada, com a trava de
+   * ordenação (o 503 "sistema ocupado" amigável na espera). Exige ver o relatório e `produtos.editar`.
+   */
+  @Permissao('relatorios.ncm_invalidos', 'produtos.editar')
+  @Post('ncm-invalidos/definir-ncm')
+  @HttpCode(200)
+  async definirNcm(
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<ResultadoDefinirNcm> {
+    const dados = validar(definirNcmLoteSchema, corpo);
+    return this.s.tenancy
+      .cx()
+      .transacao((tx) => definirNcmEmLote(this.s, tx, sessao, origemDaRequisicao(req), dados), {
+        travaVersao: true,
+      });
   }
 
   @Permissao('relatorios.exportar')

@@ -21,6 +21,8 @@ import { ExportacaoRelatorios } from './tarefas/exportar-relatorio.js';
 import { provedorEanDuplicado } from './relatorios/ean-duplicado.js';
 import { provedorEstoqueAtual } from './relatorios/estoque-atual.js';
 import { provedorMovimentacao } from './relatorios/movimentacao.js';
+import { provedorNcmInvalidos } from './relatorios/ncm-invalidos.js';
+import { provedorProdutosGeral } from './relatorios/produtos-geral.js';
 import { TarefasSegundoPlano } from './tarefas/tarefas.js';
 import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
@@ -176,10 +178,13 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
   const notasEntrada = new NotasEntrada({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   const exportacoes = new ExportacaoRelatorios({ tenancy, tarefas, armazenamento, auditoria, permissoes });
   // Os relatórios exportáveis pela rota comum (F2-B29): o Estoque Atual (F2-B31, decisão 178) e a Movimentação de
-  // Estoque, nas duas visões (F2-B33, decisão 180), e o EAN duplicado (F2-B38, decisão 184).
+  // Estoque, nas duas visões (F2-B33, decisão 180), o EAN duplicado (F2-B38, decisão 184), o Produtos geral e os NCMs
+  // inválidos (F2-B41, decisão 187).
   exportacoes.registrar(provedorEstoqueAtual());
   exportacoes.registrar(provedorMovimentacao());
   exportacoes.registrar(provedorEanDuplicado());
+  exportacoes.registrar(provedorProdutosGeral());
+  exportacoes.registrar(provedorNcmInvalidos());
   // A exportação do catálogo de ida e volta (F2-B40, decisão 186): produtos e clientes, com o acesso do cadastro.
   exportacoes.registrar(provedorCatalogoProdutos());
   exportacoes.registrar(provedorCatalogoClientes());

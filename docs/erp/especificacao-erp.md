@@ -4203,6 +4203,16 @@ sobre o Nuvem3.
 | Ação | **Editar produto** (abre `/produtos/:id`) |
 | Totais | quantidade de produtos; médias de margem e markup |
 
+Fase 2, F2-B41 (README da API › decisão 187; README do ERP › decisão 75): `GET /relatorios/produtos-geral` (paginado
+no servidor) e a exportação pela rota comum `GET /relatorios/produtos-geral/exportar`. O **Preço custo** é o preço de
+custo do cadastro (o do markup do formulário); a **venda** com a Loja é a da loja quando ela tem preço próprio (senão a
+do produto), e a loja tem de estar entre as permitidas. Lucro R$, Lucro % e Markup % saem da API em decimal, com 2
+casas ("meio para longe do zero"); o Lucro % fica vazio sem venda e o Markup % sem custo. **Totais**: a quantidade e as
+médias simples do relatório inteiro (lucro, lucro % dos produtos com venda e markup % dos com custo), das linhas antes
+do arredondamento. "Sem preço" = a venda (da loja, com a loja) igual a zero; Situação começa em "ativos". Sem
+`produtos.ver_custo`, custo, lucro, porcentagens e médias não aparecem (nem no arquivo) e ordenar por eles é recusado.
+A coluna **WooComm** fica escondida até a integração (Fase 7).
+
 ### 16.2 Histórico de produtos [P2]
 
 **Rota**: `/relatorios/historico-produtos` · **Permissão**: `relatorios.historico_produtos`.
@@ -4222,6 +4232,19 @@ Visão da auditoria (17) filtrada às entidades de produto (`produtos` e sub-tab
 Colunas: Produto, Código interno, EAN, NCM atual, **Motivo (Novo)** (vazio, inexistente, fora de vigência, CEST
 incompatível), Ação **Editar**. Ação em lote **(Novo)**: selecionar produtos → **Definir NCM** (abre `<BuscaNcm>`),
 com auditoria por produto.
+
+Fase 2, F2-B41 (README da API › decisão 187; README do ERP › decisão 75): `GET /relatorios/ncm-invalidos` (50 por
+página, com a contagem por motivo) e a exportação `…/exportar`. Entram os produtos não excluídos, sem combo e serviço
+(o inativo entra), com **um** motivo nesta ordem: NCM vazio; inexistente (fora da tabela `ncms` ou excluído dela);
+fora de vigência (`vigencia_fim` no passado) — juntos, o contrário do "NCM existente e vigente" do cadastro —; e
+**CEST incompatível**, **só quando a tabela `cests` tem carga**: o CEST do produto fora da tabela vigente ou o NCM que
+não começa por nenhum dos NCMs listados no CEST (o convênio lista posições como "2203": a comparação é pelo começo do
+código). Sem a carga, a tela mostra "Tabela não carregada" e nada de CEST é conferido. **Definir NCM** (com
+`produtos.editar`): até 50 produtos marcados na página, o NCM existente e vigente, tudo ou nada; cada produto é gravado
+como no cadastro, com a versão que o relatório mostrou (se alguém mexeu depois, nada é gravado), a auditoria própria
+com a localização "Relatórios › NCMs inválidos" e a versão nova que desce aos caixas. A tabela `cests` vem de
+`apps/api/src/database/referencias/cests.csv` (Convênio ICMS 142/2018 e alterações; a lista oficial ainda não foi
+carregada, pendência da decisão 187); a atualização periódica é a do F2-B46.
 
 #### 16.3.1 EAN duplicado (Novo) [P2]
 

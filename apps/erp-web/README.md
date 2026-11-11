@@ -1293,6 +1293,31 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       Exportar Clientes só com a permissão de pessoas), o `menu.test.ts` (o item com cada combinação de permissões) e o
       `Login.test.tsx` (Promoções como a tela "Em construção"; a Exportação sem permissão de exportar dá "Sem
       permissão", e abre só com `pessoas.ver` e `relatorios.exportar`).
+75. **Relatórios Produtos geral e NCMs inválidos, com o "Definir NCM" em lote** (Fase 2, F2-B41; ERP 16.1, 16.3;
+    README da API › decisão 187; `src/paginas/relatorios/ProdutosGeral.tsx`, `src/paginas/relatorios/NcmInvalidos.tsx`,
+    `menu.ts`, `rotas.tsx`; os dois itens de Relatórios › Produtos ficaram prontos).
+    - **Produtos geral** (`/relatorios/produtos-geral`, `relatorios.produtos_geral`) no `<Relatorio>` paginado no
+      servidor, gerado no Filtrar: Produto (o link **Editar** e "Inativo"), Unidade, Código Interno, Código Barras,
+      Marca, NCM, Preço custo, Preço venda, Preço atacado, Lucro R$, Lucro %, Markup % (o negativo em vermelho) e
+      Departamentos; a WooComm fica escondida (Fase 7). Filtros: nome/código/EAN, marca, departamento (com os filhos),
+      **loja** (o filtro `loja` do `<Relatorio>`: começa na loja de contexto e, vazio, é o preço do produto), "Somente
+      sem preço" e situação. Os cards e a linha de totais mostram a quantidade e as **médias que a API calcula em
+      decimal** (o ERP não refaz a conta; só formata). Com `produtos.ver_custo`, os três cards de média e a linha de
+      totais seguem o mesmo critério (sem linhas, "—"); sem ela, as colunas, os cards e a nota de custo, lucro e markup
+      somem (a API já os manda nulos). Exportação Excel/CSV pela API.
+    - **NCMs inválidos** (`/relatorios/ncm-invalidos`, `relatorios.ncm_invalidos`): gera ao abrir, sem filtros, 50 por
+      página; Produto, Código interno, EAN, NCM atual (com a máscara 0000.00.00), CEST, **Motivo** (o selo com a cor e o
+      detalhe em texto da API) e a ação **Editar**; os cards por motivo, e o do CEST com "Tabela não carregada"
+      enquanto a tabela `cests` está vazia (o motivo não é conferido). Com `produtos.editar`, a **seleção de linhas** da
+      página (F2-B30) leva ao **"Definir NCM"**: o modal com o `<BuscaNcm>` e a lista dos marcados manda o NCM e a
+      versão de cada linha; o erro (versão mudada, regra do cadastro) fica no modal com a mensagem de cada produto (a
+      que não traz o produto ganha o "código - nome" do marcado pelo índice `produtos.N`; a chave da lista é a do campo,
+      sem colidir nas mensagens repetidas) e nada é gravado; no sucesso, o aviso com quantos foram gravados, a seleção limpa e o relatório gerado de novo.
+      Mais de `LIMITE_DEFINIR_NCM` (50) marcados desabilita o botão (a página tem no máximo 50).
+    - Testes: `ProdutosGeral.test.tsx` (as colunas e as médias com e sem `produtos.ver_custo`, os cards com "—" sem
+      linhas, sem a WooComm) e `NcmInvalidos.test.tsx` (os motivos e o detalhe, o Editar, o card do CEST, o "Definir
+      NCM" com as versões e o relatório gerado de novo, o erro no modal, a mensagem sem o produto identificada pelo
+      índice, sem seleção sem `produtos.editar`).
 
 ## O que ainda não foi feito (Fase 0)
 

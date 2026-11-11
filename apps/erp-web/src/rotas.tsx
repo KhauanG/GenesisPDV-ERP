@@ -42,6 +42,8 @@ import { FormularioRestricaoHorario, ListaRestricoesHorario } from './paginas/pr
 import { EanDuplicado, ROTA_EAN_DUPLICADO } from './paginas/relatorios/EanDuplicado';
 import { EstoqueAtual, ROTA_ESTOQUE_ATUAL } from './paginas/relatorios/EstoqueAtual';
 import { MovimentacaoEstoque, ROTA_MOVIMENTACAO_ESTOQUE } from './paginas/relatorios/MovimentacaoEstoque';
+import { NcmInvalidos, ROTA_NCM_INVALIDOS } from './paginas/relatorios/NcmInvalidos';
+import { ProdutosGeral, ROTA_PRODUTOS_GERAL } from './paginas/relatorios/ProdutosGeral';
 import { FormularioUsuario } from './paginas/usuarios/FormularioUsuario';
 import { DetalheFechamentoCaixa, ListaFechamentosCaixa } from './paginas/vendas/FechamentosCaixa';
 import {
@@ -336,6 +338,22 @@ export const rotas: RouteObject[] = [
                 element: (
                   <ExigePermissao permissao="relatorios.estoque_atual">
                     <EstoqueAtual />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_PRODUTOS_GERAL,
+                element: (
+                  <ExigePermissao permissao="relatorios.produtos_geral">
+                    <ProdutosGeral />
+                  </ExigePermissao>
+                ),
+              },
+              {
+                path: ROTA_NCM_INVALIDOS,
+                element: (
+                  <ExigePermissao permissao="relatorios.ncm_invalidos">
+                    <NcmInvalidos />
                   </ExigePermissao>
                 ),
               },

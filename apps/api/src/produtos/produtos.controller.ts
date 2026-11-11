@@ -991,6 +991,12 @@ export interface OpcoesGravacaoProduto {
    * trava presa). A troca de tipo valida mesmo assim (a conferência não confere o saldo nem as variações).
    */
   validado?: boolean;
+  /**
+   * A tela de onde veio a gravação, para a auditoria (ERP 16.2 "Localização"), quando não é o formulário nem o
+   * cadastro em massa: o "Definir NCM" em lote do relatório NCMs inválidos (F2-B41; decisão 187) grava "Relatórios ›
+   * NCMs inválidos". O histórico de preços fica com a origem `cadastro` (o NCM não mexe em preço).
+   */
+  localizacao?: string;
 }
 
 type DepsGravacao = Pick<Servicos, 'auditoria' | 'custoCombos'>;
@@ -1005,7 +1011,7 @@ const origemHistorico = (opcoes: OpcoesGravacaoProduto) =>
 /** Localização da auditoria do produto: a tela de onde veio a gravação (ERP 16.2 "Localização"). */
 export const LOCALIZACAO_CADASTRO_MASSA = 'Produtos › Cadastro em massa';
 const localizacaoDe = (opcoes: OpcoesGravacaoProduto) =>
-  opcoes.cadastroMassa ? LOCALIZACAO_CADASTRO_MASSA : LOCALIZACAO;
+  opcoes.localizacao ?? (opcoes.cadastroMassa ? LOCALIZACAO_CADASTRO_MASSA : LOCALIZACAO);
 
 /** Insere o produto com as filhas, o custo do combo, o histórico de preços e a auditoria (transação de quem chama). */
 export async function inserirProduto(
