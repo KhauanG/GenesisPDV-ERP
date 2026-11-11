@@ -2,6 +2,7 @@
  * Contratos da estrutura da empresa (ERP 10.1, 10.3, 13.2; MD 3.2): empresa, lojas, caixas e locais de estoque.
  */
 import { z } from 'zod';
+import { idArquivoAnexo } from './arquivos.js';
 import {
   cnpjCampo,
   emailOpcional,
@@ -235,7 +236,7 @@ export type CriarLoja = z.output<typeof criarLojaSchema>;
  * Anexos da loja (ERP 10.3.4; F2-B43): o id de um envio de `POST /api/arquivos?destino=loja_logotipo|loja_foto` da
  * própria loja, `null` para tirar ou ausente para manter (o ERP de antes do F2-B43 não manda e não apaga nada).
  */
-const anexoLoja = z.uuid('Envie a imagem de novo').nullable().optional();
+const anexoLoja = idArquivoAnexo;
 
 export const alterarLojaSchema = camposLoja
   .extend({

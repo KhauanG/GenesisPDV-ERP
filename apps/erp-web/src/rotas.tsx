@@ -30,6 +30,7 @@ import { Prontidao } from './paginas/implantacao/Prontidao';
 import { Importacao } from './paginas/importacao/Importacao';
 import { FormularioFormaPagamento, ListaFormasPagamento } from './paginas/formas-pagamento/FormasPagamento';
 import { FormularioLoja, ListaLojas } from './paginas/lojas/Lojas';
+import { FichaMarcaImpressao } from './paginas/marcas/FichaMarca';
 import { FormularioMarca, ListaMarcas } from './paginas/marcas/Marcas';
 import { FormularioPerfil, ListaPerfis } from './paginas/perfis/Perfis';
 import { FormularioPessoa, ListaPessoas } from './paginas/pessoas/Pessoas';
@@ -210,6 +211,19 @@ export const rotas: RouteObject[] = [
                 <FormularioRestricaoHorario />,
               ),
               ...cadastro('/produtos/marcas', 'marcas', <ListaMarcas />, <FormularioMarca />),
+              // A ficha impressa da marca (F2-B44; o segmento fixo `ficha` ganha do `:id/:aba?` do cadastro). A API
+              // exige também `produtos.ver`.
+              {
+                path: '/produtos/marcas/:id/ficha',
+                element: (
+                  <ExigePermissao
+                    permissao="marcas.ver"
+                    acesso={(pode) => pode('marcas.ver') && pode('produtos.ver')}
+                  >
+                    <FichaMarcaImpressao />
+                  </ExigePermissao>
+                ),
+              },
               {
                 path: ROTA_CADASTRO_MASSA,
                 element: (

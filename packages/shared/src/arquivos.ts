@@ -173,3 +173,11 @@ export interface ArquivoInfo {
   variantes: Partial<Record<VarianteArquivo, VarianteArquivoInfo>>;
   criadoEm: string;
 }
+
+/**
+ * O id de um envio (`POST /api/arquivos`) guardado num cadastro (a foto do produto, a imagem da categoria, o logotipo
+ * da marca, os Anexos da loja): `null` tira a imagem e **ausente mantém** a gravada (a importação de planilha e o ERP
+ * de antes do bloco não mandam o campo e não podem apagar a imagem). A API confere na gravação que o id é um envio do
+ * destino do campo (`vincularArquivo`).
+ */
+export const idArquivoAnexo = z.uuid('Envie a imagem de novo').nullable().optional();

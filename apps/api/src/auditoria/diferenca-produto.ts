@@ -355,6 +355,17 @@ const FILHAS: Filha[] = [
     escopo: (i) => ({ estoque: txt(i.estoqueId) || null }),
     ignorar: ['estoqueId'],
   },
+  {
+    // A galeria (8.2.6; F2-B44): o arquivo não tem nome legível; a posição identifica a imagem no texto.
+    chave: 'imagens',
+    rotulo: () => 'Imagem da galeria',
+    genero: 'a',
+    id: (i) => txt(i.arquivoId).toLowerCase(),
+    identificacao: (i) => [`(posição ${txt(i.ordem)})`],
+    campos: { ordem: c('Posição', 'inteiro') },
+    resumo: [],
+    ignorar: ['arquivoId'],
+  },
 ];
 
 /** Campos de qualquer filha que não são mudança (a identidade e os nomes expandidos, as marcas de tela). */

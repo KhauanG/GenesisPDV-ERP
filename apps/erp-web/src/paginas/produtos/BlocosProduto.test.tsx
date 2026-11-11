@@ -74,6 +74,7 @@ const no = (id: string, nome: string, pai: string | null, caminho: string, nivel
   exibeTotem: false,
   exibeSite: false,
   cor: null,
+  imagemArquivoId: null,
   produtos: 0,
   versao: 1,
 });

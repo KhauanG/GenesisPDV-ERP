@@ -66,8 +66,11 @@ async function comoDataUrl(b: Blob): Promise<string> {
   return `data:${b.type || 'image/webp'};base64,${btoa(binario)}`;
 }
 
-/** A miniatura (`pdv_256`) pela API autenticada: o `<img src="/api/…">` não mandaria o token, então vem como blob. */
-function useMiniatura(id: string | null) {
+/**
+ * A miniatura (`pdv_256`) pela API autenticada: o `<img src="/api/…">` não mandaria o token, então vem como blob.
+ * Também a galeria do produto e a ficha da marca (F2-B44).
+ */
+export function useMiniaturaArquivo(id: string | null) {
   const arquivo = useQuery({
     queryKey: ['arquivos', id, 'pdv_256'],
     queryFn: async () =>
@@ -91,7 +94,7 @@ function useMiniatura(id: string | null) {
  */
 export function UploadArquivo(p: PropsUploadArquivo) {
   const destino = DESTINOS_ARQUIVO[p.destino];
-  const miniatura = useMiniatura(p.valor);
+  const miniatura = useMiniaturaArquivo(p.valor);
   const [problema, setProblema] = useState<string | null>(null);
   const [arrastando, setArrastando] = useState(false);
   const envio = useMutation({

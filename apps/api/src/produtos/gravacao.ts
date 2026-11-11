@@ -1,7 +1,8 @@
 /**
  * Regras do cadastro de produtos que dependem do banco (ERP 8.2, 8.2.17; MD 3.6.3–3.6.7, 3.6.13) e gravação das
  * filhas num só "Gravar" (códigos de barras, lojas, faixas, categorias, posições do combo/ficha técnica e
- * alternativas, produtos relacionados com a relação inversa, fornecedores, lotes do bloco Validade).
+ * alternativas, produtos relacionados com a relação inversa, fornecedores, lotes do bloco Validade, a foto e a
+ * galeria de imagens).
  */
 import {
   CHAVES_TIPO_PRODUTO,
@@ -22,6 +23,7 @@ import {
   type TipoProduto,
 } from '@genesis/shared';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { vincularArquivo } from '../arquivos/arquivos.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { ErroApi } from '../comum/erros.js';
 import { lerConfiguracao, lerConfiguracoes } from '../configuracoes/valores.js';
@@ -32,6 +34,7 @@ import {
   produtosComponentesAlternativas,
   produtosFornecedores,
   produtosHistoricoPrecos,
+  produtosImagens,
   produtosLojas,
   produtosLotes,
   produtosPrecosQuantidade,
@@ -619,6 +622,76 @@ export async function gravarFilhas(
           .values({ ...valoresAlt, componenteId: compId, criadoPorId: sessao.usuarioId });
       }
     }
+  }
+}
+
+/** As imagens gravadas do produto (8.2.6; F2-B44): a foto principal e as da galeria, para `vincularImagensProduto`. */
+export interface ImagensGravadas {
+  foto: string | null;
+  galeria: readonly string[];
+}
+
+/**
+ * A foto e a galeria do produto (ERP 8.2.6; F2-B44; README da API › decisão 190), **antes** de gravar a linha (a FK de
+ * `foto_principal_arquivo_id` só confere que o arquivo existe): cada id **novo** (diferente do gravado) tem de ser um
+ * envio `produto_foto` desta empresa, vivo e ainda sem dono ou já deste produto (`vincularArquivo`, 422 no campo:
+ * `fotoPrincipalArquivoId` ou `imagens.N`), e fica ligado ao produto (`registro_id`). O id que já estava gravado não é
+ * conferido de novo (o arquivo é do produto). `antes` nulo = produto novo (o id já foi gerado por quem chama).
+ */
+export async function vincularImagensProduto(
+  tx: DbEmpresa,
+  produtoId: string,
+  d: Pick<CriarProduto, 'fotoPrincipalArquivoId' | 'imagens'>,
+  antes: ImagensGravadas | null,
+): Promise<void> {
+  const foto = d.fotoPrincipalArquivoId?.toLowerCase();
+  if (foto && foto !== antes?.foto?.toLowerCase())
+    await vincularArquivo(tx, foto, 'produto_foto', produtoId, 'fotoPrincipalArquivoId');
+  const gravadas = new Set(antes?.galeria.map((g) => g.toLowerCase()));
+  for (const [i, id] of (d.imagens ?? []).entries())
+    if (!gravadas.has(id.toLowerCase()))
+      await vincularArquivo(tx, id.toLowerCase(), 'produto_foto', produtoId, `imagens.${i}`);
+}
+
+/**
+ * A galeria (`produtos_imagens`, ERP 8.2.6; F2-B44): `undefined` mantém as gravadas (a importação, o cadastro em massa
+ * e o ERP antigo não mandam a lista). A linha é identificada pelo arquivo (`uq_produtos_imagens`): a que saiu é
+ * excluída logicamente, a nova entra, a que ficou só atualiza a ordem (a posição na lista, 1, 2, 3…). O arquivo que
+ * saiu fica guardado (o histórico mostra a troca). Os ids já passaram por `vincularImagensProduto`.
+ */
+export async function gravarImagens(
+  tx: DbEmpresa,
+  sessao: SessaoErp,
+  produtoId: string,
+  imagens: CriarProduto['imagens'],
+): Promise<void> {
+  if (imagens === undefined) return;
+  const atuais = await tx
+    .select({ id: produtosImagens.id, arquivoId: produtosImagens.arquivoId, ordem: produtosImagens.ordem })
+    .from(produtosImagens)
+    .where(and(eq(produtosImagens.produtoId, produtoId), isNull(produtosImagens.excluidoEm)));
+  const desejadas = imagens.map((i) => i.toLowerCase());
+  const sair = atuais.filter((a) => !desejadas.includes(a.arquivoId)).map((a) => a.id);
+  if (sair.length)
+    await tx
+      .update(produtosImagens)
+      .set({ excluidoEm: new Date(), atualizadoPorId: sessao.usuarioId })
+      .where(inArray(produtosImagens.id, sair));
+  for (const [i, arquivoId] of desejadas.entries()) {
+    const atual = atuais.find((a) => a.arquivoId === arquivoId);
+    if (!atual)
+      await tx.insert(produtosImagens).values({
+        produtoId,
+        arquivoId,
+        ordem: i + 1,
+        criadoPorId: sessao.usuarioId,
+        atualizadoPorId: sessao.usuarioId,
+      });
+    else if (atual.ordem !== i + 1)
+      await tx
+        .update(produtosImagens)
+        .set({ ordem: i + 1, atualizadoPorId: sessao.usuarioId })
+        .where(eq(produtosImagens.id, atual.id));
   }
 }
 

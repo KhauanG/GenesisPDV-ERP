@@ -1019,6 +1019,7 @@ e-commerce e no campo de volumes da NF-e (peso bruto/líquido).
 | `descricao_curta` | Descrição curta | texto(250) | menu digital, totem, e-commerce |
 | `descricao_longa` | Descrição completa **(Novo)** | texto rico | e-commerce |
 | `foto_principal_arquivo_id` | Foto **(Novo)** | uuid→`arquivos` (jpg/png/webp, ≤ 2 MB) | exibida no PDV quando "Exibe foto do produto no PDV" (desce como `foto_url`) |
+| `produtos_imagens` | Outras imagens **(Novo)** | lista de →`arquivos` (jpg/png/webp, ≤ 2 MB cada; até 10), na ordem | menu digital, totem e site; não desce ao PDV. Fase 2 (F2-B44): a foto e a galeria ficam no bloco **Foto e imagens** do formulário (enviar já grava o arquivo; a escolha grava no Gravar; a cópia do produto sai sem imagens) |
 | `controla_estoque` | Controla estoque **(Novo)** | booleano | Não = vendas não geram movimento (ex.: taxa de entrega) |
 | `idade_minima` | Idade mínima **(Novo)** | inteiro (smallint, ex.: 18) | vazio = sem restrição; preenchido, o PDV pede confirmação de idade (bebidas alcoólicas = 18; frequência em `pdv.confirmacao_idade`, 9.9) |
 | `vasilhame_produto_id` | Vasilhame (casco) **(Novo)** | →`produtos` com `tipo = 'vasilhame'` | só no produto **cheio** retornável (não em um vasilhame): o casco devido por unidade vendida (PDV 10.12; `ck_produtos_vasilhame`) |
@@ -1345,7 +1346,7 @@ não aparecem o custo nem o markup.
 |---|---|
 | Árvore | Raiz fixa "Departamentos"; nós ordenados por `ordem` e nome; mostra a quantidade de produtos de cada nó; busca por texto destaca e expande |
 | Menu de contexto (clique direito ou botão ⋮) | **Configurar Categoria** (abre painel lateral), **Adicionar** (subcategoria), **Excluir** |
-| Arrastar e soltar | Move nó para outro pai ou reordena irmãos |
+| Arrastar e soltar | Move nó para outro pai ou reordena irmãos. Fase 2 (F2-B44): soltar **sobre** uma categoria a põe dentro dela (no fim); soltar na **faixa** entre duas reordena (e muda o pai, se a faixa é de outro nível); "Subir"/"Descer" no ⋮ fazem o mesmo pelo teclado; com a busca preenchida não se arrasta. A tela recusa o ciclo, os 5 níveis e o nome repetido antes de gravar; a reordenação é em lote com a versão de cada irmã (outro usuário mexeu no meio = 409, nada muda) |
 
 Campos da categoria (`categorias`):
 
@@ -1357,14 +1358,15 @@ Campos da categoria (`categorias`):
 | `ativa` | booleano | S | inativa some do PDV/menu digital |
 | `exibe_pdv` **(Novo)** | booleano | N | aparece como aba do cardápio interno do PDV |
 | `exibe_menu_digital` / `exibe_totem` / `exibe_site` | booleano | N | |
-| `imagem` | arquivo | N | |
+| `imagem_arquivo_id` | arquivo (jpg/png/webp, ≤ 2 MB) | N | Fase 2 (F2-B44): no painel da categoria |
 | `cor` **(Novo)** | cor hex | N | botão no cardápio do PDV |
 
 Regras: excluir categoria com subcategorias exige excluir/mover as filhas antes; excluir categoria com produtos pede
 confirmação e remove apenas os vínculos (os produtos ficam).
 
 **Entidades**: `categorias`, `produtos_categorias`. **API**: `/api/categorias` (árvore em `GET /api/categorias/arvore`),
-`POST /api/categorias/:id/mover`.
+`POST /api/categorias/:id/mover`, `POST /api/categorias/reordenar` (as irmãs de um pai em lote, com a versão de cada
+uma; F2-B44).
 
 ### 8.5 Exportação
 
@@ -1505,13 +1507,17 @@ Listagem: filtro **Nome**; coluna **Nome** (+ **Produtos**: quantidade **(Novo)*
 | `sem_marca` | Sem Marca | booleano | N | marca genérica "SEM MARCA"; só uma por empresa |
 | `exibe_site` | Exibe no Site | booleano | N | |
 | `ordem` | Ordem | inteiro | N | |
-| `logotipo_arquivo_id` | Logotipo | uuid→`arquivos` (imagem ≤ 1 MB) | N | |
+| `logotipo_arquivo_id` | Logotipo | uuid→`arquivos` (imagem ≤ 1 MB) | N | Fase 2 (F2-B44): jpg/png/webp, no formulário |
 
 Botões: **Novo**, **Gravar**, **Voltar**, **Imprimir** (ficha da marca com a lista de produtos), **Excluir** (bloqueado
 se houver produtos ativos da marca), **Mesclar marcas (Novo)** — move os produtos de marcas duplicadas para uma marca
 escolhida e exclui as demais (permissão `marcas.excluir`).
 
-**Entidades**: `marcas`. **API**: `/api/marcas`, `POST /api/marcas/mesclar`.
+**Imprimir** (Fase 2, F2-B44): a ficha abre em aba nova e usa a impressão do navegador: o logotipo, o código e o nome da
+marca e os produtos dela (código, nome, EAN, unidade, preço de venda e situação, ativos e inativos), sem custo; exige
+também `produtos.ver`.
+
+**Entidades**: `marcas`. **API**: `/api/marcas`, `POST /api/marcas/mesclar`, `GET /api/marcas/:id/ficha` (F2-B44).
 
 ### 8.8 Promoções (Novo) [P3]
 

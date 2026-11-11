@@ -3,15 +3,19 @@ import {
   alterarMarcaSchema,
   criarMarcaSchema,
   filtroMarcasSchema,
+  LIMITE_PRODUTOS_FICHA_MARCA,
   limiteDeslocamento,
   mesclarMarcasSchema,
+  type FichaMarca,
   type MarcaDetalhe,
   type MarcaResumo,
   type Pagina,
 } from '@genesis/shared';
 import { and, count, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { uuidv7 } from 'uuidv7';
 import { z } from 'zod';
+import { vincularArquivo } from '../arquivos/arquivos.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import {
@@ -41,7 +45,10 @@ const colunasOrdenacao = {
   produtos: sqlProdutos,
 };
 
-/** Marcas (ERP 8.7): descrição única sem diferenciar maiúsculas/acentos, "SEM MARCA" única, Mesclar. */
+/**
+ * Marcas (ERP 8.7): descrição única sem diferenciar maiúsculas/acentos, "SEM MARCA" única, Mesclar, o logotipo (um
+ * envio `marca_logotipo`) e a ficha do Imprimir (F2-B44; README da API › decisão 190).
+ */
 @Controller('marcas')
 export class MarcasController {
   constructor(@Inject(SERVICOS) private readonly s: Servicos) {}
@@ -87,6 +94,53 @@ export class MarcasController {
     return d;
   }
 
+  /**
+   * Ficha da marca para o Imprimir (ERP 8.7; F2-B44): a marca e os produtos dela (ativos e inativos, não excluídos),
+   * pelo nome, com o EAN principal, a unidade e o preço de venda; nada de custo. Exige também `produtos.ver` (a lista
+   * é do cadastro de produtos). Até `LIMITE_PRODUTOS_FICHA_MARCA` produtos (o total vem à parte).
+   */
+  @Permissao('marcas.ver', 'produtos.ver')
+  @Get(':id/ficha')
+  async ficha(@Param('id') idBruto: string): Promise<FichaMarca> {
+    const id = validar(z.uuid(), idBruto);
+    return this.s.tenancy.cx().consulta(async (db) => {
+      const marca = await detalhe(db, id);
+      if (!marca) throw ErroApi.naoEncontrado('Marca não encontrada.');
+      const { rows } = await db.execute<{
+        id: string;
+        codigo: number;
+        nome: string;
+        ean: string | null;
+        unidade_sigla: string;
+        preco_venda: string;
+        ativo: boolean;
+      }>(sql`
+        select p.id, p.codigo, p.nome, p.ativo, p.preco_venda::text as preco_venda, u.sigla as unidade_sigla,
+               (select cb.codigo from produtos_codigos_barras cb
+                 where cb.produto_id = p.id and cb.variacao_id is null and cb.principal and cb.excluido_em is null
+                 limit 1) as ean
+          from produtos p
+          join unidades_medida u on u.id = p.unidade_id
+         where p.marca_id = ${id} and p.excluido_em is null
+         order by lower(fn_unaccent(p.nome)), p.codigo
+         limit ${LIMITE_PRODUTOS_FICHA_MARCA}`);
+      return {
+        marca,
+        produtos: rows.map((r) => ({
+          id: r.id,
+          codigo: Number(r.codigo),
+          nome: r.nome,
+          ean: r.ean,
+          unidadeSigla: r.unidade_sigla,
+          precoVenda: r.preco_venda,
+          ativo: r.ativo,
+        })),
+        totalProdutos: marca.produtos,
+        geradoEm: new Date().toISOString(),
+      };
+    });
+  }
+
   @Permissao('marcas.criar')
   @Post()
   @HttpCode(201)
@@ -99,9 +153,13 @@ export class MarcasController {
     const id = await this.s.tenancy.cx().transacao(
       async (tx) => {
         await garantirUnicos(tx, dados);
+        // O logotipo (F2-B44): um envio `marca_logotipo` sem dono, ligado à marca nova antes da linha (a FK).
+        const id = uuidv7();
+        if (dados.logotipoArquivoId)
+          await vincularArquivo(tx, dados.logotipoArquivoId, 'marca_logotipo', id, 'logotipoArquivoId');
         const [m] = await tx
           .insert(marcas)
-          .values({ ...dados, criadoPorId: sessao.usuarioId, atualizadoPorId: sessao.usuarioId })
+          .values({ ...dados, id, criadoPorId: sessao.usuarioId, atualizadoPorId: sessao.usuarioId })
           .returning();
         await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
           acao: 'criar',
@@ -132,6 +190,8 @@ export class MarcasController {
         const antes = await travar(tx, id);
         if (antes.versao !== versao) await conflitoVersao(tx, antes);
         await garantirUnicos(tx, dados, id);
+        if (dados.logotipoArquivoId && dados.logotipoArquivoId.toLowerCase() !== antes.logotipoArquivoId)
+          await vincularArquivo(tx, dados.logotipoArquivoId, 'marca_logotipo', id, 'logotipoArquivoId');
         const [depois] = await tx
           .update(marcas)
           .set({ ...dados, atualizadoPorId: sessao.usuarioId })

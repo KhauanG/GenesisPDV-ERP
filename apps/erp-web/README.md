@@ -1372,12 +1372,56 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       somente leitura; o tipo pelo conteúdo) e `Lojas.test.tsx` (o logotipo enviado na aba Anexos vai no `PUT` da
       loja; a dica sem prometer a impressão e com os limites do shared; a loja nova sem os anexos no corpo).
 
+78. **Foto e imagens do produto, arrastar e soltar das categorias, logotipo e ficha da marca** (Fase 2, F2-B44; ERP
+    8.2.6, 8.4, 8.7; README da API › decisão 190; `src/paginas/produtos/FormularioProduto.tsx` (bloco "Foto e
+    imagens") e `valores.ts`, `src/componentes/campos/GaleriaImagens.tsx`, `src/paginas/categorias/Categorias.tsx` e
+    `soltura.ts`, `src/paginas/marcas/Marcas.tsx` e `FichaMarca.tsx`, a rota da ficha em `rotas.tsx`).
+    - **Produto**: bloco **"Foto e imagens"** (depois de "Outras informações"; resumo fechado "Com foto · 2 imagem(ns)")
+      com o `<UploadArquivo destino="produto_foto">` da foto (a do caixa, quando "Exibe foto do produto no PDV" estiver
+      ligada) e a **galeria** (`<GaleriaImagens>`: as miniaturas `pdv_256` na ordem, "para a esquerda"/"para a
+      direita" e Remover em cada uma, e um `<UploadArquivo>` para acrescentar no fim, até `MAXIMO_IMAGENS_PRODUTO`). O
+      corpo manda **sempre** a foto e a lista inteira (`null`/`[]` tiram); a API só mantém quando o campo não vem (o
+      ERP antigo, a planilha). O 422 de uma imagem (`imagens.N`) cai no campo da galeria. A **cópia** (Duplicar) sai
+      sem foto e sem galeria (os arquivos são do produto de origem). Somente leitura sem `produtos.editar`: só as
+      miniaturas. A galeria reordena por botões e não por arrastar (as imagens são poucas e os botões funcionam no
+      teclado).
+    - **Categorias – arrastar e soltar** (HTML5 nativo, sem biblioteca nova): a linha da categoria (com a alça ⠿) é
+      arrastável para quem tem `categorias.editar` e com a busca vazia (a árvore filtrada esconde irmãs e a ordem
+      sairia errada). Soltar **sobre** uma categoria a põe **dentro** dela, no fim das filhas (`mover` com a ordem
+      depois da maior); soltar na **faixa** que aparece entre duas (e depois da última de cada nível) põe ali:
+      `reordenar` com a lista inteira das irmãs do pai e a versão de cada uma, precedido do `mover` quando a faixa é de
+      outro nível. O plano sai de `planejarSoltura` (puro, `soltura.ts`), que já recusa na tela, sem chamar a API, o
+      ciclo (a categoria dentro de uma descendente), os 5 níveis com a subárvore e o nome repetido no nível novo, e não
+      faz nada ao soltar no mesmo lugar; a API confere tudo de novo. Depois de gravar, a árvore recarrega e abre o pai
+      novo; o 409 (outro usuário mexeu) aparece na notificação e a árvore recarrega para soltar de novo. **"Subir" e
+      "Descer"** no ⋮ fazem o mesmo pelo teclado. O **painel aberto** (montado por categoria, sem remontar quando a
+      versão muda) só adota a versão nova da árvore recarregada sem apagar o que foi digitado: sem nada digitado, troca
+      o formulário pela versão nova; com algo digitado e a versão nova vinda só das solturas desta tela a partir da do
+      formulário (a tela anota cada versão antes → depois que o `mover`/`reordenar` devolveu), leva a ordem, o pai e a
+      versão novos e mantém o digitado (o Gravar não dá 409 depois de arrastar); com algo digitado e a categoria
+      gravada em outro lugar (outro usuário), mantém a edição, avisa ("Esta categoria foi alterada…") e o Gravar dá o
+      409 com quem alterou; "Descartar e carregar a versão nova" troca o formulário. A **imagem** da categoria
+      (`categoria_imagem`) fica no painel.
+    - **Marcas**: o **Logotipo** (`marca_logotipo`, até 1 MB) no formulário, gravado com a marca; o botão **Imprimir**
+      (só com `produtos.ver`, que a API também exige) abre em aba nova a **ficha** (`/produtos/marcas/:id/ficha?imprimir=1`,
+      `GET /marcas/:id/ficha`): o logotipo, o código e o nome, e os produtos (código, nome, EAN, unidade, preço de venda
+      e a situação), sem custo, e chama a impressão do navegador quando os dados e o logotipo chegam (padrão do
+      romaneio, decisão 64). A miniatura da ficha e da galeria usam o `useMiniaturaArquivo` do `<UploadArquivo>`.
+    - Testes: `Imagens.test.tsx` (o detalhe → valores → corpo da foto e da galeria, a cópia sem imagens, o erro na
+      galeria; no formulário, trocar a foto, acrescentar, mover e remover na galeria e o `PUT` com a foto e a lista;
+      somente leitura), `soltura.test.ts` (dentro, entre irmãs de outro nível e do mesmo, no mesmo lugar, ciclo, 5
+      níveis, nome repetido), `Categorias.test.tsx` ("Cervejas long neck" arrastada para dentro de "Cervejas" e depois
+      antes de "Lata", com o corpo do `mover` e do `reordenar`; o ciclo recusado sem chamar a API; "Subir" com o 409
+      avisado e a árvore recarregada; sem `categorias.editar` não arrasta; a imagem no Gravar do painel) e
+      `Marcas.test.tsx` (o logotipo no Gravar, Imprimir em aba nova, sem Imprimir sem `produtos.ver`; a ficha com o
+      logotipo, os produtos e a impressão).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
-excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`,
-`<UploadArquivo>`; o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
-validade/lotes, foto e tributação por UF (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
+excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`; o `<UploadArquivo>` chegou no
+F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
+validade/lotes e tributação por UF (a foto chegou no F2-B44, decisão 78) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
 fornecedores no F2-B13, decisão 55); aba Acessos do usuário (sessões, últimos
-logins); anexos de lojas/marcas/categorias; abas Vendas e Financeiro/Total da pessoa; edição de planos e
+logins); abas Vendas e Financeiro/Total da pessoa; edição de planos e
 progresso em tempo real das migrações no painel; inatividade de sessão configurável por empresa; e2e no CI.

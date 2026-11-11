@@ -5718,6 +5718,65 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        semáforo de `imagens.ts`, o `fileSize` do multer, o `Content-Length`, a vaga depois da leitura, e guardando o
        buffer de cada envio): o teste correspondente falha. Imagens inventadas, geradas no teste (`test/fixtures/imagens.ts`).
 
+190. **Foto e galeria do produto, imagem da categoria, logotipo da marca, a reordenação das categorias e a ficha da
+     marca** (Fase 2, F2-B44; ERP 8.2.6, 8.4, 8.7; decisões 61, 62 e 189; `src/produtos/gravacao.ts`
+     (`vincularImagensProduto`, `gravarImagens`), `consultas.ts` (`imagensDoProduto`, a galeria na versão do cadastro),
+     `produtos.controller.ts`, `src/catalogo/categorias.controller.ts` (`POST /categorias/reordenar`) e
+     `marcas.controller.ts` (`GET /marcas/:id/ficha`), a filha `imagens` em `src/auditoria/diferenca-produto.ts`;
+     contratos no shared `catalogo.ts` (`reordenarCategoriasSchema`, `FichaMarca`), `produtos.ts`
+     (`fotoPrincipalArquivoId`, `imagens`, `MAXIMO_IMAGENS_PRODUTO`) e `idArquivoAnexo` em `arquivos.ts`; **sem migração**:
+     as colunas e a `produtos_imagens` já existiam; PDV sem mudança: o `foto_url` e o `/sync/arquivos` são o F2-B45; o ERP
+     é a decisão 78 do README do ERP).
+     - **O anexo nos cadastros** (`idArquivoAnexo`, o mesmo dos Anexos da loja): o id de um envio do destino do campo
+       (`produto_foto`, `categoria_imagem`, `marca_logotipo`), `null` tira e **ausente mantém**. É o que deixa a
+       importação de planilha, o cadastro em massa, o "Definir NCM" em lote (que partem de `entradaDoDetalhe`, que agora
+       tira a foto e a galeria) e o ERP de antes desta versão gravarem sem apagar a imagem. `vincularArquivo` (decisão
+       189) confere **na transação da gravação** que o id é um envio vivo desta empresa com a categoria e a entidade do
+       campo e ainda sem dono (ou já deste registro), e grava o `registro_id`; senão 422 no campo
+       (`fotoPrincipalArquivoId`, `imagens.N`, `imagemArquivoId`, `logotipoArquivoId`) e nada é gravado. O id que já
+       estava gravado não é conferido de novo. O arquivo de outra empresa não existe no banco desta: é o mesmo 422 (o
+       `GET` dele continua 404). O registro novo ganha o id **antes** da linha (`uuidv7`, como a categoria já fazia),
+       para a conferência rodar antes do `insert` (a FK de `foto_principal_arquivo_id` só confere que o arquivo existe,
+       não o destino). A foto do produto vale para quem tem `produtos.criar`/`editar` (o Estoquista inclusive), a da
+       categoria `categorias.editar` e o logotipo `marcas.criar`/`editar`, as mesmas do envio.
+     - **A galeria do produto** (`produtos_imagens`, até `MAXIMO_IMAGENS_PRODUTO` = 10 além da foto; não desce ao PDV):
+       a lista de ids na ordem, inteira (vazia = tira todas; ausente = mantém), identificada pelo arquivo
+       (`uq_produtos_imagens`): a que saiu é excluída logicamente, a nova entra, a que ficou só muda a ordem (1, 2, 3…);
+       repetida na lista é 422 no zod. O arquivo que sai fica guardado (o histórico mostra a troca; a limpeza dos
+       envios sem dono continua fora, decisão 189). A **versão do cadastro** (`sqlVersaoAgregada`, decisão 47) passa a
+       contar a `produtos_imagens`: mexer só na galeria e gravar com a versão de antes é 409. A **auditoria** tem a
+       filha `imagens` ("Imagem da galeria adicionada (posição 1)", "removida", "Posição 2 → 1"); a foto continua
+       "Foto principal: (alterado)" (o id não tem nome legível). A cópia do produto (Duplicar, no ERP) sai sem imagens:
+       o arquivo é do produto de origem, e a API recusaria.
+     - **`POST /categorias/reordenar`** (`categorias.editar`; o soltar entre duas categorias, ERP 8.4): `{ categoriaPaiId,
+       itens: [{ id, versao }] }` com a lista **inteira** das filhas vivas do pai (vazio = as raízes, até 500) na ordem
+       nova. Numa transação com a `fn_trava_versao` (as reordenações e os `mover` da empresa ficam em fila, então duas
+       telas não montam um ciclo nem se atropelam): prende o pai e as categorias pedidas e as filhas do pai, na ordem do
+       id; o id que não existe nesta empresa é 404; a versão diferente, a categoria que outro moveu para outro pai ou
+       excluiu e a filha nova que a lista não traz são **409** `CONFLITO_VERSAO` com quem alterou, e nada muda. Grava
+       `ordem` = posição × `PASSO_ORDEM_CATEGORIAS` (10, 20, 30…: o campo Ordem do painel continua servindo para
+       encaixar entre duas) **só nas que mudaram** (só elas ganham versão nova, descem ao PDV e ganham uma linha de
+       auditoria "Categoria reordenada" com a ordem antes e depois). O pai, o caminho, o nível e o nome não mudam: a
+       árvore não muda de forma. Devolve a árvore. **Mudar de pai** continua o `POST /categorias/:id/mover` (decisão 61:
+       sem ciclo pelo caminho materializado, até 5 níveis com a subárvore, nome único entre as irmãs), que o soltar
+       "dentro" chama com a ordem do fim da lista; o soltar entre duas de outro nível chama o `mover` e depois o
+       `reordenar` (duas transações: se o segundo der 409, a categoria fica no pai novo e o ERP recarrega e avisa).
+     - **`GET /marcas/:id/ficha`** (`marcas.ver` **e** `produtos.ver`: a lista é do cadastro de produtos): a marca e os
+       produtos dela, ativos e inativos e não excluídos, pelo nome, com o código, o EAN principal, a unidade e o preço de
+       venda; nada de custo. Até `LIMITE_PRODUTOS_FICHA_MARCA` (5.000) produtos, com o total à parte. A marca de outra
+       empresa é 404. O ERP a imprime pelo navegador (padrão "Impressão" do plano).
+     - Testes: `imagens-catalogo.test.ts` (o critério de pronto: o produto com foto e galeria e os arquivos ligados a ele;
+       reordenar, tirar e incluir na galeria com a auditoria; a versão velha depois de mexer só na galeria 409; o corpo
+       sem os campos mantém, `null`/`[]` tiram; o anexo de outro destino, de outro produto, de outra empresa e o
+       inexistente 422 no campo sem gravar nada; o Estoquista grava a foto; a imagem da categoria na criação e na
+       alteração e a de outro destino 422; "Cervejas long neck" movida para dentro de "Cervejas" e reordenada antes de
+       "Cervejas lata", só a que mudou com versão nova e auditoria; as raízes; o 409 da versão velha, da irmã fora da
+       lista, da categoria de outro pai e da excluída no meio, com as ordens e versões intactas; o 404 da outra empresa,
+       o 422 do pai inexistente e o 403 sem `categorias.editar`; o ciclo do `mover`; o logotipo da marca e a ficha com
+       os produtos, sem custo; a de outra empresa 404 e sem `produtos.ver` 403) e, no shared, `produtos.spec.ts` (a
+       foto e a galeria ausentes, o repetido e o teto) e `cadastros.spec.ts` (o `reordenarCategoriasSchema`). Imagens
+       inventadas, geradas no teste.
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;
