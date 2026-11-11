@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 em andamento: F2-B37 a F2-B42 commitados, com a lista oficial do CEST pendente; falta a revisão de segurança do PR inteiro e abrir o PR; PR-7 e PR-8 implantados em 10/11/2026, release `pdv-v0.11.0` publicado e na página de download; falta atualizar os caixas das lojas; regra do bucket aplicada)._
+_Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do dono: F2-B37 a F2-B42 e a revisão de segurança do PR inteiro (D63) commitados, com a lista oficial do CEST pendente; PR-7 e PR-8 implantados em 10/11/2026, release `pdv-v0.11.0` publicado e na página de download; falta atualizar os caixas das lojas; regra do bucket aplicada)._
 
 ## Repositório
 
@@ -54,7 +54,7 @@ _Última atualização: 11/11/2026 (PR-9 em andamento: F2-B37 a F2-B42 commitado
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
-| PR-9 catálogo operacional | B37–B42 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8) |
+| PR-9 catálogo operacional | B37–B42 | **aberto (#7), aguardando a liberação do dono**; revisão de segurança do PR inteiro (D63) feita: 1 achado médio (prévia de clientes sem `pessoas.ver`) corrigido em `7fd9b8e` |
 | PR-10 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -112,8 +112,8 @@ _Última atualização: 11/11/2026 (PR-9 em andamento: F2-B37 a F2-B42 commitado
 3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
    bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 a F2-B40
    commitados (F2-B40: exportação de produtos de ida e volta); F2-B41 (Produtos geral e NCMs inválidos)
-   commitado; F2-B42 (Histórico de produtos) commitado, o último bloco do PR-9 (falta a revisão de segurança do
-   PR inteiro, D63, antes de abri-lo). **Pendente do F2-B41**: a lista oficial do CEST
+   commitado; F2-B42 (Histórico de produtos) commitado, o último bloco do PR-9; a revisão de segurança do PR
+   inteiro (D63) achou 1 problema médio, corrigido (`7fd9b8e`), e o **PR-9 está aberto (#7)**, aguardando a liberação do dono. **Pendente do F2-B41**: a lista oficial do CEST
    (Convênio ICMS 142/2018 e alterações, CONFAZ) não entrou — a sessão não conseguiu baixá-la; o
    `apps/api/src/database/referencias/cests.csv` está só com o cabeçalho e, até a carga, o motivo "CEST incompatível"
    não aparece. Quem tiver acesso converte os anexos para o formato da decisão 187 da API, anota a fonte e a data no
