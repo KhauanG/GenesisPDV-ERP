@@ -1341,6 +1341,36 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     - Testes: `HistoricoProdutos.test.tsx` (as colunas, o texto, o link do produto e o excluído sem link, a legenda, o
       período padrão na consulta, sem link sem `produtos.ver`, o modal com o `ocorridoEm` da linha, o Exportar pela
       API com os filtros da tela).
+77. **`<UploadArquivo>` e a aba Anexos da loja** (Fase 2, F2-B43; ERP 10.3.4, 8.2.6; README da API › decisão 189;
+    `src/componentes/campos/UploadArquivo.tsx`, `src/paginas/lojas/Lojas.tsx`).
+    - **`<UploadArquivo destino lojaId? valor aoMudar>`**: o campo de imagem dos cadastros (a foto do produto, a
+      imagem da categoria e o logotipo da marca usam o mesmo no F2-B44). **Arrastar** o arquivo para o quadro da
+      miniatura ou **escolhê-lo** no botão (ERP 3.4) **já o envia**
+      (`POST /api/arquivos?destino=…`, `apiErp.enviar`) e devolve o id ao formulário, que o grava com o cadastro no
+      Salvar (um Gravar só, como o resto do formulário); "Trocar imagem" envia outro; "Remover" só tira o id. Antes de
+      enviar, a tela confere o **tamanho** e o **tipo pelo conteúdo** (`problemaDoArquivo`: os primeiros bytes com o
+      `detectarTipoArquivo` do shared, o mesmo critério da API; a extensão e o tipo que o navegador diz não contam) e
+      mostra a mensagem no campo; a recusa da API (413/415/422) aparece no mesmo lugar. O `accept` do seletor só
+      filtra a janela de arquivos (PNG, JPG e WebP). Soltar no quadro passa pela mesma conferência (um arquivo só: o
+      primeiro, se vierem vários); o `preventDefault` do soltar vale também no somente leitura, para o navegador não
+      abrir a imagem na aba e levar o formulário não salvo. A dica padrão (tipos e limite) sai de
+      `tiposELimiteArquivo`, do `DESTINOS_ARQUIVO` do shared: o texto não fica com um limite antigo.
+    - **A miniatura** é a variante `pdv_256`, baixada pela API autenticada como blob (`apiErp.baixar`, o token vai no
+      cabeçalho; um `<img src="/api/…">` não o mandaria) e mostrada como `data:` (são ~10–20 KB; sem
+      `URL.createObjectURL`, não há o que revogar ao trocar ou sair). A consulta fica no cache do TanStack Query pelo id
+      (`['arquivos', id, 'pdv_256']`): o arquivo de um id nunca muda. A CSP do ERP, quando entrar (pendência do
+      README de `infra/producao`), precisa de `img-src 'self' data:`.
+    - **Aba Anexos** da loja (só na loja já criada: o envio leva o id dela; entre Fiscal e Caixas): **Logotipo**
+      (cupom e DANFE, até 1 MB; PNG monocromático recomendado) e **Foto da loja** (a fachada do menu digital, até
+      2 MB), com os tipos e o limite da dica tirados do shared. O caixa ainda não imprime o logotipo (a `cupom_mono` e
+      a descida ao PDV ficam pendentes, `docs/andamento.md`): a dica diz "a impressão no caixa entra numa próxima
+      versão" em vez de prometer o cupom. O `corpoLoja` manda `logotipoArquivoId` e `fotoArquivoId` só na alteração; o erro da API nesses campos
+      leva à aba (`abaDoErro`). Somente leitura sem `lojas.editar`: só a miniatura.
+    - Testes: `UploadArquivo.test.tsx` (o envio com o destino e a loja, a miniatura com o token, Remover; o HTML com
+      nome `.png` e o arquivo grande recusados sem enviar; arrastar e soltar com a mesma conferência e só o primeiro
+      arquivo; soltar no somente leitura sem enviar e sem o navegador abrir o arquivo; a recusa da API no campo;
+      somente leitura; o tipo pelo conteúdo) e `Lojas.test.tsx` (o logotipo enviado na aba Anexos vai no `PUT` da
+      loja; a dica sem prometer a impressão e com os limites do shared; a loja nova sem os anexos no corpo).
 
 ## O que ainda não foi feito (Fase 0)
 

@@ -285,7 +285,7 @@ numeração na hora e gera alerta no ERP; **D21** caixas Windows, com o token pr
 
 **ERP – cadastros base**
 - [x] Empresa (ERP 10.1)
-- [x] Lojas › Dados Gerais e Anexos, com o assistente que cria estoque, caixa 0, conta "Caixa – loja" e numerações (ERP 10.3.1, 10.3.4; MD 7.13) (parcial: a aba **Anexos** — logotipo/foto — espera o envio de arquivos `<UploadArquivo>` e vai para a Fase 2, junto com as imagens do produto)
+- [x] Lojas › Dados Gerais e Anexos, com o assistente que cria estoque, caixa 0, conta "Caixa – loja" e numerações (ERP 10.3.1, 10.3.4; MD 7.13) (a aba **Anexos** — logotipo/foto — ficou para a Fase 2 e entrou no F2-B43, com o envio de arquivos `<UploadArquivo>`; README da API › decisão 189)
 - [x] Locais de estoque, incluindo **CD - Estoque Ice Beer** como `deposito` (ERP 13.2; MD 3.2.5); tipos de estoque do seed somente leitura (`/estoque/tipos`: Nome, Uso, Vendável, Padrão, Ativo; a edição da tela Tipo de Estoque fica na Fase 2, ERP 13.6)
 - [x] Lojas › Caixas (número, descrição) (ERP 10.3.10)
 - [x] Usuários (dados gerais, lojas permitidas, limite de desconto, senha numérica do PDV, flags) e Perfis de acesso (ERP 11.1–11.3)

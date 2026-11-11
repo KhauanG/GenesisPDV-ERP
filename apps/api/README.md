@@ -158,6 +158,8 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
 | `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
 | `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
+| `IMAGENS_CONCORRENCIA` / `IMAGENS_LIMITE_PIXELS` | 1 / 36000000 | Imagens decodificadas ao mesmo tempo no processo (o sharp, uma thread do libvips cada) e o teto de pixels (largura × altura) aceito no envio, conferido pelo cabeçalho antes de decodificar (decisão 189) |
+| `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
@@ -334,6 +336,7 @@ tempos e contagens; a planilha e o estado com os códigos nunca saem da pasta te
 | exceljs | 4.4.0 (exata) | só o `WorkbookWriter` em streaming da exportação de relatório em tarefa (F2-B29, decisão 177); MIT, 23 MB e ~120 pacotes transitivos (archiver, unzipper, jszip, fast-csv…: a parte de leitura vem junto e fica sem uso; a transitiva mais nova é de 07/10/2026, mais de duas semanas); o alerta moderado do `uuid@8` (GHSA-w5hq-g745-h8pq, `v3`/`v5`/`v6` com `buf`) não se aplica: o exceljs só chama `v4`. O síncrono continua no `write-excel-file` |
 | read-excel-file | 9.3.10 | leitura do xlsx da importação (mesmo autor do `write-excel-file`, só `fflate` + parser SAX); a 9.3.14 é de 29/10/2026 (menos de duas semanas) |
 | fast-xml-parser | 5.11.2 | XML da NF-e de fornecedor (F2-B18, decisão 163), com `processEntities: false` e `maxNestedTags`; a 5.12.0 é de 03/11/2026 (menos de duas semanas) |
+| sharp | 0.35.5 (exata) | conferência e variante `pdv_256` das imagens enviadas (F2-B43, decisão 189); libvips 8.18.7 **pré-compilado** nos pacotes opcionais `@img/sharp-<plataforma>` (no Linux da VPS e da imagem Docker, `@img/sharp-linux-x64` + `@img/sharp-libvips-linux-x64`, glibc; o `node:22-bookworm-slim` é glibc), sem compilar nada na instalação (não precisa entrar em `onlyBuiltDependencies`); de 27/09/2026. O lockfile traz as variantes de todas as plataformas e o pnpm instala só a da máquina |
 | xml-crypto / @xmldom/xmldom | 6.4.0 / 0.8.15 | conferência da assinatura XMLDSig da NF-e (decisão 163); o `@xmldom/xmldom` fixado na mesma versão que o `xml-crypto` usa, para o nó passado a `loadSignature` ser do mesmo DOM |
 
 ## Decisões de implementação
@@ -348,7 +351,8 @@ Divergências e lacunas encontradas nos documentos (precedência ADR > MD > SYNC
 3. **Envelope de erro**: o do ERP 1.8 (`{ codigo, mensagem, campos }`) com `detalhes` e `requisicao_id` opcionais.
    Códigos acrescentados: `EMPRESA_CANCELADA` (MD 2.3), `TROCA_SENHA_OBRIGATORIA` (403, senha provisória),
    `CONFLITO` (409, violação de unicidade), `LIMITE_TAXA` (429), `MANUTENCAO` (503 + `Retry-After`),
-   `REFRESH_CONCORRENTE` (409, decisão 12). O `/sync` usa o envelope próprio da SYNC 2.4 (`src/sync/erros.ts`). A API do ERP usa JSON em `camelCase` (contrato pedido para o login); o sync segue
+   `REFRESH_CONCORRENTE` (409, decisão 12), `ARQUIVO_GRANDE` (413) e `TIPO_NAO_SUPORTADO` (415) do envio de arquivos
+   (decisão 189). O `/sync` usa o envelope próprio da SYNC 2.4 (`src/sync/erros.ts`). A API do ERP usa JSON em `camelCase` (contrato pedido para o login); o sync segue
    `snake_case` (SYNC 2.3).
 4. **`empresas.canario`**: o ERP 19.7 fala em "empresas marcadas como canário"; o MD 2.3 ainda não tem a coluna. Foi
    criada e precisa entrar no MD. Sem empresa marcada, a de menor código é o canário; falha no canário interrompe a
@@ -875,7 +879,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     loja) toca as pessoas com `senha_hash` (na loja, só as relevantes para ela), se houver terminal ativo no escopo
     (decisão 124). Testes: "pessoas.senha_hash só desce…" e "trocar a exigência de senha…" (`sync.test.ts`).
 91. **Pendências de cadastro desta fase** (roadmap Fase 1 › ERP – cadastros base, itens "parcial"): **Anexos** da loja
-    (logotipo/foto; também os de marca/categoria) esperam o envio de arquivos → Fase 2, com as imagens do produto;
+    (logotipo/foto; também os de marca/categoria) esperam o envio de arquivos → Fase 2, com as imagens do produto (os
+    da loja e o envio ficaram prontos no F2-B43, decisão 189; os de marca e categoria são o F2-B44);
     **variações na importação** → importação completa da Fase 2 (o combo entra, decisão 95); **Tipos de estoque**: tela
     somente leitura `/estoque/tipos` (o CRUD do ERP 13.6 é da Fase 2); **ficha técnica**: o cadastro está pronto e
     segue a interpretação adotada da **D17** (produto `produzido` não tem saldo próprio — acerto e importação recusam
@@ -5605,6 +5610,113 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        "NF-e", com o texto legível e a `descricao` gravada com o documento), `importacao-nuvem3.test.ts` (a
        localização "Produtos › Importação" e a `descricao` da criação e da edição pela planilha),
        `cadastro-massa.test.ts` (a `descricao` do cadastro em massa) e o `relatorios-produtos.spec.ts` do shared.
+
+189. **Envio de arquivos e imagens: o tipo pelo conteúdo, os limites no stream e a variante `pdv_256`** (Fase 2,
+     F2-B43; MD 3.1.6; SYNC 6.12; ERP 8.2.6, 10.3.4; decisões 91 e 93; `src/arquivos/` (o controlador, o serviço
+     `Arquivos`, `vincularArquivo` e `imagens.ts`), `chaveVariante` e `excluir` em `src/infra/armazenamento.ts`, os
+     Anexos no `PUT /lojas/:id`; contratos no shared `arquivos.ts` e os códigos `ARQUIVO_GRANDE` (413) e
+     `TIPO_NAO_SUPORTADO` (415) em `erros.ts`; migração **`0027_arquivos_variantes`**; PDV sem mudança: o
+     `/sync/arquivos` e o `foto_url` são o F2-B45; o ERP é a decisão 77 do README do ERP).
+     - **`POST /api/arquivos?destino=…`** (multipart, um arquivo no campo `arquivo`, nenhum campo de texto). O
+       **destino** (`DESTINOS_ARQUIVO` no shared: `produto_foto`, `categoria_imagem`, `marca_logotipo`,
+       `loja_logotipo` e `loja_foto`, estes dois com `&lojaId=`) decide a categoria e a entidade gravadas, os tipos, o
+       limite e as variantes. Vem na **query**, não no corpo: assim tudo é decidido **antes** de ler o corpo.
+     - **Antes de o multer ler** (o interceptor `LimiteEnvioArquivo`, como o da NF-e, decisão 164): a query; a
+       **permissão do destino** (basta uma: `produtos.criar` ou `produtos.editar`, `categorias.editar`,
+       `marcas.criar` ou `marcas.editar`, `lojas.editar`; sem ela, 403 sem ler nada) e a loja entre as permitidas
+       (fora delas, 404); o `Content-Length` contra o limite do destino mais 16 KiB do multipart (acima, 413
+       `ARQUIVO_GRANDE`; sem ele, o envio em pedaços, 422); o limite por usuário por minuto
+       (`ARQUIVOS_ENVIOS_POR_MINUTO`, 30) e o de envios simultâneos do usuário (`ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO`,
+       2: o logotipo e a foto da loja juntos; o terceiro, 429 na hora), que é o que limita a memória da leitura
+       (2 × o limite do destino por usuário).
+       Depois, o **multer corta o stream** no limite do destino (`limits` como função da requisição, multer ≥ 2.4:
+       2 MB; 1 MB no logotipo, o da loja vai ao cupom e ao DANFE): o `Content-Length` que mente não passa de lá, e a
+       memória de um envio é a do limite. Um arquivo só, `fields: 0`, `parts: 1`.
+     - **A vaga do semáforo do processo** (`ARQUIVOS_ENVIOS_SIMULTANEOS`, 4; o interceptor `VagaEnvioArquivo`, depois
+       do multer) é pega com o corpo **já lido** e solta quando a resposta termina: protege a memória e a CPU (o
+       buffer juntado, a variante e a gravação), não a rede. Na primeira versão do bloco ela vinha antes da leitura, e
+       a revisão mostrou que dois usuários quaisquer (o limite por usuário é por usuário, o semáforo é do processo)
+       com 2 envios lentos cada (o `Content-Length` de ~1 MB e o corpo a poucos bytes por segundo, até o
+       `requestTimeout` de 300 s do Node, ou os 60 s do `readTimeout` do Traefik) prendiam as 4 vagas e deixavam os
+       envios de todas as outras empresas na fila, sem resposta. Agora o envio lento segura só a vaga do próprio
+       usuário; quem espera o semáforo espera só o processamento dos outros, que tem fim. O envio da NF-e (decisão 164)
+       tem o mesmo desenho antigo e fica como está (fora do bloco; o corpo dele vai a 20 MB).
+     - **O tipo é o do conteúdo** (`detectarTipoArquivo`, os magic bytes: PNG pela assinatura de 8 bytes, JPEG por
+       `FF D8 FF`, WebP pelo `RIFF….WEBP`, PDF por `%PDF-`), nunca a extensão nem o `Content-Type` do cliente; fora
+       dos tipos do destino, 415 `TIPO_NAO_SUPORTADO`. **SVG nunca** (é documento com script, não imagem: o ERP 9.1
+       ainda o citava no logotipo da empresa e foi corrigido), nem GIF, HEIC ou TIFF. **O PDF** é reconhecido, mas
+       nenhum destino do F2-B43 o aceita: o "pdf só nos anexos" do plano ficou para os anexos que são documento (o
+       boleto e o comprovante do financeiro, ERP 15), com a tela deles; os Anexos da loja (ERP 10.3.4) são as duas
+       imagens.
+     - **A imagem é decodificada de verdade** (`processarImagem`, sharp 0.35.5): o PNG truncado ou o HTML com o
+       cabeçalho de PNG voltam 415 ("corrompido ou não é uma imagem"), e o formato que o libvips vê tem de ser o
+       detectado. Contra a **bomba de descompressão**: o cabeçalho é lido primeiro (`metadata`, que não decodifica) e
+       acima de `IMAGENS_LIMITE_PIXELS` (36 MP: a foto do celular tem 12 a 24) ou com várias páginas (animação) volta
+       422 com o tamanho; o `limitInputPixels` do sharp é a segunda barreira. **Uma imagem por vez no processo**
+       (`IMAGENS_CONCORRENCIA`, 1, como o argon2 e a planilha da decisão 93), `sharp.concurrency(1)` (uma thread do
+       libvips) e `sharp.cache(false)`. **Só os leitores de PNG, JPEG e WebP em memória** ficam liberados no processo
+       inteiro (`sharp.block({ operation: ['VipsForeignLoad'] })` + `unblock` dos três): SVG, PDF, TIFF, HEIF, GIF e
+       os leitores de arquivo do libvips não rodam nem chamando o sharp direto.
+     - **A variante `pdv_256`** (SYNC 6.12): WebP qualidade 80, até 256 px no maior lado (`fit: 'inside'`, sem
+       ampliar a imagem menor), com a orientação do EXIF aplicada e **sem metadados** (o EXIF do original, com o GPS do
+       celular, não vai para a variante; o original fica como enviado, para o sha256 ser o do arquivo). Todas as
+       imagens dos destinos de hoje ganham a variante (a miniatura do ERP também a usa); a `cupom_mono` do logotipo
+       e a `banner_1366` entram com o uso delas (o caixa ainda não imprime o logotipo da loja: pendência em
+       `docs/andamento.md`, sem bloco na Fase 2; a dica da tela avisa).
+     - **Gravação.** A chave é do servidor (`chaveArquivo`: `emp/<codigo>/<categoria>/<aaaa>/<mm>/<uuidv7>.<ext>`,
+       a extensão do tipo detectado; a variante ao lado, `….pdv_256.webp`, `chaveVariante`): o nome do cliente só vai
+       para `nome_original` (sem as pastas nem caracteres de controle, `nomeOriginalSeguro`), nunca para o caminho nem
+       para um cabeçalho. O original e a variante vão ao armazenamento **antes** da linha (E/S fora de transação, MD
+       1.5), com o sha256 nos metadados do objeto; a linha guarda o sha256, o tipo detectado e **`variantes`** (jsonb:
+       `{ "pdv_256": { chave, tipoMime, tamanhoBytes, sha256, largura, altura } }`, a coluna nova da `0027`, `not
+       null default '{}'`, que no PostgreSQL 11+ não reescreve a tabela). A linha falhou → os objetos são apagados
+       (`excluir`). A resposta (`ArquivoInfo`) nunca traz a chave.
+     - **Quem vê** (`GET /api/arquivos/:id`, os metadados; `GET /api/arquivos/:id/conteudo[?variante=pdv_256]`): a
+       empresa é a do banco do token (o id de outra empresa não existe aqui: 404), e o arquivo só aparece a quem vê o
+       cadastro dono (`produtos.ver`, `categorias.ver`, `marcas.ver`; `lojas.ver` com a loja do arquivo entre as
+       permitidas), também 404 (não revela que existe). As outras categorias (XML, planilhas, logs) têm as rotas delas
+       e aqui são 404. O conteúdo passa pela API (são até 2 MB; o `<img>` do ERP não manda o token, então a tela
+       baixa como blob), com o `Content-Type` **gravado** (o detectado: nunca `text/html` nem `image/svg+xml`),
+       `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` (quem abrir o
+       endereço direto não roda nada), `Content-Disposition` com o nome gerado `<id>[.<variante>].<ext>` (`inline` na
+       imagem, `attachment` no PDF), `ETag` = o sha256 e `Cache-Control: private, max-age=300`.
+     - **Os Anexos da loja** (ERP 10.3.4, a pendência da decisão 91): `logotipoArquivoId` e `fotoArquivoId` no
+       `PUT /lojas/:id` (`alterarLojaSchema`): o id de um envio `loja_logotipo`/`loja_foto` **da própria loja**,
+       `null` tira, ausente mantém (o ERP de antes do F2-B43 não manda e não apaga nada). `vincularArquivo` confere na
+       transação a categoria, a entidade, a loja e que o arquivo não é de outro registro (senão 422 no campo) e grava o
+       `registro_id`. A coluna já descia ao PDV no fluxo `configuracao` como texto (o PDV ignora: quem baixa a imagem é
+       o F2-B45); trocar o anexo só dá versão nova à linha da loja. A foto do produto, a imagem da categoria e o
+       logotipo da marca ligam pelo mesmo `vincularArquivo` no F2-B44.
+     - **Divergência com o documento:** a ERP 10.3.4 dizia o logotipo da loja "≤ 500 KB"; vale o 1 MB do plano
+       (`DESTINOS_ARQUIVO.loja_logotipo`), e a especificação foi corrigida.
+     - **Fora do bloco:** a limpeza dos envios abandonados (enviados e nunca gravados num cadastro: `registro_id`
+       nulo; o índice `ix_arquivos_entidade_registro_id` já serve a ela) e o logotipo da empresa (Configurações ›
+       Geral, `geral.logotipo_arquivo_id`), que entra com a tela dele, também sem SVG.
+     - **A dependência nova na imagem Docker:** o `sharp` traz o libvips pré-compilado (versões escolhidas). O
+       `pnpm install --frozen-lockfile` e o `pnpm --filter api deploy --prod` (o passo do `apps/api/Dockerfile`)
+       foram conferidos no Linux (glibc) da sessão: o `node_modules` de produção traz `@img/sharp-linux-x64` e
+       `@img/sharp-libvips-linux-x64` e o sharp carrega a partir dele. O `docker build` em si não rodou na sessão (sem
+       o daemon do Docker); a CI da `main` monta a imagem.
+     - Testes: `arquivos.spec.ts` do shared (os magic bytes, os destinos, as mensagens e a loja no envio),
+       `src/arquivos/arquivos.spec.ts` (o nome seguro, a chave da variante, a variante sem ampliar e com o EXIF
+       girado, a bomba, o formato trocado, o truncado e o SVG bloqueado no sharp) e `arquivos.test.ts` (o critério de
+       pronto: o JPEG 800 × 600 gravado com o sha256 no banco e no objeto e a `pdv_256` WebP 256 × 192; PNG e WebP com o
+       tipo do conteúdo e não o do cliente; o HTML renomeado para `.png` 415 sem gravar nada (a contagem de `arquivos`
+       antes e depois, sem depender da ordem dos testes); SVG, GIF, PDF na foto e o PNG truncado 415; 2,1 MB e o
+       logotipo de 1,1 MB 413 pelo `Content-Length` (só o cabeçalho da parte é mandado: o 413 chega sem o corpo); 1
+       byte acima do limite cortado no stream (o serviço não chega a ser chamado, e no limite exato chega); o terceiro
+       envio simultâneo do mesmo usuário 429 (e as vagas de volta quando os outros terminam); 4 envios lentos de dois
+       usuários sem prender o envio da outra empresa; o envio em pedaços 422; a bomba 50.000 × 50.000 422 sem a memória subir; a permissão 403, o destino e a
+       loja 422/404, o campo extra 422; o path traversal; outra empresa 404 nos dois sentidos; o arquivo de cadastro que
+       o usuário não vê, o da outra loja e a planilha 404; os cabeçalhos do conteúdo; os Anexos da loja gravados,
+       mantidos sem o campo e tirados com `null`, e recusados com outra categoria, outra loja ou id inexistente; 20
+       envios seguidos de ~1,1 MB sem a memória crescer, medidos depois do `gc()` (o `vitest.integracao.config.ts`
+       liga o `--expose-gc`, e o teste exige o GC): o heap, o `external`/`arrayBuffers` (menos os bytes exatos que o
+       S3 em memória guardou) e o rss abaixo de 10 MB (40 MB no rss), que guardar o buffer de cada envio (22 MB)
+       estoura, e o cache do libvips desligado (`sharp.cache()` com o máximo 0); 4 envios ao mesmo tempo com uma
+       tarefa do libvips por vez, `sharp.counters()`). Conferido tirando cada proteção (o `sharp.cache(false)`, o
+       semáforo de `imagens.ts`, o `fileSize` do multer, o `Content-Length`, a vaga depois da leitura, e guardando o
+       buffer de cada envio): o teste correspondente falha. Imagens inventadas, geradas no teste (`test/fixtures/imagens.ts`).
 
 ### Operação – tarefas em segundo plano (API)
 

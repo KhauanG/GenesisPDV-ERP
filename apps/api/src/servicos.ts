@@ -11,6 +11,7 @@ import { Provisionamento } from './plataforma/provisionamento.js';
 import { Cifra } from './seguranca/cifra.js';
 import { AssinadorJwt } from './seguranca/jwt.js';
 import { RedefinicaoSenha } from './auth/redefinicao-senha.js';
+import { Arquivos } from './arquivos/arquivos.js';
 import { ArmazenamentoObjetos } from './infra/armazenamento.js';
 import { EnviadorEmail } from './infra/email.js';
 import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
@@ -93,6 +94,8 @@ export interface Servicos {
   token: TokenTerminal;
   fila: FilaTrabalhos;
   armazenamento: ArmazenamentoObjetos;
+  /** Envio e leitura das imagens dos cadastros (F2-B43, decisão 189): tipo pelo conteúdo e a variante `pdv_256`. */
+  arquivos: Arquivos;
   email: EnviadorEmail;
   redefinicao: RedefinicaoSenha;
   tarefas: TarefasSegundoPlano;
@@ -270,6 +273,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     token: new TokenTerminal(controle, tenancy, auditoria),
     fila,
     armazenamento,
+    arquivos: new Arquivos({ tenancy, armazenamento }),
     email,
     redefinicao,
     tarefas,

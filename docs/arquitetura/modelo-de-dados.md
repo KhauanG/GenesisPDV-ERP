@@ -1038,6 +1038,12 @@ O conteúdo nunca fica no banco.
 | `loja_id` | `uuid` | sim | — | → `lojas`; preenchida para logotipo/banner de loja e XML fiscal. Define o escopo de `GET /sync/arquivos/{id}` (o terminal só baixa arquivos de cadastro, da própria loja e do próprio terminal — sincronizacao.md 6.12, 20.2) |
 | `publico` | `boolean` | não | `false` | Imagens de cardápio/menu digital servidas por CDN |
 | `retencao_ate` | `date` | sim | — | XML fiscal: emissão + 5 anos (mín. legal); nulo = indefinido |
+| `variantes` | `jsonb` | não | `'{}'` | Variantes geradas pela API no envio (sincronizacao.md 6.12): `{ "pdv_256": { chave, tipoMime, tamanhoBytes, sha256, largura, altura } }`, cada uma um objeto próprio no armazenamento, ao lado do original (`….pdv_256.webp`); `{}` = só o original. Fase 2, F2-B43, migração `0027_arquivos_variantes` |
+
+O envio pelo ERP (`POST /api/arquivos`, Fase 2, F2-B43; README da API › decisão 189) confere o tipo pelo **conteúdo**
+(magic bytes: PNG, JPEG, WebP; PDF reconhecido, mas nenhum destino de cadastro o aceita ainda; SVG nunca) e grava em
+`tipo_mime` o tipo detectado, com que o arquivo é servido (`nosniff`). A chave é sempre gerada pelo servidor; o nome do
+cliente só vai para `nome_original`.
 
 - `ix_arquivos_entidade_registro_id`; `ix_arquivos_sha256`; `ix_arquivos_loja_id (loja_id) where loja_id is not null`;
   `fk_arquivos_loja_id`; `ck_arquivos_categoria`.

@@ -988,7 +988,8 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   houver, a página de download explica o aviso do SmartScreen.
 - SMTP real (e-mail da Hostinger): sem ele, os e-mails (ex.: “esqueci a senha”) falham na fila e o resto funciona.
 - `Content-Security-Policy` do ERP: fica para depois de conferida com o ERP de verdade no navegador (Mantine usa
-  estilos inline; a URL assinada do armazenamento é de outro domínio).
+  estilos inline; a URL assinada do armazenamento é de outro domínio; a miniatura do `<UploadArquivo>` é uma imagem
+  `data:`, então `img-src 'self' data:`, README do ERP › decisão 77).
 - Converter a instância de teste grátis do Cloud SQL em paga antes do fim do período de teste (~03/12/2026) e, nela,
   ligar backups automáticos e PITR (aí o dump do I1b vira a segunda cópia, fora do Cloud SQL).
 - Apagar os arquivos com `retencao_ate` vencida (exportações, 7 dias; relatório da importação, 30): hoje ninguém os

@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a liberação do dono, falta implantar; PR-10 "Arquivos, imagens e protocolo do PDV" iniciado no F2-B43; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a liberação do dono, falta implantar; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43 commitado, próximo F2-B44; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -92,7 +92,7 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a l
 
 | Bloco | Situação |
 |---|---|
-| F2-B43 envio de arquivos e imagens, com a variante `pdv_256` | em andamento |
+| F2-B43 envio de arquivos e imagens, com a variante `pdv_256` (API: `POST /api/arquivos?destino=` multipart com o destino na query — `produto_foto`, `categoria_imagem`, `marca_logotipo` (1 MB), `loja_logotipo` (1 MB) e `loja_foto`, com `lojaId` —, a permissão do destino, o `Content-Length` e o limite por usuário antes de ler o corpo e a vaga do semáforo do processo só com o corpo lido, o multer cortando o stream no limite (2 MB; 1 MB no logotipo), o tipo pelos magic bytes (PNG/JPEG/WebP; PDF reconhecido e nenhum destino o aceita; SVG nunca), 415 `TIPO_NAO_SUPORTADO` e 413 `ARQUIVO_GRANDE` novos; a imagem decodificada com o **sharp 0.35.5** (versão exata, libvips pré-compilado glibc; `pnpm deploy --prod` conferido, o `docker build` não rodou na sessão) só com os leitores PNG/JPEG/WebP liberados, uma por vez, o limite de pixels pelo cabeçalho (36 MP) contra a bomba de descompressão e a `pdv_256` WebP até 256 px sem EXIF; chave do servidor, sha256 no banco e no objeto; `GET /api/arquivos/:id[/conteudo?variante=pdv_256]` com o tipo gravado, `nosniff`, CSP `sandbox` e o nome `<id>.<ext>`, 404 para outra empresa e para quem não vê o cadastro dono; os Anexos no `PUT /lojas/:id` com o envio da própria loja; migração **0027_arquivos_variantes** (`arquivos.variantes jsonb`, sem reescrever a tabela); ERP: `<UploadArquivo>` (envia ao arrastar ou escolher, confere o tamanho e o tipo pelo conteúdo, a miniatura `pdv_256` como blob) e a aba Anexos da loja (logotipo e foto); PDV sem mudança, sem `Esquema.g.cs`; README da API › decisão 189, do ERP › 77) | commitado |
 | F2-B44 foto e imagens do produto, categorias e marcas completas | a fazer |
 | F2-B45 protocolo do PDV: `/sync/arquivos`, `foto_url` estável e as tabelas de complementos (F2-Q1 = D43: complementos sim), numa só volta de cursor | a fazer |
 
@@ -132,10 +132,12 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a l
    EAN duplicado zerar na Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano). D65 respondida
    (11/11/2026): 100 linhas por gravação do cadastro em massa.
 3b. **PR-10 "Arquivos, imagens e protocolo do PDV"** (F2-B43 a F2-B45; release R2 do PDV): workflow `genesis-bloco`
-   bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 em andamento. O
+   bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 commitado;
+   próximo: F2-B44 (foto do produto, imagem da categoria e logotipo da marca, pelo
+   `vincularArquivo` e o `<UploadArquivo>` do F2-B43). O
    F2-B45 inclui as tabelas de complementos (F2-Q1 = D43: complementos sim) e uma única volta do cursor do `catalogo`;
    a API vai para a produção antes do PDV.
-4. Numeração das próximas decisões nos READMEs: **API 189**, **ERP 77**, **PDV 85** (confira o último número no próprio
+4. Numeração das próximas decisões nos READMEs: **API 190**, **ERP 78**, **PDV 85** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
@@ -164,6 +166,10 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` em 11/11/2026 com a l
   desde 06/11: a API registra em `fatal` a exceção não tratada, o sinal e o heap alto; a saúde detalhada tem
   `processo`; o `implantar.sh` guarda o log da API em `/opt/genesis/logs` (`implantar.sh logs`). Na próxima queda:
   `infra/producao/README.md` › A API reiniciou sozinha.
+- **Logotipo da loja no cupom (sem bloco ainda):** o F2-B43 guarda o logotipo (Lojas › Anexos), mas o caixa ainda
+  não o imprime: falta gerar a variante `cupom_mono` (SYNC 6.12) e levar o logotipo da loja ao PDV (o F2-B45 leva só
+  as imagens de produto, marca e categoria). A dica da tela já avisa ("a impressão no caixa entra numa próxima
+  versão"). Encaixar num bloco do PDV quando o cupom ganhar o logotipo (o `imprime_logotipo` do PDV).
 - **Cloud SQL:** converter o trial antes de 26/11/2026.
 - **G7 review** (achados menores da aba Sincronização da Central): conferir se algum ficou de fora antes de mexer de
   novo na Central.

@@ -1470,6 +1470,9 @@ convivência com o Nuvem3).
 - **Critério de pronto:** uma foto enviada no ERP fica guardada com o sha256 e a variante `pdv_256`, e o upload malicioso é recusado.
 - **Depende de:** nada.
 - **Decisões usadas:** README da API, decisões 62, 91 e 93; implantação de 03/11/2026.
+- **Pendência deixada (revisão do bloco):** o logotipo da loja fica guardado, mas o caixa ainda não o imprime; a
+  variante `cupom_mono` (SYNC 6.12) e a descida do logotipo da loja ao PDV não estão em nenhum bloco da Fase 2 (o
+  F2-B45 leva só as imagens de produto, marca e categoria). Registrado em `docs/andamento.md` › Pendências.
 
 #### F2-B44 – Foto e imagens do produto, categorias e marcas completas
 - **Tamanho:** M

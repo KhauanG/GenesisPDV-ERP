@@ -10,6 +10,7 @@ import {
   CompleteMultipartUploadCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -46,6 +47,17 @@ export function chaveArquivo(
       .replace(/[^a-z0-9]/g, '') || 'bin';
   const mes = String(agora.getUTCMonth() + 1).padStart(2, '0');
   return `emp/${codigoEmpresa}/${categoria}/${agora.getUTCFullYear()}/${mes}/${uuidv7()}.${ext}`;
+}
+
+/**
+ * A chave de uma variante (a `pdv_256` da foto, F2-B43): a do original com o nome da variante antes da extensão
+ * (`…/<uuid>.jpg` → `…/<uuid>.pdv_256.webp`). Tudo gerado pelo servidor: nada do nome do arquivo do cliente entra no
+ * caminho.
+ */
+export function chaveVariante(chaveOriginal: string, variante: string, extensao: string): string {
+  const base = chaveOriginal.replace(/\.[a-z0-9]+$/, '');
+  const ext = extensao.toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  return `${base}.${variante.replace(/[^a-z0-9_]/g, '')}.${ext}`;
 }
 
 /** XML fiscal é endereçado por conteúdo: reenviar o mesmo XML é idempotente (SYNC 9.10). */
@@ -186,6 +198,11 @@ export class ArmazenamentoObjetos {
   async ler(chave: string): Promise<Buffer> {
     const r = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: chave }));
     return Buffer.from(await r.Body!.transformToByteArray());
+  }
+
+  /** Apaga o objeto (o envio que não chegou a ser gravado em `arquivos`); objeto inexistente não é erro no S3. */
+  async excluir(chave: string): Promise<void> {
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: chave }));
   }
 
   /** URL assinada de download; `nomeArquivo` vira o `Content-Disposition` da resposta. */

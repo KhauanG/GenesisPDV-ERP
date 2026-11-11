@@ -159,6 +159,14 @@ export const arquivos = pgTable(
     lojaId: uuid('loja_id'),
     publico: boolean('publico').notNull().default(false),
     retencaoAte: date('retencao_ate'),
+    /**
+     * Variantes geradas pela API no envio (SYNC 6.12; F2-B43, migração `0027_arquivos_variantes`): `{ "pdv_256":
+     * { chave, tipoMime, tamanhoBytes, sha256, largura, altura } }`. Cada variante é outro objeto no armazenamento,
+     * com a chave gerada pelo servidor; `{}` = só o original (planilhas, XML, PDF).
+     */
+    variantes: jsonb('variantes')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
   },
   (t) => [
     primaryKey({ name: 'pk_arquivos', columns: [t.id] }),

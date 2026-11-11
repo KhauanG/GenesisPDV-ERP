@@ -1,3 +1,4 @@
+export * from './arquivos.js';
 export * from './auth.js';
 export * from './campos.js';
 export * from './catalogo.js';

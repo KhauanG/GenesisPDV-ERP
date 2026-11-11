@@ -153,6 +153,120 @@ describe('<FormularioLoja> – assistente de primeira configuração (MD 7.13)',
   });
 });
 
+describe('<FormularioLoja> – Anexos (ERP 10.3.4; F2-B43)', () => {
+  const LOJA = '01928f3a-0000-7000-8000-0000000000a1';
+  const LOGO = '01928f3a-0000-7000-8000-0000000000f1';
+  const detalhe = {
+    id: LOJA,
+    versao: 7,
+    criadoEm: '2026-11-01T12:00:00.000Z',
+    atualizadoEm: '2026-11-01T12:00:00.000Z',
+    atualizadoPorNome: 'MARIA',
+    codigo: 1,
+    nome: 'Loja 1',
+    tipo: 'ponto_venda',
+    razaoSocial: 'Loja 1 Ltda',
+    nomeFantasia: 'Loja 1',
+    cnpj: '11222333000181',
+    ie: null,
+    inscricaoMunicipal: null,
+    telefone: null,
+    celular: null,
+    email: null,
+    estoqueId: ESTOQUE_CD,
+    estoqueNome: 'CD - Estoque Ice Beer',
+    cep: '80010000',
+    logradouro: 'Rua XV',
+    numero: '100',
+    complemento: null,
+    bairro: 'Centro',
+    uf: 'PR',
+    municipioIbge: 4106902,
+    municipioNome: 'Curitiba',
+    fusoHorario: 'America/Sao_Paulo',
+    fraseRodapeCupom: null,
+    ordem: 0,
+    ativa: true,
+    usaPdv: true,
+    usaMenuDigital: false,
+    treino: false,
+    chavePublica: null,
+    chavePix: null,
+    pixNomeRecebedor: null,
+    pixCidadeRecebedor: null,
+    regime: null,
+    tipoEmissao: 'nao_fiscal',
+    nfceAmbiente: 2,
+    nfeSerie: null,
+    nfcePrazoCancelamentoMin: 30,
+    nfceValorExigeIdentificacao: '10000.00',
+    logotipoArquivoId: null,
+    fotoArquivoId: null,
+    contaCaixaId: null,
+    nfeProximoNumero: null,
+  };
+
+  it('enviar o logotipo põe o id no cadastro, que vai no Salvar da loja', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = simularApi(
+      ...rotasSessao({ permissoes: ['lojas.ver', 'lojas.editar', 'estoques.ver'] }),
+      ...rotasBase,
+      ({ url, metodo }) =>
+        metodo === 'GET' && url.pathname === `/api/lojas/${LOJA}` ? { corpo: detalhe } : undefined,
+      ({ url, metodo }) =>
+        metodo === 'POST' && url.pathname === '/api/arquivos'
+          ? {
+              status: 201,
+              corpo: {
+                id: LOGO,
+                categoria: 'logotipo',
+                entidade: 'lojas',
+                lojaId: LOJA,
+                nomeOriginal: 'logo.png',
+                tipoMime: 'image/png',
+                tamanhoBytes: 8,
+                sha256: 'a'.repeat(64),
+                variantes: {},
+                criadoEm: '2026-11-11T12:00:00.000Z',
+              },
+            }
+          : undefined,
+      ({ url, metodo }) =>
+        metodo === 'PUT' && url.pathname === `/api/lojas/${LOJA}`
+          ? { status: 422, corpo: { codigo: 'VALIDACAO', mensagem: 'x', campos: {} } }
+          : undefined,
+    );
+    const { container } = renderizarComSessao(
+      <FormularioLoja />,
+      `/cadastros/lojas/${LOJA}/anexos`,
+      'cadastros/lojas/:id/:aba?',
+    );
+    expect(await screen.findByText('Logotipo')).toBeInTheDocument();
+    expect(screen.getByText('Foto da loja')).toBeInTheDocument();
+    // A dica não promete a impressão que o caixa ainda não faz; o limite vem do shared.
+    expect(screen.getByText(/a impressão no caixa entra numa próxima versão.*até 1 MB$/)).toBeInTheDocument();
+    expect(screen.getByText(/A fachada, para o menu digital; .*até 2 MB$/)).toBeInTheDocument();
+    expect(screen.queryByText(/Impresso no cupom/)).not.toBeInTheDocument();
+    const [logotipo] = container.querySelectorAll('input[type="file"]');
+    const png = new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], 'logo.png', {
+      type: 'image/png',
+    });
+    await u.upload(logotipo as HTMLInputElement, png);
+    await waitFor(() =>
+      expect(chamadas.some((c) => c.metodo === 'POST' && c.url.pathname === '/api/arquivos')).toBe(true),
+    );
+    const post = chamadas.find((c) => c.metodo === 'POST' && c.url.pathname === '/api/arquivos')!;
+    expect(post.url.search).toBe(`?destino=loja_logotipo&lojaId=${LOJA}`);
+    await u.click(await screen.findByRole('button', { name: /Salvar/ }));
+    await waitFor(() => expect(chamadas.some((c) => c.metodo === 'PUT')).toBe(true));
+    expect(chamadas.find((c) => c.metodo === 'PUT')!.corpo).toMatchObject({
+      versao: 7,
+      logotipoArquivoId: LOGO,
+      fotoArquivoId: null,
+    });
+  }, 30_000);
+});
+
 describe('corpoLoja', () => {
   it('na alteração não manda o modo do estoque; série vazia vira nula', () => {
     const c = corpoLoja(
@@ -167,5 +281,8 @@ describe('corpoLoja', () => {
     });
     expect(c).not.toHaveProperty('nomeEstoque');
     expect(c).not.toHaveProperty('modoEstoque');
+    expect(c).toMatchObject({ logotipoArquivoId: null, fotoArquivoId: null });
+    // A loja nova não tem Anexos (o envio leva o id da loja).
+    expect(corpoLoja(LOJA_VAZIA, true)).not.toHaveProperty('logotipoArquivoId');
   });
 });

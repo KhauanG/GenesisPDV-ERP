@@ -1,15 +1,16 @@
 /**
- * S3 mínimo em memória para os testes (PUT/GET/HEAD de objeto e de bucket, estilo caminho, e o envio em multipart:
- * iniciar, parte, concluir e abortar). Não confere a assinatura nem o tamanho mínimo das partes: serve para provar o
- * encanamento (chaves, URL assinada, conteúdo). Com `ARMAZENAMENTO_TESTE_URL` os testes usam um S3 de verdade (MinIO
- * do docker-compose) em vez dele.
+ * S3 mínimo em memória para os testes (PUT/GET/HEAD/DELETE de objeto, PUT/HEAD de bucket, estilo caminho, e o
+ * envio em multipart: iniciar, parte, concluir e abortar). Não confere a assinatura nem o tamanho mínimo das partes:
+ * serve para provar o encanamento (chaves, URL assinada, conteúdo). Com `ARMAZENAMENTO_TESTE_URL` os testes usam um
+ * S3 de verdade (MinIO do docker-compose) em vez dele.
  */
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 export interface S3Falso {
   url: string;
-  objetos: Map<string, { corpo: Buffer; tipo: string }>;
+  /** `sha256`: o metadado `x-amz-meta-sha256` do `PutObject` (o `gravar` do armazenamento manda). */
+  objetos: Map<string, { corpo: Buffer; tipo: string; sha256?: string }>;
   /** Envios em multipart abertos (iniciados e ainda não concluídos nem abortados). */
   multipart: Map<string, { id: string; tipo: string; partes: Map<number, Buffer> }>;
   pedidos: Array<{ metodo: string; caminho: string; consulta: URLSearchParams }>;
@@ -26,7 +27,7 @@ export interface S3Falso {
 }
 
 export async function iniciarS3Falso(): Promise<S3Falso> {
-  const objetos = new Map<string, { corpo: Buffer; tipo: string }>();
+  const objetos: S3Falso['objetos'] = new Map();
   const buckets = new Set<string>();
   const pedidos: S3Falso['pedidos'] = [];
   const multipart: S3Falso['multipart'] = new Map();
@@ -118,8 +119,19 @@ export async function iniciarS3Falso(): Promise<S3Falso> {
         );
         return;
       }
+      if (req.method === 'DELETE') {
+        objetos.delete(id);
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
       if (req.method === 'PUT') {
-        objetos.set(id, { corpo: Buffer.concat(partes), tipo: String(req.headers['content-type'] ?? '') });
+        const sha256 = req.headers['x-amz-meta-sha256'];
+        objetos.set(id, {
+          corpo: Buffer.concat(partes),
+          tipo: String(req.headers['content-type'] ?? ''),
+          ...(typeof sha256 === 'string' ? { sha256 } : {}),
+        });
         res.setHeader('ETag', '"falso"');
         res.end();
         return;
