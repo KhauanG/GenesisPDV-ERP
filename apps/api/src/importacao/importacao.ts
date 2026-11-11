@@ -452,7 +452,10 @@ export class Importacoes {
             planilha.linhas,
             mapa.indices,
             await carregarReferenciasClientes(db, planilha.linhas, mapa.indices),
-            { editarCredito: sessao.permissoes.has('pessoas.editar_credito') },
+            {
+              editarCredito: sessao.permissoes.has('pessoas.editar_credito'),
+              verPessoas: sessao.permissoes.has('pessoas.ver'),
+            },
           );
     // A planilha não faz o que o usuário não faria no formulário (decisão 85).
     for (const l of linhas) {
@@ -473,6 +476,9 @@ export class Importacoes {
             : 'Sem permissão para alterar pessoas ("Pessoas: Editar")',
         );
         l.acao = 'ignorar';
+        // A linha não será gravada: o "O que muda" (com os valores do cadastro) não vai para a prévia nem para o
+        // relatório de quem não poderia alterar o registro (revisão de segurança do PR-9, D63).
+        delete l.alteracoes;
       }
     }
     return { linhas, mapa };

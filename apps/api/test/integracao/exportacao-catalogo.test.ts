@@ -816,6 +816,38 @@ describe('Exportar Clientes', () => {
     );
     expect(numero!.numero).toBe('200');
   });
+
+  it('sem "Pessoas: Ver" a prévia não traz nenhum valor do cadastro (revisão de segurança do PR-9, D63)', async () => {
+    const e = await exportar('/api/pessoas/exportacao?formato=xlsx');
+    const livro = new ExcelJS.Workbook();
+    await livro.xlsx.load(e.corpo as unknown as ArrayBuffer);
+    const aba = livro.worksheets[0]!;
+    const cab = (aba.getRow(1).values as unknown[]).slice(1) as string[];
+    const gravados: string[] = [];
+    aba.eachRow((linha, n) => {
+      if (n === 1) return;
+      // O que está gravado sai da planilha; ficam valores inventados, como faria quem tenta ler o cadastro.
+      for (const coluna of ['E-mail', 'Telefone', 'RG/IE', 'Logradouro']) {
+        const celula = linha.getCell(cab.indexOf(coluna) + 1);
+        if (celula.value) gravados.push(String(celula.value));
+        celula.value =
+          coluna === 'E-mail' ? 'x@exemplo.com' : coluna === 'Telefone' ? '(11) 99999-9999' : 'X';
+      }
+    });
+    const planilha = Buffer.from(await livro.xlsx.writeBuffer());
+    expect(gravados.length).toBeGreaterThan(0);
+    await perfil('imp_sem_ver', ['pessoas.importar']);
+    await perfil('imp_editar_sem_ver', ['pessoas.importar', 'pessoas.editar']);
+    for (const login of ['sem_ver', 'editar_sem_ver']) {
+      await criarUsuario(emp.nomeBanco, { login, perfil: `imp_${login}`, lojas: [loja1] });
+      const token = await amb.entrar(emp.codigo, login, SENHA_TESTE);
+      const p = await previa(planilha, `${login}.xlsx`, { token, tipo: 'clientes' });
+      expect(p.linhas.length).toBe(2);
+      for (const l of p.linhas) expect(l.alteracoes ?? []).toEqual([]);
+      const corpo = JSON.stringify(p);
+      for (const valor of gravados) expect(corpo).not.toContain(valor);
+    }
+  });
 });
 
 /** Cada espera da carga real (a importação de ~1.664 produtos, uma transação por produto, e a exportação). */

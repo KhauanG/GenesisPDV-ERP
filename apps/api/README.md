@@ -5387,6 +5387,11 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `sem_alteracao` e a confirmação não grava nada (nem versão nova para os PDVs nem auditoria); com diferença, só o
        que mudou é gravado e a prévia mostra cada "de → para" (a planilha exportada antes de uma alteração no ERP aparece
        como mudança, não sobrescreve calada). Sem `pessoas.editar_credito` o limite não é comparado (já não era gravado).
+       **Sem `pessoas.ver` a linha não é comparada** (revisão de segurança do PR-9, D63): a prévia só exige
+       `pessoas.importar`, e o "de" traria o CPF/CNPJ, o RG, o nascimento, o telefone, o e-mail e o endereço de qualquer
+       pessoa achada pelo código (o "Sem alteração" serviria de oráculo para adivinhá-los). A linha fica "Atualizar" com
+       o que veio na planilha, como antes do F2-B40. A linha que vira "ignorar" por falta de `pessoas.editar` (ou
+       `produtos.editar`) também sai sem o `alteracoes`, na prévia e no relatório do resultado.
        **Correção na gravação** (`gravarCliente`): o telefone ou o e-mail da planilha que já existe no cadastro ficava
        sem a marca de principal (o atual perdia a marca e o da planilha era descartado como repetido); agora o existente
        só ganha a marca, com o id e os outros campos. O endereço principal recebia o da planilha sem id e perdia a

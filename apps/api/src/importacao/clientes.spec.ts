@@ -39,7 +39,7 @@ const REF: ReferenciasClientes = {
 };
 
 /** A linha exportada da MARIA, com as células trocadas por `mudar`. */
-function analisar(mudar: Record<string, string | number> = {}, editarCredito = true) {
+function analisar(mudar: Record<string, string | number> = {}, editarCredito = true, verPessoas = true) {
   const linha: Record<string, string | number> = {
     'Id (UUID)': MARIA,
     'Tipo (PF/PJ)': 'PF',
@@ -62,7 +62,7 @@ function analisar(mudar: Record<string, string | number> = {}, editarCredito = t
   const cabecalho = Object.keys(linha);
   const mapa = mapearColunas(cabecalho, 'clientes');
   const linhas: LinhaPlanilha[] = [{ numero: 2, valores: cabecalho.map((c) => linha[c]!) }];
-  return analisarClientes(linhas, mapa.indices, REF, { editarCredito })[0]!;
+  return analisarClientes(linhas, mapa.indices, REF, { editarCredito, verPessoas })[0]!;
 }
 
 describe('analisarClientes: "Sem alteração" e "O que muda" (decisão 103, F2-B40)', () => {
@@ -91,5 +91,15 @@ describe('analisarClientes: "Sem alteração" e "O que muda" (decisão 103, F2-B
     const l = analisar({ 'Limite de compras': 750 }, false);
     expect(l.acao).toBe('sem_alteracao');
     expect(l.dados.limiteCompras).toBeUndefined();
+  });
+
+  it('sem "Pessoas: Ver" a linha não é comparada: nenhum valor do cadastro sai na prévia (D63)', () => {
+    const igual = analisar({}, true, false);
+    expect(igual.acao).toBe('atualizar');
+    expect(igual.alteracoes).toBeUndefined();
+    const mudada = analisar({ Número: '200' }, true, false);
+    expect(mudada.alteracoes).toBeUndefined();
+    expect(JSON.stringify(mudada)).not.toContain('Rua Exemplo, 100');
+    expect(mudada.dados.cpfCnpj).toBe('52998224725');
   });
 });

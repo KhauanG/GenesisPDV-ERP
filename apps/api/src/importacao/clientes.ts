@@ -74,6 +74,13 @@ export interface ReferenciasClientes {
 export interface PermissoesAnaliseClientes {
   /** `pessoas.editar_credito`: sem ela o limite de compras da planilha não é gravado nem comparado. */
   editarCredito: boolean;
+  /**
+   * `pessoas.ver`: sem ela a linha não é comparada com o cadastro. O "de" de "O que muda" traria o CPF/CNPJ, o RG, o
+   * nascimento, o telefone, o e-mail e o endereço de quem já está gravado (revisão de segurança do PR-9, D63), e o
+   * "Sem alteração" serviria de oráculo para adivinhar esses dados. A linha fica "Atualizar" com tudo o que veio na
+   * planilha, como antes do F2-B40.
+   */
+  verPessoas: boolean;
 }
 
 const texto = (v: Celula | undefined): string | null => {
@@ -208,7 +215,7 @@ export function analisarClientes(
   linhas: readonly LinhaPlanilha[],
   indices: Record<string, number>,
   ref: ReferenciasClientes,
-  pode: PermissoesAnaliseClientes = { editarCredito: true },
+  pode: PermissoesAnaliseClientes = { editarCredito: true, verPessoas: true },
 ): LinhaCliente[] {
   const tem = (chave: string) => indices[chave] !== undefined;
   const documentos = new Map<string, number>();
@@ -359,7 +366,7 @@ export function analisarClientes(
       dados,
     };
     // Cliente existente: só o que muda é gravado; nada mudou → `sem_alteracao` (decisão 103).
-    if (linha.acao === 'atualizar') {
+    if (linha.acao === 'atualizar' && pode.verPessoas) {
       const atual = ref.atuais.get(existente!.id);
       if (atual) {
         linha.alteracoes = compararClienteComAtual(dados, atual, cidade, pode);
