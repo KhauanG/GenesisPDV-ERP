@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários": F2-B46 commitado e PR aberto (#9), aguardando a liberação do merge; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal" iniciado (F2-B51); PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -56,8 +56,10 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
 | PR-9 catálogo operacional | B37–B42 | concluído (#7, juntado em 11/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: 1 achado médio corrigido em `7fd9b8e`); **em produção** desde 11/11/2026 (Implantação manual na `main`, `e78db8c`, verde) |
 | PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | concluído (#8, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 12/11/2026 (API e ERP, Implantação manual verde em `3cb46a1`; a CI da `main` ficou verde ao repetir só a integração no PostgreSQL 18, que falhou no teste de heap do `recalcular-saldos`, já conhecido como sensível); release **`pdv-v0.12.0`** publicado e posto na página de download em 12/11/2026 (Implantação com `publicar_pdv`, verde); **falta** atualizar os caixas, um de cada vez (roteiro do item 3b, passo 5) |
-| PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | **aberto** (#9, 12/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; sem migração e sem release do PDV |
-| PR-12 em diante | | não iniciados |
+| PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
+| PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
+| PR-13 complementos: modal | B51 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11) |
+| PR-14 tributação gravada e fechamento | B52–B53 | não iniciado |
 
 ### PR-6 — blocos
 
@@ -88,6 +90,12 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | F2-B34 guarda de produto com variações no PDV (PDV: `ProdutoResolvido.ExigeVariacao`/`VariacaoId`, `ProdutoVenda.TemVariacoesAtivas` e `GuardaVariacoes` no Core, marcação no `CatalogoLocal` — o código da variação e o pai `com_variacoes` com variação ativa; o legado sem variação ativa e o `com_complementos` vendem —, recusa no `ServicoVenda.IncluirResolvidoAsync` pelo bipe e pela pesquisa F2 com "Produto com variações: venda disponível na próxima versão"; chave `pdv.recusa_produto_com_variacoes` = `true`, por loja, D44 decidida pelo dono em 05/11/2026, na aba 7 da Central; nuvem: a venda do pai sem a variação é aceita e abre o `CADASTRO_PRODUTO` `venda_sem_variacao` (`abrirAlertaCadastro`, o mesmo do `alerta.cadastro`); ERP: a chave em Parâmetros › PDV e, ao ligar `produtos.variacoes_habilitadas`, o aviso dos caixas abaixo de `VERSAO_PDV_GUARDA_VARIACOES` = 0.11.0 por `GET /configuracoes/terminais-sem-guarda-variacoes`; **sem migração**, sem `Esquema.g.cs` nem protocolo novos, versão do PDV inalterada (a R1 é do fechamento do PR-8); README da API › decisão 181, do ERP › 69, do PDV › 81) | **commitado** |
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
 | F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
+
+### PR-13 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B51 complementos: modal no ERP e liberação do tipo | em andamento |
 
 ### PR-11 — blocos
 
@@ -169,6 +177,10 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
       de novo sozinhos. Os produtos listados aparecem no ERP em Relatórios › NCMs inválidos ("fora de vigência").
    3. Sem acesso ao Siscomex pela VPS: baixar o JSON no computador e rodar com `--arquivo - < arquivo.json`.
    4. Repetir uma vez por mês, ou quando houver resolução nova do Gecex.
+   PR-11 juntado na `main` (#9, 12/11/2026); falta a Implantação (sem migração, sem `publicar_pdv`).
+3d. **PR-13 "Complementos: modal"** (F2-B51; F2-Q1 = D43: complementos sim): workflow `genesis-bloco` no branch
+   `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11). O PR-12 (variações) fica fora (D43). Depois: o
+   PR-14 (F2-B52 tributação só gravada e F2-B53 fechamento da Fase 2, com a auditoria completa de segurança, D64).
 4. Numeração das próximas decisões nos READMEs: **API 194**, **ERP 79**, **PDV 87** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
