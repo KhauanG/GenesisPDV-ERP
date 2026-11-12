@@ -22,7 +22,7 @@ import {
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
-import { IconArrowsJoin } from '@tabler/icons-react';
+import { IconArrowsJoin, IconPrinter } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -30,11 +30,14 @@ import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
 import { useCadastro } from '../../componentes/cadastro';
+import { tiposELimiteArquivo, UploadArquivo } from '../../componentes/campos/UploadArquivo';
 import { FormularioEntidade } from '../../componentes/FormularioEntidade';
 import { Listagem, type ConfigListagem } from '../../componentes/listagem/Listagem';
 import { NaoEncontrado } from '../Erros';
 
 export const ROTA_MARCAS = '/produtos/marcas';
+/** A ficha impressa pelo navegador (aba nova; padrão "Impressão" do plano da Fase 2; F2-B44). */
+export const urlFichaMarca = (id: string) => `${ROTA_MARCAS}/${id}/ficha?imprimir=1`;
 
 /** Marcas – listagem (ERP 8.7): filtro Nome; colunas Nome e Produtos. */
 export function ListaMarcas() {
@@ -82,10 +85,20 @@ interface Valores extends Record<string, unknown> {
   semMarca: boolean;
   exibeSite: boolean;
   ordem: number | string;
+  logotipoArquivoId: string | null;
 }
-const VAZIO: Valores = { descricao: '', semMarca: false, exibeSite: false, ordem: 0 };
+const VAZIO: Valores = {
+  descricao: '',
+  semMarca: false,
+  exibeSite: false,
+  ordem: 0,
+  logotipoArquivoId: null,
+};
 
-/** Marcas – formulário (ERP 8.7) com Mesclar marcas. */
+/**
+ * Marcas – formulário (ERP 8.7) com o logotipo (um envio `marca_logotipo`, gravado no Gravar), Imprimir (a ficha com
+ * os produtos, F2-B44; README do ERP › decisão 78) e Mesclar marcas.
+ */
 export function FormularioMarca() {
   const { id } = useParams();
   const pode = usePode();
@@ -101,6 +114,7 @@ export function FormularioMarca() {
       semMarca: m.semMarca,
       exibeSite: m.exibeSite,
       ordem: m.ordem,
+      logotipoArquivoId: m.logotipoArquivoId,
     }),
     paraCorpo: (v) => ({ ...v, ordem: v.ordem === '' ? 0 : Number(v.ordem) }),
     schemaCriar: criarMarcaSchema,
@@ -109,6 +123,7 @@ export function FormularioMarca() {
   const [mesclar, setMesclar] = useState(false);
   if (c.naoEncontrado) return <NaoEncontrado inicio={ROTA_MARCAS} />;
   const m = c.registro.data;
+  const somenteLeitura = !pode(c.novo ? 'marcas.criar' : 'marcas.editar');
 
   return (
     <>
@@ -119,7 +134,7 @@ export function FormularioMarca() {
         alteradoPor={m?.atualizadoPorNome}
         carregando={!c.novo && c.registro.isPending}
         salvando={c.salvando}
-        somenteLeitura={!pode(c.novo ? 'marcas.criar' : 'marcas.editar')}
+        somenteLeitura={somenteLeitura}
         sujo={form.isDirty()}
         rotaVoltar={ROTA_MARCAS}
         rotaNovo={!c.novo && pode('marcas.criar') ? `${ROTA_MARCAS}/novo` : undefined}
@@ -129,14 +144,28 @@ export function FormularioMarca() {
         aoRecarregar={c.recarregar}
         historico={m ? { entidade: 'marcas', registroId: m.id } : undefined}
         acoesExtras={
-          !c.novo && pode('marcas.editar') && pode('marcas.excluir') ? (
-            <Button
-              variant="default"
-              leftSection={<IconArrowsJoin size={16} />}
-              onClick={() => setMesclar(true)}
-            >
-              Mesclar marcas
-            </Button>
+          m ? (
+            <>
+              {/* A ficha é do cadastro de produtos também (a API exige `produtos.ver`). */}
+              {pode('produtos.ver') && (
+                <Button
+                  variant="default"
+                  leftSection={<IconPrinter size={16} />}
+                  onClick={() => window.open(urlFichaMarca(m.id), '_blank')}
+                >
+                  Imprimir
+                </Button>
+              )}
+              {pode('marcas.editar') && pode('marcas.excluir') && (
+                <Button
+                  variant="default"
+                  leftSection={<IconArrowsJoin size={16} />}
+                  onClick={() => setMesclar(true)}
+                >
+                  Mesclar marcas
+                </Button>
+              )}
+            </>
           ) : undefined
         }
         abas={[
@@ -164,10 +193,21 @@ export function FormularioMarca() {
                     />
                   </Group>
                 </Grid.Col>
+                <Grid.Col span={12}>
+                  <UploadArquivo
+                    rotulo="Logotipo"
+                    descricao={tiposELimiteArquivo('marca_logotipo')}
+                    destino="marca_logotipo"
+                    valor={form.getValues().logotipoArquivoId}
+                    aoMudar={(id) => form.setFieldValue('logotipoArquivoId', id)}
+                    somenteLeitura={somenteLeitura}
+                    erro={form.errors.logotipoArquivoId as string | undefined}
+                  />
+                </Grid.Col>
                 {m && (
                   <Grid.Col span={12}>
                     <Text size="sm" c="dimmed">
-                      {m.produtos} produto(s) desta marca. O logotipo entra com o envio de arquivos.
+                      {m.produtos} produto(s) desta marca.
                     </Text>
                   </Grid.Col>
                 )}

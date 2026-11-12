@@ -1593,6 +1593,57 @@ describe('payload completo do caixa (C4; SYNC 9.7, 8.4)', () => {
     expect(de, JSON.stringify(de)).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
   });
 
+  it('complemento_id que a nuvem não conhece é gravado nulo (FK da 0028, F2-B45); o conhecido fica; reenvio igual', async () => {
+    const p = await novoPonto();
+    const prod = await criarProduto({
+      nome: 'CAIPIRINHA COMPLEMENTOS F2B45',
+      tipo: 'servico',
+      controlaEstoque: false,
+    });
+    const [{ id: grupo }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into produtos_grupos_complementos (produto_id, nome) values ($1, 'Fruta') returning id",
+      [prod],
+    )) as [{ id: string }];
+    const [{ id: conhecido }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into produtos_complementos (grupo_id, descricao, preco_adicional) values ($1, 'Limão', '1.0000') returning id",
+      [grupo],
+    )) as [{ id: string }];
+    const desconhecido = uuidv7();
+    const v = venda(p, [{ produto: prod, quantidade: '1.000', preco: '12.0000' }]);
+    const complemento = (complementoId: string, descricao: string) => ({
+      id: uuidv7(),
+      item_venda_id: idItem(v, 0),
+      complemento_id: complementoId,
+      grupo_nome: 'Fruta',
+      descricao,
+      quantidade: '1.000',
+      preco_adicional: '0.0000',
+    });
+    const payload = {
+      ...v,
+      itens_venda_complementos: [
+        complemento(conhecido.toUpperCase(), 'Limão'),
+        complemento(desconhecido, 'Morango (opção apagada)'),
+      ],
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', payload)]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    const gravados = await consultar<{ descricao: string; complemento_id: string | null }>(
+      emp.nomeBanco,
+      'select descricao, complemento_id from itens_venda_complementos where item_venda_id = $1 order by descricao',
+      [idItem(v, 0)],
+    );
+    expect(gravados).toEqual([
+      { descricao: 'Limão', complemento_id: conhecido },
+      { descricao: 'Morango (opção apagada)', complemento_id: null },
+    ]);
+    // O reenvio do mesmo evento confere as linhas com a mesma regra: igual, sem divergência.
+    const [de] = await pushOk(p, [evento(p, 'venda.finalizada', payload)]);
+    expect(de, JSON.stringify(de)).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
+  });
+
   it('TEF, PIX, complemento e parcelas: gravados e ligados à venda; reenvio ja_existia mesmo com o status mudado', async () => {
     const p = await novoPonto();
     const prod = await criarProduto({ nome: 'CERV TEF PIX C6B' });

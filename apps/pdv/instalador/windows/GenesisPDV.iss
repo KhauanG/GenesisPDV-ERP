@@ -1,7 +1,7 @@
 ﻿; Instalador do GenesisPDV para Windows (implantação I3; PDV 5.1, 32.6 e 32.7; README do PDV › "Instalar na loja" e
 ; decisão 62). Inno Setup 6, compilado pelo gerar-instalador.ps1 (CI do PDV no Windows e workflow pdv-release):
 ;
-;   iscc /DVersaoApp=0.11.0 /DPastaPublicacao=<publish\win-x64> /DPastaSaida=<saída> GenesisPDV.iss
+;   iscc /DVersaoApp=0.12.0 /DPastaPublicacao=<publish\win-x64> /DPastaSaida=<saída> GenesisPDV.iss
 ;
 ; - Por máquina (administrador), só x64, Windows 10 22H2 (10.0.19045) ou mais novo.
 ; - O aplicativo (o executável único self-contained do dotnet publish) vai para {autopf}\GenesisPDV; os dados ficam em

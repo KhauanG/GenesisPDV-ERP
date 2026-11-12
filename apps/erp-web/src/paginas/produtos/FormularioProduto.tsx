@@ -5,6 +5,7 @@ import {
   gerarCodigoInterno,
   margemPct,
   markupPct,
+  MAXIMO_IMAGENS_PRODUTO,
   motivoTipoProdutoBloqueado,
   precoPeloMarkupTexto,
   resumoCombo,
@@ -73,6 +74,8 @@ import { usePode } from '../../auth/permissoes';
 import { useEu } from '../../auth/sessao';
 import { BuscaNcm } from '../../componentes/campos/BuscaNcm';
 import { CampoDataHora } from '../../componentes/campos/CamposData';
+import { GaleriaImagens } from '../../componentes/campos/GaleriaImagens';
+import { tiposELimiteArquivo, UploadArquivo } from '../../componentes/campos/UploadArquivo';
 import { useCadastro } from '../../componentes/cadastro';
 import { FormularioEntidade } from '../../componentes/FormularioEntidade';
 import { SeletorProduto } from '../../componentes/seletores/SeletorProduto';
@@ -152,6 +155,7 @@ const CAMPOS_BLOCO: Record<string, readonly string[]> = {
     'pesoAbatimentoG',
     'pesoPacoteKg',
   ],
+  imagens: ['fotoPrincipalArquivoId', 'imagens'],
   categorias: ['categorias', 'categoriaPrincipalId'],
   relacionados: ['relacionados'],
   fornecedores: ['fornecedores'],
@@ -431,6 +435,14 @@ export function FormularioProduto() {
           v.usaFichaTecnica ? `${v.insumos.length} insumo(s)` : null,
         ),
     bloco('outras', 'Outras informações', <OutrasInformacoes form={form} />, resumoOutras),
+    bloco(
+      'imagens',
+      'Foto e imagens',
+      <BlocoImagens form={form} somenteLeitura={!pode(c.novo ? 'produtos.criar' : 'produtos.editar')} />,
+      [v.fotoPrincipalArquivoId && 'Com foto', v.imagens.length && `${v.imagens.length} imagem(ns)`]
+        .filter(Boolean)
+        .join(' · ') || null,
+    ),
     bloco(
       'categorias',
       'Categorias',
@@ -1535,6 +1547,38 @@ function OutrasInformacoes({ form }: { form: Form }) {
         <TextInput label="Peso abatimento (g)" {...form.getInputProps('pesoAbatimentoG')} />
         <TextInput label="Peso pacote (kg)" {...form.getInputProps('pesoPacoteKg')} />
       </SimpleGrid>
+    </Stack>
+  );
+}
+
+/**
+ * Foto e imagens (ERP 8.2.6; F2-B44; README do ERP › decisão 78): a foto, que desce ao PDV (`foto_url`, F2-B45) e
+ * aparece no caixa quando "Exibe foto do produto no PDV" estiver ligada, e as outras imagens (menu digital, site).
+ * Enviar já grava o arquivo; o cadastro guarda a escolha no Gravar.
+ */
+function BlocoImagens({ form, somenteLeitura }: { form: Form; somenteLeitura: boolean }) {
+  const v = form.getValues();
+  return (
+    <Stack gap="md">
+      <UploadArquivo
+        rotulo="Foto do produto"
+        descricao={`${tiposELimiteArquivo('produto_foto')}. É a foto do caixa (quando ligada nos parâmetros do PDV).`}
+        destino="produto_foto"
+        valor={v.fotoPrincipalArquivoId}
+        aoMudar={(id) => form.setFieldValue('fotoPrincipalArquivoId', id)}
+        somenteLeitura={somenteLeitura}
+        erro={form.errors.fotoPrincipalArquivoId as string | undefined}
+      />
+      <GaleriaImagens
+        rotulo="Outras imagens"
+        descricao={`Até ${MAXIMO_IMAGENS_PRODUTO} (menu digital e site), na ordem; ${tiposELimiteArquivo('produto_foto')} cada.`}
+        destino="produto_foto"
+        valor={v.imagens}
+        aoMudar={(ids) => form.setFieldValue('imagens', ids)}
+        maximo={MAXIMO_IMAGENS_PRODUTO}
+        somenteLeitura={somenteLeitura}
+        erro={form.errors.imagens as string | undefined}
+      />
     </Stack>
   );
 }

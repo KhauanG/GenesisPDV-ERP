@@ -485,6 +485,9 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             modelBuilder.Entity(tipo).ToTable(tabela);
         }
 
+        // Complementos (F2-B45): a venda da Fase 3 lê os grupos do produto e as opções do grupo.
+        modelBuilder.Entity<ProdutoGrupoComplementosRegistro>().HasIndex(x => x.ProdutoId).HasDatabaseName("ix_produtos_grupos_complementos_produto_id");
+        modelBuilder.Entity<ProdutoComplementoRegistro>().HasIndex(x => x.GrupoId).HasDatabaseName("ix_produtos_complementos_grupo_id");
         modelBuilder.Entity<PermissaoRegistro>().HasKey(x => x.Chave);
         modelBuilder.Entity<NcmRegistro>().HasKey(x => x.Codigo);
         modelBuilder.Entity<CfopRegistro>().HasKey(x => x.Codigo);
@@ -604,6 +607,8 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             ("pessoas_relevancia_loja", typeof(PessoaRelevanciaLojaRegistro)),
             ("pessoas_telefones", typeof(PessoaTelefoneRegistro)),
             ("produtos_categorias", typeof(ProdutoCategoriaRegistro)),
+            ("produtos_complementos", typeof(ProdutoComplementoRegistro)),
+            ("produtos_grupos_complementos", typeof(ProdutoGrupoComplementosRegistro)),
             ("produtos_lotes", typeof(ProdutoLoteRegistro)),
             ("produtos_relacionados", typeof(ProdutoRelacionadoRegistro)),
             ("produtos_tributacao_uf", typeof(ProdutoTributacaoUfRegistro)),

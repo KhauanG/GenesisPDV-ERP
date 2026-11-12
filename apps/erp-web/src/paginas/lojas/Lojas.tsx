@@ -45,6 +45,7 @@ import {
   enderecoParaForm,
   type ValoresEndereco,
 } from '../../componentes/campos/CamposEndereco';
+import { tiposELimiteArquivo, UploadArquivo } from '../../componentes/campos/UploadArquivo';
 import { FormularioEntidade } from '../../componentes/FormularioEntidade';
 import { Listagem, type ConfigListagem } from '../../componentes/listagem/Listagem';
 import { CamposConfiguracoes } from '../configuracoes/CamposConfiguracoes';
@@ -133,6 +134,9 @@ export interface ValoresLoja extends ValoresEndereco, Record<string, unknown> {
   nfeSerie: number | string;
   nfcePrazoCancelamentoMin: number | string;
   nfceValorExigeIdentificacao: number | string;
+  /** Anexos (ERP 10.3.4; F2-B43): o id do envio de `POST /api/arquivos`, gravado com a loja no Salvar. */
+  logotipoArquivoId: string | null;
+  fotoArquivoId: string | null;
 }
 
 export const LOJA_VAZIA: ValoresLoja = {
@@ -167,6 +171,8 @@ export const LOJA_VAZIA: ValoresLoja = {
   nfeSerie: '',
   nfcePrazoCancelamentoMin: 30,
   nfceValorExigeIdentificacao: 10000,
+  logotipoArquivoId: null,
+  fotoArquivoId: null,
 };
 
 function paraValores(l: LojaDetalhe): ValoresLoja {
@@ -202,12 +208,14 @@ function paraValores(l: LojaDetalhe): ValoresLoja {
     nfeSerie: l.nfeSerie ?? '',
     nfcePrazoCancelamentoMin: l.nfcePrazoCancelamentoMin,
     nfceValorExigeIdentificacao: Number(l.nfceValorExigeIdentificacao),
+    logotipoArquivoId: l.logotipoArquivoId,
+    fotoArquivoId: l.fotoArquivoId,
   };
 }
 
 /** Corpo da API a partir do formulário (o assistente manda `estoqueId` nulo para criar o estoque homônimo). */
 export function corpoLoja(v: ValoresLoja, novo: boolean): Record<string, unknown> {
-  const { modoEstoque, nomeEstoque, ...resto } = v;
+  const { modoEstoque, nomeEstoque, logotipoArquivoId, fotoArquivoId, ...resto } = v;
   return {
     ...resto,
     ...enderecoParaApi(v),
@@ -230,16 +238,17 @@ export function corpoLoja(v: ValoresLoja, novo: boolean): Record<string, unknown
           pixCidadeRecebedor: null,
         }
       : {}),
+    // Os Anexos só existem na loja já criada (o envio leva o id dela).
     ...(novo
       ? {
           estoqueId: modoEstoque === 'criar' ? null : v.estoqueId,
           nomeEstoque: modoEstoque === 'criar' ? nomeEstoque : null,
         }
-      : {}),
+      : { logotipoArquivoId, fotoArquivoId }),
   };
 }
 
-const ABAS = ['dados', 'fiscal', 'caixas', 'parametros'] as const;
+const ABAS = ['dados', 'fiscal', 'anexos', 'caixas', 'parametros'] as const;
 const CAMPOS_FISCAL = [
   'regime',
   'tipoEmissao',
@@ -248,6 +257,7 @@ const CAMPOS_FISCAL = [
   'nfcePrazoCancelamentoMin',
   'nfceValorExigeIdentificacao',
 ];
+const CAMPOS_ANEXOS = ['logotipoArquivoId', 'fotoArquivoId'];
 const PARAMETROS_LOJA = [...ABA_GERAL, ...ABA_PARAMETROS, ...ABA_PDV];
 
 /**
@@ -273,7 +283,8 @@ export function FormularioLoja() {
     paraCorpo: (v) => corpoLoja(v, !id),
     schemaCriar: criarLojaSchema,
     schemaAlterar: alterarLojaSchema,
-    aoErroCampos: (campos) => setAba(abaDoErro(campos, { fiscal: CAMPOS_FISCAL }) ?? 'dados'),
+    aoErroCampos: (campos) =>
+      setAba(abaDoErro(campos, { fiscal: CAMPOS_FISCAL, anexos: CAMPOS_ANEXOS }) ?? 'dados'),
     aoGravar: () => void recarregarEu(),
   });
   const estoques = useQuery({
@@ -294,7 +305,9 @@ export function FormularioLoja() {
     .map((e) => ({ value: e.id, label: `${e.nome}${e.tipo === 'deposito' ? ' (CD)' : ''}` }));
   if (l && !opcoesEstoque.some((o) => o.value === l.estoqueId))
     opcoesEstoque.push({ value: l.estoqueId, label: l.estoqueNome ?? 'Estoque atual' });
-  const errosDados = Object.keys(form.errors).some((k) => !CAMPOS_FISCAL.includes(k));
+  const errosDados = Object.keys(form.errors).some(
+    (k) => !CAMPOS_FISCAL.includes(k) && !CAMPOS_ANEXOS.includes(k),
+  );
 
   const dados = (
     <Stack gap="md">
@@ -573,6 +586,42 @@ export function FormularioLoja() {
     </Stack>
   );
 
+  // Anexos (ERP 10.3.4; F2-B43): o logotipo (cupom e DANFE) e a foto da fachada (menu digital). Escolher a imagem a
+  // envia; o id vai com a loja no Salvar. Os tipos e o limite da dica vêm do shared (`tiposELimiteArquivo`), os mesmos
+  // da validação. O caixa ainda não imprime o logotipo (a variante `cupom_mono` e a descida ao PDV ficam pendentes;
+  // docs/andamento.md), e a dica diz isso em vez de prometer a impressão.
+  const anexos = l && (
+    <Grid>
+      <Grid.Col span={{ base: 12, sm: 6 }}>
+        <UploadArquivo
+          rotulo="Logotipo"
+          descricao={
+            'Para o cupom e o DANFE (a impressão no caixa entra numa próxima versão). PNG monocromático ' +
+            `recomendado; ${tiposELimiteArquivo('loja_logotipo')}`
+          }
+          destino="loja_logotipo"
+          lojaId={l.id}
+          valor={v.logotipoArquivoId}
+          aoMudar={(id) => form.setFieldValue('logotipoArquivoId', id)}
+          somenteLeitura={somenteLeitura}
+          erro={form.errors.logotipoArquivoId as string | undefined}
+        />
+      </Grid.Col>
+      <Grid.Col span={{ base: 12, sm: 6 }}>
+        <UploadArquivo
+          rotulo="Foto da loja"
+          descricao={`A fachada, para o menu digital; ${tiposELimiteArquivo('loja_foto')}`}
+          destino="loja_foto"
+          lojaId={l.id}
+          valor={v.fotoArquivoId}
+          aoMudar={(id) => form.setFieldValue('fotoArquivoId', id)}
+          somenteLeitura={somenteLeitura}
+          erro={form.errors.fotoArquivoId as string | undefined}
+        />
+      </Grid.Col>
+    </Grid>
+  );
+
   return (
     <FormularioEntidade
       titulo={c.novo ? 'Nova loja' : (l?.nome ?? 'Loja')}
@@ -603,6 +652,12 @@ export function FormularioLoja() {
         },
         ...(l
           ? [
+              {
+                valor: 'anexos',
+                rotulo: 'Anexos',
+                conteudo: anexos,
+                comErro: Object.keys(form.errors).some((k) => CAMPOS_ANEXOS.includes(k)),
+              },
               {
                 valor: 'caixas',
                 rotulo: 'Caixas',

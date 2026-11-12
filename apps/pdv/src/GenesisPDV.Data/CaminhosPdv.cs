@@ -19,6 +19,12 @@ public sealed record CaminhosPdv(string PastaDados, string PastaBackup, string P
     public string ArquivoBanco => Path.Combine(PastaDados, "pdv.db");
 
     /// <summary>
+    /// Cache local das imagens do catálogo (Fase 2, F2-B45; SYNC 6.12): <c>&lt;sha256&gt;.webp</c>, nomes gerados pelo
+    /// PDV. Fica sob a pasta de dados, fora do backup (que copia só o <c>pdv.db</c>), e é criada no primeiro download.
+    /// </summary>
+    public string PastaCacheImagens => Path.Combine(PastaDados, "cache", "imagens");
+
+    /// <summary>
     /// Arquivo da chave local que protege o token e os segredos no Linux (SYNC 3.6; no Windows é a DPAPI e ele não é
     /// usado). Fica fora da pasta de dados, para uma cópia do <c>pdv.db</c> não levar a chave junto; sem o pacote
     /// instalado é criado na primeira ativação com <c>0600</c>.

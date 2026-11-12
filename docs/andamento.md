@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do dono: F2-B37 a F2-B42 e a revisão de segurança do PR inteiro (D63) commitados, com a lista oficial do CEST pendente; PR-7 e PR-8 implantados em 10/11/2026, release `pdv-v0.11.0` publicado e na página de download; falta atualizar os caixas das lojas; regra do bucket aplicada)._
+_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43, F2-B44 e F2-B45 commitados e PR aberto (#8), aguardando a liberação do merge — fecha o PR-10 e a release R2 do PDV, 0.12.0; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -54,8 +54,9 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
 | PR-6 transferências | B22–B27 | concluído (#4) e em produção (06/11/2026) |
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
-| PR-9 catálogo operacional | B37–B42 | **aberto (#7), aguardando a liberação do dono**; revisão de segurança do PR inteiro (D63) feita: 1 achado médio (prévia de clientes sem `pessoas.ver`) corrigido em `7fd9b8e` |
-| PR-10 em diante | | não iniciados |
+| PR-9 catálogo operacional | B37–B42 | concluído (#7, juntado em 11/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: 1 achado médio corrigido em `7fd9b8e`); **em produção** desde 11/11/2026 (Implantação manual na `main`, `e78db8c`, verde) |
+| PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | **aberto** (#8, 12/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; release R2 do PDV (0.12.0) |
+| PR-11 em diante | | não iniciados |
 
 ### PR-6 — blocos
 
@@ -87,6 +88,14 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
 | F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
 
+### PR-10 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B43 envio de arquivos e imagens, com a variante `pdv_256` (API: `POST /api/arquivos?destino=` multipart com o destino na query — `produto_foto`, `categoria_imagem`, `marca_logotipo` (1 MB), `loja_logotipo` (1 MB) e `loja_foto`, com `lojaId` —, a permissão do destino, o `Content-Length` e o limite por usuário antes de ler o corpo e a vaga do semáforo do processo só com o corpo lido, o multer cortando o stream no limite (2 MB; 1 MB no logotipo), o tipo pelos magic bytes (PNG/JPEG/WebP; PDF reconhecido e nenhum destino o aceita; SVG nunca), 415 `TIPO_NAO_SUPORTADO` e 413 `ARQUIVO_GRANDE` novos; a imagem decodificada com o **sharp 0.35.5** (versão exata, libvips pré-compilado glibc; `pnpm deploy --prod` conferido, o `docker build` não rodou na sessão) só com os leitores PNG/JPEG/WebP liberados, uma por vez, o limite de pixels pelo cabeçalho (36 MP) contra a bomba de descompressão e a `pdv_256` WebP até 256 px sem EXIF; chave do servidor, sha256 no banco e no objeto; `GET /api/arquivos/:id[/conteudo?variante=pdv_256]` com o tipo gravado, `nosniff`, CSP `sandbox` e o nome `<id>.<ext>`, 404 para outra empresa e para quem não vê o cadastro dono; os Anexos no `PUT /lojas/:id` com o envio da própria loja; migração **0027_arquivos_variantes** (`arquivos.variantes jsonb`, sem reescrever a tabela); ERP: `<UploadArquivo>` (envia ao arrastar ou escolher, confere o tamanho e o tipo pelo conteúdo, a miniatura `pdv_256` como blob) e a aba Anexos da loja (logotipo e foto); PDV sem mudança, sem `Esquema.g.cs`; README da API › decisão 189, do ERP › 77) | commitado |
+| F2-B44 foto e imagens do produto, categorias e marcas completas (shared: `idArquivoAnexo` — o id de um envio, `null` tira, ausente mantém —, `fotoPrincipalArquivoId` e `imagens` no produto com `MAXIMO_IMAGENS_PRODUTO` = 10, `imagemArquivoId` na categoria, `logotipoArquivoId` na marca, `reordenarCategoriasSchema`, `FichaMarca`; API: a foto e a galeria (`produtos_imagens`) conferidas e ligadas por `vincularArquivo` antes da linha (o id do registro novo gerado antes; outro destino, outro cadastro, outra empresa ou inexistente = 422 no campo), a galeria inteira na ordem (ausente mantém: importação, cadastro em massa e "Definir NCM" não apagam), a galeria na versão do cadastro (409) e na auditoria legível; `POST /categorias/reordenar` com a lista inteira das irmãs e a versão de cada uma (ordem 10, 20, 30…; versão velha, irmã fora da lista, movida ou excluída no meio = 409 e nada muda; id de outra empresa 404; só as que mudaram ganham versão e auditoria; a árvore não muda de forma), o `mover` de sempre para o soltar dentro; a imagem da categoria e o logotipo da marca; `GET /marcas/:id/ficha` com `marcas.ver` + `produtos.ver`, sem custo, até 5.000 produtos; ERP: bloco "Foto e imagens" do produto (`<GaleriaImagens>`; a cópia sai sem imagens), arrastar e soltar nativo nas categorias (dentro / faixa entre duas; `planejarSoltura` recusa ciclo, 5 níveis e nome repetido na tela; Subir/Descer no ⋮; sem arrastar com a busca), a imagem no painel, o logotipo e o Imprimir da marca (ficha pelo navegador); **sem migração**, PDV sem mudança, sem `Esquema.g.cs`; README da API › decisão 190, do ERP › 78) | commitado |
+| F2-B45 protocolo do PDV: `/sync/arquivos`, `foto_url` estável e as tabelas de complementos (F2-Q1 = D43: complementos sim), numa só volta de cursor (API: migração **`0028_complementos`** — `produtos_grupos_complementos` e `produtos_complementos` com os CHECKs da MD 3.6.8, `fn_versao`, autoria, no fluxo `catalogo`, exclusão física recusada por trigger, `itens_venda_complementos.complemento_id` com FK `on delete set null` e o handler da venda gravando nulo o id desconhecido, README da API › decisão 191; `GET /sync/arquivos/{id}?variante=pdv_256` em `apps/api/src/sync/arquivos.ts` — o token do terminal, só a variante do caixa de produto/categoria/marca vivos, outra empresa ou fora do escopo 404, `image/webp` fixo, `nosniff`, `ETag` = sha256 e `304`, 120/min por terminal — e os campos calculados `foto_url`/`foto_sha256`, `imagem_*` e `logotipo_*` no pull (`TabelaFluxo.calculadas`, projetados no `Esquema.g.cs`), decisão 192; PDV **0.12.0**: espelhos dos complementos, as colunas das marcas e categorias, a migração EF única `FaseDois` (cursor do `catalogo` e versão das marcas e categorias a 0), README do PDV › decisão 85; `CacheImagens` com o id tirado só da URL estável, `<sha256>.webp` gerado pelo PDV, 512 KB, sha256 conferido antes de gravar e falha = placeholder, decisão 86; `venda.finalizada` v1 e `versoes_schema` sem mudança; `VERSAO_PDV_GUARDA_VARIACOES` fica em 0.11.0) | commitado |
+
 ### PR-9 — blocos
 
 | Bloco | Situação |
@@ -108,23 +117,41 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
    e sem cabo, pesquisa F2); dar as permissões das telas novas do PR-7 (`relatorios.estoque_atual`,
    `relatorios.movimentacao_estoque`, `relatorios.exportar`, `produtos.ver_custo` e `estoque_acertos.criar`). A regra
    `AbortIncompleteMultipartUpload` do bucket já foi aplicada (10/11/2026; `infra/producao/README.md` › Backup). A
-   versão do PDV e `VERSAO_PDV_GUARDA_VARIACOES` (shared) andam juntas (PDV 84).
-3. **PR-9 "Catálogo operacional"** (F2-B37 a F2-B42; `docs/planos/fase2-plano.md`): workflow `genesis-bloco` bloco a
-   bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-8). F2-B37 a F2-B40
-   commitados (F2-B40: exportação de produtos de ida e volta); F2-B41 (Produtos geral e NCMs inválidos)
-   commitado; F2-B42 (Histórico de produtos) commitado, o último bloco do PR-9; a revisão de segurança do PR
-   inteiro (D63) achou 1 problema médio, corrigido (`7fd9b8e`), e o **PR-9 está aberto (#7)**, aguardando a liberação do dono. **Pendente do F2-B41**: a lista oficial do CEST
-   (Convênio ICMS 142/2018 e alterações, CONFAZ) não entrou — a sessão não conseguiu baixá-la; o
-   `apps/api/src/database/referencias/cests.csv` está só com o cabeçalho e, até a carga, o motivo "CEST incompatível"
-   não aparece. Quem tiver acesso converte os anexos para o formato da decisão 187 da API, anota a fonte e a data no
-   README e roda `db:referencias` (nunca linhas inventadas). **Pendente do F2-B40 (critério de pronto)**: a ida e volta com a planilha real da Ice Beer ainda
-   **não foi conferida** (a sessão não tinha o arquivo; só a massa inventada rodou). Antes do merge do PR-9, quem
-   testa põe o arquivo em `apps/api/test/fixtures/planilhas/reais/` (fora do Git), roda o `exportacao-catalogo.test.ts`
-   e registra aqui o resultado (100% "Sem alteração" ou o que divergiu). Quando o relatório de EAN
-   duplicado zerar na Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano). Para o cadastro em massa,
-   o dono libera `produtos.cadastro_massa` a quem cadastra (o Gerente já tem; o Estoquista não). O limite de 100 linhas por
-   gravação foi confirmado pelo dono em 11/11/2026 (D65, opção A; a especificação dizia 500).
-4. Numeração das próximas decisões nos READMEs: **API 189**, **ERP 77**, **PDV 85** (confira o último número no próprio
+   `VERSAO_PDV_GUARDA_VARIACOES` (shared) é a primeira versão com a guarda (0.11.0) e não acompanha as releases
+   seguintes (PDV 84 e 85).
+3. **PR-9 "Catálogo operacional" juntado (#7) e implantado (11/11/2026, Implantação manual verde).** **Falta (dono):**
+   liberar nos cargos `produtos.cadastro_massa` (o Gerente já tem; o
+   Estoquista não), `relatorios.produtos_geral`, `relatorios.ncm_invalidos`, `relatorios.historico_produtos` e as de
+   exportar (`produtos.exportar`, `pessoas.exportar` ou `relatorios.exportar`). **Pendente do F2-B40 (critério de
+   pronto):** a ida e volta com a planilha real da Ice Beer — o dono exporta em Produtos › Exportação, importa o mesmo
+   arquivo e confere que a prévia sai toda "Sem alteração" (sem confirmar); ou, local, o arquivo em
+   `apps/api/test/fixtures/planilhas/reais/` (fora do Git) e o `exportacao-catalogo.test.ts`. Registrar aqui o
+   resultado. **Pendente do F2-B41:** a lista oficial do CEST (Convênio ICMS 142/2018 e alterações, CONFAZ) — o site
+   recusa a conexão vinda da sessão; o `apps/api/src/database/referencias/cests.csv` está só com o cabeçalho e, até a
+   carga, o motivo "CEST incompatível" não aparece. Quem tiver acesso converte os anexos para o formato da decisão 187
+   da API, anota a fonte e a data no README e roda `db:referencias` (nunca linhas inventadas). Quando o relatório de
+   EAN duplicado zerar na Ice Beer, voltar `geral.ean_duplicado` a "bloquear" (padrão do plano). D65 respondida
+   (11/11/2026): 100 linhas por gravação do cadastro em massa.
+3b. **PR-10 "Arquivos, imagens e protocolo do PDV"** (F2-B43 a F2-B45; release R2 do PDV): workflow `genesis-bloco`
+   bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 e F2-B44 commitados
+   (foto e galeria do produto, imagem e arrastar e soltar das categorias, logotipo e ficha da marca); F2-B45
+   commitado (o `/sync/arquivos`, os campos `foto_url`/`foto_sha256`, as tabelas de complementos e o PDV 0.12.0 com
+   uma única volta do cursor do `catalogo`). Revisão de segurança do PR inteiro (D63) feita, sem achado médio ou alto; PR-10 aberto (#8): falta a liberação do dono para o merge.
+   **Roteiro da release R2 para o dono, nesta ordem (a API sempre antes do PDV, SYNC 17.2):**
+   1. Liberar o merge do PR-10 na `main` e esperar a CI da `main` verde (inclusive o PDV no `windows-latest`).
+   2. Rodar a **Implantação** (API e ERP) e aprovar o environment `producao`: ela aplica a migração **0028**
+      (complementos; não mexe em dado existente) e publica o `/sync/arquivos`. Conferir a saúde em
+      https://erp.grupoicebeer.com.br/saude. Os caixas 0.11.0 continuam vendendo e sincronizando normalmente: eles só
+      ignoram os campos e as tabelas novas.
+   3. Rodar o workflow **"PDV release"** na `main` com "publicar" marcado (a versão vazia já pega a **0.12.0** do
+      `Directory.Build.props`): ele gera o instalador, testa e cria o release `pdv-v0.12.0`.
+   4. Rodar a **Implantação** com `publicar_pdv` para pôr o instalador 0.12.0 na página de download.
+   5. Atualizar um caixa de cada vez, fora do horário de pico: na abertura, o 0.12.0 faz o backup, aplica a migração e
+      baixa o catálogo de novo em segundo plano (o caixa vende durante a descida; com milhares de produtos leva alguns
+      minutos). Conferir na Central do PDV › Sincronização que o fluxo `catalogo` voltou a "em dia".
+   6. Teste no caixa: enviar uma foto num produto e o logotipo numa marca no ERP; depois do próximo ciclo, o caixa
+      recebe os campos (a foto ainda não aparece na tela: `pdv.exibe_foto_produto` continua desligada, fora da Fase 2).
+4. Numeração das próximas decisões nos READMEs: **API 193**, **ERP 79**, **PDV 87** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
@@ -153,6 +180,10 @@ _Última atualização: 11/11/2026 (PR-9 aberto, #7, aguardando a liberação do
   desde 06/11: a API registra em `fatal` a exceção não tratada, o sinal e o heap alto; a saúde detalhada tem
   `processo`; o `implantar.sh` guarda o log da API em `/opt/genesis/logs` (`implantar.sh logs`). Na próxima queda:
   `infra/producao/README.md` › A API reiniciou sozinha.
+- **Logotipo da loja no cupom (sem bloco ainda):** o F2-B43 guarda o logotipo (Lojas › Anexos), mas o caixa ainda
+  não o imprime: falta gerar a variante `cupom_mono` (SYNC 6.12) e levar o logotipo da loja ao PDV (o F2-B45 leva só
+  as imagens de produto, marca e categoria). A dica da tela já avisa ("a impressão no caixa entra numa próxima
+  versão"). Encaixar num bloco do PDV quando o cupom ganhar o logotipo (o `imprime_logotipo` do PDV).
 - **Cloud SQL:** converter o trial antes de 26/11/2026.
 - **G7 review** (achados menores da aba Sincronização da Central): conferir se algum ficou de fora antes de mexer de
   novo na Central.

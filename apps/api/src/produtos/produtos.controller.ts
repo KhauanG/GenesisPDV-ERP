@@ -46,6 +46,7 @@ import {
 } from '@genesis/shared';
 import { and, count, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Response } from 'express';
+import { uuidv7 } from 'uuidv7';
 import { z } from 'zod';
 import type { OrigemAcao } from '../auditoria/auditoria.service.js';
 import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
@@ -83,6 +84,7 @@ import {
   buscarOpcoes,
   detalheProduto,
   fornecedoresDoProduto,
+  imagensDoProduto,
   lotesDoProduto,
   precosPorLojaDoProduto,
 } from './consultas.js';
@@ -92,6 +94,7 @@ import {
   conferirEanDuplicado,
   gravarFilhas,
   gravarFornecedores,
+  gravarImagens,
   gravarLotes,
   gravarRelacionados,
   precosFilhosGravados,
@@ -100,6 +103,7 @@ import {
   tiposHabilitados,
   type VinculoFornecedorMovido,
   validarNoBanco,
+  vincularImagensProduto,
   type ProdutoAntes,
 } from './gravacao.js';
 
@@ -769,6 +773,7 @@ function colunasProduto(d: CriarProduto) {
     fornecedores: _forn,
     lotes: _lotes,
     lotesExcluidos: _lotesExcluidos,
+    imagens: _imagens,
     confirmarEanDuplicado: _conf,
     precoCusto: _custo,
     markupPct: _markup,
@@ -808,6 +813,8 @@ const filhasAuditoria = async (tx: DbEmpresa, produtoId: string, d: CriarProduto
   ...(d.relacionados !== undefined ? { relacionados: d.relacionados } : {}),
   fornecedores: await fornecedoresDoProduto(tx, produtoId, true),
   lotes: await lotesDoProduto(tx, produtoId),
+  // F2-B44: a galeria como ficou (o corpo sem a lista mantém a gravada).
+  imagens: await imagensDoProduto(tx, produtoId),
 });
 
 /**
@@ -1047,10 +1054,14 @@ export async function inserirProduto(
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
   const principal = dados.categoriaPrincipalId ?? dados.categorias[0] ?? null;
   const codigo = opcoes.codigo ?? (await proximoCodigoProduto(tx));
+  // O id antes da linha: a foto e a galeria são conferidas e ligadas a ele antes do insert (F2-B44).
+  const id = uuidv7();
+  await vincularImagensProduto(tx, id, dados, null);
   const [p] = await tx
     .insert(produtos)
     .values({
       ...colunasProduto(dados),
+      id,
       codigo,
       ...(custo ? { precoCusto: dados.precoCusto, markupPct: dados.markupPct } : {}),
       categoriaPrincipalId: principal,
@@ -1060,6 +1071,7 @@ export async function inserirProduto(
     })
     .returning();
   await gravarFilhas(tx, sessao, p!.id, dados, principal);
+  await gravarImagens(tx, sessao, p!.id, dados.imagens);
   const inversas = await gravarRelacionados(tx, sessao, p!.id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, p!.id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, p!.id, dados.lotes, dados.lotesExcluidos);
@@ -1137,6 +1149,10 @@ export async function atualizarProduto(
   else await conferirEanDuplicado(tx, dados, id);
   const custo = verCusto(sessao) && dados.tipo !== 'kit';
   const principal = dados.categoriaPrincipalId ?? dados.categorias[0] ?? null;
+  await vincularImagensProduto(tx, id, dados, {
+    foto: linha.fotoPrincipalArquivoId,
+    galeria: antes.imagens.map((i) => i.arquivoId),
+  });
   const [depois] = await tx
     .update(produtos)
     .set({
@@ -1149,6 +1165,7 @@ export async function atualizarProduto(
     .where(eq(produtos.id, id))
     .returning();
   await gravarFilhas(tx, sessao, id, dados, principal);
+  await gravarImagens(tx, sessao, id, dados.imagens);
   const inversas = await gravarRelacionados(tx, sessao, id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, id, dados.lotes, dados.lotesExcluidos);
@@ -1203,6 +1220,9 @@ export function entradaDoDetalhe(d: ProdutoDetalhe): CriarProdutoEntrada {
     relacionados: _rel,
     fornecedores: _forn,
     lotes: _lotes,
+    // F2-B44: ausentes = a gravação mantém a foto e a galeria (a planilha não as conhece).
+    fotoPrincipalArquivoId: _foto,
+    imagens: _imagens,
     avisos: _av,
     temMovimento: _tm,
     id: _id,

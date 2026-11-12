@@ -7,6 +7,8 @@ import {
   gravarAtalhosSchema,
   listaEmailsOpcional,
   montarArvoreCategorias,
+  MAXIMO_IRMAS_REORDENAR,
+  reordenarCategoriasSchema,
   normalizarTeclaAtalho,
   validarPin,
   type CategoriaNo,
@@ -164,6 +166,7 @@ describe('montarArvoreCategorias', () => {
       exibeTotem: false,
       exibeSite: false,
       cor: null,
+      imagemArquivoId: null,
       produtos: 0,
       versao: 1,
     });
@@ -175,5 +178,36 @@ describe('montarArvoreCategorias', () => {
     ]);
     expect(a.map((x) => x.nome)).toEqual(['Cervejas', 'Vinhos']);
     expect(a[0]!.filhas.map((x) => x.nome)).toEqual(['Long neck', 'Lata']);
+  });
+});
+
+describe('reordenarCategoriasSchema (F2-B44)', () => {
+  const id = (n: number) => `01928f3a-0000-7000-8000-${String(n).padStart(12, '0')}`;
+  const caminhos = (v: unknown) => {
+    const r = reordenarCategoriasSchema.safeParse(v);
+    return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+  };
+
+  it('aceita a lista das irmãs com as versões; pai vazio = raízes', () => {
+    expect(
+      reordenarCategoriasSchema.parse({ categoriaPaiId: '', itens: [{ id: id(1), versao: 3 }] }),
+    ).toEqual({ categoriaPaiId: null, itens: [{ id: id(1), versao: 3 }] });
+  });
+
+  it('recusa a lista vazia, a repetida (sem diferenciar maiúsculas) e acima do teto', () => {
+    expect(caminhos({ itens: [] })).toEqual(['itens']);
+    expect(
+      caminhos({
+        itens: [
+          { id: id(1), versao: 1 },
+          { id: id(1).toUpperCase(), versao: 1 },
+        ],
+      }),
+    ).toEqual(['itens.1.id']);
+    expect(
+      caminhos({
+        itens: Array.from({ length: MAXIMO_IRMAS_REORDENAR + 1 }, (_, i) => ({ id: id(i + 1), versao: 1 })),
+      }),
+    ).toEqual(['itens']);
   });
 });

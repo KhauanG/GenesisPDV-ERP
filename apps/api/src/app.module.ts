@@ -4,6 +4,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import type { Logger as LoggerPino } from 'pino';
 import { uuidv7 } from 'uuidv7';
+import { ArquivosController } from './arquivos/arquivos.controller.js';
 import { AuditoriaController } from './auditoria/auditoria.controller.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AutenticacaoGuard, PermissaoGuard } from './autorizacao/guards.js';
@@ -117,6 +118,7 @@ export class AppModule {
         RelatoriosController,
         TarefasController,
         ImportacoesController,
+        ArquivosController,
         DashboardController,
         ImplantacaoController,
         VendasController,

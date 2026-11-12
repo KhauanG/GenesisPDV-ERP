@@ -11,6 +11,7 @@ import { Provisionamento } from './plataforma/provisionamento.js';
 import { Cifra } from './seguranca/cifra.js';
 import { AssinadorJwt } from './seguranca/jwt.js';
 import { RedefinicaoSenha } from './auth/redefinicao-senha.js';
+import { Arquivos } from './arquivos/arquivos.js';
 import { ArmazenamentoObjetos } from './infra/armazenamento.js';
 import { EnviadorEmail } from './infra/email.js';
 import { FILAS, FilaTrabalhos, trabalhoPorEmpresas } from './infra/fila.js';
@@ -29,6 +30,7 @@ import { FilaDecisao } from './terminais/fila-decisao.js';
 import { CRON_MANUTENCAO_TERMINAIS, ManutencaoTerminais } from './terminais/manutencao.js';
 import { TerminaisErp } from './terminais/terminais.service.js';
 import { HeartbeatSync } from './sync/heartbeat.js';
+import { ArquivosSync } from './sync/arquivos.js';
 import { ConsultasSync } from './sync/consultas.js';
 import { RecuperarSync } from './sync/recuperar.js';
 import { PullSync } from './sync/pull.js';
@@ -90,9 +92,13 @@ export interface Servicos {
   recuperar: RecuperarSync;
   /** Consultas online do caixa no `/sync/*` (F2-B35): o saldo das outras lojas no F4 da pesquisa. */
   consultas: ConsultasSync;
+  /** `GET /sync/arquivos/{id}` (F2-B45, decisão 192): a variante `pdv_256` das imagens do catálogo para o caixa. */
+  arquivosSync: ArquivosSync;
   token: TokenTerminal;
   fila: FilaTrabalhos;
   armazenamento: ArmazenamentoObjetos;
+  /** Envio e leitura das imagens dos cadastros (F2-B43, decisão 189): tipo pelo conteúdo e a variante `pdv_256`. */
+  arquivos: Arquivos;
   email: EnviadorEmail;
   redefinicao: RedefinicaoSenha;
   tarefas: TarefasSegundoPlano;
@@ -267,9 +273,11 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     heartbeat: new HeartbeatSync(controle, tenancy, auditoria),
     recuperar: new RecuperarSync(tenancy),
     consultas: new ConsultasSync(tenancy),
+    arquivosSync: new ArquivosSync({ tenancy, armazenamento }),
     token: new TokenTerminal(controle, tenancy, auditoria),
     fila,
     armazenamento,
+    arquivos: new Arquivos({ tenancy, armazenamento }),
     email,
     redefinicao,
     tarefas,

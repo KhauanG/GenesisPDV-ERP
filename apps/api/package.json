@@ -63,6 +63,7 @@
     "read-excel-file": "9.3.10",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "sharp": "0.35.5",
     "uuidv7": "^1.2.1",
     "write-excel-file": "^4.1.1",
     "xml-crypto": "6.4.0",

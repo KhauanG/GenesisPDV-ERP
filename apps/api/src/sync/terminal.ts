@@ -20,7 +20,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/;
 
 export type EndpointSync =
-  'estado' | 'pull' | 'push' | 'heartbeat' | 'token' | 'eventos-status' | 'recuperar' | 'consulta-saldos';
+  | 'estado'
+  | 'pull'
+  | 'push'
+  | 'heartbeat'
+  | 'token'
+  | 'eventos-status'
+  | 'recuperar'
+  | 'consulta-saldos'
+  | 'arquivos';
 
 /**
  * SYNC 3.7: o anterior só conta como reutilizado quando o atual já funcionou há mais que isso. Absorve a corrida do
@@ -34,7 +42,7 @@ export const MARGEM_TOKEN_ANTERIOR_MS = 30_000;
  * nada é gravado nem devolvido. O `recuperar` (22.2; Fase 1C, C17) entrega os payloads do terminal (vendas, CPF na
  * nota, quem retirou a sangria): uma cópia do token em outra máquina não os lê, e a reidratação só serve ao push, que
  * já exige o hardware. A consulta de saldos das outras lojas (F2-B35) mostra o estoque da empresa inteira: só o caixa
- * registrado a usa.
+ * registrado a usa. As imagens do catálogo (`arquivos`, F2-B45) não exigem: são os mesmos cadastros que o pull entrega.
  */
 const ENDPOINTS_COM_HARDWARE: ReadonlySet<EndpointSync> = new Set([
   'push',

@@ -11,6 +11,7 @@ import { CHAVES_CONFIGURACAO_PDV, CONFIGURACOES_POR_CHAVE, type Fluxo } from '@g
 import { sql, type SQL } from 'drizzle-orm';
 import { getTableConfig, type PgTable } from 'drizzle-orm/pg-core';
 import { hojeNaEmpresa } from '../comum/fuso.js';
+import { camposImagemPdv, type CampoCalculado } from './arquivos.js';
 import {
   atalhosPdv,
   atributosVariacao,
@@ -50,8 +51,10 @@ import {
   produtos,
   produtosCategorias,
   produtosCodigosBarras,
+  produtosComplementos,
   produtosComponentes,
   produtosComponentesAlternativas,
+  produtosGruposComplementos,
   produtosLojas,
   produtosLotes,
   produtosPrecosQuantidade,
@@ -92,6 +95,12 @@ export interface TabelaFluxo {
   omitir?: readonly string[];
   /** Colunas que descem com outra expressão (projeção condicional), sobre o alias `t`. */
   projecao?: Record<string, (e: EscopoTerminal) => SQL>;
+  /**
+   * Campos calculados (MD 6.2): descem na linha sem existir na tabela, depois das colunas, e o gerador do
+   * `Esquema.g.cs` os lista como colunas projetadas e anuláveis. Hoje só as imagens do catálogo (`sync/arquivos.ts`,
+   * F2-B45). Precisam depender só de colunas da própria linha que versionam (trocar a imagem troca o id na linha).
+   */
+  calculadas?: Record<string, CampoCalculado>;
 }
 
 /** Tipos de template impressos pelo PDV (cupom, vale, recibo de crediário). */
@@ -278,10 +287,12 @@ export const REGISTRO_FLUXOS: Readonly<Record<Fluxo, readonly TabelaFluxo[]>> = 
     },
   ],
   catalogo: [
-    { tabela: marcas },
-    { tabela: categorias },
+    // Imagens do catálogo (F2-B45; SYNC 6.12): o caminho estável e o sha256 da variante `pdv_256`.
+    { tabela: marcas, calculadas: camposImagemPdv('marcas') },
+    { tabela: categorias, calculadas: camposImagemPdv('categorias') },
     {
       tabela: produtos,
+      calculadas: camposImagemPdv('produtos'),
       // Custo não vai para o caixa (MD 3.6.3, 6.2). `custo_medio` também é isento de versão (0011,
       // `COLUNAS_ISENTAS_VERSAO`): precisa ficar aqui, senão o caixa ficaria com o valor velho.
       omitir: [
@@ -311,6 +322,9 @@ export const REGISTRO_FLUXOS: Readonly<Record<Fluxo, readonly TabelaFluxo[]>> = 
     { tabela: produtosComponentes },
     { tabela: produtosComponentesAlternativas },
     { tabela: produtosRelacionados },
+    // Complementos (F2-B45; F2-Q1 = D43; MD 3.6.8): todas as colunas, sem filtro (o produto desce a todas as lojas).
+    { tabela: produtosGruposComplementos },
+    { tabela: produtosComplementos },
     {
       tabela: produtosLojas,
       filtro: (e) => sql`t.loja_id = ${e.lojaId}`,

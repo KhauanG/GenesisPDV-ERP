@@ -116,10 +116,13 @@ public class ProdutoRegistro : LinhaEspelho
     public string? IsUnidade { get; set; }
     public string? ServicoCodigoLc116 { get; set; }
 
-    /// <summary>Campo calculado do pull (3.6.3): caminho estável da foto (variante <c>pdv_256</c>).</summary>
+    /// <summary>
+    /// Campo calculado do pull (3.6.3; F2-B45, SYNC 6.12): caminho estável da foto (variante <c>pdv_256</c>). O PDV não
+    /// segue o texto: tira o id e monta a rota ele mesmo (<c>CacheImagens</c>).
+    /// </summary>
     public string? FotoUrl { get; set; }
 
-    /// <summary>Campo calculado do pull: chave do cache local de imagens.</summary>
+    /// <summary>Campo calculado do pull: sha256 da variante, a chave do cache local de imagens.</summary>
     public string? FotoSha256 { get; set; }
 }
 

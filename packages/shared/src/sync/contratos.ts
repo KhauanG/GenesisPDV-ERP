@@ -622,6 +622,15 @@ export const saldosOutrasLojasQuerySchema = z.object({
 });
 export type SaldosOutrasLojasQuery = z.infer<typeof saldosOutrasLojasQuerySchema>;
 
+/**
+ * `GET /sync/arquivos/{id}?variante=pdv_256` (Fase 2, F2-B45; SYNC 6.12): a imagem de um cadastro que desce ao caixa.
+ * Só a variante do caixa; o id vai no caminho (o mesmo do `foto_url`, `imagem_url` e `logotipo_url` do pull).
+ */
+export const arquivoSyncQuerySchema = z.object({
+  variante: z.literal('pdv_256', 'Variante inválida: o caixa baixa só a pdv_256'),
+});
+export type ArquivoSyncQuery = z.infer<typeof arquivoSyncQuerySchema>;
+
 /** Tipo do local do F4: a loja (o estoque vinculado a ela) ou o depósito sem loja (o CD). */
 export const TIPOS_LOCAL_SALDO_ONLINE = ['loja', 'deposito'] as const;
 

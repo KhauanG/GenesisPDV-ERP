@@ -13,6 +13,7 @@ import {
 import { and, count, eq, ilike, inArray, isNull, max, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
+import { vincularArquivo } from '../arquivos/arquivos.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { filtroLojas, garantirLoja } from '../autorizacao/lojas.js';
@@ -92,7 +93,10 @@ const colunasOrdenacao = {
   ativa: lojas.ativa,
 };
 
-/** Lojas (ERP 10.3): Dados Gerais, Fiscal (colunas da loja) e Caixas; criar = assistente da primeira configuração (MD 7.13). */
+/**
+ * Lojas (ERP 10.3): Dados Gerais, Fiscal (colunas da loja), Caixas e Anexos (o logotipo e a foto, F2-B43); criar =
+ * assistente da primeira configuração (MD 7.13).
+ */
 @Controller('lojas')
 export class LojasController {
   constructor(@Inject(SERVICOS) private readonly s: Servicos) {}
@@ -305,6 +309,11 @@ export class LojasController {
           await this.garantirEstoqueLivre(tx, dados.estoqueId, lojaId);
         }
         if (antes.ativa && !dados.ativa) await this.garantirSemTerminal(tx, lojaId, 'inativar');
+        // Anexos (ERP 10.3.4; F2-B43, decisão 189): só um envio da própria loja, com a categoria do campo.
+        if (dados.logotipoArquivoId && dados.logotipoArquivoId !== antes.logotipoArquivoId)
+          await vincularArquivo(tx, dados.logotipoArquivoId, 'loja_logotipo', lojaId, 'logotipoArquivoId');
+        if (dados.fotoArquivoId && dados.fotoArquivoId !== antes.fotoArquivoId)
+          await vincularArquivo(tx, dados.fotoArquivoId, 'loja_foto', lojaId, 'fotoArquivoId');
         if (dados.tipo === 'deposito' && antes.tipo !== 'deposito') {
           const [c] = await tx
             .select({ n: count() })

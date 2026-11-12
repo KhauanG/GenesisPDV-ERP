@@ -664,6 +664,79 @@ export const produtosComponentesAlternativas = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------- Complementos (MD 3.6.8)
+
+/**
+ * Grupos de complementos do produto `com_complementos` ("Gelo", "Adicionais"), com a quantidade mínima e máxima de
+ * escolhas (Fase 2, F2-B45; F2-Q1 = D43: complementos sim). Descem ao caixa no fluxo `catalogo`; o cadastro no ERP é o
+ * F2-B51 e o uso na venda, a Fase 3. Só inativação: a exclusão física é recusada por trigger (0028), para um PDV
+ * offline nunca citar um id que a nuvem não tem mais.
+ */
+export const produtosGruposComplementos = pgTable(
+  'produtos_grupos_complementos',
+  {
+    ...colunasPadrao(),
+    ...colunasAutoria(),
+    produtoId: uuid('produto_id').notNull(),
+    nome: varchar('nome', { length: 40 }).notNull(),
+    minimo: smallint('minimo').notNull().default(0),
+    maximo: smallint('maximo').notNull().default(1),
+    obrigatorio: boolean('obrigatorio').notNull().default(false),
+    ordem: integer('ordem').notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_produtos_grupos_complementos', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_produtos_grupos_complementos_produto_id',
+      columns: [t.produtoId],
+      foreignColumns: [produtos.id],
+    }),
+    index('ix_produtos_grupos_complementos_produto_id').on(t.produtoId),
+    check(
+      'ck_produtos_grupos_complementos_quantidades',
+      sql`minimo >= 0 and maximo >= minimo and (not obrigatorio or minimo >= 1)`,
+    ),
+  ],
+);
+
+/**
+ * Opções de um grupo de complementos (MD 3.6.8): vinculada a um produto (que pode baixar estoque) ou livre (só a
+ * descrição), com o preço adicional somado ao item. Só inativação (`ativo`), como o grupo.
+ */
+export const produtosComplementos = pgTable(
+  'produtos_complementos',
+  {
+    ...colunasPadrao(),
+    ...colunasAutoria(),
+    grupoId: uuid('grupo_id').notNull(),
+    produtoId: uuid('produto_id'),
+    descricao: varchar('descricao', { length: 60 }),
+    precoAdicional: preco('preco_adicional').notNull().default('0'),
+    baixaEstoque: boolean('baixa_estoque').notNull().default(false),
+    quantidadeBaixa: quantidade('quantidade_baixa').notNull().default('1'),
+    ordem: integer('ordem').notNull().default(0),
+    ativo: boolean('ativo').notNull().default(true),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_produtos_complementos', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_produtos_complementos_grupo_id',
+      columns: [t.grupoId],
+      foreignColumns: [produtosGruposComplementos.id],
+    }),
+    foreignKey({
+      name: 'fk_produtos_complementos_produto_id',
+      columns: [t.produtoId],
+      foreignColumns: [produtos.id],
+    }),
+    index('ix_produtos_complementos_grupo_id').on(t.grupoId),
+    index('ix_produtos_complementos_produto_id').on(t.produtoId),
+    check('ck_produtos_complementos_origem', sql`produto_id is not null or descricao is not null`),
+    check('ck_produtos_complementos_baixa', sql`not baixa_estoque or produto_id is not null`),
+    check('ck_produtos_complementos_valores', sql`preco_adicional >= 0 and quantidade_baixa > 0`),
+  ],
+);
+
 // ---------------------------------------------------------------- Demais filhas (MD 3.6.9)
 
 export const produtosRelacionados = pgTable(

@@ -11,8 +11,11 @@ namespace GenesisPDV.Data.Tests;
 /// <summary>O modelo EF do PDV não pode divergir do schema da nuvem gerado em <c>Esquema.g.cs</c> (MD 4.1).</summary>
 public class EsquemaNuvemTests
 {
-    /// <summary>Colunas que só existem no SQLite (MD 4.2) e campos calculados do pull (MD 3.6.3).</summary>
-    private static readonly HashSet<string> ColunasSoLocais = ["criado_localmente", "foto_url", "foto_sha256"];
+    /// <summary>
+    /// Colunas que só existem no SQLite (MD 4.2). Os campos calculados do pull (<c>foto_url</c>, <c>foto_sha256</c>…) estão
+    /// no Esquema.g.cs como projetados desde o F2-B45 e são conferidos como as demais colunas.
+    /// </summary>
+    private static readonly HashSet<string> ColunasSoLocais = ["criado_localmente"];
 
     // As colunas que não descem (MD 6.2) vêm do próprio Esquema.g.cs (DescidaColuna.Omitida), geradas do registro de
     // fluxos da API: nada de lista mantida à mão aqui.
@@ -55,6 +58,22 @@ public class EsquemaNuvemTests
         }
         // Movimento nasce no PDV e sobe inteiro: não tem projeção de descida.
         Assert.All(EsquemaNuvem.Tabelas.Where(t => t.Papel == PapelTabela.Movimento).SelectMany(t => t.Colunas), c => Assert.Equal(DescidaColuna.Desce, c.Descida));
+    }
+
+    [Fact]
+    public void Imagens_do_catalogo_descem_como_campos_calculados_projetados()
+    {
+        // Fase 2 (F2-B45; SYNC 6.12): o caminho estável e o sha256 da variante `pdv_256`, sempre anuláveis (sem imagem).
+        foreach (var (tabela, campo) in new[] { ("produtos", "foto"), ("categorias", "imagem"), ("marcas", "logotipo") })
+        {
+            foreach (var nome in new[] { $"{campo}_url", $"{campo}_sha256" })
+            {
+                var coluna = EsquemaNuvem.Tabela(tabela)!.Colunas.Single(c => c.Nome == nome);
+                Assert.Equal(DescidaColuna.Projetada, coluna.Descida);
+                Assert.True(coluna.Nulo, $"{tabela}.{nome}");
+                Assert.Equal(typeof(string), coluna.TipoClr);
+            }
+        }
     }
 
     [Fact]
@@ -177,6 +196,8 @@ public class EsquemaNuvemTests
             "produtos", "produtos_codigos_barras", "produtos_lojas", "produtos_precos_quantidade", "grupos_preco_quantidade",
             "grupos_preco_quantidade_faixas", "produtos_componentes", "produtos_componentes_alternativas", "restricoes_horario_venda",
             "formas_pagamento", "formas_pagamento_lojas", "unidades_medida",
+            // Fase 2 (F2-B45; F2-Q1 = D43): os complementos.
+            "produtos_grupos_complementos", "produtos_complementos",
         ];
         var mapeadas = db.Model.GetEntityTypes().Select(t => t.GetTableName()).ToHashSet();
         foreach (var nome in espelhos)

@@ -151,6 +151,11 @@ public static class Inicializacao
         servicos.AddSingleton<IConsultaOutrasLojas>(sp => new ConsultaOutrasLojasHttp(
             sp.GetRequiredService<IClienteSync>(), sp.GetRequiredService<IServicoSincronizacao>(),
             sp.GetRequiredService<ILogger<ConsultaOutrasLojasHttp>>()));
+        // Imagens do catálogo (F2-B45; SYNC 6.12): o cache local com o sha256 conferido, sob demanda; a exibição da foto
+        // (`pdv.exibe_foto_produto`, padrão desligado) e o descarte LRU entram depois.
+        servicos.AddSingleton(sp => new CacheImagens(
+            sp.GetRequiredService<IClienteSync>(), caminhos.PastaCacheImagens, sp.GetRequiredService<IRelogio>(),
+            sp.GetRequiredService<ILogger<CacheImagens>>()));
         servicos.AddSingleton<SessaoTerminal>();
         // Central do PDV (bloco G2): quem está nela, a liberação de 5 min e a auditoria do acesso.
         servicos.AddSingleton<Diagnostico.AcessoCentral>();

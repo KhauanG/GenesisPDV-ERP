@@ -4,12 +4,15 @@ import {
   criarCategoriaSchema,
   excluirCategoriaQuerySchema,
   moverCategoriaSchema,
+  PASSO_ORDEM_CATEGORIAS,
   PROFUNDIDADE_MAXIMA_CATEGORIAS,
+  reordenarCategoriasSchema,
   type CategoriaNo,
 } from '@genesis/shared';
-import { and, asc, count, eq, isNull, like, ne, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, like, ne, or, sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import { z } from 'zod';
+import { vincularArquivo } from '../arquivos/arquivos.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, garantirSemConflito, ref } from '../comum/cadastro.js';
@@ -30,7 +33,9 @@ const sqlProdutos = sql<number>`(select count(*)::int from produtos_categorias p
 
 /**
  * Categorias em árvore (ERP 8.4; MD 3.6.2): `caminho` materializado com ids (`raiz/filho/…`), `caminho_nomes`
- * ("CERVEJA > LATA") e `nivel` mantidos pela API; até 5 níveis, nome único entre irmãs, sem ciclos.
+ * ("CERVEJA > LATA") e `nivel` mantidos pela API; até 5 níveis, nome único entre irmãs, sem ciclos. O arrastar e
+ * soltar do ERP usa o `mover` (outro pai) e o `reordenar` (as irmãs, em lote, com a versão de cada uma); a imagem é um
+ * envio `categoria_imagem` (F2-B44; README da API › decisão 190).
  */
 @Controller('categorias')
 export class CategoriasController {
@@ -54,6 +59,7 @@ export class CategoriasController {
           exibeTotem: categorias.exibeTotem,
           exibeSite: categorias.exibeSite,
           cor: categorias.cor,
+          imagemArquivoId: categorias.imagemArquivoId,
           produtos: sqlProdutos,
           versao: categorias.versao,
         })
@@ -80,6 +86,9 @@ export class CategoriasController {
         }
         await garantirNomeIrmas(tx, dados.categoriaPaiId, dados.nome);
         const id = uuidv7();
+        // A imagem (F2-B44): um envio `categoria_imagem` sem dono, ligado à categoria nova (422 no campo se não for).
+        if (dados.imagemArquivoId)
+          await vincularArquivo(tx, dados.imagemArquivoId, 'categoria_imagem', id, 'imagemArquivoId');
         const [c] = await tx
           .insert(categorias)
           .values({
@@ -121,6 +130,8 @@ export class CategoriasController {
         const antes = await travar(tx, id);
         if (antes.versao !== versao) await conflitoVersao(tx, antes);
         if (dados.nome !== antes.nome) await garantirNomeIrmas(tx, antes.categoriaPaiId, dados.nome, id);
+        if (dados.imagemArquivoId && dados.imagemArquivoId.toLowerCase() !== antes.imagemArquivoId)
+          await vincularArquivo(tx, dados.imagemArquivoId, 'categoria_imagem', id, 'imagemArquivoId');
         const prefixo = antes.caminhoNomes.slice(0, antes.caminhoNomes.length - antes.nome.length);
         const [depois] = await tx
           .update(categorias)
@@ -210,6 +221,83 @@ export class CategoriasController {
       { travaVersao: true },
     );
     return this.no(id);
+  }
+
+  /**
+   * Reordenar as irmãs (ERP 8.4 "reordena irmãos", o soltar entre duas categorias; F2-B44; README da API › decisão
+   * 190): a lista inteira das filhas vivas do pai, na ordem nova, com a versão que a tela viu; `ordem` = posição ×
+   * `PASSO_ORDEM_CATEGORIAS`. Tudo ou nada: a versão diferente, a categoria movida para outro pai ou excluída no meio e
+   * a irmã nova que a lista não traz são 409 (`CONFLITO_VERSAO`, com quem alterou); o id que não existe nesta empresa,
+   * 404. Só a ordem muda (o pai, o caminho e o nível ficam: a árvore não muda de forma); só as que mudaram de posição
+   * ganham versão nova (e descem ao PDV) e uma linha de auditoria cada.
+   */
+  @Permissao('categorias.editar')
+  @Post('reordenar')
+  @HttpCode(200)
+  async reordenar(
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<CategoriaNo[]> {
+    const { categoriaPaiId, itens } = validar(reordenarCategoriasSchema, corpo);
+    const paiId = categoriaPaiId?.toLowerCase() ?? null;
+    const ids = itens.map((i) => i.id.toLowerCase());
+    await this.s.tenancy.cx().transacao(
+      async (tx) => {
+        if (paiId) await travar(tx, paiId, 'categoriaPaiId');
+        // As pedidas e as filhas vivas do pai, presas na ordem do id (a mesma ordem em toda reordenação).
+        const linhas = await tx
+          .select()
+          .from(categorias)
+          .where(
+            and(
+              isNull(categorias.excluidoEm),
+              or(
+                inArray(categorias.id, ids),
+                paiId ? eq(categorias.categoriaPaiId, paiId) : isNull(categorias.categoriaPaiId),
+              ),
+            ),
+          )
+          .orderBy(asc(categorias.id))
+          .for('update');
+        const porId = new Map(linhas.map((l) => [l.id, l]));
+        for (const [n, id] of ids.entries()) {
+          const atual = porId.get(id);
+          if (!atual) {
+            // Excluída por outro usuário depois que a tela carregou: 409; nunca existiu nesta empresa: 404.
+            const [excluida] = await tx.select().from(categorias).where(eq(categorias.id, id));
+            if (excluida) await conflitoVersao(tx, excluida);
+            throw ErroApi.naoEncontrado('Categoria não encontrada.');
+          }
+          if (atual.categoriaPaiId !== paiId || atual.versao !== itens[n]!.versao)
+            await conflitoVersao(tx, atual);
+        }
+        const pedidas = new Set(ids);
+        const nova = linhas.find((l) => l.categoriaPaiId === paiId && !pedidas.has(l.id));
+        if (nova) await conflitoVersao(tx, nova);
+        const origem = origemDaRequisicao(req);
+        for (const [n, id] of ids.entries()) {
+          const antes = porId.get(id)!;
+          const ordem = (n + 1) * PASSO_ORDEM_CATEGORIAS;
+          if (antes.ordem === ordem) continue;
+          await tx
+            .update(categorias)
+            .set({ ordem, atualizadoPorId: sessao.usuarioId })
+            .where(eq(categorias.id, id));
+          await this.s.auditoria.registrar(tx, origem, {
+            acao: 'editar',
+            entidade: 'categorias',
+            registroId: id,
+            localizacao: LOCALIZACAO,
+            descricao: 'Categoria reordenada',
+            antes: { ordem: antes.ordem },
+            depois: { ordem },
+          });
+        }
+      },
+      { travaVersao: true },
+    );
+    return this.arvore();
   }
 
   /**

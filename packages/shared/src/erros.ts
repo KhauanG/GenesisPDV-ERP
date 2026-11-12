@@ -16,6 +16,10 @@ export const CODIGOS_ERRO = {
   REGRA_NEGOCIO: 422,
   LIMITE_PLANO: 422,
   LIMITE_TAXA: 429,
+  /** Arquivo acima do limite do destino (F2-B43; README da API › decisão 189): o envio é cortado no stream. */
+  ARQUIVO_GRANDE: 413,
+  /** O conteúdo do arquivo não é de um tipo aceito pelo destino (conferido pelos magic bytes, F2-B43). */
+  TIPO_NAO_SUPORTADO: 415,
   MANUTENCAO: 503,
   /**
    * A gravação esperou a trava de ordenação além do limite (caixas reconectando com muitas vendas; Fase 1C, C13):

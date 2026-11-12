@@ -158,6 +158,8 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
 | `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
 | `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
+| `IMAGENS_CONCORRENCIA` / `IMAGENS_LIMITE_PIXELS` | 1 / 36000000 | Imagens decodificadas ao mesmo tempo no processo (o sharp, uma thread do libvips cada) e o teto de pixels (largura × altura) aceito no envio, conferido pelo cabeçalho antes de decodificar (decisão 189) |
+| `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
@@ -334,6 +336,7 @@ tempos e contagens; a planilha e o estado com os códigos nunca saem da pasta te
 | exceljs | 4.4.0 (exata) | só o `WorkbookWriter` em streaming da exportação de relatório em tarefa (F2-B29, decisão 177); MIT, 23 MB e ~120 pacotes transitivos (archiver, unzipper, jszip, fast-csv…: a parte de leitura vem junto e fica sem uso; a transitiva mais nova é de 07/10/2026, mais de duas semanas); o alerta moderado do `uuid@8` (GHSA-w5hq-g745-h8pq, `v3`/`v5`/`v6` com `buf`) não se aplica: o exceljs só chama `v4`. O síncrono continua no `write-excel-file` |
 | read-excel-file | 9.3.10 | leitura do xlsx da importação (mesmo autor do `write-excel-file`, só `fflate` + parser SAX); a 9.3.14 é de 29/10/2026 (menos de duas semanas) |
 | fast-xml-parser | 5.11.2 | XML da NF-e de fornecedor (F2-B18, decisão 163), com `processEntities: false` e `maxNestedTags`; a 5.12.0 é de 03/11/2026 (menos de duas semanas) |
+| sharp | 0.35.5 (exata) | conferência e variante `pdv_256` das imagens enviadas (F2-B43, decisão 189); libvips 8.18.7 **pré-compilado** nos pacotes opcionais `@img/sharp-<plataforma>` (no Linux da VPS e da imagem Docker, `@img/sharp-linux-x64` + `@img/sharp-libvips-linux-x64`, glibc; o `node:22-bookworm-slim` é glibc), sem compilar nada na instalação (não precisa entrar em `onlyBuiltDependencies`); de 27/09/2026. O lockfile traz as variantes de todas as plataformas e o pnpm instala só a da máquina |
 | xml-crypto / @xmldom/xmldom | 6.4.0 / 0.8.15 | conferência da assinatura XMLDSig da NF-e (decisão 163); o `@xmldom/xmldom` fixado na mesma versão que o `xml-crypto` usa, para o nó passado a `loadSignature` ser do mesmo DOM |
 
 ## Decisões de implementação
@@ -348,7 +351,8 @@ Divergências e lacunas encontradas nos documentos (precedência ADR > MD > SYNC
 3. **Envelope de erro**: o do ERP 1.8 (`{ codigo, mensagem, campos }`) com `detalhes` e `requisicao_id` opcionais.
    Códigos acrescentados: `EMPRESA_CANCELADA` (MD 2.3), `TROCA_SENHA_OBRIGATORIA` (403, senha provisória),
    `CONFLITO` (409, violação de unicidade), `LIMITE_TAXA` (429), `MANUTENCAO` (503 + `Retry-After`),
-   `REFRESH_CONCORRENTE` (409, decisão 12). O `/sync` usa o envelope próprio da SYNC 2.4 (`src/sync/erros.ts`). A API do ERP usa JSON em `camelCase` (contrato pedido para o login); o sync segue
+   `REFRESH_CONCORRENTE` (409, decisão 12), `ARQUIVO_GRANDE` (413) e `TIPO_NAO_SUPORTADO` (415) do envio de arquivos
+   (decisão 189). O `/sync` usa o envelope próprio da SYNC 2.4 (`src/sync/erros.ts`). A API do ERP usa JSON em `camelCase` (contrato pedido para o login); o sync segue
    `snake_case` (SYNC 2.3).
 4. **`empresas.canario`**: o ERP 19.7 fala em "empresas marcadas como canário"; o MD 2.3 ainda não tem a coluna. Foi
    criada e precisa entrar no MD. Sem empresa marcada, a de menor código é o canário; falha no canário interrompe a
@@ -875,7 +879,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     loja) toca as pessoas com `senha_hash` (na loja, só as relevantes para ela), se houver terminal ativo no escopo
     (decisão 124). Testes: "pessoas.senha_hash só desce…" e "trocar a exigência de senha…" (`sync.test.ts`).
 91. **Pendências de cadastro desta fase** (roadmap Fase 1 › ERP – cadastros base, itens "parcial"): **Anexos** da loja
-    (logotipo/foto; também os de marca/categoria) esperam o envio de arquivos → Fase 2, com as imagens do produto;
+    (logotipo/foto; também os de marca/categoria) esperam o envio de arquivos → Fase 2, com as imagens do produto (os
+    da loja e o envio ficaram prontos no F2-B43, decisão 189; os de marca e categoria são o F2-B44);
     **variações na importação** → importação completa da Fase 2 (o combo entra, decisão 95); **Tipos de estoque**: tela
     somente leitura `/estoque/tipos` (o CRUD do ERP 13.6 é da Fase 2); **ficha técnica**: o cadastro está pronto e
     segue a interpretação adotada da **D17** (produto `produzido` não tem saldo próprio — acerto e importação recusam
@@ -5605,6 +5610,250 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        "NF-e", com o texto legível e a `descricao` gravada com o documento), `importacao-nuvem3.test.ts` (a
        localização "Produtos › Importação" e a `descricao` da criação e da edição pela planilha),
        `cadastro-massa.test.ts` (a `descricao` do cadastro em massa) e o `relatorios-produtos.spec.ts` do shared.
+
+189. **Envio de arquivos e imagens: o tipo pelo conteúdo, os limites no stream e a variante `pdv_256`** (Fase 2,
+     F2-B43; MD 3.1.6; SYNC 6.12; ERP 8.2.6, 10.3.4; decisões 91 e 93; `src/arquivos/` (o controlador, o serviço
+     `Arquivos`, `vincularArquivo` e `imagens.ts`), `chaveVariante` e `excluir` em `src/infra/armazenamento.ts`, os
+     Anexos no `PUT /lojas/:id`; contratos no shared `arquivos.ts` e os códigos `ARQUIVO_GRANDE` (413) e
+     `TIPO_NAO_SUPORTADO` (415) em `erros.ts`; migração **`0027_arquivos_variantes`**; PDV sem mudança: o
+     `/sync/arquivos` e o `foto_url` são o F2-B45; o ERP é a decisão 77 do README do ERP).
+     - **`POST /api/arquivos?destino=…`** (multipart, um arquivo no campo `arquivo`, nenhum campo de texto). O
+       **destino** (`DESTINOS_ARQUIVO` no shared: `produto_foto`, `categoria_imagem`, `marca_logotipo`,
+       `loja_logotipo` e `loja_foto`, estes dois com `&lojaId=`) decide a categoria e a entidade gravadas, os tipos, o
+       limite e as variantes. Vem na **query**, não no corpo: assim tudo é decidido **antes** de ler o corpo.
+     - **Antes de o multer ler** (o interceptor `LimiteEnvioArquivo`, como o da NF-e, decisão 164): a query; a
+       **permissão do destino** (basta uma: `produtos.criar` ou `produtos.editar`, `categorias.editar`,
+       `marcas.criar` ou `marcas.editar`, `lojas.editar`; sem ela, 403 sem ler nada) e a loja entre as permitidas
+       (fora delas, 404); o `Content-Length` contra o limite do destino mais 16 KiB do multipart (acima, 413
+       `ARQUIVO_GRANDE`; sem ele, o envio em pedaços, 422); o limite por usuário por minuto
+       (`ARQUIVOS_ENVIOS_POR_MINUTO`, 30) e o de envios simultâneos do usuário (`ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO`,
+       2: o logotipo e a foto da loja juntos; o terceiro, 429 na hora), que é o que limita a memória da leitura
+       (2 × o limite do destino por usuário).
+       Depois, o **multer corta o stream** no limite do destino (`limits` como função da requisição, multer ≥ 2.4:
+       2 MB; 1 MB no logotipo, o da loja vai ao cupom e ao DANFE): o `Content-Length` que mente não passa de lá, e a
+       memória de um envio é a do limite. Um arquivo só, `fields: 0`, `parts: 1`.
+     - **A vaga do semáforo do processo** (`ARQUIVOS_ENVIOS_SIMULTANEOS`, 4; o interceptor `VagaEnvioArquivo`, depois
+       do multer) é pega com o corpo **já lido** e solta quando a resposta termina: protege a memória e a CPU (o
+       buffer juntado, a variante e a gravação), não a rede. Na primeira versão do bloco ela vinha antes da leitura, e
+       a revisão mostrou que dois usuários quaisquer (o limite por usuário é por usuário, o semáforo é do processo)
+       com 2 envios lentos cada (o `Content-Length` de ~1 MB e o corpo a poucos bytes por segundo, até o
+       `requestTimeout` de 300 s do Node, ou os 60 s do `readTimeout` do Traefik) prendiam as 4 vagas e deixavam os
+       envios de todas as outras empresas na fila, sem resposta. Agora o envio lento segura só a vaga do próprio
+       usuário; quem espera o semáforo espera só o processamento dos outros, que tem fim. O envio da NF-e (decisão 164)
+       tem o mesmo desenho antigo e fica como está (fora do bloco; o corpo dele vai a 20 MB).
+     - **O tipo é o do conteúdo** (`detectarTipoArquivo`, os magic bytes: PNG pela assinatura de 8 bytes, JPEG por
+       `FF D8 FF`, WebP pelo `RIFF….WEBP`, PDF por `%PDF-`), nunca a extensão nem o `Content-Type` do cliente; fora
+       dos tipos do destino, 415 `TIPO_NAO_SUPORTADO`. **SVG nunca** (é documento com script, não imagem: o ERP 9.1
+       ainda o citava no logotipo da empresa e foi corrigido), nem GIF, HEIC ou TIFF. **O PDF** é reconhecido, mas
+       nenhum destino do F2-B43 o aceita: o "pdf só nos anexos" do plano ficou para os anexos que são documento (o
+       boleto e o comprovante do financeiro, ERP 15), com a tela deles; os Anexos da loja (ERP 10.3.4) são as duas
+       imagens.
+     - **A imagem é decodificada de verdade** (`processarImagem`, sharp 0.35.5): o PNG truncado ou o HTML com o
+       cabeçalho de PNG voltam 415 ("corrompido ou não é uma imagem"), e o formato que o libvips vê tem de ser o
+       detectado. Contra a **bomba de descompressão**: o cabeçalho é lido primeiro (`metadata`, que não decodifica) e
+       acima de `IMAGENS_LIMITE_PIXELS` (36 MP: a foto do celular tem 12 a 24) ou com várias páginas (animação) volta
+       422 com o tamanho; o `limitInputPixels` do sharp é a segunda barreira. **Uma imagem por vez no processo**
+       (`IMAGENS_CONCORRENCIA`, 1, como o argon2 e a planilha da decisão 93), `sharp.concurrency(1)` (uma thread do
+       libvips) e `sharp.cache(false)`. **Só os leitores de PNG, JPEG e WebP em memória** ficam liberados no processo
+       inteiro (`sharp.block({ operation: ['VipsForeignLoad'] })` + `unblock` dos três): SVG, PDF, TIFF, HEIF, GIF e
+       os leitores de arquivo do libvips não rodam nem chamando o sharp direto.
+     - **A variante `pdv_256`** (SYNC 6.12): WebP qualidade 80, até 256 px no maior lado (`fit: 'inside'`, sem
+       ampliar a imagem menor), com a orientação do EXIF aplicada e **sem metadados** (o EXIF do original, com o GPS do
+       celular, não vai para a variante; o original fica como enviado, para o sha256 ser o do arquivo). Todas as
+       imagens dos destinos de hoje ganham a variante (a miniatura do ERP também a usa); a `cupom_mono` do logotipo
+       e a `banner_1366` entram com o uso delas (o caixa ainda não imprime o logotipo da loja: pendência em
+       `docs/andamento.md`, sem bloco na Fase 2; a dica da tela avisa).
+     - **Gravação.** A chave é do servidor (`chaveArquivo`: `emp/<codigo>/<categoria>/<aaaa>/<mm>/<uuidv7>.<ext>`,
+       a extensão do tipo detectado; a variante ao lado, `….pdv_256.webp`, `chaveVariante`): o nome do cliente só vai
+       para `nome_original` (sem as pastas nem caracteres de controle, `nomeOriginalSeguro`), nunca para o caminho nem
+       para um cabeçalho. O original e a variante vão ao armazenamento **antes** da linha (E/S fora de transação, MD
+       1.5), com o sha256 nos metadados do objeto; a linha guarda o sha256, o tipo detectado e **`variantes`** (jsonb:
+       `{ "pdv_256": { chave, tipoMime, tamanhoBytes, sha256, largura, altura } }`, a coluna nova da `0027`, `not
+       null default '{}'`, que no PostgreSQL 11+ não reescreve a tabela). A linha falhou → os objetos são apagados
+       (`excluir`). A resposta (`ArquivoInfo`) nunca traz a chave.
+     - **Quem vê** (`GET /api/arquivos/:id`, os metadados; `GET /api/arquivos/:id/conteudo[?variante=pdv_256]`): a
+       empresa é a do banco do token (o id de outra empresa não existe aqui: 404), e o arquivo só aparece a quem vê o
+       cadastro dono (`produtos.ver`, `categorias.ver`, `marcas.ver`; `lojas.ver` com a loja do arquivo entre as
+       permitidas), também 404 (não revela que existe). As outras categorias (XML, planilhas, logs) têm as rotas delas
+       e aqui são 404. O conteúdo passa pela API (são até 2 MB; o `<img>` do ERP não manda o token, então a tela
+       baixa como blob), com o `Content-Type` **gravado** (o detectado: nunca `text/html` nem `image/svg+xml`),
+       `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` (quem abrir o
+       endereço direto não roda nada), `Content-Disposition` com o nome gerado `<id>[.<variante>].<ext>` (`inline` na
+       imagem, `attachment` no PDF), `ETag` = o sha256 e `Cache-Control: private, max-age=300`.
+     - **Os Anexos da loja** (ERP 10.3.4, a pendência da decisão 91): `logotipoArquivoId` e `fotoArquivoId` no
+       `PUT /lojas/:id` (`alterarLojaSchema`): o id de um envio `loja_logotipo`/`loja_foto` **da própria loja**,
+       `null` tira, ausente mantém (o ERP de antes do F2-B43 não manda e não apaga nada). `vincularArquivo` confere na
+       transação a categoria, a entidade, a loja e que o arquivo não é de outro registro (senão 422 no campo) e grava o
+       `registro_id`. A coluna já descia ao PDV no fluxo `configuracao` como texto (o PDV ignora: quem baixa a imagem é
+       o F2-B45); trocar o anexo só dá versão nova à linha da loja. A foto do produto, a imagem da categoria e o
+       logotipo da marca ligam pelo mesmo `vincularArquivo` no F2-B44.
+     - **Divergência com o documento:** a ERP 10.3.4 dizia o logotipo da loja "≤ 500 KB"; vale o 1 MB do plano
+       (`DESTINOS_ARQUIVO.loja_logotipo`), e a especificação foi corrigida.
+     - **Fora do bloco:** a limpeza dos envios abandonados (enviados e nunca gravados num cadastro: `registro_id`
+       nulo; o índice `ix_arquivos_entidade_registro_id` já serve a ela) e o logotipo da empresa (Configurações ›
+       Geral, `geral.logotipo_arquivo_id`), que entra com a tela dele, também sem SVG.
+     - **A dependência nova na imagem Docker:** o `sharp` traz o libvips pré-compilado (versões escolhidas). O
+       `pnpm install --frozen-lockfile` e o `pnpm --filter api deploy --prod` (o passo do `apps/api/Dockerfile`)
+       foram conferidos no Linux (glibc) da sessão: o `node_modules` de produção traz `@img/sharp-linux-x64` e
+       `@img/sharp-libvips-linux-x64` e o sharp carrega a partir dele. O `docker build` em si não rodou na sessão (sem
+       o daemon do Docker); a CI da `main` monta a imagem.
+     - Testes: `arquivos.spec.ts` do shared (os magic bytes, os destinos, as mensagens e a loja no envio),
+       `src/arquivos/arquivos.spec.ts` (o nome seguro, a chave da variante, a variante sem ampliar e com o EXIF
+       girado, a bomba, o formato trocado, o truncado e o SVG bloqueado no sharp) e `arquivos.test.ts` (o critério de
+       pronto: o JPEG 800 × 600 gravado com o sha256 no banco e no objeto e a `pdv_256` WebP 256 × 192; PNG e WebP com o
+       tipo do conteúdo e não o do cliente; o HTML renomeado para `.png` 415 sem gravar nada (a contagem de `arquivos`
+       antes e depois, sem depender da ordem dos testes); SVG, GIF, PDF na foto e o PNG truncado 415; 2,1 MB e o
+       logotipo de 1,1 MB 413 pelo `Content-Length` (só o cabeçalho da parte é mandado: o 413 chega sem o corpo); 1
+       byte acima do limite cortado no stream (o serviço não chega a ser chamado, e no limite exato chega); o terceiro
+       envio simultâneo do mesmo usuário 429 (e as vagas de volta quando os outros terminam); 4 envios lentos de dois
+       usuários sem prender o envio da outra empresa; o envio em pedaços 422; a bomba 50.000 × 50.000 422 sem a memória subir; a permissão 403, o destino e a
+       loja 422/404, o campo extra 422; o path traversal; outra empresa 404 nos dois sentidos; o arquivo de cadastro que
+       o usuário não vê, o da outra loja e a planilha 404; os cabeçalhos do conteúdo; os Anexos da loja gravados,
+       mantidos sem o campo e tirados com `null`, e recusados com outra categoria, outra loja ou id inexistente; 20
+       envios seguidos de ~1,1 MB sem a memória crescer, medidos depois do `gc()` (o `vitest.integracao.config.ts`
+       liga o `--expose-gc`, e o teste exige o GC): o heap, o `external`/`arrayBuffers` (menos os bytes exatos que o
+       S3 em memória guardou) e o rss abaixo de 10 MB (40 MB no rss), que guardar o buffer de cada envio (22 MB)
+       estoura, e o cache do libvips desligado (`sharp.cache()` com o máximo 0); 4 envios ao mesmo tempo com uma
+       tarefa do libvips por vez, `sharp.counters()`). Conferido tirando cada proteção (o `sharp.cache(false)`, o
+       semáforo de `imagens.ts`, o `fileSize` do multer, o `Content-Length`, a vaga depois da leitura, e guardando o
+       buffer de cada envio): o teste correspondente falha. Imagens inventadas, geradas no teste (`test/fixtures/imagens.ts`).
+
+190. **Foto e galeria do produto, imagem da categoria, logotipo da marca, a reordenação das categorias e a ficha da
+     marca** (Fase 2, F2-B44; ERP 8.2.6, 8.4, 8.7; decisões 61, 62 e 189; `src/produtos/gravacao.ts`
+     (`vincularImagensProduto`, `gravarImagens`), `consultas.ts` (`imagensDoProduto`, a galeria na versão do cadastro),
+     `produtos.controller.ts`, `src/catalogo/categorias.controller.ts` (`POST /categorias/reordenar`) e
+     `marcas.controller.ts` (`GET /marcas/:id/ficha`), a filha `imagens` em `src/auditoria/diferenca-produto.ts`;
+     contratos no shared `catalogo.ts` (`reordenarCategoriasSchema`, `FichaMarca`), `produtos.ts`
+     (`fotoPrincipalArquivoId`, `imagens`, `MAXIMO_IMAGENS_PRODUTO`) e `idArquivoAnexo` em `arquivos.ts`; **sem migração**:
+     as colunas e a `produtos_imagens` já existiam; PDV sem mudança: o `foto_url` e o `/sync/arquivos` são o F2-B45; o ERP
+     é a decisão 78 do README do ERP).
+     - **O anexo nos cadastros** (`idArquivoAnexo`, o mesmo dos Anexos da loja): o id de um envio do destino do campo
+       (`produto_foto`, `categoria_imagem`, `marca_logotipo`), `null` tira e **ausente mantém**. É o que deixa a
+       importação de planilha, o cadastro em massa, o "Definir NCM" em lote (que partem de `entradaDoDetalhe`, que agora
+       tira a foto e a galeria) e o ERP de antes desta versão gravarem sem apagar a imagem. `vincularArquivo` (decisão
+       189) confere **na transação da gravação** que o id é um envio vivo desta empresa com a categoria e a entidade do
+       campo e ainda sem dono (ou já deste registro), e grava o `registro_id`; senão 422 no campo
+       (`fotoPrincipalArquivoId`, `imagens.N`, `imagemArquivoId`, `logotipoArquivoId`) e nada é gravado. O id que já
+       estava gravado não é conferido de novo. O arquivo de outra empresa não existe no banco desta: é o mesmo 422 (o
+       `GET` dele continua 404). O registro novo ganha o id **antes** da linha (`uuidv7`, como a categoria já fazia),
+       para a conferência rodar antes do `insert` (a FK de `foto_principal_arquivo_id` só confere que o arquivo existe,
+       não o destino). A foto do produto vale para quem tem `produtos.criar`/`editar` (o Estoquista inclusive), a da
+       categoria `categorias.editar` e o logotipo `marcas.criar`/`editar`, as mesmas do envio.
+     - **A galeria do produto** (`produtos_imagens`, até `MAXIMO_IMAGENS_PRODUTO` = 10 além da foto; não desce ao PDV):
+       a lista de ids na ordem, inteira (vazia = tira todas; ausente = mantém), identificada pelo arquivo
+       (`uq_produtos_imagens`): a que saiu é excluída logicamente, a nova entra, a que ficou só muda a ordem (1, 2, 3…);
+       repetida na lista é 422 no zod. O arquivo que sai fica guardado (o histórico mostra a troca; a limpeza dos
+       envios sem dono continua fora, decisão 189). A **versão do cadastro** (`sqlVersaoAgregada`, decisão 47) passa a
+       contar a `produtos_imagens`: mexer só na galeria e gravar com a versão de antes é 409. A **auditoria** tem a
+       filha `imagens` ("Imagem da galeria adicionada (posição 1)", "removida", "Posição 2 → 1"); a foto continua
+       "Foto principal: (alterado)" (o id não tem nome legível). A cópia do produto (Duplicar, no ERP) sai sem imagens:
+       o arquivo é do produto de origem, e a API recusaria.
+     - **`POST /categorias/reordenar`** (`categorias.editar`; o soltar entre duas categorias, ERP 8.4): `{ categoriaPaiId,
+       itens: [{ id, versao }] }` com a lista **inteira** das filhas vivas do pai (vazio = as raízes, até 500) na ordem
+       nova. Numa transação com a `fn_trava_versao` (as reordenações e os `mover` da empresa ficam em fila, então duas
+       telas não montam um ciclo nem se atropelam): prende o pai e as categorias pedidas e as filhas do pai, na ordem do
+       id; o id que não existe nesta empresa é 404; a versão diferente, a categoria que outro moveu para outro pai ou
+       excluiu e a filha nova que a lista não traz são **409** `CONFLITO_VERSAO` com quem alterou, e nada muda. Grava
+       `ordem` = posição × `PASSO_ORDEM_CATEGORIAS` (10, 20, 30…: o campo Ordem do painel continua servindo para
+       encaixar entre duas) **só nas que mudaram** (só elas ganham versão nova, descem ao PDV e ganham uma linha de
+       auditoria "Categoria reordenada" com a ordem antes e depois). O pai, o caminho, o nível e o nome não mudam: a
+       árvore não muda de forma. Devolve a árvore. **Mudar de pai** continua o `POST /categorias/:id/mover` (decisão 61:
+       sem ciclo pelo caminho materializado, até 5 níveis com a subárvore, nome único entre as irmãs), que o soltar
+       "dentro" chama com a ordem do fim da lista; o soltar entre duas de outro nível chama o `mover` e depois o
+       `reordenar` (duas transações: se o segundo der 409, a categoria fica no pai novo e o ERP recarrega e avisa).
+     - **`GET /marcas/:id/ficha`** (`marcas.ver` **e** `produtos.ver`: a lista é do cadastro de produtos): a marca e os
+       produtos dela, ativos e inativos e não excluídos, pelo nome, com o código, o EAN principal, a unidade e o preço de
+       venda; nada de custo. Até `LIMITE_PRODUTOS_FICHA_MARCA` (5.000) produtos, com o total à parte. A marca de outra
+       empresa é 404. O ERP a imprime pelo navegador (padrão "Impressão" do plano).
+     - Testes: `imagens-catalogo.test.ts` (o critério de pronto: o produto com foto e galeria e os arquivos ligados a ele;
+       reordenar, tirar e incluir na galeria com a auditoria; a versão velha depois de mexer só na galeria 409; o corpo
+       sem os campos mantém, `null`/`[]` tiram; o anexo de outro destino, de outro produto, de outra empresa e o
+       inexistente 422 no campo sem gravar nada; o Estoquista grava a foto; a imagem da categoria na criação e na
+       alteração e a de outro destino 422; "Cervejas long neck" movida para dentro de "Cervejas" e reordenada antes de
+       "Cervejas lata", só a que mudou com versão nova e auditoria; as raízes; o 409 da versão velha, da irmã fora da
+       lista, da categoria de outro pai e da excluída no meio, com as ordens e versões intactas; o 404 da outra empresa,
+       o 422 do pai inexistente e o 403 sem `categorias.editar`; o ciclo do `mover`; o logotipo da marca e a ficha com
+       os produtos, sem custo; a de outra empresa 404 e sem `produtos.ver` 403) e, no shared, `produtos.spec.ts` (a
+       foto e a galeria ausentes, o repetido e o teto) e `cadastros.spec.ts` (o `reordenarCategoriasSchema`). Imagens
+       inventadas, geradas no teste.
+
+191. **Complementos do produto: as tabelas, a FK segura da venda e só inativação** (Fase 2, F2-B45; F2-Q1 = roadmap D43:
+     complementos sim; MD 3.6.8; migração **`0028_complementos`**; `src/database/empresa/schema/produtos.ts`
+     (`produtosGruposComplementos`, `produtosComplementos`), `vendas.ts` (a FK de `itens_venda_complementos`),
+     `src/sync/fluxos.ts` (as duas no `catalogo`) e `src/sync/handlers/vendas.ts` (`complementosConhecidos`)).
+     - **As tabelas**: `produtos_grupos_complementos` (`produto_id` → produtos, `nome` varchar(40), `minimo`/`maximo`
+       smallint, `obrigatorio`, `ordem`) e `produtos_complementos` (`grupo_id` → grupos, `produto_id` → produtos
+       anulável — a opção vinculada — ou `descricao` varchar(60) — a livre —, `preco_adicional` numeric(15,4),
+       `baixa_estoque`, `quantidade_baixa` numeric(15,3), `ordem`, `ativo`), com CP e AU. CHECKs da MD 3.6.8:
+       `ck_produtos_grupos_complementos_quantidades` (`minimo >= 0 and maximo >= minimo and (not obrigatorio or minimo >=
+       1)`), `ck_produtos_complementos_origem` (vinculada ou livre), `_baixa` (baixa estoque só a vinculada) e
+       `_valores` (preço adicional ≥ 0 e quantidade da baixa > 0). Que o grupo seja de um produto `com_complementos`
+       fica para a gravação do ERP (F2-B51), como as outras regras de tipo das filhas do produto.
+     - **Descem no `catalogo`** com todas as colunas e sem filtro (o produto desce a todas as lojas): `fn_versao` (trava
+       de ordenação), `ix_<tabela>_versao` e as FKs de autoria, como as demais filhas; `TABELAS_COM_AUTORIA` e o
+       `Esquema.g.cs` (espelhos novos no PDV 0.12.0, decisão 85 do README do PDV) acompanham. O PDV anterior descarta as
+       tabelas que não conhece sem travar o cursor (SYNC 6.10). Até o F2-B51 elas ficam vazias e
+       `produtos.complementos_habilitados` continua desligada.
+     - **Exclusão física recusada** (`fn_exclusao_fisica_proibida`, `before delete` por linha e `before truncate` por
+       comando, nas duas): o erro `P0001 EXCLUSAO_FISICA_PROIBIDA`. Só a exclusão lógica (`excluido_em`, que desce como
+       tombstone) e o `ativo`: o caixa offline pode ter na venda o id de uma opção, e a nuvem continua conhecendo esse
+       id quando o evento chegar. O `truncate ... cascade` também para no trigger (antes de esvaziar as vendas).
+     - **`itens_venda_complementos.complemento_id` → `produtos_complementos` com `on delete set null`** (antes sem FK,
+       "futuro"), com o índice da FK. A migração zera o id que existisse antes de criar a FK (nenhum caixa publicado manda
+       complementos: a lista vai vazia, então em produção nada muda). Para a FK nunca recusar uma venda, o
+       `conferirDocumentoVenda` lê quais `complemento_id` do documento existem (`complementosConhecidos`, uma consulta) e
+       o `montarLinhas` grava **nulo** o que a nuvem não conhece (o nome do grupo e a descrição ficam no item). O reenvio
+       do mesmo evento passa pela mesma regra, então a conferência da camada 2 (SYNC 8.4) não acusa divergência. Era o
+       que o plano deixava para a Fase 3; entrou aqui porque a FK nasce aqui.
+     - `venda.finalizada` continua v1 e `versoes_schema` não muda (SYNC 17.5): o bloco `itens_venda_complementos` já
+       existia no payload.
+     - Testes: `sync-arquivos.test.ts` (as duas tabelas no pull com todas as colunas; os CHECKs, cada um pelo nome; o
+       DELETE e o TRUNCATE recusados com o código; a inativação que desce como tombstone; a FK com `set null`),
+       `venda-eventos.test.ts` (o `complemento_id` conhecido gravado, o desconhecido nulo, o reenvio `ja_existia`),
+       `versionamento.test.ts` e `sync-triggers.test.ts` (os triggers e a autoria pelas listas) e `esquema-pdv.spec.ts`.
+
+192. **`GET /sync/arquivos/{id}?variante=pdv_256` e os campos calculados das imagens no pull** (Fase 2, F2-B45; SYNC
+     6.12, 17.2; MD 6.2; decisões 189 e 190; `src/sync/arquivos.ts` (`camposImagemPdv`, `ArquivosSync`),
+     `src/sync/sync.controller.ts`, `fluxos.ts` (`calculadas`), `pull.ts`, `src/database/esquema-pdv.ts`; contrato
+     `arquivoSyncQuerySchema` no shared `sync/contratos.ts`; sem migração).
+     - **Campos calculados** (`TabelaFluxo.calculadas`): campos que descem na linha sem existir na tabela, depois das
+       colunas. `foto_url`/`foto_sha256` nos produtos, `imagem_url`/`imagem_sha256` nas categorias e
+       `logotipo_url`/`logotipo_sha256` nas marcas: o caminho **estável** `/sync/arquivos/{arquivo_id}?variante=pdv_256`
+       (nunca uma URL assinada, que expiraria e mudaria a linha) e o sha256 **da variante** (`arquivos.variantes`), por
+       uma subconsulta pela PK de `arquivos` que exige o envio vivo do destino certo (categoria e entidade) e com a
+       variante; senão os dois descem nulos. O arquivo não muda depois do envio: trocar a imagem troca o id na linha do
+       cadastro, que ganha versão nova e desce (a projeção sozinha nunca muda a linha, então dois pulls dão o mesmo
+       valor). O gerador do `Esquema.g.cs` lista cada campo calculado no fim da tabela como coluna **projetada e
+       anulável** (o PDV confere tipo e nulidade como as outras; o nome que colide com uma coluna é erro do gerador). O
+       `logotipo` e a `foto` da loja não descem (pendência do cupom, `docs/andamento.md`).
+     - **O endpoint** (`EndpointSync` `arquivos`): o token do terminal, como o pull; não exige o hardware registrado
+       (são os mesmos cadastros que o pull entrega a ele), e o terminal em desativação recebe 403 `ESCOPO_INVALIDO` como
+       no pull do `catalogo`. Só a variante `pdv_256` (outra ou ausente: 400 `REQUISICAO_INVALIDA`); o id no caminho,
+       sem diferença de caixa. **Escopo:** só o arquivo ligado a um cadastro **vivo** que desce ao terminal — a foto
+       principal de um produto, a imagem de uma categoria ou o logotipo de uma marca —, com a categoria e a entidade do
+       destino (a mesma regra dos campos calculados). A empresa é a do banco do terminal: o arquivo de outra empresa, o
+       envio solto, o do produto excluído, o de outra categoria (logotipo e foto da loja, XML, planilhas, anexos) e o id
+       inválido dão **404 `NAO_ENCONTRADO`**, sem dizer qual (a SYNC 6.12 falava em 403 para a outra categoria; o 404
+       não confirma que o id existe). A galeria (`produtos_imagens`) não desce.
+     - **A resposta**: o conteúdo sai pela própria API, e não pelo `302` para a URL assinada da SYNC 6.12: a variante tem
+       10–20 KB, e assim o `Content-Type` é o **fixo** do caixa (`image/webp`; a variante gravada com outro tipo, com o
+       sha256 fora do formato ou acima de `LIMITE_BYTES_VARIANTE_PDV` = 512 KB é 404), com `X-Content-Type-Options:
+       nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition: inline;
+       filename="<id>.pdv_256.webp"` (nunca o nome do cliente), `Cache-Control: private, no-cache` e o **`ETag` com o
+       sha256**: o `If-None-Match` com ele (ou `*`) responde `304` sem ler o objeto. O PDV confere o sha256 do que
+       baixou antes de gravar no disco (decisão 86 do README do PDV).
+     - **Limite por terminal** (`SYNC_ARQUIVOS_POR_MINUTO`, padrão 120 por minuto, na memória da instância como o da
+       consulta de saldos): `429 LIMITE_TAXA` com `Retry-After: 60`. O caixa baixa sob demanda, 2 por vez.
+     - **Compatibilidade**: campo novo na linha do pull e rota nova são mudanças compatíveis (SYNC 17.2): o PDV 0.11.0
+       grava `foto_url`/`foto_sha256` (as colunas existem no espelho dele desde a 1A) e descarta os campos das marcas e
+       das categorias e as tabelas de complementos; a API vai para a produção **antes** do PDV 0.12.0.
+     - Testes: `sync-arquivos.test.ts` (o critério de pronto: `foto_url`/`foto_sha256` no pull, o sha256 da variante e
+       não o do original, nulos sem foto, `imagem_*` e `logotipo_*`; estável entre dois pulls e sem versão nova; trocar a
+       foto desce a URL e o sha256 novos; o download com o tipo fixo, `nosniff`, a CSP, o nome gerado, o `ETag` e o
+       `304`; a marca, a categoria e o terminal de outra loja da mesma empresa; outra empresa, o envio solto, o logotipo
+       da loja, o produto excluído e os ids inválido e desconhecido 404; a variante ausente ou outra 400, sem token 401;
+       o terminal em desativação 403; o limite 429 por terminal) e `esquema-pdv.spec.ts` (os campos calculados no fim,
+       projetados e anuláveis). Imagens inventadas, geradas no teste.
 
 ### Operação – tarefas em segundo plano (API)
 

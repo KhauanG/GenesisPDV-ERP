@@ -3814,3 +3814,68 @@ reimpresso continua o original, com o número do caixa.
     precisam andar juntas. Nada muda no protocolo (`versoes_schema`): o 0.10.0 instalado continua vendendo com a API
     nova até a loja atualizar. **Ordem na implantação:** primeiro a API (a rota do F4 é nova; o 0.11.0 com a API antiga
     só mostra "Consulta indisponível"), depois o release "PDV release" e a Implantação com `publicar_pdv`.
+
+85. **Versão 0.12.0: a release R2 da Fase 2, com uma migração só e uma volta só do cursor do `catalogo`** (11/11/2026,
+    fechamento do PR-10, F2-B45; SYNC 17.4.2, 17.5; MD 3.6.8, 6.2; README da API › decisões 191 e 192).
+    - **O que muda no espelho:** as colunas calculadas das imagens nas marcas (`logotipo_url`, `logotipo_sha256`) e nas
+      categorias (`imagem_url`, `imagem_sha256`) — os produtos já tinham `foto_url`/`foto_sha256` desde a 1A, como
+      colunas só locais, e agora elas estão no `Esquema.g.cs` como projetadas e conferidas pelo `EsquemaNuvemTests`
+      (saíram da lista `ColunasSoLocais`) — e os espelhos `produtos_grupos_complementos` e `produtos_complementos`
+      (`ProdutoGrupoComplementosRegistro`, `ProdutoComplementoRegistro` em `Entidades/TabelasCatalogoComplementar.cs`,
+      com o índice pelo produto e pelo grupo; F2-Q1 = D43). Só o espelho: o uso dos complementos na venda é da Fase 3, e
+      o caixa continua vendendo o `com_complementos` sem eles (decisão 81).
+    - **Uma migração EF só** (`Migracoes/<data>_FaseDois.cs`), no padrão da `FormasPagamentoLojas` (C8b): adiciona as
+      colunas e as tabelas e volta o cursor do `catalogo` a 0, e a versão local das **marcas** e das **categorias** a 0
+      (o PDV anterior descartou as colunas novas delas, e a mesma versão da nuvem, agora com a imagem, seria ignorada).
+      Os produtos não voltam a versão: o PDV anterior já grava `foto_url`/`foto_sha256` (as colunas existem nele), e a
+      foto só existe a partir da API nova. O cursor de outro fluxo, a carga inicial concluída e a marca `ressincronizar`
+      não mudam; a venda segue durante a nova descida (upsert por versão, nada local é apagado). Toda mudança de
+      `Esquema.g.cs` da Fase 2 entra nesta migração: as fotos enviadas antes da atualização também chegam. Como a
+      abertura aplica todas as migrações pendentes, o banco do 0.10.0 que passa direto para o 0.12.0 (a
+      `BuscaProdutosFts` e a `FaseDois` juntas) também tem o cursor do `catalogo` voltado (o `IndiceBuscaProdutosTests`
+      do banco em uso confere isso agora).
+    - **Protocolo:** `venda.finalizada` continua v1 e `versoes_schema` não muda (SYNC 17.5). O 0.11.0 instalado continua
+      sincronizando com a API nova: campo e tabela desconhecidos são descartados com log, sem travar o cursor (SYNC
+      6.10). **Ordem na implantação: a API primeiro**, depois o release "PDV release" do 0.12.0 e a Implantação com
+      `publicar_pdv` (roteiro em `docs/andamento.md` › Próximo passo). O 0.12.0 diante da API antiga só não acha a rota
+      `/sync/arquivos` (o download dá 404 e a tela fica no placeholder) e não recebe os campos novos.
+    - **Versão:** a `<Version>` do `Directory.Build.props` passa de 0.11.0 para **0.12.0** (e os exemplos do
+      `GenesisPDV.iss` e do `gerar-instalador.ps1`), o número do meio como nas decisões 79 e 84. **A
+      `VERSAO_PDV_GUARDA_VARIACOES` do shared fica em 0.11.0:** ela é a *primeira* versão com a guarda das variações,
+      não a versão atual; subir para 0.12.0 faria o ERP avisar que os caixas 0.11.0 (que já têm a guarda) venderiam o
+      produto com variações pelo pai. O "andam juntas" da decisão 84 vale só para a release que trouxe a guarda.
+    - Testes: `MigracaoFaseDoisTests` (Data: o banco do 0.11.0 recebe só a `FaseDois`, o cursor do `catalogo` e a
+      versão das marcas e das categorias vão a 0, os outros fluxos, a carga concluída e o `ressincronizar` ficam, as
+      tabelas novas nascem vazias), `AplicadorPullTests` (Sync: o banco do 0.11.0 grava o produto com a foto, descarta a
+      coluna da marca e as tabelas de complementos com log e avança o cursor; depois da `FaseDois`, a mesma página grava
+      o logotipo da marca e os complementos com os decimais na escala) e `EsquemaNuvemTests` (as colunas calculadas
+      projetadas e anuláveis, os espelhos novos com a mesma chave e o mesmo fluxo).
+
+86. **Cache das imagens do catálogo: o sha256 conferido antes de gravar e nunca uma falha que trave o caixa** (F2-B45;
+    SYNC 6.12; README da API › decisão 192; `GenesisPDV.Sync/Cliente/CacheImagens.cs`, `ClienteSyncHttp.BaixarArquivoAsync`,
+    `CaminhosPdv.PastaCacheImagens`).
+    - **Do `*_url` só sai o id:** `CacheImagens.IdDaUrl` aceita só o formato exato `/sync/arquivos/{uuid}?variante=pdv_256`
+      (outro host, outra variante, `..`, parâmetro a mais: nulo, nem vai à rede), e o `ClienteSyncHttp` monta a rota
+      relativa pelo id contra a `url_api` da identidade: o token nunca vai a um endereço que veio na linha.
+    - **O nome local é do PDV:** `<sha256>.webp` sob `PastaCacheImagens` (`<dados>\cache\imagens`; fora do backup, que
+      copia só o `pdv.db`), com o sha256 conferido como 64 hexadecimais minúsculos; outro texto não vira caminho (sem
+      path traversal). A pasta é criada no primeiro download.
+    - **Integridade e tamanho:** o download só aceita `image/webp`, recusa o `Content-Length` acima de
+      `CacheImagens.LimiteBytes` (512 KB, o mesmo teto da API) e lê o corpo em blocos, cortando quando passa do limite
+      (o `HttpClient` não junta o corpo inteiro antes: `ResponseHeadersRead`). O sha256 do conteúdo precisa ser o da
+      linha; só então grava num temporário da mesma pasta e troca pelo nome final de uma vez (`File.Move`): nunca fica
+      meia imagem com o nome certo. O `If-None-Match` com o sha256 e o `304` estão no cliente para o cache LRU.
+    - **Offline-first:** `ObterAsync` nunca lança (só o cancelamento de quem chama): rede fora, prazo de 15 s
+      (`TemposLimiteSync.Arquivo`), 404 da API antiga, tipo ou tamanho errado, sha256 diferente, disco cheio — devolve
+      nulo e a tela fica no placeholder; a venda e a sincronização não passam por ele. A imagem que falhou espera
+      `EsperaAposFalha` (10 min) antes de outra tentativa; no máximo 2 downloads ao mesmo tempo (SYNC 6.12).
+    - **Fora deste bloco** (plano, "Fora do escopo"): a exibição da foto no caixa e o descarte LRU de 500 MB, para quando
+      `pdv.exibe_foto_produto` (padrão `false`) for ligada — o serviço já está registrado no app; ligar depois não exige
+      ressincronização, porque os campos já estão no espelho. O logotipo da loja no cupom (variante `cupom_mono`) segue
+      pendente (`docs/andamento.md`).
+    - Testes: `CacheImagensTests` (Sync: a rota pelo id com o token, o sha256 conferido, o nome gerado sem temporário
+      sobrando e o segundo pedido sem rede; as URLs fora do formato e os sha256 fora do formato sem rede nem pasta; o
+      conteúdo com outro sha256 não gravado e a espera antes de tentar de novo; o 404, o tipo errado, o grande e a rede
+      fora viram nulo; o corpo sem `Content-Length` cortado no limite; o `If-None-Match` e o `304`; no máximo 2
+      downloads presos na API ao mesmo tempo; e a mesma imagem pedida durante o download, que espera a vaga, relê o
+      disco e não vai à rede).

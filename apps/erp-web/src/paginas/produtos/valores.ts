@@ -232,6 +232,10 @@ export type ValoresProduto = Record<(typeof TEXTOS)[number], string> &
     relacionados: RelacionadoForm[];
     fornecedores: FornecedorForm[];
     lotes: LoteForm[];
+    /** A foto (um envio `produto_foto`; F2-B44). */
+    fotoPrincipalArquivoId: string | null;
+    /** As outras imagens (`produtos_imagens`), os ids dos arquivos na ordem. */
+    imagens: string[];
     /** Ids dos lotes gravados que o "Remover" tirou da grade: o corpo os manda excluir (F2-B17). */
     lotesExcluidos: string[];
     /** Colunas que o formulário desta fase não edita, devolvidas como vieram. */
@@ -267,6 +271,8 @@ export function produtoVazio(lojas: ReadonlyArray<{ id: string; nome: string }>,
     relacionados: [],
     fornecedores: [],
     lotes: [],
+    fotoPrincipalArquivoId: null,
+    imagens: [],
     lotesExcluidos: [],
     preservar: {},
   };
@@ -364,7 +370,8 @@ function posicaoParaForm(c: ProdutoDetalhe['componentes'][number]): PosicaoForm 
  * barras, sem código interno e sem ids das filhas; os relacionados vêm só neste sentido (a cópia ainda não existe
  * para os outros produtos apontarem para ela), e os fornecedores sem o código e o EAN do fornecedor (eles identificam
  * o produto de origem: o mesmo código no outro produto seria o 409), um por fornecedor e sem o histórico de compra.
- * Os lotes não vão para a cópia: são da mercadoria do produto de origem (o saldo por lote é dele).
+ * Os lotes não vão para a cópia: são da mercadoria do produto de origem (o saldo por lote é dele), nem a foto e a
+ * galeria (os arquivos são dele).
  */
 export function paraValores(
   p: ProdutoDetalhe,
@@ -512,6 +519,9 @@ export function paraValores(
             original,
           };
         }),
+    // A cópia sai sem imagens (F2-B44): o arquivo é do produto de origem, e a API recusa o de outro cadastro.
+    fotoPrincipalArquivoId: duplicar ? null : p.fotoPrincipalArquivoId,
+    imagens: duplicar ? [] : p.imagens.map((i) => i.arquivoId),
     lotesExcluidos: [],
     preservar: {
       descricaoLonga: p.descricaoLonga,
@@ -590,6 +600,9 @@ export function paraCorpo(
     grupoPrecoQuantidadeId: v.grupoPrecoQuantidadeId,
     vasilhameProdutoId: v.vasilhameProdutoId,
     balancaTipo: v.balancaTipo,
+    // Sempre a foto e a galeria inteira (F2-B44): `null`/vazia tiram; a API só mantém quando o campo não vem.
+    fotoPrincipalArquivoId: v.fotoPrincipalArquivoId,
+    imagens: v.imagens,
     codigosBarras,
     lojas: v.lojas
       .filter(
@@ -723,6 +736,11 @@ export function errosParaFormulario(
     }
     if (chave === 'codigosBarras') {
       r.ean ??= msg;
+      continue;
+    }
+    // A imagem recusada da galeria (F2-B44: de outro cadastro, enviada de novo) cai no campo da galeria.
+    if (chave === 'imagens' || chave.startsWith('imagens.')) {
+      r.imagens ??= msg;
       continue;
     }
     if (chave === 'componentes' || chave.startsWith('componentes.')) {

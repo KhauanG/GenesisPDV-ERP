@@ -1,11 +1,26 @@
-import { Body, Controller, Get, HttpCode, Inject, Post, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Res,
+  StreamableFile,
+  UseGuards,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { Publico } from '../autorizacao/decorators.js';
 import { LimiteTaxaGuard } from '../autorizacao/limite-taxa.guard.js';
 import { Req, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import type { Servicos } from '../servicos.js';
+import { z } from 'zod';
+import { TIPO_VARIANTE_PDV } from './arquivos.js';
 import {
+  arquivoSyncQuerySchema,
   ativarSchema,
   eventosStatusQuerySchema,
   heartbeatSchema,
@@ -15,6 +30,7 @@ import {
   saldosOutrasLojasQuerySchema,
   validarSync,
 } from './contratos.js';
+import { ErroSync } from './erros.js';
 import { exigirHardware, lerCabecalhos, type EndpointSync, type TerminalAutenticado } from './terminal.js';
 
 /**
@@ -143,5 +159,45 @@ export class SyncController {
     return this.noTerminal(req, res, 'consulta-saldos', (t) =>
       this.s.consultas.saldosOutrasLojas(t, validarSync(saldosOutrasLojasQuerySchema, query)),
     );
+  }
+
+  /**
+   * Imagem de um cadastro do catálogo para o caixa (Fase 2, F2-B45; SYNC 6.12; README da API › decisão 192): a variante
+   * `pdv_256` do produto, da categoria ou da marca que desce ao terminal (`arquivos.ts`); fora disso, `404`. Sai com o
+   * `Content-Type` fixo `image/webp`, `nosniff`, uma CSP que não roda nada, o nome gerado e o `ETag` com o sha256 (o
+   * `If-None-Match` igual responde `304` sem corpo). O PDV confere o sha256 antes de gravar no cache.
+   */
+  @Get('arquivos/:id')
+  async arquivo(
+    @Param('id') idBruto: string,
+    @Query() query: unknown,
+    @Req() req: RequisicaoGenesis,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile | undefined> {
+    // O id inválido é o mesmo 404 do arquivo fora do escopo, mas só depois de o terminal autenticar.
+    const id = z.uuid().safeParse(String(idBruto).toLowerCase());
+    const seNaoCorresponder = req.headers['if-none-match'];
+    const r = await this.noTerminal(req, res, 'arquivos', (t) => {
+      validarSync(arquivoSyncQuerySchema, query);
+      if (!id.success) throw new ErroSync('NAO_ENCONTRADO', 'Imagem não encontrada.');
+      return this.s.arquivosSync.variante(
+        t,
+        id.data,
+        typeof seNaoCorresponder === 'string' ? seNaoCorresponder : undefined,
+      );
+    });
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Cache-Control', 'private, no-cache');
+    res.setHeader('ETag', `"${r.sha256}"`);
+    if ('naoModificado' in r) {
+      res.status(304);
+      return undefined;
+    }
+    return new StreamableFile(r.conteudo, {
+      type: TIPO_VARIANTE_PDV,
+      length: r.conteudo.length,
+      disposition: `inline; filename="${id.data!}.pdv_256.webp"`,
+    });
   }
 }

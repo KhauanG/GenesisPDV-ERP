@@ -5,6 +5,7 @@
  * restrições de horário de venda. Decimais trafegam como string (ERP 1.5).
  */
 import { z } from 'zod';
+import { idArquivoAnexo } from './arquivos.js';
 import {
   dataOpcionalValida,
   decimal,
@@ -539,6 +540,16 @@ export type LoteProduto = z.output<typeof loteProdutoSchema>;
 export const chaveLoteProduto = (l: { estoqueId: string | null; lote: string }) =>
   `${l.estoqueId?.toLowerCase() ?? ''}:${l.lote}`;
 
+/** Teto da galeria do produto (`produtos_imagens`, ERP 8.2.6; F2-B44), além da foto principal. */
+export const MAXIMO_IMAGENS_PRODUTO = 10;
+
+/** Imagem da galeria no detalhe, na ordem gravada. */
+export interface ImagemProdutoDetalhe {
+  id: string;
+  arquivoId: string;
+  ordem: number;
+}
+
 // ---------------------------------------------------------------- Produto
 
 const camposProduto = z.object({
@@ -592,6 +603,20 @@ const camposProduto = z.object({
   descricaoCurta: textoOpcional(250),
   descricaoLonga: textoOpcional(20_000),
   controlaEstoque: z.boolean().default(true),
+  /**
+   * Foto (8.2.6; F2-B44): um envio `produto_foto`, a que desce ao PDV como `foto_url` no F2-B45. `null` tira, **ausente
+   * mantém** (a importação de planilha, o cadastro em massa e o ERP de antes desta versão não mandam).
+   */
+  fotoPrincipalArquivoId: idArquivoAnexo,
+  /**
+   * As outras imagens (`produtos_imagens`, 8.2.6; F2-B44; não descem ao PDV), envios `produto_foto` na ordem da lista.
+   * **Ausente = mantém as gravadas**, como `relacionados`; o formulário manda sempre a lista inteira (vazia = remove
+   * todas).
+   */
+  imagens: z
+    .array(z.uuid('Envie a imagem de novo'))
+    .max(MAXIMO_IMAGENS_PRODUTO, `No máximo ${MAXIMO_IMAGENS_PRODUTO} imagens além da foto`)
+    .optional(),
   idadeMinima: z.preprocess(
     (v) => (v === '' || v === undefined ? null : v),
     z.coerce.number().int().min(1, 'Entre 1 e 99').max(99, 'Entre 1 e 99').nullable().default(null),
@@ -863,6 +888,14 @@ function regrasProduto(p: Produto, ctx: z.RefinementCtx) {
   });
   if (TIPOS_SEM_SALDO_PROPRIO.includes(p.tipo) && p.lotes?.length)
     erro(['lotes'], `${ROTULOS_TIPO_PRODUTO[p.tipo]} não tem estoque próprio: não tem lote`);
+
+  // Imagens (8.2.6): uma vez cada na galeria (`uq_produtos_imagens`).
+  const imagens = new Map<string, number>();
+  p.imagens?.forEach((id, i) => {
+    const anterior = imagens.get(id.toLowerCase());
+    if (anterior !== undefined) erro(['imagens', i], `Imagem repetida (posição ${anterior + 1})`);
+    else imagens.set(id.toLowerCase(), i);
+  });
 
   // Categorias.
   if (p.categoriaPrincipalId && p.categorias.length && !p.categorias.includes(p.categoriaPrincipalId)) {
@@ -1363,8 +1396,13 @@ export interface ProdutoDetalhe
       | 'lotesExcluidos'
       | 'precoCusto'
       | 'markupPct'
+      | 'fotoPrincipalArquivoId'
+      | 'imagens'
     > {
   codigo: number;
+  fotoPrincipalArquivoId: string | null;
+  /** A galeria (`produtos_imagens`), pela ordem. */
+  imagens: ImagemProdutoDetalhe[];
   /** `null` sem `produtos.ver_custo`. */
   precoCusto: string | null;
   custoMedio: string | null;

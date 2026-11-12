@@ -269,7 +269,10 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
         return valores;
     }
 
-    /// <summary>Coluna da nuvem; uma só local (campo calculado do pull, como <c>foto_url</c>) é texto.</summary>
+    /// <summary>
+    /// Coluna da nuvem (os campos calculados do pull, como <c>foto_url</c>, estão no Esquema.g.cs como projetados desde o
+    /// F2-B45); uma coluna só local é texto.
+    /// </summary>
     private static ColunaEsquema ColunaDoEsquema(TabelaEsquema tabela, string nome) =>
         tabela.Colunas.FirstOrDefault(c => c.Nome == nome) ?? new ColunaEsquema(nome, "text", typeof(string), Nulo: true, Escala: null);
 

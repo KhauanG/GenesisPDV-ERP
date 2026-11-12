@@ -1470,6 +1470,9 @@ convivência com o Nuvem3).
 - **Critério de pronto:** uma foto enviada no ERP fica guardada com o sha256 e a variante `pdv_256`, e o upload malicioso é recusado.
 - **Depende de:** nada.
 - **Decisões usadas:** README da API, decisões 62, 91 e 93; implantação de 03/11/2026.
+- **Pendência deixada (revisão do bloco):** o logotipo da loja fica guardado, mas o caixa ainda não o imprime; a
+  variante `cupom_mono` (SYNC 6.12) e a descida do logotipo da loja ao PDV não estão em nenhum bloco da Fase 2 (o
+  F2-B45 leva só as imagens de produto, marca e categoria). Registrado em `docs/andamento.md` › Pendências.
 
 #### F2-B44 – Foto e imagens do produto, categorias e marcas completas
 - **Tamanho:** M
@@ -1534,6 +1537,11 @@ convivência com o Nuvem3).
 - **Depende de:** F2-B43, F2-B44; F2-Q1 (para a parte de complementos).
 - **Decisões usadas:** SYNC 6.12, 17.4.2, 17.5; MD 6.1, 6.2, 3.6.8; README do PDV, decisões 37, 38 e 50; D4; crítica (URL estável,
   FK segura, uma volta de cursor).
+- **Na implementação (11/11/2026; README da API › decisões 191 e 192, README do PDV › decisões 85 e 86):** o endpoint serve a
+  variante pela própria API (não o `302` da SYNC 6.12) e responde 404 a todo arquivo fora do escopo, inclusive o de outra
+  categoria; o handler da venda já grava nulo o `complemento_id` desconhecido (a FK nasce neste bloco, não na Fase 3); o
+  PDV ganha o `CacheImagens` (download conferido pelo sha256), sem a exibição nem o LRU; `VERSAO_PDV_GUARDA_VARIACOES`
+  fica em 0.11.0.
 
 ### PR-11 – Utilitários
 

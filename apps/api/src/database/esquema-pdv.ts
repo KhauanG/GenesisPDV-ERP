@@ -6,7 +6,8 @@
  *
  * Cada coluna de espelho diz também como desce no pull (MD 6.2), lido do registro de fluxos (`sync/fluxos.ts`):
  * `omitida` nunca desce (e não pode existir no espelho), `projetada` desce com outra expressão (condicional ou sempre
- * nula, como os segredos `bytea`). Assim o teste do PDV não mantém à mão a lista de colunas que não descem.
+ * nula, como os segredos `bytea`). Assim o teste do PDV não mantém à mão a lista de colunas que não descem. Os campos
+ * calculados do pull (`calculadas`, F2-B45: `foto_url`, `foto_sha256`…) entram no fim da tabela como projetados.
  *
  * Cada tabela leva também a chave primária (o aplicador do pull faz `on conflict(<chave>)`; as referências têm chave
  * natural, como `ufs.sigla`) e o fluxo que a lê (ordem da carga inicial e `ressincronizar_fluxo`, SYNC 6.1).
@@ -124,27 +125,44 @@ export function descreverTabela(tabela: PgTable, papel: TabelaPdv['papel']): Tab
     papel,
     chave,
     fluxo: noFluxo?.fluxo ?? null,
-    colunas: config.columns.map((c) => {
-      const tipoSql = c.getSQLType();
-      const { tipo, escala } = tipoClr(tipoSql);
-      // Mesma ordem de decisão do pull: omitir > projeção > `bytea` (PgCustomColumn) sempre nulo > valor da coluna.
-      const descida: DescidaColuna = !def
-        ? 'desce'
-        : omitidas.has(c.name)
-          ? 'omitida'
-          : def.projecao?.[c.name] || c.columnType === 'PgCustomColumn'
-            ? 'projetada'
-            : 'desce';
-      return {
-        nome: c.name,
-        tipoNuvem: tipoSql,
-        tipoClr: tipo,
-        nulo: !c.notNull,
-        escala,
-        descida,
-        gerada: c.generated !== undefined,
-      };
-    }),
+    colunas: [
+      ...config.columns.map((c) => {
+        const tipoSql = c.getSQLType();
+        const { tipo, escala } = tipoClr(tipoSql);
+        // Mesma ordem de decisão do pull: omitir > projeção > `bytea` (PgCustomColumn) sempre nulo > valor da coluna.
+        const descida: DescidaColuna = !def
+          ? 'desce'
+          : omitidas.has(c.name)
+            ? 'omitida'
+            : def.projecao?.[c.name] || c.columnType === 'PgCustomColumn'
+              ? 'projetada'
+              : 'desce';
+        return {
+          nome: c.name,
+          tipoNuvem: tipoSql,
+          tipoClr: tipo,
+          nulo: !c.notNull,
+          escala,
+          descida,
+          gerada: c.generated !== undefined,
+        };
+      }),
+      // Campos calculados do pull (MD 6.2; F2-B45): descem depois das colunas, sempre anuláveis e projetados.
+      ...Object.entries(def?.calculadas ?? {}).map(([nome, campo]): ColunaPdv => {
+        if (config.columns.some((c) => c.name === nome))
+          throw new Error(`Campo calculado com o nome de uma coluna: ${config.name}.${nome}`);
+        const { tipo, escala } = tipoClr(campo.tipo);
+        return {
+          nome,
+          tipoNuvem: campo.tipo,
+          tipoClr: tipo,
+          nulo: true,
+          escala,
+          descida: 'projetada',
+          gerada: false,
+        };
+      }),
+    ],
     checks: config.checks
       .map((k) => ({ nome: k.name, expressao: dialeto.sqlToQuery(k.value).sql }))
       .sort((a, b) => a.nome.localeCompare(b.nome)),

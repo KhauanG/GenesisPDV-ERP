@@ -31,6 +31,7 @@ import {
   LIMITE_CODIGOS_PESQUISA_EAN_MASSA,
   LIMITE_LINHAS_CADASTRO_MASSA,
   MAXIMO_FORNECEDORES_PRODUTO,
+  MAXIMO_IMAGENS_PRODUTO,
   MAXIMO_LOTES_PRODUTO,
   motivoTipoProdutoBloqueado,
   pesquisaEanCadastroMassaSchema,
@@ -833,5 +834,39 @@ describe('consulta do histórico de preços (F2-B37)', () => {
     expect(caminhos({ loja: 'loja-1' })).toEqual(['loja']);
     expect(caminhos({ dataInicial: '2026-02-30' })).toEqual(['dataInicial']);
     expect(caminhos({ dataInicial: '2026-11-10', dataFinal: '2026-11-01' })).toEqual(['dataFinal']);
+  });
+});
+
+describe('imagens do produto (F2-B44)', () => {
+  const UN_ = '01928f3a-0000-7000-8000-0000000000b1';
+  const base = { nome: 'CERV FICTICIA LN 355', unidadeId: UN_, precoVenda: '6,90' };
+  const img = (n: number) => `01928f3a-0000-7000-8000-${String(n).padStart(12, '0')}`;
+  const caminhos = (v: unknown) => {
+    const r = criarProdutoSchema.safeParse(v);
+    return r.success ? [] : r.error.issues.map((i) => i.path.join('.'));
+  };
+
+  it('a foto e a galeria ausentes ficam indefinidas (a gravação mantém as gravadas); null tira a foto', () => {
+    const r = criarProdutoSchema.parse(base);
+    expect(r.fotoPrincipalArquivoId).toBeUndefined();
+    expect(r.imagens).toBeUndefined();
+    expect(
+      criarProdutoSchema.parse({ ...base, fotoPrincipalArquivoId: null }).fotoPrincipalArquivoId,
+    ).toBeNull();
+    expect(criarProdutoSchema.parse({ ...base, imagens: [] }).imagens).toEqual([]);
+  });
+
+  it('recusa o id inválido, a imagem repetida e a galeria acima do teto', () => {
+    expect(caminhos({ ...base, fotoPrincipalArquivoId: 'foto.png' })).toEqual(['fotoPrincipalArquivoId']);
+    expect(caminhos({ ...base, imagens: [img(1), img(2), img(1).toUpperCase()] })).toEqual(['imagens.2']);
+    expect(
+      caminhos({
+        ...base,
+        imagens: Array.from({ length: MAXIMO_IMAGENS_PRODUTO + 1 }, (_, i) => img(i + 1)),
+      }),
+    ).toEqual(['imagens']);
+    expect(
+      caminhos({ ...base, imagens: Array.from({ length: MAXIMO_IMAGENS_PRODUTO }, (_, i) => img(i + 1)) }),
+    ).toEqual([]);
   });
 });

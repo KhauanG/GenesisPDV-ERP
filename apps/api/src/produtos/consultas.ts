@@ -6,6 +6,7 @@ import {
   CST_COM_ST,
   type AvisoComboComponente,
   type ComponenteDetalhe,
+  type ImagemProdutoDetalhe,
   type FornecedorProdutoDetalhe,
   type LoteProdutoDetalhe,
   type ProdutoDetalhe,
@@ -125,6 +126,7 @@ export const sqlVersaoAgregada = (id: SQL) => sql`greatest(
     (select max(versao) from produtos_relacionados where produto_id = ${id}),
     (select max(versao) from produtos_fornecedores where produto_id = ${id}),
     (select max(versao) from produtos_lotes where produto_id = ${id}),
+    (select max(versao) from produtos_imagens where produto_id = ${id}),
     (select max(a.versao) from produtos_componentes_alternativas a
        join produtos_componentes pc on pc.id = a.componente_id where pc.produto_id = ${id}))`;
 
@@ -248,6 +250,15 @@ export async function fornecedoresDoProduto(
     ultimaCompraEm: txt(f.ultima_compra_em),
     principal: f.principal as boolean,
   }));
+}
+
+/** A galeria do produto (`produtos_imagens`, 8.2.6; F2-B44): só as vivas, pela ordem. */
+export async function imagensDoProduto(db: DbEmpresa, produtoId: string): Promise<ImagemProdutoDetalhe[]> {
+  const { rows } = await db.execute<Linha>(sql`
+    select id, arquivo_id, ordem from produtos_imagens
+     where produto_id = ${produtoId} and excluido_em is null
+     order by ordem, criado_em`);
+  return rows.map((r) => ({ id: r.id as string, arquivoId: r.arquivo_id as string, ordem: Number(r.ordem) }));
 }
 
 /**
@@ -485,6 +496,7 @@ export async function detalheProduto(
 
   const fornecedores = await fornecedoresDoProduto(db, id, verCusto);
   const lotes = await lotesDoProduto(db, id, estoquesVisiveis);
+  const imagens = await imagensDoProduto(db, id);
 
   const codigosBarras = codigos.rows.map((c) => ({
     id: c.id as string,
@@ -554,6 +566,8 @@ export async function detalheProduto(
     descricaoCurta: txt(p.descricao_curta),
     descricaoLonga: txt(p.descricao_longa),
     controlaEstoque: p.controla_estoque as boolean,
+    fotoPrincipalArquivoId: txt(p.foto_principal_arquivo_id),
+    imagens,
     idadeMinima: p.idade_minima === null ? null : Number(p.idade_minima),
     vasilhameProdutoId: txt(p.vasilhame_produto_id),
     vasilhameQuantidade: p.vasilhame_quantidade === null ? null : Number(p.vasilhame_quantidade),

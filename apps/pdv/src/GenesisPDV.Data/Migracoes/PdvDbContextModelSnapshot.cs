@@ -464,6 +464,14 @@ namespace GenesisPDV.Data.Migracoes
                         .HasColumnType("TEXT")
                         .HasColumnName("imagem_arquivo_id");
 
+                    b.Property<string>("ImagemSha256")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("imagem_sha256");
+
+                    b.Property<string>("ImagemUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("imagem_url");
+
                     b.Property<short>("Nivel")
                         .HasColumnType("INTEGER")
                         .HasColumnName("nivel");
@@ -3280,6 +3288,14 @@ namespace GenesisPDV.Data.Migracoes
                         .HasColumnType("TEXT")
                         .HasColumnName("logotipo_arquivo_id");
 
+                    b.Property<string>("LogotipoSha256")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("logotipo_sha256");
+
+                    b.Property<string>("LogotipoUrl")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("logotipo_url");
+
                     b.Property<int>("Ordem")
                         .HasColumnType("INTEGER")
                         .HasColumnName("ordem");
@@ -5308,6 +5324,97 @@ namespace GenesisPDV.Data.Migracoes
                         });
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ProdutoComplementoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ativo");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("AtualizadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_por_id");
+
+                    b.Property<bool>("BaixaEstoque")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("baixa_estoque");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("CriadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_por_id");
+
+                    b.Property<string>("Descricao")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("descricao");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("GrupoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("grupo_id");
+
+                    b.Property<int>("Ordem")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ordem");
+
+                    b.Property<long>("PrecoAdicional")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("preco_adicional");
+
+                    b.Property<string>("ProdutoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("produto_id");
+
+                    b.Property<long>("QuantidadeBaixa")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantidade_baixa");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_produtos_complementos");
+
+                    b.HasIndex("GrupoId")
+                        .HasDatabaseName("ix_produtos_complementos_grupo_id");
+
+                    b.ToTable("produtos_complementos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_produtos_complementos_ativo", "ativo in (0,1)");
+
+                            t.HasCheckConstraint("ck_produtos_complementos_baixa_estoque", "baixa_estoque in (0,1)");
+
+                            t.HasCheckConstraint("ck_produtos_complementos_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_produtos_complementos_id_uuid", "length(id) = 36");
+                        });
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.ProdutoComponenteAlternativaRegistro", b =>
                 {
                     b.Property<string>("Id")
@@ -5482,6 +5589,88 @@ namespace GenesisPDV.Data.Migracoes
                             t.HasCheckConstraint("ck_produtos_componentes_id_uuid", "length(id) = 36");
 
                             t.HasCheckConstraint("ck_produtos_componentes_permite_substituicao", "permite_substituicao in (0,1)");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ProdutoGrupoComplementosRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("AtualizadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_por_id");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("CriadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_por_id");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<short>("Maximo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("maximo");
+
+                    b.Property<short>("Minimo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("minimo");
+
+                    b.Property<string>("Nome")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("nome");
+
+                    b.Property<bool>("Obrigatorio")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("obrigatorio");
+
+                    b.Property<int>("Ordem")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ordem");
+
+                    b.Property<string>("ProdutoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("produto_id");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_produtos_grupos_complementos");
+
+                    b.HasIndex("ProdutoId")
+                        .HasDatabaseName("ix_produtos_grupos_complementos_produto_id");
+
+                    b.ToTable("produtos_grupos_complementos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_produtos_grupos_complementos_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_produtos_grupos_complementos_id_uuid", "length(id) = 36");
+
+                            t.HasCheckConstraint("ck_produtos_grupos_complementos_obrigatorio", "obrigatorio in (0,1)");
                         });
                 });
 
