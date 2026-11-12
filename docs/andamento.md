@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43, F2-B44 e F2-B45 commitados — fecha o PR-10 e a release R2 do PDV, 0.12.0; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV": F2-B43, F2-B44 e F2-B45 commitados e PR aberto (#8), aguardando a liberação do merge — fecha o PR-10 e a release R2 do PDV, 0.12.0; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -55,7 +55,7 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-7 relatórios de estoque | B28–B33 | concluído (#5, juntado em 10/11/2026 com a liberação do dono); **falta implantar** (migração **0026**; vai junto com o PR-8) |
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
 | PR-9 catálogo operacional | B37–B42 | concluído (#7, juntado em 11/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: 1 achado médio corrigido em `7fd9b8e`); **em produção** desde 11/11/2026 (Implantação manual na `main`, `e78db8c`, verde) |
-| PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9); release R2 do PDV |
+| PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | **aberto** (#8, 12/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; release R2 do PDV (0.12.0) |
 | PR-11 em diante | | não iniciados |
 
 ### PR-6 — blocos
@@ -136,7 +136,7 @@ _Última atualização: 11/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    bloco a bloco, no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-9). F2-B43 e F2-B44 commitados
    (foto e galeria do produto, imagem e arrastar e soltar das categorias, logotipo e ficha da marca); F2-B45
    commitado (o `/sync/arquivos`, os campos `foto_url`/`foto_sha256`, as tabelas de complementos e o PDV 0.12.0 com
-   uma única volta do cursor do `catalogo`). Falta: a revisão de segurança do PR inteiro (D63) e abrir o PR-10.
+   uma única volta do cursor do `catalogo`). Revisão de segurança do PR inteiro (D63) feita, sem achado médio ou alto; PR-10 aberto (#8): falta a liberação do dono para o merge.
    **Roteiro da release R2 para o dono, nesta ordem (a API sempre antes do PDV, SYNC 17.2):**
    1. Liberar o merge do PR-10 na `main` e esperar a CI da `main` verde (inclusive o PDV no `windows-latest`).
    2. Rodar a **Implantação** (API e ERP) e aprovar o environment `producao`: ela aplica a migração **0028**
