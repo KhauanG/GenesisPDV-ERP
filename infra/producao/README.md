@@ -363,7 +363,8 @@ Formato da resposta e regras sugeridas de alerta em [Monitoramento](#monitoramen
 | Mudar a configuração (`genesis.env`, `segredos/genesis-app.env`) | editar, `/opt/genesis/implantar.sh logs guardar` e `cd /opt/genesis && docker compose up -d` (recria a API: sem o `guardar`, o log dela some) |
 | Reiniciar a API | `docker restart genesis-api` |
 | Migrar as empresas de novo (ex.: depois de uma falha) | `/opt/genesis/implantar.sh tarefa migrar-empresas` |
-| Comandos da API | `/opt/genesis/implantar.sh tarefa <comando> [--argumentos]` (`admin-criar`, `empresa-criar`, `empresa-provisionamento`, `migrar-controle`, `migrar-empresas`, `particoes`, `referencias`) |
+| Comandos da API | `/opt/genesis/implantar.sh tarefa <comando> [--argumentos]` (`admin-criar`, `empresa-criar`, `empresa-provisionamento`, `migrar-controle`, `migrar-empresas`, `ncm-atualizar`, `particoes`, `referencias`) |
+| Atualizar a tabela NCM (simular antes) | `/opt/genesis/implantar.sh tarefa ncm-atualizar --simular` e, depois, sem o `--simular` ([Tabela NCM](#tabela-ncm-atualização-pela-plataforma-f2-b46)) |
 | Uso de memória | `docker stats --no-stream genesis-api genesis-web genesis-cloudsql-proxy genesis-backup` |
 | Backup: último, dias guardados, um backup agora | `/opt/genesis/implantar.sh backup estado` / `backup listar` / `backup agora` |
 | Logs do backup | `docker logs genesis-backup --tail 100` (uma linha por banco; `FALHOU` quando algo deu errado) |
@@ -479,6 +480,59 @@ D=$(gh release view pdv-v$P --json publishedAt --jq .publishedAt)
 tar -C /tmp/pdv -cf - GenesisPDV-Setup-$P.exe GenesisPDV-Setup-$P.exe.sha256 |
   ssh "$VPS" "bash /opt/genesis/implantar.sh pdv publicar $P $D"
 ```
+
+### Tabela NCM (atualização pela plataforma, F2-B46)
+
+A tabela NCM é a lista oficial de códigos de mercadoria que o cadastro de produtos usa (o "BuscaNcm", o relatório
+**NCMs inválidos**). Ela muda algumas vezes por ano, por resolução do Gecex; quando um NCM é encerrado, o produto que o
+usa passa a aparecer no relatório NCMs inválidos para alguém trocar o NCM antes da fase fiscal. Nada aqui emite nota.
+A atualização é um comando que **você** roda na VPS quando quiser (sugestão: uma vez por mês, ou quando o contador
+avisar de uma resolução nova). Ele baixa a tabela do Portal Único Siscomex, confere se o arquivo está no formato de
+sempre (se o formato mudou, **para sem mudar nada** e diz o motivo), e aplica em cada empresa, uma de cada vez, cada
+uma inteira ou nada (README da API › decisão 193).
+
+1. **Simular primeiro** (mostra o que mudaria, sem gravar nada):
+
+   ```bash
+   /opt/genesis/implantar.sh tarefa ncm-atualizar --simular
+   ```
+
+   A primeira linha diz a data da tabela e quantos NCMs ela tem. Depois, uma linha por empresa: quantos NCMs entram,
+   quantos mudam de descrição, quantos são encerrados e quais produtos ficam com NCM inválido.
+
+2. **Aplicar**, se a simulação fez sentido:
+
+   ```bash
+   /opt/genesis/implantar.sh tarefa ncm-atualizar
+   ```
+
+   Se algum NCM mudou, os caixas daquela empresa recebem o aviso de baixar a tabela de novo (acontece sozinho, em
+   segundo plano, sem parar a venda). Os produtos listados aparecem no ERP em Relatórios › NCMs inválidos como "fora de
+   vigência": dá para corrigir de 50 em 50 pelo "Definir NCM".
+
+3. **Se o servidor não conseguir baixar do Siscomex** (mensagem "não foi possível baixar a tabela"): baixe no seu
+   computador o JSON em
+   `https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json?perfil=PUBLICO`, copie para a
+   VPS (ex.: `scp Tabela_NCM_Vigente_*.json <usuario>@<IP_DA_VPS>:/tmp/ncm.json`) e rode com o arquivo:
+
+   ```bash
+   /opt/genesis/implantar.sh tarefa ncm-atualizar --simular --arquivo - < /tmp/ncm.json
+   /opt/genesis/implantar.sh tarefa ncm-atualizar --arquivo - < /tmp/ncm.json && rm /tmp/ncm.json
+   ```
+
+- **"encerraria N dos 10516 NCMs"**: o arquivo tiraria mais de 20% da tabela. Quase sempre é um download pela metade:
+  baixe de novo. Numa revisão grande da Nomenclatura (a próxima do Sistema Harmonizado é a de 2027), confira a
+  simulação e rode com `--permitir-encerramento-em-massa`.
+- **Empresa "ignorada"**: estava migrando naquele momento (rode de novo depois) ou a tabela é mais antiga que a que ela
+  já tem. **Empresa "falhou"**: ficou exatamente como estava; mande a mensagem para a próxima sessão de
+  desenvolvimento. A saída é 1 só quando alguma empresa **falhou** ou o arquivo foi recusado; a empresa **ignorada** sai
+  com 0 (não é erro), então olhe a linha de cada empresa e, se foi a migração, rode o comando de novo.
+- **"--empresas recusado"**: algum código do `--empresas` não é número (uma letra no lugar de um dígito, um `;`, a
+  vírgula sobrando). Nada foi feito, em nenhuma empresa: corrija e rode de novo (ex.: `--empresas 100001,100002`).
+- O endereço do Siscomex fica em `SISCOMEX_NCM_URL` (`genesis.env`; o padrão é o oficial acima). Se o portal mudar o
+  endereço, troque ali; o comando não segue redirecionamento de propósito.
+- As migrações das próximas implantações **não desfazem** a tabela aplicada. Uma empresa criada depois recebe a tabela
+  que veio no sistema e a mais nova na próxima vez que você rodar o comando.
 
 ## Página de download do PDV
 

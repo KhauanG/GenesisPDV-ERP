@@ -7,6 +7,23 @@ export function argumentos<T extends NonNullable<ParseArgsConfig['options']>>(op
   return parseArgs({ options: opcoes, allowPositionals: false, strict: true }).values;
 }
 
+/**
+ * O `--empresas 100001,100002`: a lista dos códigos, ou `undefined` sem o argumento (todas as empresas). Um item que
+ * não é inteiro positivo (`emp100001`, `1O`, `100001;`, a vírgula sobrando) recusa o argumento inteiro: o filtro
+ * inválido nunca vira "todas as empresas" sem aviso.
+ */
+export function codigosEmpresas(valor: string | undefined): number[] | undefined {
+  if (valor === undefined) return undefined;
+  const itens = valor.split(',').map((c) => c.trim());
+  const invalidos = itens.filter((c) => !/^[1-9]\d{0,14}$/.test(c));
+  if (invalidos.length)
+    throw new Error(
+      `--empresas recusado: ${invalidos.map((c) => (c ? `"${c}"` : '(vazio)')).join(', ')} não é código de ` +
+        'empresa (use os números separados por vírgula, ex.: --empresas 100001,100002); nada foi feito',
+    );
+  return [...new Set(itens.map(Number))];
+}
+
 export function configuracaoCli(): Configuracao {
   carregarArquivosEnv();
   return carregarConfiguracao();

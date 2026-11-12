@@ -21,6 +21,7 @@
     "db:migrate:controle": "tsx src/cli/migrar-controle.ts",
     "db:migrate:empresas": "tsx src/cli/migrar-empresas.ts",
     "db:referencias": "tsx src/cli/referencias.ts",
+    "db:ncm:atualizar": "tsx src/cli/ncm-atualizar.ts",
     "db:particoes": "tsx src/cli/particoes.ts",
     "db:preencher-seq-lancamento": "tsx src/cli/preencher-seq-lancamento.ts",
     "db:recalcular-saldos": "tsx src/cli/recalcular-saldos.ts",

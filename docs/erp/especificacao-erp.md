@@ -4275,7 +4275,8 @@ código). Sem a carga, a tela mostra "Tabela não carregada" e nada de CEST é c
 como no cadastro, com a versão que o relatório mostrou (se alguém mexeu depois, nada é gravado), a auditoria própria
 com a localização "Relatórios › NCMs inválidos" e a versão nova que desce aos caixas. A tabela `cests` vem de
 `apps/api/src/database/referencias/cests.csv` (Convênio ICMS 142/2018 e alterações; a lista oficial ainda não foi
-carregada, pendência da decisão 187); a atualização periódica é a do F2-B46.
+carregada, pendência da decisão 187); a atualização periódica é a do F2-B46 (18.13): o NCM encerrado pela tabela nova
+do Siscomex fica com o fim de vigência na véspera da data da tabela e aparece aqui como "fora de vigência".
 
 #### 16.3.1 EAN duplicado (Novo) [P2]
 
@@ -4732,6 +4733,15 @@ alternativa); PDF do boleto anexado à parcela e enviado por e-mail/WhatsApp.
 | Base de GTIN (ex.: Cosmos) — opcional, chave por empresa | P2 | "Pesquisar EAN" do cadastro em massa |
 | Tabela NCM (Siscomex) e CEST | P2 | atualização periódica de `ncms`/`cests` pela plataforma |
 | Tabela IBPT (Lei da Transparência) | P6 | % aproximado de tributos por NCM |
+
+**Tabela NCM e CEST pela plataforma (Fase 2, F2-B46; README da API › decisão 193).** Comando de operação da plataforma
+(`implantar.sh tarefa ncm-atualizar`, com `--simular`), sem tela: baixa a tabela NCM vigente do Portal Único Siscomex
+(`SISCOMEX_NCM_URL`; ou o JSON baixado no navegador, `--arquivo -`), confere o formato inteiro antes de tocar em qualquer
+empresa (o formato mudou, ou o arquivo encerraria mais de 20% da tabela: para sem aplicar nada) e aplica em cada empresa
+numa transação, com o relatório: NCMs incluídos, alterados e encerrados (o encerrado ganha o fim de vigência na véspera
+da data da tabela, sem ser excluído) e os produtos que ficam com NCM inválido (16.3). O CEST vem do arquivo versionado
+(F2-B41). Quando `ncms` muda, os caixas da empresa recebem `ressincronizar_fluxo referencia`. As migrações não desfazem a
+tabela aplicada. Sem uso fiscal: é a referência do cadastro.
 
 ### 18.14 E-mail transacional [P1]
 

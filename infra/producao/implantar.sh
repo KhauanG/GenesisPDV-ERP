@@ -8,7 +8,8 @@
 #   implantar.sh estado               # versões, containers e saúde
 #   implantar.sh tarefa <comando> [argumentos...]
 #                                     # comando da API na imagem atual: admin-criar, empresa-criar, migrar-controle,
-#                                     # migrar-empresas, empresa-provisionamento, particoes, referencias
+#                                     # migrar-empresas, empresa-provisionamento, ncm-atualizar, particoes,
+#                                     # referencias
 #   implantar.sh backup <agora|estado|listar|restaurar|psql> [argumentos...]
 #                                     # o genesis-backup do container em execução (README › Backup)
 #   implantar.sh token-monitor [--arquivo <caminho>]

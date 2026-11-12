@@ -1565,6 +1565,11 @@ convivência com o Nuvem3).
 - **Critério de pronto:** um arquivo novo encerra um NCM, que passa a aparecer no relatório de NCMs inválidos das empresas que o usam.
 - **Depende de:** F2-B41.
 - **Decisões usadas:** ERP 18.13; README da API, decisões 41 e 98.
+- **Na implementação (12/11/2026; README da API › decisão 193):** a tarefa é o comando de operação `ncm-atualizar` (como o
+  `migrar-empresas` e o `referencias`, sem rota nem botão), com `--simular` e `--arquivo -` para o JSON baixado no
+  navegador; o NCM que sai do arquivo ganha o fim de vigência na véspera da data da tabela, sem ser excluído; o
+  relatório fica em `auditoria_plataforma` (`ncm_atualizada`), que a carga das referências das migrações consulta para
+  não recarregar o `ncms.csv` por cima da tabela mais nova; nada mudou em `database/controle` (sem migração).
 
 #### F2-B47 – Base de GTIN externa (condicional à F2-Q13)
 - **Tamanho:** M
