@@ -83,6 +83,7 @@ curl -X POST localhost:3000/api/auth/login -H 'content-type: application/json' \
 | `db:migrate:controle`                                                                                                                 | Cria o `genesis_control` se não existir, aplica as migrações e o seed mínimo do controle                                                                                                            |
 | `db:migrate:empresas [--empresas=100001,100002] [--lote=4] [--parar-no-primeiro-erro]`                                                | Migra todas as empresas `ativa`/`suspensa`: canário primeiro, depois as demais; reaplica referências, catálogo de permissões e seed idempotente; sai com código 1 se alguma falhar                  |
 | `db:referencias [--empresas=…]`                                                                                                       | Recarrega referências nacionais, catálogo de permissões e seed em todas as empresas                                                                                                                 |
+| `db:ncm:atualizar [--simular] [--empresas=…] [--arquivo=<caminho>\|-] [--url=…] [--permitir-encerramento-em-massa]` | Baixa a tabela NCM vigente do Siscomex (`SISCOMEX_NCM_URL`) ou lê o arquivo, confere o formato e aplica em cada empresa com o relatório (incluídos, encerrados, produtos com NCM inválido) e o `ressincronizar_fluxo referencia` (decisão 193) |
 | `db:particoes`                                                                                                                        | Garante as partições mensais de `auditoria` (12 meses à frente) — agendar mensalmente                                                                                                               |
 | `db:preencher-seq-lancamento [--empresas=…] [--saida=quebras.csv]` | Dá a ordem de lançamento (`seq_lancamento`) aos movimentos de estoque antigos, cria o índice da linha e relata as linhas do razão com a cadeia quebrada, também depois da migração, sem nada a preencher (decisão 146); o `db:migrate:empresas` já roda o preenchimento antes da `0017` |
 | `db:recalcular-saldos (--empresa=100001[,…] \| --todas) [--estoque=<id>] [--produto=<id>] [--corrigir] [--saida=relatorio.csv]` | Refaz `saldos_estoque` pelo razão (replay por `seq_lancamento`) e confere `produtos.custo_medio`: diz "idêntico" ou lista cada linha divergente (gravado, recalculado, diferença, primeiro movimento divergente); `--corrigir` regrava só a projeção, sob a trava, e o saldo certo desce ao PDV. Sem filtro e idêntico, resolve o `RAZAO_SALDO_DIVERGENTE` aberto. Sai com 2 se diverge sem `--corrigir` (decisão 147) |
@@ -151,6 +152,7 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `POOL_CACHE_MAXIMO` / `POOL_OCIOSO_MS`                                                            | 50 / 300000                                                     | Cache de pools por empresa (pool em uso nunca é fechado)                                                                                                                                                                             |
 | `DASHBOARD_CACHE_MS` | 60000 | Cache do `GET /dashboard` por empresa × loja × mês × o que o usuário enxerga (ERP 6); 0 desliga (testes e e2e) |
 | `CEP_CONSULTA_URL`                                                                                | ViaCEP (`https://viacep.com.br/ws/{cep}/json/`)                  | Consulta de CEP do ERP (opcional, 3 s de limite); `desligada` desativa — o endereço é digitado                                                                                                                                        |
+| `SISCOMEX_NCM_URL` | `https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json?perfil=PUBLICO` | Tabela NCM vigente que o `db:ncm:atualizar` baixa (decisão 193); só a tarefa usa |
 | `ERP_URL`, `SMTP_URL`, `EMAIL_REMETENTE`                                                          | `http://localhost:5173`, `smtp://127.0.0.1:1025`                | Links e envio de e-mail (Mailpit em desenvolvimento)                                                                                                                                                                                 |
 | `ARMAZENAMENTO_*`                                                                                 | MinIO/RustFS local em dev                                       | Endpoint, região, bucket, chaves e estilo de caminho do S3                                                                                                                                                                           |
 | `FILA_TRABALHADOR`                                                                                | `true`                                                          | Esta instância executa a fila (tarefas e e-mails); `false` só enfileira                                                                                                                                                              |
@@ -586,7 +588,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 41. **Referências da Fase 1A**: `ncms` com os 10.516 códigos de 8 dígitos da Nomenclatura vigente em 30/10/2026
     (Resolução Gecex nº 926/2026), baixada do Portal Único Siscomex (`classif/api/publico/nomenclatura/download/json`)
     e convertida em `src/database/referencias/ncms.csv` (descrição = posição/subposição + item, sem HTML); NCM que
-    sair do arquivo é excluído logicamente. `paises` só com o Brasil (1058) até a tabela BACEN completa entrar com a
+    sair do arquivo é excluído logicamente (a atualização pela plataforma, F2-B46, é a decisão 193: o encerrado ganha
+    o fim de vigência, e a carga do arquivo não desfaz a tabela mais nova da plataforma). `paises` só com o Brasil (1058) até a tabela BACEN completa entrar com a
     NF-e (o cadastro de pessoa no exterior exige o país). `cests` existe vazia (não há fonte oficial em formato de
     dados; a carga entra com a fase fiscal e, até lá, a regra "CEST de bem listado" não tem como ser checada). F2-B41
     (decisão 187): o carregador do `cests.csv` e o formato existem, e o relatório NCMs inválidos confere o CEST × NCM
@@ -5483,7 +5486,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        fora do formato derruba a carga com o número dela. Só as linhas novas ou diferentes são gravadas; o CEST que sair
        do arquivo é excluído logicamente; **o arquivo vazio (ou ausente) não mexe na tabela** ("ainda sem a lista", não
        "revogados"). É tabela de referência pública do Convênio ICMS 142/2018 e alterações, não emissão fiscal. A
-       atualização periódica pela plataforma é o F2-B46.
+       atualização periódica pela plataforma é o F2-B46 (decisão 193).
      - **Pendente: a lista oficial do CEST.** O `cests.csv` versionado está **só com o cabeçalho**: a sessão do
        F2-B41 não conseguiu baixar o Convênio ICMS 142/2018 do CONFAZ (`www.confaz.fazenda.gov.br` recusou a conexão
        a partir do ambiente da sessão), e as linhas nunca são inventadas. Até a carga, o motivo "CEST incompatível" não
@@ -5854,6 +5857,85 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        da loja, o produto excluído e os ids inválido e desconhecido 404; a variante ausente ou outra 400, sem token 401;
        o terminal em desativação 403; o limite 429 por terminal) e `esquema-pdv.spec.ts` (os campos calculados no fim,
        projetados e anuláveis). Imagens inventadas, geradas no teste.
+
+193. **Atualização da tabela NCM (e do CEST) pela plataforma, sem uso fiscal** (Fase 2, F2-B46; ERP 18.13; SYNC 6.13;
+     MD 1.4; decisões 41, 98 e 187; `src/plataforma/ncm-atualizacao.ts`, o comando `src/cli/ncm-atualizar.ts`
+     (`pnpm --filter api db:ncm:atualizar`; na produção `implantar.sh tarefa ncm-atualizar`), `carregarNcms` e
+     `NCMS_CSV_VIGENTE_EM` em `src/database/referencias/carregar.ts`, a guarda no `posMigracaoSemAdmin`
+     (`provisionamento.ts`), `SISCOMEX_NCM_URL` na configuração; **sem migração de schema** e PDV sem mudança). A tabela
+     é referência do cadastro: o que muda é o que o cadastro, o filtro "Situação de cadastro", o relatório NCMs
+     inválidos e o PDV leem de `ncms`; nada de emissão.
+     - **Como é disparada: comando de operação**, como as outras tarefas da plataforma que escrevem nos bancos de todas
+       as empresas (`migrar-empresas`, `referencias`, `particoes`): roda no container de tarefa com a imagem da versão
+       atual, com a role dona de cada banco (a das migrações e da carga das referências, MD 1.4), e não ganha rota nem
+       botão (a API no ar não precisa de acesso de escrita com essa role, e a tarefa é rara). Opções: `--simular` (o
+       mesmo relatório, tudo desfeito no fim), `--empresas 1,2`, `--arquivo <caminho>` ou `--arquivo -` (a entrada
+       padrão: o JSON baixado no navegador, quando o servidor não alcança o portal), `--url` e
+       `--permitir-encerramento-em-massa`. Um item do `--empresas` que não é inteiro positivo (`emp100001`, `1O`, a
+       vírgula sobrando) recusa o comando antes do download, com saída 1: o filtro inválido nunca vira "todas as
+       empresas" (`codigosEmpresas`, `src/cli/comum.ts`; no serviço, `codigos: []` também é nenhuma empresa). Saída 1 se
+       alguma empresa falhou, o arquivo ou o `--empresas` foi recusado; a empresa `ignorada` (em migração naquele
+       momento, ou com tabela mais nova) não muda a saída: a linha dela diz o motivo e, na migração, roda-se de novo.
+     - **Entrada externa, conferida inteira antes de qualquer empresa**: o endereço oficial fica em `SISCOMEX_NCM_URL`
+       (padrão `https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json?perfil=PUBLICO`; sem o
+       `perfil` o portal responde 307), só `http(s)`, **sem seguir redirecionamento** (o endereço mudou → trocar a
+       variável), 2 min de tempo limite, status 200, `Content-Type` JSON e no máximo `LIMITE_BYTES_TABELA_NCM` = 32 MB
+       (o cabeçalho e a leitura em partes; o arquivo de 12/11/2026 tem 3,1 MB). Depois: UTF-8 estrito (byte inválido
+       recusa, o BOM é descartado), JSON com `Data_Ultima_Atualizacao_NCM` ("Vigente em DD/MM/AAAA", a data da tabela),
+       `Ato` opcional e `Nomenclaturas`, cada item com `Codigo` num dos níveis da Nomenclatura (`01`, `01.01`,
+       `0101.2`, `0101.21`, `0102.29.1`, `0101.21.00`), `Descricao` texto (até 4.000 caracteres, não vazia sem o HTML e
+       os travessões), `Data_Inicio`/`Data_Fim` em DD/MM/AAAA válidas e em ordem (`31/12/9999` = sem fim), sem código
+       repetido, e pelo menos `MINIMO_NCMS_TABELA` = 5.000 NCMs de 8 dígitos. Campo a mais é ignorado; campo a menos,
+       renomeado ou com tipo trocado **recusa o arquivo e nada é aplicado** ("o formato mudou"). Também é recusado o
+       arquivo que encerraria mais de `LIMITE_ENCERRADOS_FRACAO` = 20% dos NCMs do `ncms.csv` versionado (download pela
+       metade), salvo `--permitir-encerramento-em-massa` (a revisão da Nomenclatura do SH). O `cests.csv` versionado é
+       lido na mesma etapa.
+     - **A descrição como no `ncms.csv`** (decisão 41, que não guardou o script da conversão): a do item de 8 dígitos
+       precedida das subposições e itens acima dele (5 a 7 dígitos), sem o HTML (`<i>`, `<sub>`), os travessões da
+       frente, os dois pontos do fim e com o `;` trocado por vírgula; o nível que só repete o de cima ("-- Outros" /
+       "Outros") entra uma vez; e a posição (4 dígitos) vai na frente quando o primeiro nível é genérico ("Outros",
+       "Outras", "Com …", "Sem …", "Em …", "De peso …", "De capacidade …"). Conferido com o download real de
+       12/11/2026 (fora do repositório): os **10.516 NCMs saem iguais** ao `ncms.csv` (descrição e vigência), então a
+       primeira execução não muda nada. A tabela real nunca é versionada; os testes usam arquivos inventados.
+     - **Uma transação por empresa**, uma empresa de cada vez, com a trava 7300001 (`fn_trava_versao`) e a **mesma
+       trava consultiva das migrações** (`genesis:migracao_empresa`; a empresa em migração fica `ignorada`): a
+       diferença com o que a empresa tem (**incluídos**: novos, excluídos ou encerrados antes que voltam; **alterados**:
+       descrição ou vigência; **encerrados**: os que saíram do arquivo), o upsert (`carregarNcms`, o mesmo do
+       `carregarReferencias`: só as linhas novas ou diferentes ganham versão), a carga do `cests.csv` versionado
+       (F2-B41: sem lista, a tabela fica como está) e o **`ressincronizar_fluxo {fluxo: "referencia"}`** para os
+       terminais `ativo`/`desativando` da empresa quando `ncms` mudou (SYNC 6.13; o CEST não desce, decisão 187). É o
+       comando que os PDVs 0.11.0 e 0.12.0 já executam (o cursor do fluxo volta a 0 e o pull baixa de novo; sem mudança
+       de protocolo nem do `Esquema.g.cs`); as linhas novas também descem pelo pull normal, pela versão. Falha numa
+       empresa desfaz só ela, inteira; as outras seguem.
+     - **O NCM que sumiu do arquivo não é excluído**: ganha `vigencia_fim` na **véspera da data da tabela** (o Siscomex
+       não publica a data do encerramento na tabela vigente; o que já terminava antes fica como está). O produto que o
+       usa passa a "fora de vigência — Vigência até DD/MM/AAAA" no relatório NCMs inválidos (o `ncmVigente` da decisão
+       98: em todos os lugares juntos). A carga do `ncms.csv` continua excluindo logicamente (decisão 41).
+     - **Relatório e registro** (`auditoria_plataforma`): `ncm_atualizada` por empresa (a data, o ato, o sha256 do
+       arquivo, as contagens, até 200 códigos de cada lista, os terminais avisados e **os produtos que ficam com NCM
+       inválido**: código, nome e NCM, até 200, sem kit e serviço, como o relatório) e `ncm_atualizacao_executada` com
+       o resumo de todas. O `ncm_atualizada` é gravado **antes** do commit da empresa: falhou, nada fica; o commit que
+       falha depois deixa um registro sem a mudança, o que só faz a guarda abaixo manter a tabela como estava. A
+       saída do comando mostra o mesmo relatório. A simulação não registra.
+     - **A migração não desfaz a tabela da plataforma**: a carga das referências (`posMigracaoSemAdmin`, de toda
+       migração e do `referencias`) compara a última `ncm_atualizada` da empresa com `NCMS_CSV_VIGENTE_EM` (a data do
+       `ncms.csv`, "2026-10-30"; **atualize junto com o arquivo**) e, com a da plataforma mais nova, não mexe em `ncms`
+       (as outras referências seguem). A empresa nova recebe o `ncms.csv` no provisionamento e a tabela da plataforma na
+       próxima execução. A tabela **mais antiga** que a da empresa (a aplicada antes ou a do arquivo) é `ignorada`.
+     - Testes: `ncm-atualizacao.spec.ts` (a descrição montada com HTML, entidade, `;`, NBSP, o nível repetido e a
+       posição na frente; o BOM e os campos a mais; 16 formatos alterados recusados; o mínimo e o limite de tamanho; a
+       diferença com os incluídos que voltam, os alterados, os encerrados e os que já tinham terminado; o download pelo
+       servidor HTTP falso com o 500, o HTML, o tamanho declarado e o lido acima do limite, o redirecionamento, o tempo
+       limite e o endereço que não é http(s)), `cli/comum.spec.ts` (o `--empresas` inválido recusado) e
+       `ncm-atualizacao.test.ts` (duas empresas e uma terceira criada depois, que a lista vazia não alcança:
+       a tabela igual à versionada não muda nada; simular sem gravar; o formato quebrado e o encerramento em massa sem
+       aplicar nada; o critério de pronto — o NCM encerrado no relatório NCMs inválidos da empresa que o usa, a outra
+       sem produto afetado —, o comando ao terminal, os registros; rodar de novo sem mudança nem comando; a migração
+       sem desfazer; a tabela mais antiga e a empresa em migração ignoradas; a falha numa empresa desfeita inteira).
+       Arquivos inventados (capítulo 77, que a Nomenclatura não usa) e a tabela de integração montada do `ncms.csv`.
+     - **Fora**: a atualização automática (agendada) e o botão no painel da plataforma (o dono roda o comando quando
+       quiser, ver `infra/producao/README.md` › Tabela NCM); a lista oficial do CEST (pendência da decisão 187: sem
+       fonte oficial em formato de dados, segue o arquivo versionado); IBPT e qualquer uso fiscal.
 
 ### Operação – tarefas em segundo plano (API)
 

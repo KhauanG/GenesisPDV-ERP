@@ -106,6 +106,15 @@ const esquema = z
      * aceitando o endereço digitado. A consulta tem limite de 3 s e falha sem quebrar o cadastro.
      */
     CEP_CONSULTA_URL: z.string().default('https://viacep.com.br/ws/{cep}/json/'),
+    /**
+     * Tabela NCM vigente do Portal Único Siscomex (F2-B46, decisão 193): o JSON que o `ncm-atualizar` baixa. Só a
+     * tarefa da plataforma usa; sem acesso ao site, o arquivo baixado no navegador entra por `--arquivo`.
+     */
+    SISCOMEX_NCM_URL: z
+      .url({ protocol: /^https?$/ })
+      .default(
+        'https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json?perfil=PUBLICO',
+      ),
     /** E-mail transacional (ERP 18.14): em desenvolvimento, o Mailpit do docker-compose. */
     SMTP_URL: z.url().default('smtp://127.0.0.1:1025'),
     EMAIL_REMETENTE: z.string().min(3).default('GenesisPDV <nao-responda@genesis.local>'),
@@ -229,6 +238,8 @@ export interface Configuracao {
   erpUrl: string;
   /** `null` = consulta de CEP desligada. */
   cepConsultaUrl: string | null;
+  /** Endereço da tabela NCM do Siscomex (`SISCOMEX_NCM_URL`). */
+  siscomexNcmUrl: string;
   email: { smtpUrl: string; remetente: string };
   armazenamento: {
     endpoint: string | null;
@@ -316,6 +327,7 @@ export function carregarConfiguracao(env: Record<string, string | undefined> = p
     esperaTravaVersaoMs: v.ERP_ESPERA_TRAVA_MS === 0 ? null : v.ERP_ESPERA_TRAVA_MS,
     erpUrl: v.ERP_URL.replace(/\/+$/, ''),
     cepConsultaUrl: v.CEP_CONSULTA_URL === 'desligada' ? null : v.CEP_CONSULTA_URL,
+    siscomexNcmUrl: v.SISCOMEX_NCM_URL,
     email: { smtpUrl: v.SMTP_URL, remetente: v.EMAIL_REMETENTE },
     armazenamento: {
       // Em desenvolvimento, o MinIO local (infra/docker-compose.yml) com as credenciais de lá.

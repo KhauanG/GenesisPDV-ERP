@@ -1066,7 +1066,7 @@ A ressincronização **nunca** mexe em `eventos_saida`, tabelas de movimento ou 
 | Índices locais | Os do modelo 4.2 (código de barras, código interno, PLU, FTS5); criados **depois** da carga inicial |
 | Cadastro em massa no ERP | Grava em blocos de até 500 linhas por transação (modelo 1.5), para não segurar a trava de ordenação nem gerar páginas gigantes |
 | Mudança de preço em massa (ex.: 10 mil produtos) | Vira 10 mil linhas no fluxo `catalogo` (~20 páginas de 500, ~1,5 MB compactado); o PDV aplica entre vendas |
-| Tabelas `referencia` | Atualização da tabela oficial (NCM/IBPT) toca milhares de linhas: a API gera um snapshot novo e manda `ressincronizar_fluxo {fluxo: "referencia"}`, mais barato que paginar |
+| Tabelas `referencia` | Atualização da tabela oficial (NCM/IBPT) toca milhares de linhas: a API gera um snapshot novo e manda `ressincronizar_fluxo {fluxo: "referencia"}`, mais barato que paginar. **Fase 2, F2-B46** (README da API › decisão 193): a atualização da NCM pela plataforma manda o comando aos terminais `ativo`/`desativando` da empresa quando `ncms` mudou (sem snapshot: o PDV volta o cursor do fluxo a 0 e baixa de novo, como já faz; sem mudança de protocolo) |
 
 ---
 

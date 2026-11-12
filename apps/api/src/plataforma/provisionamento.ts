@@ -5,7 +5,11 @@ import { ErroApi } from '../comum/erros.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import { empresas, planos } from '../database/controle/schema.js';
 import { garantirNomeBancoEmpresa, nomeBancoEmpresa } from '../database/nomes-bancos.js';
-import { carregarReferencias } from '../database/referencias/carregar.js';
+import {
+  carregarReferencias,
+  NCMS_CSV_VIGENTE_EM,
+  type OpcoesReferencias,
+} from '../database/referencias/carregar.js';
 import { removerRoleAplicacao } from '../database/roles-empresa.js';
 import { aplicarSeedEmpresa, type DadosSeedEmpresa } from '../database/seed/seed-empresa.js';
 import type { ServidoresBanco } from '../database/servidores.js';
@@ -13,6 +17,7 @@ import { gerarHashSenha, gerarSenhaProvisoria } from '../seguranca/senhas.js';
 import type { PoolsEmpresas } from '../tenancy/pools-empresas.js';
 import { registrarAuditoriaPlataforma } from './auditoria-plataforma.js';
 import type { EmpresaAlvo, MigradorEmpresas } from './migrador-empresas.js';
+import { vigenciaNcmAplicada } from './ncm-atualizacao.js';
 
 export interface Ator {
   adminId?: string | null;
@@ -34,11 +39,12 @@ export async function posMigracaoEmpresa(
   cliente: pg.ClientBase,
   dados: DadosSeedEmpresa,
   admin?: Parameters<typeof aplicarSeedEmpresa>[2],
+  referencias: OpcoesReferencias = {},
 ): Promise<Awaited<ReturnType<typeof aplicarSeedEmpresa>>> {
   await cliente.query('begin');
   try {
     await cliente.query('select fn_trava_versao()');
-    await carregarReferencias(cliente);
+    await carregarReferencias(cliente, referencias);
     const r = await aplicarSeedEmpresa(cliente, dados, admin);
     await cliente.query('select fn_auditoria_garantir_particoes(1, 12)');
     await cliente.query('commit');
@@ -348,6 +354,10 @@ export function posMigracaoSemAdmin(controle: BancoControle) {
   return async (cliente: pg.Client, alvo: EmpresaAlvo): Promise<void> => {
     const [e] = await controle.db.select().from(empresas).where(eq(empresas.id, alvo.id));
     if (!e) throw new Error(`Empresa ${alvo.codigo} não encontrada`);
-    await posMigracaoEmpresa(cliente, dadosSeedDe(e, await lerRegime(cliente)));
+    // A tabela NCM que a plataforma aplicou (F2-B46, decisão 193) mais nova que o `ncms.csv` fica como está.
+    const aplicada = await vigenciaNcmAplicada(controle, alvo.id);
+    await posMigracaoEmpresa(cliente, dadosSeedDe(e, await lerRegime(cliente)), undefined, {
+      ncms: aplicada === null || aplicada < NCMS_CSV_VIGENTE_EM,
+    });
   };
 }

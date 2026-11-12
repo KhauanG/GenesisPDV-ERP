@@ -36,8 +36,23 @@ function lerMunicipios(): Array<{ codigo: number; nome: string; uf: string }> {
     });
 }
 
+/**
+ * Data da Nomenclatura que o `ncms.csv` versionado traz ("vigente em", decisão 41). **Atualize junto com o arquivo**:
+ * é o que decide, na carga das referências, se a tabela que a plataforma aplicou numa empresa (F2-B46, decisão 193)
+ * é mais nova que o arquivo e fica como está.
+ */
+export const NCMS_CSV_VIGENTE_EM = '2026-10-30';
+
+export interface LinhaNcm {
+  /** 8 dígitos, sem pontos. */
+  codigo: string;
+  descricao: string;
+  inicio: string | null;
+  fim: string | null;
+}
+
 /** NCM vigente (Siscomex, `ncms.csv`: codigo;descricao;vigencia_inicio;vigencia_fim). */
-function lerNcms(): Array<{ codigo: string; descricao: string; inicio: string | null; fim: string | null }> {
+export function lerNcms(): LinhaNcm[] {
   return readFileSync(join(PASTA, 'ncms.csv'), 'utf8')
     .split('\n')
     .slice(1)
@@ -309,6 +324,53 @@ async function upsert(
   return r.rowCount ?? 0;
 }
 
+/**
+ * Upsert de `ncms` (chave `codigo`): só as linhas novas ou diferentes (a excluída que volta ao arquivo é reativada).
+ * O NCM que **não está nas linhas**: `'excluir'` = exclusão lógica (a carga do `ncms.csv`, decisão 41); `{ encerrarEm }`
+ * = fim de vigência nessa data, sem excluir, quando ainda não termina antes (a atualização da plataforma, F2-B46: o
+ * produto que o usa passa a "fora de vigência" no relatório NCMs inválidos). Devolve as linhas alteradas.
+ */
+export async function carregarNcms(
+  cliente: pg.ClientBase,
+  linhas: readonly LinhaNcm[],
+  ausentes: 'excluir' | { encerrarEm: string },
+): Promise<number> {
+  let alteradas = await upsert(
+    cliente,
+    'ncms',
+    { nome: 'codigo', tipo: 'varchar' },
+    [
+      { nome: 'descricao', tipo: 'text' },
+      { nome: 'vigencia_inicio', tipo: 'date' },
+      { nome: 'vigencia_fim', tipo: 'date' },
+    ],
+    linhas.map((n) => [n.codigo, n.descricao, n.inicio, n.fim]),
+  );
+  const codigos = linhas.map((n) => n.codigo);
+  const removidos =
+    ausentes === 'excluir'
+      ? await cliente.query(
+          'update ncms set excluido_em = now() where excluido_em is null and not (codigo = any($1::varchar[]))',
+          [codigos],
+        )
+      : await cliente.query(
+          `update ncms set vigencia_fim = $2::date
+            where excluido_em is null and not (codigo = any($1::varchar[]))
+              and (vigencia_fim is null or vigencia_fim > $2::date)`,
+          [codigos, ausentes.encerrarEm],
+        );
+  alteradas += removidos.rowCount ?? 0;
+  return alteradas;
+}
+
+export interface OpcoesReferencias {
+  /**
+   * `false` = não mexe em `ncms`: a empresa já recebeu da plataforma uma tabela mais nova que o `ncms.csv`
+   * (`NCMS_CSV_VIGENTE_EM`; F2-B46, decisão 193), e recarregar o arquivo desfaria as inclusões e os encerramentos.
+   */
+  ncms?: boolean;
+}
+
 export interface ResumoReferencias {
   ufs: number;
   municipios: number;
@@ -318,6 +380,7 @@ export interface ResumoReferencias {
   tiposMovimento: number;
   permissoes: number;
   paises: number;
+  /** Linhas do `ncms.csv` aplicadas (0 com `ncms: false`). */
   ncms: number;
   /** Linhas do `cests.csv` (0 = sem a lista oficial ainda: a tabela fica como está). */
   cests: number;
@@ -326,7 +389,10 @@ export interface ResumoReferencias {
 }
 
 /** Carga idempotente das referências nacionais e do catálogo de permissões (MD 3.4, 7.2, 3.3.3). */
-export async function carregarReferencias(cliente: pg.ClientBase): Promise<ResumoReferencias> {
+export async function carregarReferencias(
+  cliente: pg.ClientBase,
+  opcoes: OpcoesReferencias = {},
+): Promise<ResumoReferencias> {
   const ufs = lerUfs();
   const municipios = lerMunicipios();
   let alteradas = 0;
@@ -424,24 +490,9 @@ export async function carregarReferencias(cliente: pg.ClientBase): Promise<Resum
     [{ nome: 'nome', tipo: 'varchar' }],
     PAISES.map((p) => [p.codigoBacen, p.nome]),
   );
-  const ncms = lerNcms();
-  alteradas += await upsert(
-    cliente,
-    'ncms',
-    { nome: 'codigo', tipo: 'varchar' },
-    [
-      { nome: 'descricao', tipo: 'text' },
-      { nome: 'vigencia_inicio', tipo: 'date' },
-      { nome: 'vigencia_fim', tipo: 'date' },
-    ],
-    ncms.map((n) => [n.codigo, n.descricao, n.inicio, n.fim]),
-  );
   // NCM que saiu da tabela oficial é excluído logicamente (o produto que o usa deixa de ser vendável na loja NFC-e).
-  const ncmsRemovidos = await cliente.query(
-    'update ncms set excluido_em = now() where excluido_em is null and not (codigo = any($1::varchar[]))',
-    [ncms.map((n) => n.codigo)],
-  );
-  alteradas += ncmsRemovidos.rowCount ?? 0;
+  const ncms = opcoes.ncms === false ? [] : lerNcms();
+  if (ncms.length) alteradas += await carregarNcms(cliente, ncms, 'excluir');
   const cests = lerCests();
   alteradas += await carregarCests(cliente, cests);
   const parametros = await upsertParametrosFiscais(cliente);
