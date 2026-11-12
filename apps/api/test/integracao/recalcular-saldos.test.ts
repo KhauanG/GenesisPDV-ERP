@@ -5,9 +5,9 @@
  * nova, auditoria `recalcular_saldos`, o saldo certo no pull do fluxo `estoque`) e a segunda execução dá idêntico; uma
  * venda que chega entre a verificação e a correção, ou ao mesmo tempo que ela, não se perde; a correção em vários
  * blocos recria a linha de saldo que falta; o comando de verdade (`tsx src/cli/recalcular-saldos.ts`) diz "idêntico" e
- * devolve 2 com divergência; o replay de 200 mil movimentos fica abaixo de 256 MB de heap; e a verificação periódica
- * abre e resolve o alerta `RAZAO_SALDO_DIVERGENTE`. Cada teste prepara o próprio cenário (`partirIdentica`) e só
- * confere o que ele criou: rodam sozinhos ou em qualquer ordem.
+ * devolve 2 com divergência; o replay de 200 mil movimentos fica abaixo de 256 MB de heap vivo (medido depois do gc,
+ * crescendo menos de 64 MB); e a verificação periódica abre e resolve o alerta `RAZAO_SALDO_DIVERGENTE`. Cada teste
+ * prepara o próprio cenário (`partirIdentica`) e só confere o que ele criou: rodam sozinhos ou em qualquer ordem.
  */
 import { execFile } from 'node:child_process';
 import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -833,19 +833,24 @@ describe('db:recalcular-saldos (F2-B3; MD 3.7; ERP 13.1.1)', () => {
           [estoqueId, produto, tipo],
         );
       }
-      let pico = process.memoryUsage().heapUsed;
-      const r = await verificarSaldos(
-        c,
-        {},
-        {
-          aoPaginar: () => {
-            pico = Math.max(pico, process.memoryUsage().heapUsed);
-          },
-        },
-      );
-      pico = Math.max(pico, process.memoryUsage().heapUsed);
+      // Mede o heap VIVO (depois do `gc()`, ligado pelo `--expose-gc` do vitest.integracao.config.ts) a cada página.
+      // Sem o gc, a conta pegava o lixo que o V8 ainda não recolheu (dependia da carga da máquina: 274 MB na CI da
+      // `main` em 12/11/2026, com ~120 MB vivos). O teto de 256 MB continua, e o crescimento sobre a base fica abaixo
+      // de 64 MB: guardar os 200 mil movimentos em memória passaria disso.
+      const gc = globalThis.gc;
+      if (!gc) throw new Error('rode com --expose-gc (vitest.integracao.config.ts)');
+      gc();
+      const base = process.memoryUsage().heapUsed;
+      let pico = base;
+      const medir = () => {
+        gc();
+        pico = Math.max(pico, process.memoryUsage().heapUsed);
+      };
+      const r = await verificarSaldos(c, {}, { aoPaginar: medir });
+      medir();
       expect(r).toMatchObject({ linhas: 4, movimentos: 200_000, divergencias: [], razaoInconsistente: [] });
       expect(pico).toBeLessThan(256 * 1024 * 1024);
+      expect(pico - base).toBeLessThan(64 * 1024 * 1024);
     } finally {
       await c.end();
     }
