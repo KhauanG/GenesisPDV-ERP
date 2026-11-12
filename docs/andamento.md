@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários": F2-B46 commitado; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários": F2-B46 commitado e PR aberto (#9), aguardando a liberação do merge; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -56,7 +56,7 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-8 PDV: guarda e consulta | B34–B36 | concluído (#6, juntado em 10/11/2026 com a liberação do dono; CI da `main` verde, inclusive o PDV no `windows-latest`); **falta implantar e o release do PDV 0.11.0** |
 | PR-9 catálogo operacional | B37–B42 | concluído (#7, juntado em 11/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: 1 achado médio corrigido em `7fd9b8e`); **em produção** desde 11/11/2026 (Implantação manual na `main`, `e78db8c`, verde) |
 | PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | concluído (#8, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 12/11/2026 (API e ERP, Implantação manual verde em `3cb46a1`; a CI da `main` ficou verde ao repetir só a integração no PostgreSQL 18, que falhou no teste de heap do `recalcular-saldos`, já conhecido como sensível); release **`pdv-v0.12.0`** publicado e posto na página de download em 12/11/2026 (Implantação com `publicar_pdv`, verde); **falta** atualizar os caixas, um de cada vez (roteiro do item 3b, passo 5) |
-| PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-10) |
+| PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | **aberto** (#9, 12/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; sem migração e sem release do PDV |
 | PR-12 em diante | | não iniciados |
 
 ### PR-6 — blocos
