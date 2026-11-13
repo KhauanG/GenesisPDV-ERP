@@ -197,6 +197,11 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   todas as lojas: principal pelo plugin oficial `claude-security` (catálogo da Anthropic; o dono instala na hora) e,
   como segunda opinião, a skill `cloudflare/security-audit-skill`. Nada a instalar antes. Roadmap §16, D64;
   `docs/andamento.md` › Pendências.
+  - **13/11/2026 (dono):** "Use o da cloudflare" — a auditoria do fim da Fase 2 roda com a skill
+    `cloudflare/security-audit-skill` (o repositório público dela, lido por inteiro antes do uso), no perfil
+    `standard`, com o método completo de 6 fases e o código só executado num sandbox isolado (sem rede, alvo somente
+    leitura, limites de CPU, memória e tempo). Os resultados ficam fora do repositório (que é público) até as correções.
+    O `claude-security` não foi instalado.
 - **Plugins sugeridos pelo dono (caveman, claude-mem, karpathy-guidelines):** não adotados, pela recomendação — o
   caveman encurta as respostas (o contrário do que o dono pede), a memória do projeto já é o `andamento.md` e este
   arquivo (versionados; as sessões na nuvem são descartáveis e o repositório é público) e as diretrizes de código já
