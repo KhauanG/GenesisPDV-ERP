@@ -551,6 +551,22 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
   });
 
   it('tipos sem suporte (F2-B1): a planilha não cria Com variações nem Com complementos; o legado atualiza e reimporta igual', async () => {
+    // A chave de complementos nasce ligada desde o F2-B51: desligada aqui, para conferir a trava nos dois tipos.
+    const chaveComplementos = (valor: boolean | null) =>
+      amb
+        .http()
+        .put('/api/configuracoes')
+        .set(bearer(admin))
+        .send({ valores: { 'produtos.complementos_habilitados': valor } });
+    expect((await chaveComplementos(false)).status).toBe(200);
+    try {
+      await tiposSemSuporte();
+    } finally {
+      await chaveComplementos(null);
+    }
+  });
+
+  async function tiposSemSuporte() {
     const COM_TIPO = ['IdProduto', 'NomeProduto', 'Tipo', 'PrecoVenda'];
     const linhas = (nomeGelo: string, tipoGelo: string) =>
       [
@@ -605,7 +621,7 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
       .attach('arquivo', exp.body as Buffer, 'Produtos.xlsx');
     expect(volta.status, JSON.stringify(volta.body)).toBe(200);
     expect(volta.body.resumo).toMatchObject({ linhas: 1, sem_alteracao: 1 });
-  });
+  }
 
   it('códigos explícitos à frente da sequência: o próximo do formulário salta a faixa ocupada de uma vez', async () => {
     const [seq] = await consultar<{ n: string }>(

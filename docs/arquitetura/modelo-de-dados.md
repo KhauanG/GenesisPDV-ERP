@@ -790,7 +790,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `geral.altera_preco_produto_erp` | bool | `true` | — | — | Geral › Altera Preço do Produto no ERP |
 | `geral.produto_usa_fornecedores` | bool | `false` | — | — | Geral › Produto Usa Fornecedores |
 | `produtos.variacoes_habilitadas` | bool | `false` | — | — | Novo (Fase 2, F2-B1; roadmap D43): criar ou trocar o produto para `com_variacoes` exige a chave; o já gravado segue (ERP 8.2.1). Ligar avisa dos terminais ativos com o PDV anterior à guarda das variações (F2-B34) |
-| `produtos.complementos_habilitados` | bool | `false` | — | — | Novo (Fase 2, F2-B1; roadmap D43): idem para `com_complementos` |
+| `produtos.complementos_habilitados` | bool | `true` (desde o F2-B51; era `false` no F2-B1) | — | — | Novo (Fase 2, F2-B1; roadmap D43): idem para `com_complementos`; ligada por padrão pelo F2-B51, que entregou o cadastro dos complementos (3.6.8) |
 | `produtos.custo_base_margem` | `preco_custo`/`custo_medio`/`ultimo_custo` | `preco_custo` | — | — | Novo (Fase 2, F2-B16; roadmap D49, decidida pelo dono): a base do markup ⇄ preço de venda da compra (ERP 13.3) — o preço de custo que o produto terá depois da compra, o custo médio do estoque depois da entrada ou o último custo (o da compra); sem `produtos.ver_custo`, sempre o custo da compra |
 | `geral.utiliza_servico_avulso` | bool | `false` | S | S | Geral › Utiliza Serviço Avulso |
 | `geral.margem_lucro_pct` | percentual | `0` | — | — | Geral › Margem de Lucro (%) (markup padrão de produto novo) |
@@ -2165,7 +2165,11 @@ Implementadas na **Fase 2, F2-B45** (migração `0028_complementos`; README da A
 todas as colunas (`fn_versao`, índice de versão, autoria). **Só inativação:** a exclusão física (DELETE e TRUNCATE) é
 recusada por trigger (`EXCLUSAO_FISICA_PROIBIDA`), para um PDV offline nunca citar um id que a nuvem não tem;
 `itens_venda_complementos.complemento_id` → `produtos_complementos` com `on delete set null`, e o handler da venda grava
-nulo o id desconhecido. O cadastro no ERP é o F2-B51; o uso na venda, a Fase 3.
+nulo o id desconhecido. O cadastro no ERP é o **F2-B51** (README da API › decisão 194): os grupos só no produto
+`com_complementos`, gravados com o produto; o grupo removido recebe `excluido_em` com as opções (que também ficam com
+`ativo = false`), e a opção removida de um grupo que fica só recebe `ativo = false`; o `produto_id` vinculado é
+Simples, Matéria-prima ou Produzido (o Produzido baixa os insumos da ficha), e o produto que é opção ativa de um grupo
+vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3.
 
 #### 3.6.9 Demais filhas de `produtos`
 

@@ -78,10 +78,11 @@ const LINHAS: Linha[] = [
   // D7 (dono, 31/10/2026): corte às 05:00 na empresa, ajustável por loja.
   ['geral.dia_operacional_hora_corte', hora, '05:00', LP],
   // Produtos. F2-B1 (D43, decidida pelo dono: complementos sim, variações não): criar "Com variações"/"Com
-  // complementos" exige a chave (`CHAVES_TIPO_PRODUTO`); a de complementos é ligada pelo bloco que entrega o modal
-  // (F2-B51) e a de variações fica desligada (a grade, F2-B49, saiu do escopo).
+  // complementos" exige a chave (`CHAVES_TIPO_PRODUTO`). A de complementos nasce ligada desde o F2-B51 (o modal
+  // Complementos; o caixa continua vendendo sem eles até a Fase 3) e a de variações fica desligada (a grade, F2-B49,
+  // saiu do escopo).
   ['produtos.variacoes_habilitadas', bool, false],
-  ['produtos.complementos_habilitados', bool, false],
+  ['produtos.complementos_habilitados', bool, true],
   // F2-B16 (F2-Q8 = D49, decidida pelo dono: "bem maleável"): o custo base do markup ⇄ preço da compra.
   [CHAVE_CUSTO_BASE_MARGEM, umDe(BASES_CUSTO_MARGEM), 'preco_custo'],
   // Estoque

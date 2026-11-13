@@ -909,12 +909,14 @@ antes da migração (questão 18, seção 23.2) e o enum ajustado se preciso.
 
 **Tipos sem suporte (Fase 2, F2-B1; roadmap D43, decidida pelo dono: complementos sim, variações não).** "Com variações" e "Com
 complementos" só podem ser **escolhidos** (produto novo, cópia ou troca de tipo, no formulário, na API e na
-importação) com as chaves `produtos.variacoes_habilitadas` e `produtos.complementos_habilitados` ligadas (9.1;
-padrão Não): sem elas, o select da criação não os oferece e a gravação é recusada com "Tipo disponível em breve". O
-produto **já gravado** com o tipo (legado do Nuvem3) continua editável e importável sem trocar o tipo, aparece no
-filtro "Tipo sem suporte" (8.1) e abre com o aviso de que o tipo não tem suporte. Sair de "Com variações" é livre
-quando não há variação ativa; sem grade, o produto só movimentou o pai e troca para Simples mesmo com movimento. "Com
-complementos" continua vendável no PDV, sem os complementos (PDV 10.2).
+importação) com a chave do tipo ligada (9.1): `produtos.variacoes_habilitadas` para "Com variações" (padrão Não) e
+`produtos.complementos_habilitados` para "Com complementos" (padrão **Sim** desde o F2-B51, que entregou o modal
+Complementos, 8.2.16). Com a chave do tipo desligada (as variações sempre, pelo padrão; os complementos só quando a
+chave for gravada como "Não"), o tipo é **sem suporte**: o select da criação não o oferece e a gravação é recusada com
+"Tipo disponível em breve"; o produto **já gravado** com o tipo (legado do Nuvem3) continua editável e importável sem
+trocar o tipo, aparece no filtro "Tipo sem suporte" (8.1) e abre com o aviso de que o tipo não tem suporte. Sair de
+"Com variações" é livre quando não há variação ativa; sem grade, o produto só movimentou o pai e troca para Simples
+mesmo com movimento. "Com complementos" continua vendável no PDV, sem os complementos, até a Fase 3 (PDV-2, D43; PDV 10.2).
 
 Unidades padrão (seed de `unidades_medida`, editável): UN, PC, CX, FD (fardo), PCT, DZ, KG, G, L, ML, M, CM, M2, M3,
 PAR, CJ, KIT.
@@ -1212,7 +1214,7 @@ Regras (Fase 2, F2-B13; README da API › decisão 158; README do ERP › decis�
 |---|---|
 | **Busca de NCM** | Pesquisa por código ou descrição em `ncms`; mostra código, descrição, vigência e % aproximada de tributos (Lei da Transparência); Enter seleciona |
 | **Gerar variações** | (1) escolher até 3 atributos (`atributos_variacao`: ex.: Tamanho, Sabor, Cor) e seus valores; (2) o sistema gera a grade de combinações; (3) por combinação: nome gerado ("CERVEJA X 350ML LATA"), código interno, EAN, preço (vazio = do produto), custo, ativo; (4) Gravar cria `produtos_variacoes`. Estoque, venda e transferência passam a exigir a variação |
-| **Complementos** | Grupos de complementos (`produtos_grupos_complementos`: `nome`, `minimo`, `maximo`, `obrigatorio`, `ordem`) e itens (`produtos_complementos`: `produto_id` vinculado **ou** `descricao` livre, `preco_adicional`, `baixa_estoque` + `quantidade_baixa` do produto vinculado, `ordem`, `ativo`) — modelo 3.6.8. Ex.: grupo "Gelo" (0–1) com "Com gelo +R$ 0,00", grupo "Adicionais" (0–5) |
+| **Complementos** | Grupos de complementos (`produtos_grupos_complementos`: `nome`, `minimo`, `maximo`, `obrigatorio`, `ordem`) e itens (`produtos_complementos`: `produto_id` vinculado **ou** `descricao` livre, `preco_adicional`, `baixa_estoque` + `quantidade_baixa` do produto vinculado, `ordem`, `ativo`) — modelo 3.6.8. Ex.: grupo "Gelo" (0–1) com "Com gelo +R$ 0,00", grupo "Adicionais" (0–5). **Fase 2, F2-B51** (README da API › decisão 194; do ERP › 79): bloco "Complementos" no tipo Com complementos com o botão que abre o modal; gravado com o produto (Salvar; as permissões do formulário). Regras: máximo de 1 a 99 e ≥ mínimo, obrigatório ⇒ mínimo ≥ 1 e ao menos um complemento ativo, nome do grupo único, um complemento por produto (ou descrição) no grupo, até 20 grupos e 50 complementos **ativos** por grupo (o inativo não conta: o gravado nunca sai, e o grupo que troca as opções acumula inativos; a lista inteira tem só o limite técnico de 300 linhas); o vinculado é Simples, Matéria-prima ou Produzido, ativo, não o próprio produto, e a baixa é inteira se ele não permite fração; preço adicional ≥ 0 com 4 casas; com "Altera Preço do Produto no ERP" = Não (9.1), mudar o preço adicional do complemento gravado ou criar um com preço exige "Produtos: Alterar preço" (como os outros preços). O complemento gravado **só se inativa**; o grupo removido é excluído logicamente com os complementos. Sair do tipo exige excluir os grupos; o produto que é complemento ativo de outro não se exclui nem vira tipo que não pode ser complemento. O caixa ainda vende sem complementos (a escolha na venda é da Fase 3) |
 | **Itens do kit** | Substituído pelo bloco **Combo (kit)** do acordeão (8.2.17), que aparece no tipo Combo / kit |
 
 #### 8.2.17 Combo (kit) — Fase 1 do roadmap
@@ -1639,7 +1641,7 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Altera Preço do Produto no ERP | `geral.altera_preco_produto_erp` | booleano | Sim | N | N | Não = preço de venda só muda por recebimento (markup) ou por quem tem `produtos.alterar_preco` |
 | Produto Usa Fornecedores | `geral.produto_usa_fornecedores` | booleano | Não | N | N | exibe o bloco Fornecedores no produto (8.2.14) |
 | Cadastrar produtos "Com variações" **(Novo)** | `produtos.variacoes_habilitadas` | booleano | Não | N | N | Não = o tipo não pode ser escolhido no cadastro nem na importação (8.2.1; F2-B1, roadmap D43); ligada pelo bloco da grade de variações (8.2.16). Ao gravar Sim, a tela lista os terminais ativos com o PDV anterior à guarda das variações (F2-B34) ou sem versão conhecida e pede "Gravar mesmo assim": eles vendem o produto com variações com o preço e o saldo do pai |
-| Cadastrar produtos "Com complementos" **(Novo)** | `produtos.complementos_habilitados` | booleano | Não | N | N | idem para "Com complementos"; ligada pelo bloco do modal Complementos (8.2.16) |
+| Cadastrar produtos "Com complementos" **(Novo)** | `produtos.complementos_habilitados` | booleano | **Sim** (desde o F2-B51) | N | N | idem para "Com complementos"; ligada por padrão pelo bloco do modal Complementos (8.2.16; F2-B51, README da API › decisão 194). O caixa ainda vende o produto sem os complementos até a Fase 3 |
 | Custo base do markup na compra **(Novo)** | `produtos.custo_base_margem` | enum `preco_custo` (o que o produto terá depois da compra) / `custo_medio` (do estoque depois da entrada) / `ultimo_custo` (o desta compra) | `preco_custo` (D49) | N | N | Fase 2, F2-B16; roadmap D49: base do markup ⇄ preço de venda dos itens do recebimento (13.3) e da NF-e (13.4.1, F2-B20/F2-B21) |
 | Utiliza Serviço Avulso | `geral.utiliza_servico_avulso` | booleano | Não | S | S | PDV e venda ERP aceitam item de serviço sem cadastro (descrição + valor), lançado no produto técnico "SERVIÇO AVULSO" |
 | Margem de Lucro (%) | `geral.margem_lucro_pct` | percentual | 0 | N | N | markup padrão de produtos novos e de itens de recebimento (0 = sem sugestão) |

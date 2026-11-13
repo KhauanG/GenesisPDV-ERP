@@ -72,6 +72,7 @@ import {
   produtosLojas,
   produtosLotes,
   produtosPrecosQuantidade,
+  produtosGruposComplementos,
   produtosRelacionados,
   unidadesMedida,
 } from '../database/empresa/schema/index.js';
@@ -82,6 +83,8 @@ import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { sqlPendenciasTransferencia, sqlSaldosComPendencias } from '../transferencias/em-transito.js';
 import {
   buscarOpcoes,
+  complementoDe,
+  complementosDoProduto,
   detalheProduto,
   fornecedoresDoProduto,
   imagensDoProduto,
@@ -92,6 +95,7 @@ import { paginaHistoricoPrecos } from './historico-precos.js';
 import { ncmVigente } from './ncm.js';
 import {
   conferirEanDuplicado,
+  gravarComplementos,
   gravarFilhas,
   gravarFornecedores,
   gravarImagens,
@@ -684,6 +688,14 @@ export class ProdutosController {
             `O produto é componente de ${antes.usadoEm.map((u) => `${u.codigo} - ${u.nome}`).join(', ')}. Retire-o da composição ou inative o produto.`,
           );
         }
+        // F2-B51: complemento ativo de outro produto (a venda da Fase 3 baixaria o estoque dele).
+        const complementoDeOutros = await complementoDe(tx, id);
+        if (complementoDeOutros.length) {
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            `O produto é complemento de ${complementoDeOutros.map((u) => `${u.codigo} - ${u.nome}`).join(', ')}. Retire-o dos complementos (ou inative o complemento) ou inative o produto.`,
+          );
+        }
         const agora = new Date();
         const autor = { excluidoEm: agora, atualizadoPorId: sessao.usuarioId };
         const comps = await tx
@@ -721,6 +733,18 @@ export class ProdutosController {
             .set(autor)
             .where(and(eq(t.produtoId, id), isNull(t.excluidoEm)));
         }
+        // F2-B51: os grupos de complementos saem com o produto, com os complementos (exclusão lógica; a física é
+        // recusada por trigger). `produtos_complementos.produto_id` é o vinculado, não o dono: vai pelo grupo.
+        await tx.execute(sql`
+          update produtos_complementos set excluido_em = ${agora}, ativo = false, atualizado_por_id = ${sessao.usuarioId}
+           where excluido_em is null and grupo_id in (
+             select id from produtos_grupos_complementos where produto_id = ${id} and excluido_em is null)`);
+        await tx
+          .update(produtosGruposComplementos)
+          .set(autor)
+          .where(
+            and(eq(produtosGruposComplementos.produtoId, id), isNull(produtosGruposComplementos.excluidoEm)),
+          );
         // As relações de outros produtos para este também saem: o PDV não sugere um produto excluído.
         await tx
           .update(produtosRelacionados)
@@ -773,6 +797,7 @@ function colunasProduto(d: CriarProduto) {
     fornecedores: _forn,
     lotes: _lotes,
     lotesExcluidos: _lotesExcluidos,
+    gruposComplementos: _gruposComplementos,
     imagens: _imagens,
     confirmarEanDuplicado: _conf,
     precoCusto: _custo,
@@ -815,6 +840,8 @@ const filhasAuditoria = async (tx: DbEmpresa, produtoId: string, d: CriarProduto
   lotes: await lotesDoProduto(tx, produtoId),
   // F2-B44: a galeria como ficou (o corpo sem a lista mantém a gravada).
   imagens: await imagensDoProduto(tx, produtoId),
+  // F2-B51: os complementos como ficaram (o corpo não traz o que a gravação inativou, e sem a lista mantém tudo).
+  gruposComplementos: await complementosDoProduto(tx, produtoId, true),
 });
 
 /**
@@ -955,7 +982,19 @@ async function garantirAlterarPreco(
   const mudouFaixa =
     antes.precosQuantidade.filter(faixaVisivel).map(chaveFaixa).sort().join('|') !==
     d.precosQuantidade.map(chaveFaixa).sort().join('|');
-  if (mudouProduto || mudouLoja || mudouFaixa) {
+  // O preço adicional dos complementos (F2-B51) é preço cobrado do cliente na venda: muda quando o complemento casado
+  // (o mesmo casamento de `gravarComplementos`: o grupo pelo id entre os do produto, o complemento pelo id entre os do
+  // grupo) vem com outro preço, ou quando o complemento novo vem com preço. Repetir o preço de agora não conta; a lista
+  // ausente mantém os gravados (planilha, cadastro em massa, ERP antigo).
+  const minusculo = (v: string | null) => v?.toLowerCase() ?? null;
+  const mudouComplemento = (d.gruposComplementos ?? []).some((g) => {
+    const grupo = antes.gruposComplementos.find((x) => x.id === minusculo(g.id));
+    return g.complementos.some((c) => {
+      const a = grupo?.complementos.find((x) => x.id === minusculo(c.id));
+      return a ? n(a.precoAdicional) !== n(c.precoAdicional) : n(c.precoAdicional)! > 0;
+    });
+  });
+  if (mudouProduto || mudouLoja || mudouFaixa || mudouComplemento) {
     throw ErroApi.semPermissao('Alterar preço no ERP exige "Produtos: Alterar preço".');
   }
 }
@@ -1075,6 +1114,7 @@ export async function inserirProduto(
   const inversas = await gravarRelacionados(tx, sessao, p!.id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, p!.id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, p!.id, dados.lotes, dados.lotesExcluidos);
+  await gravarComplementos(tx, sessao, p!.id, dados.gruposComplementos);
   if (dados.tipo === 'kit') await s.custoCombos.recalcular(tx, [p!.id]);
   await registrarHistoricoPrecos(
     tx,
@@ -1169,6 +1209,7 @@ export async function atualizarProduto(
   const inversas = await gravarRelacionados(tx, sessao, id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, id, dados.lotes, dados.lotesExcluidos);
+  await gravarComplementos(tx, sessao, id, dados.gruposComplementos);
   if (dados.tipo === 'kit') await s.custoCombos.recalcular(tx, [id]);
   await registrarHistoricoPrecos(
     tx,
@@ -1220,6 +1261,8 @@ export function entradaDoDetalhe(d: ProdutoDetalhe): CriarProdutoEntrada {
     relacionados: _rel,
     fornecedores: _forn,
     lotes: _lotes,
+    // F2-B51: ausente = a gravação mantém os grupos de complementos (a planilha não os conhece).
+    gruposComplementos: _gruposComplementos,
     // F2-B44: ausentes = a gravação mantém a foto e a galeria (a planilha não as conhece).
     fotoPrincipalArquivoId: _foto,
     imagens: _imagens,

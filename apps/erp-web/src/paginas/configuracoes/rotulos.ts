@@ -59,9 +59,10 @@ export const ABA_GERAL: RotuloConfiguracao[] = [
     ajuda:
       'Ligar só com a grade de variações e os caixas na versão com a guarda: a tela avisa dos caixas antigos, que vendem o produto pai com o preço e o saldo dele',
   }),
+  // F2-B51: ligada por padrão com o modal Complementos (deixou de ser "módulo futuro").
   r('produtos.complementos_habilitados', 'Cadastrar produtos "Com complementos"', 'bool', 'Produtos', {
-    fut: true,
-    ajuda: 'O caixa ainda vende sem os complementos (PDV 10.2)',
+    ajuda:
+      'Os grupos e os complementos são cadastrados no modal Complementos do produto; o caixa ainda vende o produto sem eles (a escolha na venda vem com a Fase 3)',
   }),
   // F2-B16 (F2-Q8 = D49): a base do markup ⇄ preço de venda da compra (recebimento manual; a NF-e no F2-B21).
   r(

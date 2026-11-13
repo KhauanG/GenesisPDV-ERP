@@ -110,6 +110,37 @@ export interface FornecedorForm {
   ultimaCompraEm: string | null;
 }
 
+/**
+ * Complemento de um grupo (ERP 8.2.16; F2-B51): vinculado a um produto (`produtoId`, com a baixa de estoque dele) ou
+ * livre (só a `descricao`). `gravado` = veio do detalhe: o "Remover" só o inativa (a API nunca o exclui), e a linha
+ * nova sai da lista.
+ */
+export interface ComplementoForm {
+  chave: string;
+  id: string | null;
+  produtoId: string | null;
+  produto: ProdutoOpcao | null;
+  descricao: string;
+  precoAdicional: string;
+  baixaEstoque: boolean;
+  quantidadeBaixa: string;
+  ativo: boolean;
+  gravado: boolean;
+}
+
+/** Grupo de complementos (ERP 8.2.16; F2-B51): o mínimo e o máximo como o texto digitado. */
+export interface GrupoComplementosForm {
+  chave: string;
+  id: string | null;
+  nome: string;
+  minimo: string;
+  maximo: string;
+  obrigatorio: boolean;
+  /** Veio do detalhe: removê-lo exclui o grupo com os complementos no caixa (a tela confirma). */
+  gravado: boolean;
+  complementos: ComplementoForm[];
+}
+
 /** Os campos editáveis do lote como vieram do detalhe: o corpo leva só o lote que mudou (F2-B17). */
 export interface LoteOriginal {
   lote: string;
@@ -232,6 +263,8 @@ export type ValoresProduto = Record<(typeof TEXTOS)[number], string> &
     relacionados: RelacionadoForm[];
     fornecedores: FornecedorForm[];
     lotes: LoteForm[];
+    /** Grupos de complementos (F2-B51), na ordem do modal. */
+    gruposComplementos: GrupoComplementosForm[];
     /** A foto (um envio `produto_foto`; F2-B44). */
     fotoPrincipalArquivoId: string | null;
     /** As outras imagens (`produtos_imagens`), os ids dos arquivos na ordem. */
@@ -271,6 +304,7 @@ export function produtoVazio(lojas: ReadonlyArray<{ id: string; nome: string }>,
     relacionados: [],
     fornecedores: [],
     lotes: [],
+    gruposComplementos: [],
     fotoPrincipalArquivoId: null,
     imagens: [],
     lotesExcluidos: [],
@@ -371,7 +405,7 @@ function posicaoParaForm(c: ProdutoDetalhe['componentes'][number]): PosicaoForm 
  * para os outros produtos apontarem para ela), e os fornecedores sem o código e o EAN do fornecedor (eles identificam
  * o produto de origem: o mesmo código no outro produto seria o 409), um por fornecedor e sem o histórico de compra.
  * Os lotes não vão para a cópia: são da mercadoria do produto de origem (o saldo por lote é dele), nem a foto e a
- * galeria (os arquivos são dele).
+ * galeria (os arquivos são dele). Os complementos vão (F2-B51), sem os ids e sem os inativos.
  */
 export function paraValores(
   p: ProdutoDetalhe,
@@ -519,6 +553,30 @@ export function paraValores(
             original,
           };
         }),
+    // `?? []`: o detalhe da API de antes do F2-B51 não traz a lista.
+    gruposComplementos: (p.gruposComplementos ?? []).map((g) => ({
+      chave: duplicar ? novaChave() : g.id,
+      id: duplicar ? null : g.id,
+      nome: g.nome,
+      minimo: String(g.minimo),
+      maximo: String(g.maximo),
+      obrigatorio: g.obrigatorio,
+      gravado: !duplicar,
+      complementos: g.complementos
+        .filter((c) => !duplicar || c.ativo)
+        .map((c) => ({
+          chave: duplicar ? novaChave() : c.id,
+          id: duplicar ? null : c.id,
+          produtoId: c.produtoId,
+          produto: c.produto,
+          descricao: c.descricao ?? '',
+          precoAdicional: decimalParaTela(c.precoAdicional),
+          baixaEstoque: c.baixaEstoque,
+          quantidadeBaixa: decimalParaTela(c.quantidadeBaixa, 3),
+          ativo: c.ativo,
+          gravado: !duplicar,
+        })),
+    })),
     // A cópia sai sem imagens (F2-B44): o arquivo é do produto de origem, e a API recusa o de outro cadastro.
     fotoPrincipalArquivoId: duplicar ? null : p.fotoPrincipalArquivoId,
     imagens: duplicar ? [] : p.imagens.map((i) => i.arquivoId),
@@ -638,6 +696,26 @@ export function paraCorpo(
       tipo: r.tipo,
       ordem: i + 1,
       criarInversa: r.criarInversa,
+    })),
+    // Complementos (F2-B51): sempre a lista inteira (vazia = exclui os grupos); a API mantém só quando o campo não vem.
+    // A ordem é a da tela. O preço adicional vazio é zero; a quantidade da baixa vazia, 1.
+    gruposComplementos: v.gruposComplementos.map((g, i) => ({
+      id: g.id,
+      nome: g.nome,
+      minimo: g.minimo.trim() === '' ? 0 : g.minimo.trim(),
+      maximo: g.maximo.trim() === '' ? 0 : g.maximo.trim(),
+      obrigatorio: g.obrigatorio,
+      ordem: i + 1,
+      complementos: g.complementos.map((c, j) => ({
+        id: c.id,
+        produtoId: c.produtoId,
+        descricao: opcional(c.descricao),
+        precoAdicional: c.precoAdicional.trim() || '0',
+        baixaEstoque: c.produtoId !== null && c.baixaEstoque,
+        quantidadeBaixa: c.quantidadeBaixa.trim() || '1',
+        ordem: j + 1,
+        ativo: c.ativo,
+      })),
     })),
     ...(opcoes.comFornecedores
       ? {

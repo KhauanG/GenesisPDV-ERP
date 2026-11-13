@@ -212,10 +212,17 @@ interface Filha {
   escopo?: (i: Item) => { loja?: string | null; estoque?: string | null };
   /** Campos da chave natural (mudar um deles = remover uma linha e adicionar outra) e os imutáveis. */
   ignorar: string[];
+  /**
+   * A lista quando ela não é um campo do documento (os complementos, que vêm dentro de cada grupo); sem ela, `doc[chave]`.
+   * `undefined` = a lista não está no documento (não é mudança).
+   */
+  de?: (doc: Item) => unknown;
 }
 
 const txt = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+
+const objeto = (v: unknown): v is Item => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 const FILHAS: Filha[] = [
   {
@@ -356,6 +363,56 @@ const FILHAS: Filha[] = [
     ignorar: ['estoqueId'],
   },
   {
+    // Os grupos de complementos (8.2.16; F2-B51): pelo id (o nome muda); os complementos são a filha abaixo.
+    chave: 'gruposComplementos',
+    rotulo: () => 'Grupo de complementos',
+    genero: 'o',
+    id: (i) => txt(i.id).toLowerCase(),
+    identificacao: (i) => [txt(i.nome)],
+    campos: {
+      nome: c('Nome', 'texto'),
+      minimo: c('Mínimo', 'inteiro'),
+      maximo: c('Máximo', 'inteiro'),
+      obrigatorio: c('Obrigatório', 'booleano'),
+      ordem: c('Ordem', 'inteiro'),
+    },
+    resumo: ['minimo', 'maximo', 'obrigatorio'],
+    ignorar: ['complementos'],
+  },
+  {
+    // Os complementos de cada grupo, numa lista só, com o nome do grupo na identificação ("Molhos: Barbecue"). O
+    // complemento gravado não sai (só se inativa): a remoção só aparece com o grupo excluído.
+    chave: 'complementos',
+    rotulo: () => 'Complemento',
+    genero: 'o',
+    id: (i) => txt(i.id).toLowerCase(),
+    identificacao: (i) => [
+      `${txt(i.grupoNome)}: `,
+      i.descricao || !i.produtoId ? txt(i.descricao) : { valor: i.produtoId, formato: ref('produto') },
+    ],
+    campos: {
+      descricao: c('Descrição', 'texto'),
+      produtoId: c('Produto', ref('produto')),
+      precoAdicional: c('Preço adicional', 'dinheiro'),
+      baixaEstoque: c('Baixa estoque', 'booleano'),
+      quantidadeBaixa: c('Qtd da baixa', 'quantidade', { padrao: '1' }),
+      ordem: c('Ordem', 'inteiro'),
+      ativo: c('Ativo', 'booleano', { padrao: true }),
+    },
+    resumo: ['precoAdicional', 'baixaEstoque', 'quantidadeBaixa', 'ativo'],
+    ignorar: ['grupoNome', 'grupoId'],
+    de: (doc) =>
+      Array.isArray(doc.gruposComplementos)
+        ? (doc.gruposComplementos as unknown[])
+            .filter(objeto)
+            .flatMap((g) =>
+              (Array.isArray(g.complementos) ? g.complementos : [])
+                .filter(objeto)
+                .map((x: Item) => ({ ...x, grupoNome: g.nome })),
+            )
+        : undefined,
+  },
+  {
     // A galeria (8.2.6; F2-B44): o arquivo não tem nome legível; a posição identifica a imagem no texto.
     chave: 'imagens',
     rotulo: () => 'Imagem da galeria',
@@ -461,8 +518,6 @@ function campoDe(catalogo: Record<string, Campo>, chave: string): Campo {
   return { rotulo: rotuloDesconhecido(chave), formato: 'bruto', custo: CUSTO.test(chave) };
 }
 
-const objeto = (v: unknown): v is Item => v !== null && typeof v === 'object' && !Array.isArray(v);
-
 function camposAlterados(
   catalogo: Record<string, Campo>,
   ignorados: Set<string>,
@@ -507,10 +562,13 @@ export function diferencasProduto(antes: unknown, depois: unknown): ItemDiferenc
 
   // Filhas: só quando a lista está do lado de depois (e do de antes, na alteração).
   for (const f of FILHAS) {
-    if (!Array.isArray(b[f.chave]) || (a && !Array.isArray(a[f.chave]))) continue;
+    const doc = (x: Item) => (f.de ? f.de(x) : x[f.chave]);
+    const listaB = doc(b);
+    const listaA = a ? doc(a) : undefined;
+    if (!Array.isArray(listaB) || (a && !Array.isArray(listaA))) continue;
     const lista = (v: unknown) => (Array.isArray(v) ? v.filter(objeto) : []);
-    const de = new Map(lista(a?.[f.chave]).map((i) => [f.id(i), i]));
-    const para = new Map(lista(b[f.chave]).map((i) => [f.id(i), i]));
+    const de = new Map(lista(listaA).map((i) => [f.id(i), i]));
+    const para = new Map(lista(listaB).map((i) => [f.id(i), i]));
     for (const [id, item] of de)
       if (!para.has(id)) itens.push({ tipo: 'filha', filha: f, acao: 'removido', item });
     for (const [id, item] of para) {

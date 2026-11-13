@@ -6,6 +6,7 @@ import {
   CST_COM_ST,
   type AvisoComboComponente,
   type ComponenteDetalhe,
+  type GrupoComplementosDetalhe,
   type ImagemProdutoDetalhe,
   type FornecedorProdutoDetalhe,
   type LoteProdutoDetalhe,
@@ -127,6 +128,9 @@ export const sqlVersaoAgregada = (id: SQL) => sql`greatest(
     (select max(versao) from produtos_fornecedores where produto_id = ${id}),
     (select max(versao) from produtos_lotes where produto_id = ${id}),
     (select max(versao) from produtos_imagens where produto_id = ${id}),
+    (select max(versao) from produtos_grupos_complementos where produto_id = ${id}),
+    (select max(c.versao) from produtos_complementos c
+       join produtos_grupos_complementos g on g.id = c.grupo_id where g.produto_id = ${id}),
     (select max(a.versao) from produtos_componentes_alternativas a
        join produtos_componentes pc on pc.id = a.componente_id where pc.produto_id = ${id}))`;
 
@@ -153,6 +157,25 @@ export async function usadoEm(db: DbEmpresa, id: string): Promise<ProdutoDetalhe
     nome: r.nome as string,
     tipo: r.tipo as TipoProduto,
   }));
+}
+
+/**
+ * Produtos "Com complementos" não excluídos que têm este como complemento **ativo** de um grupo vivo (8.2.16; F2-B51):
+ * bloqueiam a exclusão dele e a troca para um tipo que não pode ser complemento (o caixa da Fase 3 baixaria o estoque
+ * de um produto que não vende mais). O complemento inativo não conta.
+ */
+export async function complementoDe(
+  db: DbEmpresa,
+  id: string,
+): Promise<Array<{ id: string; codigo: number; nome: string }>> {
+  const { rows } = await db.execute<Linha>(sql`
+    select distinct p.id, p.codigo, p.nome
+      from produtos_complementos c
+      join produtos_grupos_complementos g on g.id = c.grupo_id and g.excluido_em is null
+      join produtos p on p.id = g.produto_id and p.excluido_em is null
+     where c.produto_id = ${id} and c.ativo and c.excluido_em is null
+     order by p.nome`);
+  return rows.map((r) => ({ id: r.id as string, codigo: Number(r.codigo), nome: r.nome as string }));
 }
 
 /**
@@ -249,6 +272,58 @@ export async function fornecedoresDoProduto(
     ultimoCusto: verCusto ? txt(f.ultimo_custo) : null,
     ultimaCompraEm: txt(f.ultima_compra_em),
     principal: f.principal as boolean,
+  }));
+}
+
+/**
+ * Grupos de complementos do produto no formato do detalhe (8.2.16; MD 3.6.8; F2-B51): os grupos não excluídos, pela
+ * ordem, cada um com os complementos não excluídos (os inativos também: o gravado só se inativa), pela ordem. O id
+ * desempata, como em `fornecedoresDoProduto`. `produto` = o vinculado, mesmo inativo ou excluído depois (o cadastro
+ * antigo continua legível). É também o `antes`/`depois` da auditoria (o que ficou no banco, não o corpo: o corpo não
+ * traz o complemento que a gravação inativou).
+ */
+export async function complementosDoProduto(
+  db: DbEmpresa,
+  id: string,
+  verCusto: boolean,
+): Promise<GrupoComplementosDetalhe[]> {
+  const { rows: grupos } = await db.execute<Linha>(sql`
+    select id, nome, minimo, maximo, obrigatorio, ordem from produtos_grupos_complementos
+     where produto_id = ${id} and excluido_em is null
+     order by ordem, criado_em, id`);
+  if (!grupos.length) return [];
+  const { rows: itens } = await db.execute<Linha>(sql`
+    select c.id, c.grupo_id, c.produto_id, c.descricao, c.preco_adicional::text as preco_adicional, c.baixa_estoque,
+           c.quantidade_baixa::text as quantidade_baixa, c.ordem, c.ativo
+      from produtos_complementos c
+      join produtos_grupos_complementos g on g.id = c.grupo_id
+     where g.produto_id = ${id} and g.excluido_em is null and c.excluido_em is null
+     order by c.ordem, c.criado_em, c.id`);
+  const opcoes = await opcoesPorId(
+    db,
+    itens.flatMap((c) => (c.produto_id ? [c.produto_id as string] : [])),
+    verCusto,
+  );
+  return grupos.map((g) => ({
+    id: g.id as string,
+    nome: g.nome as string,
+    minimo: Number(g.minimo),
+    maximo: Number(g.maximo),
+    obrigatorio: g.obrigatorio as boolean,
+    ordem: Number(g.ordem),
+    complementos: itens
+      .filter((c) => c.grupo_id === g.id)
+      .map((c) => ({
+        id: c.id as string,
+        produtoId: txt(c.produto_id),
+        produto: c.produto_id ? (opcoes.get(c.produto_id as string) ?? null) : null,
+        descricao: txt(c.descricao),
+        precoAdicional: c.preco_adicional as string,
+        baixaEstoque: c.baixa_estoque as boolean,
+        quantidadeBaixa: c.quantidade_baixa as string,
+        ordem: Number(c.ordem),
+        ativo: c.ativo as boolean,
+      })),
   }));
 }
 
@@ -497,6 +572,7 @@ export async function detalheProduto(
   const fornecedores = await fornecedoresDoProduto(db, id, verCusto);
   const lotes = await lotesDoProduto(db, id, estoquesVisiveis);
   const imagens = await imagensDoProduto(db, id);
+  const gruposComplementos = await complementosDoProduto(db, id, verCusto);
 
   const codigosBarras = codigos.rows.map((c) => ({
     id: c.id as string,
@@ -605,6 +681,7 @@ export async function detalheProduto(
     relacionados,
     fornecedores,
     lotes,
+    gruposComplementos,
     grupoPreco,
     vasilhame: p.vasilhame_produto_id ? (opcoes.get(p.vasilhame_produto_id as string) ?? null) : null,
     usadoEm: usados,
