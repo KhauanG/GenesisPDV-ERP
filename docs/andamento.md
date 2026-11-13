@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": F2-B51 commitado, falta a revisão de segurança do PR e abri-lo; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": F2-B51 commitado e PR aberto (#10), aguardando a liberação do merge; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -58,7 +58,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | concluído (#8, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 12/11/2026 (API e ERP, Implantação manual verde em `3cb46a1`; a CI da `main` ficou verde ao repetir só a integração no PostgreSQL 18, que falhou no teste de heap do `recalcular-saldos`, já conhecido como sensível); release **`pdv-v0.12.0`** publicado e posto na página de download em 12/11/2026 (Implantação com `publicar_pdv`, verde); **falta** atualizar os caixas, um de cada vez (roteiro do item 3b, passo 5) |
 | PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
-| PR-13 complementos: modal | B51 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11) |
+| PR-13 complementos: modal | B51 | **aberto** (#10, 13/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; sem migração e sem release do PDV |
 | PR-14 tributação gravada e fechamento | B52–B53 | não iniciado |
 
 ### PR-6 — blocos
@@ -180,7 +180,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    PR-11 juntado na `main` (#9, 12/11/2026); falta a Implantação (sem migração, sem `publicar_pdv`).
 3d. **PR-13 "Complementos: modal"** (F2-B51; F2-Q1 = D43: complementos sim): workflow `genesis-bloco` no branch
    `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11). O PR-12 (variações) fica fora (D43). F2-B51
-   commitado (falta a revisão de segurança do PR, D63, e abrir o PR). **Depois da implantação, para o
+   commitado; revisão de segurança do PR inteiro (D63) feita, sem achado médio ou alto; PR-13 aberto (#10): falta a liberação do dono para o merge. **Depois da implantação, para o
    dono:** "Cadastrar produtos "Com complementos"" já vem ligada (Configurações › Geral › Produtos); no produto do tipo
    "Com complementos", o bloco Complementos abre o modal para criar os grupos (ex.: "Molhos" de 0 a 2) e os
    complementos, e o Salvar grava. Os caixas 0.12.0 já recebem os grupos, mas continuam vendendo o produto sem pedir
