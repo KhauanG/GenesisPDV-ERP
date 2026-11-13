@@ -74,6 +74,7 @@ import {
   produtosPrecosQuantidade,
   produtosGruposComplementos,
   produtosRelacionados,
+  produtosTributacaoUf,
   unidadesMedida,
 } from '../database/empresa/schema/index.js';
 import { ajustarEstoqueDefinir, resumoEfetivacao } from '../estoques/acertos.js';
@@ -90,6 +91,7 @@ import {
   imagensDoProduto,
   lotesDoProduto,
   precosPorLojaDoProduto,
+  tributacaoUfDoProduto,
 } from './consultas.js';
 import { paginaHistoricoPrecos } from './historico-precos.js';
 import { ncmVigente } from './ncm.js';
@@ -101,6 +103,7 @@ import {
   gravarImagens,
   gravarLotes,
   gravarRelacionados,
+  gravarTributacaoUf,
   precosFilhosGravados,
   registrarHistoricoPrecos,
   type RelacaoInversaCriada,
@@ -727,6 +730,8 @@ export class ProdutosController {
           produtosFornecedores,
           // F2-B17: o produto só se exclui sem saldo; os lotes saem com ele (o razão continua apontando para eles).
           produtosLotes,
+          // F2-B52: a Tributação por UF sai com o produto (o PDV recebe o tombstone).
+          produtosTributacaoUf,
         ]) {
           await tx
             .update(t)
@@ -798,6 +803,7 @@ function colunasProduto(d: CriarProduto) {
     lotes: _lotes,
     lotesExcluidos: _lotesExcluidos,
     gruposComplementos: _gruposComplementos,
+    tributacaoUf: _tributacaoUf,
     imagens: _imagens,
     confirmarEanDuplicado: _conf,
     precoCusto: _custo,
@@ -842,6 +848,8 @@ const filhasAuditoria = async (tx: DbEmpresa, produtoId: string, d: CriarProduto
   imagens: await imagensDoProduto(tx, produtoId),
   // F2-B51: os complementos como ficaram (o corpo não traz o que a gravação inativou, e sem a lista mantém tudo).
   gruposComplementos: await complementosDoProduto(tx, produtoId, true),
+  // F2-B52: a Tributação por UF como ficou (o corpo sem a lista mantém a gravada). O ST retido vem nas lojas, acima.
+  tributacaoUf: await tributacaoUfDoProduto(tx, produtoId),
 });
 
 /**
@@ -1109,12 +1117,13 @@ export async function inserirProduto(
       atualizadoPorId: sessao.usuarioId,
     })
     .returning();
-  await gravarFilhas(tx, sessao, p!.id, dados, principal);
+  await gravarFilhas(tx, sessao, p!.id, dados, principal, verCusto(sessao));
   await gravarImagens(tx, sessao, p!.id, dados.imagens);
   const inversas = await gravarRelacionados(tx, sessao, p!.id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, p!.id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, p!.id, dados.lotes, dados.lotesExcluidos);
   await gravarComplementos(tx, sessao, p!.id, dados.gruposComplementos);
+  await gravarTributacaoUf(tx, sessao, p!.id, dados.tributacaoUf);
   if (dados.tipo === 'kit') await s.custoCombos.recalcular(tx, [p!.id]);
   await registrarHistoricoPrecos(
     tx,
@@ -1204,12 +1213,13 @@ export async function atualizarProduto(
     })
     .where(eq(produtos.id, id))
     .returning();
-  await gravarFilhas(tx, sessao, id, dados, principal);
+  await gravarFilhas(tx, sessao, id, dados, principal, verCusto(sessao));
   await gravarImagens(tx, sessao, id, dados.imagens);
   const inversas = await gravarRelacionados(tx, sessao, id, dados.relacionados);
   const movidos = await gravarFornecedores(tx, sessao, id, dados.fornecedores, verCusto(sessao));
   await gravarLotes(tx, sessao, id, dados.lotes, dados.lotesExcluidos);
   await gravarComplementos(tx, sessao, id, dados.gruposComplementos);
+  await gravarTributacaoUf(tx, sessao, id, dados.tributacaoUf);
   if (dados.tipo === 'kit') await s.custoCombos.recalcular(tx, [id]);
   await registrarHistoricoPrecos(
     tx,
@@ -1263,6 +1273,9 @@ export function entradaDoDetalhe(d: ProdutoDetalhe): CriarProdutoEntrada {
     lotes: _lotes,
     // F2-B51: ausente = a gravação mantém os grupos de complementos (a planilha não os conhece).
     gruposComplementos: _gruposComplementos,
+    // F2-B52: ausente = a gravação mantém a Tributação por UF; o ST retido sai das lojas abaixo pelo mesmo motivo.
+    tributacaoUf: _tributacaoUf,
+    lojas: lojasDetalhe,
     // F2-B44: ausentes = a gravação mantém a foto e a galeria (a planilha não as conhece).
     fotoPrincipalArquivoId: _foto,
     imagens: _imagens,
@@ -1290,6 +1303,15 @@ export function entradaDoDetalhe(d: ProdutoDetalhe): CriarProdutoEntrada {
       preco: c.preco,
       usaVenda: c.usaVenda,
       usaCompra: c.usaCompra,
+    })),
+    // As lojas sem o ST retido (F2-B52): ausente, a gravação mantém o gravado sem mexer na data dele.
+    lojas: lojasDetalhe.map((l) => ({
+      lojaId: l.lojaId,
+      estoqueMinimo: l.estoqueMinimo,
+      estoqueMaximo: l.estoqueMaximo,
+      precoVenda: l.precoVenda,
+      ativoNaLoja: l.ativoNaLoja,
+      acrescimoGelada: l.acrescimoGelada,
     })),
     precosQuantidade: d.precosQuantidade.map((f) => ({ ...f })),
     componentes: d.componentes.map((c) => ({

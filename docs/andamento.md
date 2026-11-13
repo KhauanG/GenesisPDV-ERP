@@ -95,7 +95,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 
 | Bloco | Situação |
 |---|---|
-| F2-B52 tributação só gravada (sem cálculo fiscal) | em andamento |
+| F2-B52 tributação só gravada (sem cálculo fiscal; shared: `tributacaoUfSchema`, os campos do Imposto Seletivo, da unidade tributável e do ST retido na linha da loja com "ausente = mantém", `AVISO_TRIBUTACAO_SO_REGISTRO`; API: `gravarTributacaoUf`, o ST manual em `produtos_lojas` só nas lojas permitidas com `st_atualizado_em` e os valores em R$ só com `produtos.ver_custo` (D68: vale a recomendação até o dono responder), as FKs e o `ck_produtos_is` como 422, `produtos_tributacao_uf` na versão agregada e na exclusão, a auditoria legível; ERP: o aviso fixo "Somente registro. Nenhum cálculo fiscal é feito nesta versão.", a unidade tributável, o Imposto Seletivo e as sub-grades Tributação por UF e ST retido por loja no bloco Tributação; sem efeito em preço nem venda; **sem migração**, protocolo, `Esquema.g.cs` e PDV sem mudança; README da API › decisão 195, do ERP › 80) | **commitado** |
 | F2-B53 fechamento da Fase 2: documentação, Definição de pronto, auditoria de segurança completa (D64) e execução com o dono | a fazer |
 
 ### PR-13 — blocos
@@ -194,7 +194,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    os complementos: a escolha na venda é da Fase 3. Depois: o
    PR-14 (F2-B52 tributação só gravada e F2-B53 fechamento da Fase 2, com a auditoria completa de segurança, D64).
 4. Numeração das próximas decisões nos READMEs: **API 195**, **ERP 80**, **PDV 87** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D69** (D68 aberta em 13/11/2026: os valores em R$ do ST retido como custo, valendo a recomendação (A) até o dono responder; D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;

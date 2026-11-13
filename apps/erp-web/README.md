@@ -1444,13 +1444,41 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     - Testes: `Complementos.test.tsx` (o formulário ⇄ corpo e a cópia; a "Porção" ganhando o grupo "Molhos (0 a 2)"
       com um complemento livre e o `PUT` com a lista; o gravado só inativado e a confirmação do grupo; o máximo menor
       que o mínimo no campo do modal, sem chamar a API; o teto de 50 contando só os ativos).
+80. **Tributação só gravada no bloco Tributação** (Fase 2, F2-B52; ERP 8.2.10, 8.2.15; MD 3.6.3, 3.6.9; restrição do
+    dono: nada fiscal até a fase fiscal; README da API › decisão 195; o bloco em `FormularioProduto.tsx` e o
+    formulário ⇄ corpo em `valores.ts`).
+    - **Aviso fixo** no alto do bloco: "Somente registro. Nenhum cálculo fiscal é feito nesta versão." (o texto vem
+      de `AVISO_TRIBUTACAO_SO_REGISTRO` do shared). Nada é calculado nem sugerido e nada mexe no preço.
+    - **Campos novos**, depois de PIS/COFINS/IPI: a **unidade tributável** (as unidades do cadastro; vazio = a do
+      produto) e o **fator**; o **Imposto Seletivo** (situação, classificação, alíquota %, alíquota específica em R$ e
+      a unidade dela). Na tela, os decimais como os outros (4 casas no máximo, sem zeros à direita).
+    - **Sub-grade "Tributação por UF"**: uma linha por UF ("Inserir UF"; a UF já usada some do select das outras
+      linhas), com CFOP, CST/CSOSN, modalidades, alíquotas, MVA, FCP, FCP-ST e cBenef; vazio = o valor do produto.
+      Remover a linha a exclui ao gravar.
+    - **Sub-grade "ST retido por loja"**: as mesmas lojas do bloco Lojas (só as permitidas e ativas), com os sete
+      valores do grupo de ST retido (o rótulo com a tag do XML, para o contador reconhecer: "ICMS-ST retido
+      (vICMSSTRet)") e o "Atualizado em" (somente leitura). Fica na Tributação, e não no bloco Lojas, para o contador
+      achar tudo num lugar só; o erro de um desses campos marca e abre só a Tributação (o bloco Lojas, onde o campo
+      não aparece, fica sem marcador). **Sem `produtos.ver_custo`**, só os dois percentuais (pST e pFCPSTRet): os cinco
+      valores em R$ revelam o preço de compra (D68; README da API › decisão 195), então nem aparecem nem vão no corpo
+      (`paraCorpo` com `verCusto` falso; ausentes = a API mantém os gravados).
+    - **Corpo**: sempre todos os campos e a lista inteira de UFs (vazio apaga; a API só mantém o gravado quando o
+      campo não vem, o que protege a importação e o ERP de antes desta versão). A loja só com o ST preenchido entra no
+      corpo (cria a linha da loja); o erro que a API devolve em `lojas.N.…` volta para a linha certa da grade (o corpo
+      leva só as lojas com dados). O detalhe da API de antes desta versão (sem os campos) abre como vazio.
+    - **Cópia** (Duplicar): leva os campos fiscais do produto e a Tributação por UF; o ST retido das lojas não (vem das
+      compras da mercadoria do produto de origem, como os lotes).
+    - Testes: `Tributacao.test.tsx` (o formulário ⇄ corpo, a loja só com ST, o erro na linha certa, a cópia, o detalhe
+      antigo; o aviso, a UF do PR e o ST da Loja 1 no `PUT` com o preço intacto; o erro do zod no campo do ST sem
+      chamar a API, com a Tributação fechada antes do Salvar: o marcador e a abertura só nela, não no bloco Lojas; sem
+      `produtos.ver_custo`, só os percentuais na tela e no corpo).
 
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`; o `<UploadArquivo>` chegou no
 F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações,
-validade/lotes e tributação por UF (a foto chegou no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
+validade/lotes e o uso fiscal da tributação (a foto chegou no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79; a tributação por UF e o ST retido só gravados, no F2-B52, decisão 80) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
 fornecedores no F2-B13, decisão 55); aba Acessos do usuário (sessões, últimos
 logins); abas Vendas e Financeiro/Total da pessoa; edição de planos e
 progresso em tempo real das migrações no painel; inatividade de sessão configurável por empresa; e2e no CI.

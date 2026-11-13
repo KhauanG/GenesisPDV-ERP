@@ -21,7 +21,14 @@
  * têm campos diferentes: `unidadeSigla`, `grupoPreco`… existem só num deles e não são mudança); na criação (`antes`
  * nulo), os campos preenchidos fora do padrão. Campo desconhecido entra com o nome da chave.
  */
-import { chaveFornecedorProduto, ROTULOS_TIPO_PRODUTO, ROTULOS_TIPO_RELACAO } from '@genesis/shared';
+import {
+  CAMPOS_ST_RETIDO,
+  CAMPOS_ST_RETIDO_PCT,
+  chaveFornecedorProduto,
+  ROTULOS_ST_RETIDO,
+  ROTULOS_TIPO_PRODUTO,
+  ROTULOS_TIPO_RELACAO,
+} from '@genesis/shared';
 import { sql } from 'drizzle-orm';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { mascararSensiveis } from './mascarar.js';
@@ -256,10 +263,51 @@ const FILHAS: Filha[] = [
       estoqueMaximo: c('Estoque máximo', 'quantidade'),
       ativoNaLoja: c('Ativo na loja', 'booleano', { padrao: true }),
       acrescimoGelada: c('Acréscimo gelada', 'dinheiro'),
+      // ST retido por loja (F2-B52; preenchimento manual auditado, MD 3.6.9), com a tag do XML no rótulo. Os valores
+      // em R$ são custo (D68: revelam o preço de compra), só com `produtos.ver_custo`; os percentuais, não.
+      ...Object.fromEntries(
+        CAMPOS_ST_RETIDO.map((k) => [
+          k,
+          CAMPOS_ST_RETIDO_PCT.includes(k)
+            ? c(ROTULOS_ST_RETIDO[k], 'pct')
+            : c(ROTULOS_ST_RETIDO[k], 'dinheiro', { custo: true }),
+        ]),
+      ),
     },
-    resumo: ['precoVenda', 'estoqueMinimo', 'estoqueMaximo', 'ativoNaLoja', 'acrescimoGelada'],
+    resumo: [
+      'precoVenda',
+      'estoqueMinimo',
+      'estoqueMaximo',
+      'ativoNaLoja',
+      'acrescimoGelada',
+      ...CAMPOS_ST_RETIDO,
+    ],
     escopo: (i) => ({ loja: txt(i.lojaId) || null }),
-    ignorar: ['lojaId'],
+    // `stAtualizadoEm` é a data da gravação do ST (consequência da mudança, não mudança do cadastro).
+    ignorar: ['lojaId', 'stAtualizadoEm'],
+  },
+  {
+    // A Tributação por UF (8.2.15; F2-B52): pela UF; não é de loja (desce às lojas da UF).
+    chave: 'tributacaoUf',
+    rotulo: () => 'Tributação da UF',
+    genero: 'a',
+    id: (i) => txt(i.uf).toUpperCase(),
+    identificacao: (i) => [txt(i.uf).toUpperCase()],
+    campos: {
+      cfopVendaEstado: c('CFOP dentro do estado', 'texto'),
+      icmsSituacao: c('ICMS – situação', 'texto'),
+      icmsModalidadeBc: c('ICMS – modalidade BC', 'texto'),
+      icmsAliquota: c('ICMS – alíquota %', 'pct'),
+      icmsReducaoBcPct: c('ICMS – redução de BC %', 'pct'),
+      icmsModalidadeBcst: c('ICMS – modalidade BC ST', 'texto'),
+      icmsMvaPct: c('MVA ST %', 'pct'),
+      icmsAliquotaSt: c('ICMS – alíquota ST %', 'pct'),
+      fcpAliquota: c('FCP %', 'pct'),
+      fcpStAliquota: c('FCP-ST %', 'pct'),
+      beneficioFiscalCodigo: c('cBenef', 'texto'),
+    },
+    resumo: ['cfopVendaEstado', 'icmsSituacao', 'icmsAliquota', 'fcpAliquota'],
+    ignorar: ['uf'],
   },
   {
     chave: 'precosQuantidade',

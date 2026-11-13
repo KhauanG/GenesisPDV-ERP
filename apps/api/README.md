@@ -736,9 +736,10 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
     `tipo_emissao <> 'nao_fiscal'`, exceto combo (não vai para a NFC-e), serviço e matéria-prima. CFOP dentro do
     estado 5xxx e fora 6xxx (e existentes), 5405 ⇔ CST 60/CSOSN 500, CEST obrigatório com CST/CSOSN de ST (no
     `zod`). No combo, componente ou alternativa sem NCM válido ou com CFOP × CST incoerente aparece em
-    `avisos` do detalhe (não bloqueia, ERP 8.2.17). Ficam para a fase fiscal: tributação por UF
-    (`produtos_tributacao_uf`), "Sugerir pela regra da UF", cBenef × `beneficios_fiscais_uf`, CEST × NCM (a tabela
-    `cests` está vazia, decisão 41) e o ST retido por loja manual.
+    `avisos` do detalhe (não bloqueia, ERP 8.2.17). Ficam para a fase fiscal: as regras de emissão na tributação por
+    UF (`produtos_tributacao_uf`; desde o F2-B52 ela e o ST retido por loja manual são só gravados, decisão 195),
+    "Sugerir pela regra da UF", cBenef × `beneficios_fiscais_uf` e CEST × NCM (a tabela `cests` está vazia, decisão
+    41).
 68. **Permissões de custo e preço**: sem `produtos.ver_custo` custo, custo médio e markup voltam `null` (listagem,
     detalhe, busca, saldos), o custo enviado é ignorado e ordenar por custo é 403. Com `geral.altera_preco_produto_erp
     = false`, alterar preço do produto, da loja, das faixas ou o preço adicional dos complementos (F2-B51, decisão
@@ -6008,6 +6009,77 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        desligam a chave antes.
      - **Fora** (Fase 3): a escolha dos complementos na venda do PDV (o diálogo, o preço somado, a baixa do vinculado e
        o `itens_venda_complementos` preenchido), o cardápio e o e-commerce.
+195. **Tributação só gravada: Tributação por UF, ST retido por loja, unidade tributável e Imposto Seletivo** (Fase 2,
+     F2-B52, o último bloco funcional; restrição do dono: nada fiscal até a fase fiscal; ERP 8.2.10, 8.2.15; MD 3.6.3,
+     3.6.9; decisões 47, 67, 88 e 188; `@genesis/shared` `produtos.ts` (`tributacaoUfSchema`, `CAMPOS_ST_RETIDO`,
+     `ROTULOS_ST_RETIDO`, `AVISO_TRIBUTACAO_SO_REGISTRO`, `MAXIMO_TRIBUTACAO_UF` = 27, os campos novos de
+     `camposProduto` e `produtoLojaSchema`, `ProdutoLojaDetalhe`); `src/produtos/gravacao.ts` (`gravarTributacaoUf`, o
+     ST em `gravarFilhas`, as FKs e o `ck_produtos_is` em `validarNoBanco`), `consultas.ts` (`tributacaoUfDoProduto`, o
+     ST em `precosPorLojaDoProduto`, `sqlVersaoAgregada`), `produtos.controller.ts` (gravação, exclusão,
+     `entradaDoDetalhe`, `filhasAuditoria`) e `src/auditoria/diferenca-produto.ts`; **sem migração** (as colunas e a
+     tabela já existem desde a Fase 1A), protocolo, `Esquema.g.cs` e PDV sem mudança).
+     - **Só guarda**: os campos fiscais que existiam no schema e não estavam no zod nem na tela passam a ser gravados
+       pelo `POST`/`PUT /produtos`, com as permissões do formulário (`produtos.criar`/`produtos.editar`). **Nenhum
+       cálculo**, nenhuma validação fiscal nova, nada de SEFAZ ou emissão, e **nenhum efeito em preço nem em venda**: o
+       preço não muda, o histórico de preços não ganha linha, e o PDV continua só guardando as linhas que já recebia
+       (o espelho de `produtos_tributacao_uf` e as colunas do ST em `produtos_lojas` existem no SQLite e nada as lê).
+       O ERP mostra o aviso fixo "Somente registro. Nenhum cálculo fiscal é feito nesta versão." no bloco.
+     - **Campos do produto** (`unidadeTributavelId`, `fatorTributavel`, `isCst`, `isClassificacao`, `isAliquotaPct`,
+       `isAliquotaEspecifica`, `isUnidade`): nas casas das colunas (fator 3, percentual e alíquota específica 4) e com os
+       formatos delas (CST com 3 dígitos, cClassTrib com 6, unidade até 6 caracteres). **Ausentes = mantêm o gravado**
+       (o helper `mantido` do zod: `undefined` não entra no `UPDATE`, vazio ou `null` apaga): a importação de planilha,
+       o cadastro em massa e o "Definir NCM" passam pelo `entradaDoDetalhe` com os valores do detalhe, e o ERP de antes
+       desta versão não os manda. Os campos que já estavam no formulário continuam como eram.
+     - **Tributação por UF** (`tributacaoUf`, a sub-grade de `produtos_tributacao_uf`): uma linha por UF (zod), a lista
+       inteira quando vem e **ausente = mantém as gravadas** (`entradaDoDetalhe` a tira). A linha casa pela UF (a chave
+       de `uq_produtos_tributacao_uf`): a que saiu é excluída logicamente (o tombstone desce ao caixa das lojas da UF),
+       a nova entra e a que ficou só é regravada quando algum valor mudou (sem versão nova à toa, os percentuais
+       comparados pelo valor). Valem os formatos e as faixas das colunas, os mesmos do produto (CFOP com 4 dígitos, CST
+       ou CSOSN, modalidades 0–3 e 0–6, percentuais 0–100, MVA 0–999, cBenef até 10) e as FKs como 422 no campo ("UF
+       inexistente", "CFOP inexistente"); as regras de emissão sobre o valor efetivo (5405 × CST 60, CEST com ST, cBenef
+       × `beneficios_fiscais_uf`, MD 3.6.9) e o "Sugerir pela regra da UF" ficam para a fase fiscal: a linha só é
+       guardada como o contador a digitou.
+     - **ST retido por loja** (os sete campos de `produtos_lojas` na linha da loja: vBCSTRet, pST, vICMSSubstituto,
+       vICMSSTRet, vBCFCPSTRet, pFCPSTRet, vFCPSTRet, por unidade base, 4 casas, os CHECKs de `ck_produtos_lojas_st` no
+       zod): o preenchimento manual da MD 3.6.9. **Só nas lojas permitidas ao usuário**: a linha de loja fora das
+       permitidas é o 403 de sempre (decisão 88) e a gravação mantém a dela. Cada campo **ausente mantém** o gravado (a
+       importação, o cadastro em massa e o ERP antigo mandam a linha da loja sem eles). Quando algum valor muda,
+       `st_atualizado_em` marca a gravação e `st_nota_entrada_id` sai (os valores já não são os da NF-e); repetir os de
+       agora não mexe na data. O detalhe traz os sete e o `stAtualizadoEm` (somente leitura). O preenchimento pela NF-e
+       e pela transferência (`fiscal.st_retido_criterio`) e o uso na NFC-e são da fase fiscal.
+     - **Os valores em R$ do ST retido são dado de custo** (D68: pergunta ao dono aberta em 13/11/2026; vale a recomendação, opção A, até a resposta; revisão do
+       F2-B52): o vICMSSubstituto é o ICMS da operação própria do fornecedor (base própria × alíquota própria), e a base
+       própria é, na prática, o preço de compra da loja (1,80 ÷ 18% = 10,00); o vBCSTRet ÷ (1 + MVA), com o MVA da
+       Tributação por UF do mesmo detalhe, também o dá, e o vBCFCPSTRet, o vICMSSTRet e o vFCPSTRet o dão com as
+       alíquotas. Pelo mesmo critério do markup do item (ERP 9.x, "revelaria a base") e da ordenação por custo, os
+       cinco valores (`CAMPOS_ST_RETIDO_CUSTO` no shared: vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet,
+       vFCPSTRet) só existem para quem tem `produtos.ver_custo`: sem ela, `precosPorLojaDoProduto`/`detalheProduto`
+       os devolvem `null`, `gravarFilhas` **ignora** os do corpo (o gravado fica, como o `precoCusto`, para que quem não
+       vê não apague sem saber) e a auditoria os trata como custo (`custo: true` no catálogo da diferença e
+       `CUSTO_ST_RETIDO` no `redigirParaVisao`, em camelCase e snake_case): o texto gravado já os resume em "Dados de
+       loja alterados", e o histórico e o "ver diferença completa" de quem consulta sem a permissão não os trazem. Os
+       percentuais (pST, pFCPSTRet) seguem livres. O ERP sem a permissão mostra só os percentuais na sub-grade e não
+       manda os valores (ausentes = mantêm). O pull do PDV não muda (o caixa da loja recebe a linha inteira, como
+       recebe o custo).
+     - **Unidade tributável e Imposto Seletivo na API**: a unidade existe (e é ativa quando diferente da gravada, como a
+       unidade do produto) e o `ck_produtos_is` (a alíquota específica exige a unidade) é conferido sobre o valor que
+       fica (o campo ausente vale o gravado), como 422 no campo, em vez do 422 genérico do 23503/23514.
+     - **Versão e auditoria**: `produtos_tributacao_uf` entra na versão agregada do cadastro (decisão 47: quem abriu
+       antes da mudança recebe o 409; as linhas do ST já estavam, em `produtos_lojas`); a exclusão do produto exclui as
+       UFs logicamente. O detalhe traz `tributacaoUf` e os campos novos, e a auditoria do produto leva a lista e as
+       lojas relidas do banco no `depois`; o texto legível (decisão 188) ganha a filha "Tributação da UF adicionada PR
+       (CFOP dentro do estado 5405, ICMS – situação 60, …)" / "Tributação da UF PR: ICMS – alíquota % 19,50 → 18,00" e
+       os campos do ST na linha da loja (com a tag do XML no rótulo: "Loja 1: ICMS-ST retido (vICMSSTRet) — → 0,7373"),
+       que no texto gravado viram "Dados de loja alterados" e no histórico de quem consulta aparecem só nas lojas
+       permitidas, como o preço da loja. O `stAtualizadoEm` não é mudança.
+     - Testes: `produtos.spec.ts` do shared (o zod: casas, ausente × vazio, CHECKs, UF repetida, nenhuma regra fiscal
+       nova) e `produto-tributacao.test.ts` (o critério de pronto pelo `PUT` do contador restrito à Loja 1, com o preço
+       e o histórico de preços intactos, o pull HTTP do `catalogo` do caixa da Loja 1 com a UF e o ST, e a auditoria
+       gravada e a do relatório; a linha igual sem versão nova, também quando outro usuário (o admin) salva o mesmo
+       corpo (o `atualizado_por_id` da linha da UF continua o do contador); os valores do ST sem `produtos.ver_custo`
+       (nulos no detalhe, ignorados na gravação, fora do histórico; D68); o ERP antigo e o "Definir NCM" mantendo
+       tudo; o 409; o 403 da loja de fora com o ST dela preservado; as FKs e os CHECKs como 422; o tombstone da UF
+       tirada; a exclusão do produto). `mascarar.spec.ts` e `diferenca-produto.spec.ts`: os valores do ST como custo.
 
 ### Operação – tarefas em segundo plano (API)
 

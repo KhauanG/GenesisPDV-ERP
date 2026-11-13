@@ -4,8 +4,11 @@
  * vão para "Embalagens e códigos adicionais"; posições do combo e insumos da ficha técnica são listas separadas.
  */
 import {
+  CAMPOS_ST_RETIDO,
+  CAMPOS_ST_RETIDO_CUSTO,
   chaveLoteProduto,
   TIPOS_SEM_SALDO_PROPRIO,
+  type CampoStRetido,
   type PessoaOpcao,
   type ProdutoDetalhe,
   type ProdutoOpcao,
@@ -30,7 +33,11 @@ export interface CodigoForm {
   usaCompra: boolean;
 }
 
-export interface LojaForm {
+/**
+ * A linha da loja (8.2.10) com o ST retido por loja (F2-B52; só gravado): os valores como o texto digitado e a data da
+ * última gravação do ST (`stAtualizadoEm`, só mostrada).
+ */
+export type LojaForm = {
   lojaId: string;
   nome: string;
   existente: boolean;
@@ -39,7 +46,51 @@ export interface LojaForm {
   precoVenda: string;
   ativoNaLoja: boolean;
   acrescimoGelada: string;
+  stAtualizadoEm: string | null;
+} & Record<CampoStRetido, string>;
+
+/** Uma linha da Tributação por UF (8.2.15; F2-B52; só gravada), como o texto digitado. */
+export interface TributacaoUfForm {
+  chave: string;
+  uf: string;
+  cfopVendaEstado: string | null;
+  icmsSituacao: string;
+  icmsModalidadeBc: string | null;
+  icmsAliquota: string;
+  icmsReducaoBcPct: string;
+  icmsModalidadeBcst: string | null;
+  icmsMvaPct: string;
+  icmsAliquotaSt: string;
+  fcpAliquota: string;
+  fcpStAliquota: string;
+  beneficioFiscalCodigo: string;
 }
+
+/** Os percentuais da linha da UF (4 casas na tela e na coluna). */
+const PCT_UF = [
+  'icmsAliquota',
+  'icmsReducaoBcPct',
+  'icmsMvaPct',
+  'icmsAliquotaSt',
+  'fcpAliquota',
+  'fcpStAliquota',
+] as const;
+
+export const tributacaoUfVazia = (uf = ''): TributacaoUfForm => ({
+  chave: novaChave(),
+  uf,
+  cfopVendaEstado: null,
+  icmsSituacao: '',
+  icmsModalidadeBc: null,
+  icmsAliquota: '',
+  icmsReducaoBcPct: '',
+  icmsModalidadeBcst: null,
+  icmsMvaPct: '',
+  icmsAliquotaSt: '',
+  fcpAliquota: '',
+  fcpStAliquota: '',
+  beneficioFiscalCodigo: '',
+});
 
 export interface FaixaForm {
   chave: string;
@@ -223,6 +274,13 @@ const TEXTOS = [
   'ipiAliquota',
   'ipiEnquadramento',
   'ibsCbsClassificacao',
+  // Só gravados (F2-B52): o fator da unidade tributável e o Imposto Seletivo.
+  'fatorTributavel',
+  'isCst',
+  'isClassificacao',
+  'isAliquotaPct',
+  'isAliquotaEspecifica',
+  'isUnidade',
 ] as const;
 
 const BOOLEANOS = [
@@ -244,6 +302,8 @@ export type ValoresProduto = Record<(typeof TEXTOS)[number], string> &
   Record<(typeof BOOLEANOS)[number], boolean> & {
     tipo: TipoProduto;
     unidadeId: string | null;
+    /** A unidade tributável (F2-B52; só gravada); `null` = a comercial. */
+    unidadeTributavelId: string | null;
     ncm: string | null;
     marcaId: string | null;
     categoriaPrincipalId: string | null;
@@ -257,6 +317,8 @@ export type ValoresProduto = Record<(typeof TEXTOS)[number], string> &
     eanTipo: 'gtin' | 'interno';
     codigosAdicionais: CodigoForm[];
     lojas: LojaForm[];
+    /** Tributação por UF (F2-B52), uma linha por UF. */
+    tributacaoUf: TributacaoUfForm[];
     precosQuantidade: FaixaForm[];
     posicoes: PosicaoForm[];
     insumos: PosicaoForm[];
@@ -285,6 +347,7 @@ export function produtoVazio(lojas: ReadonlyArray<{ id: string; nome: string }>,
     precoCusto: '0,00',
     markupPct: '0',
     unidadeId,
+    unidadeTributavelId: null,
     ncm: null,
     marcaId: null,
     categoriaPrincipalId: null,
@@ -298,6 +361,7 @@ export function produtoVazio(lojas: ReadonlyArray<{ id: string; nome: string }>,
     eanTipo: 'gtin' as const,
     codigosAdicionais: [],
     lojas: lojas.map((l) => lojaVazia(l)),
+    tributacaoUf: [],
     precosQuantidade: [],
     posicoes: [],
     insumos: [],
@@ -322,7 +386,13 @@ const lojaVazia = (l: { id: string; nome: string }): LojaForm => ({
   precoVenda: '',
   ativoNaLoja: true,
   acrescimoGelada: '',
+  stAtualizadoEm: null,
+  ...stVazio(),
 });
+
+/** O ST retido da loja vazio (F2-B52). */
+const stVazio = () =>
+  Object.fromEntries(CAMPOS_ST_RETIDO.map((c) => [c, ''])) as Record<CampoStRetido, string>;
 
 /** Decimal da API ("3.4900") para a tela ("3,49"); `casas` 2 em preço, 3 em quantidade (sem zeros à direita). */
 export function decimalParaTela(v: string | null | undefined, casas = 2): string {
@@ -361,6 +431,9 @@ const CASAS: Partial<Record<(typeof TEXTOS)[number], number>> = {
   pesoG: 3,
   pesoAbatimentoG: 3,
   pesoPacoteKg: 3,
+  fatorTributavel: 3,
+  isAliquotaPct: 4,
+  isAliquotaEspecifica: 4,
 };
 
 const DECIMAIS = new Set<string>([
@@ -435,6 +508,8 @@ export function paraValores(
     tipo: p.tipo,
     codigoInterno: duplicar ? '' : (p.codigoInterno ?? ''),
     unidadeId: p.unidadeId,
+    // `?? null`/`?? []`: o detalhe da API de antes do F2-B52 não traz os campos.
+    unidadeTributavelId: p.unidadeTributavelId ?? null,
     ncm: p.ncm,
     marcaId: p.marcaId,
     categoriaPrincipalId: p.categoriaPrincipalId,
@@ -475,10 +550,30 @@ export function paraValores(
               precoVenda: decimalParaTela(linha.precoVenda),
               ativoNaLoja: linha.ativoNaLoja,
               acrescimoGelada: decimalParaTela(linha.acrescimoGelada),
+              // O ST retido não vai para a cópia (F2-B52): vem das compras da mercadoria do produto de origem.
+              stAtualizadoEm: duplicar ? null : (linha.stAtualizadoEm ?? null),
+              ...(duplicar
+                ? stVazio()
+                : (Object.fromEntries(
+                    CAMPOS_ST_RETIDO.map((c) => [c, decimalParaTela(linha[c], 4)]),
+                  ) as Record<CampoStRetido, string>)),
             }
           : lojaVazia(l);
       }),
     ],
+    tributacaoUf: (p.tributacaoUf ?? []).map((t) => ({
+      chave: novaChave(),
+      uf: t.uf,
+      cfopVendaEstado: t.cfopVendaEstado,
+      icmsSituacao: t.icmsSituacao ?? '',
+      icmsModalidadeBc: t.icmsModalidadeBc,
+      icmsModalidadeBcst: t.icmsModalidadeBcst,
+      beneficioFiscalCodigo: t.beneficioFiscalCodigo ?? '',
+      ...(Object.fromEntries(PCT_UF.map((c) => [c, decimalParaTela(t[c], 4)])) as Record<
+        (typeof PCT_UF)[number],
+        string
+      >),
+    })),
     precosQuantidade: p.precosQuantidade.map((f) =>
       semId({
         chave: f.id,
@@ -591,14 +686,22 @@ export function paraValores(
 
 const opcional = (t: string) => (t.trim() === '' ? null : t.trim());
 
+/** Os campos do ST retido que quem não vê o custo edita: os percentuais (D68). */
+export const camposStSemCusto: readonly CampoStRetido[] = CAMPOS_ST_RETIDO.filter(
+  (c) => !CAMPOS_ST_RETIDO_CUSTO.includes(c),
+);
+
 /**
  * Formulário → corpo de `POST`/`PUT /api/produtos` (sem a versão). `comFornecedores` = o bloco Fornecedores está
  * visível (`geral.produto_usa_fornecedores`): só então a lista vai, e escondido a API mantém os vínculos gravados.
+ * `verCusto` falso (sem `produtos.ver_custo`): os valores em R$ do ST retido não vão (D68: são custo; a tela não os
+ * mostra e a API mantém os gravados).
  */
 export function paraCorpo(
   v: ValoresProduto,
-  opcoes: { comFornecedores?: boolean } = {},
+  opcoes: { comFornecedores?: boolean; verCusto?: boolean } = {},
 ): Record<string, unknown> {
+  const camposSt = opcoes.verCusto === false ? camposStSemCusto : CAMPOS_ST_RETIDO;
   const textos = Object.fromEntries(TEXTOS.map((c) => [c, opcional(v[c])]));
   const kit = v.tipo === 'kit';
   const codigosBarras = [
@@ -651,6 +754,17 @@ export function paraCorpo(
     usaFichaTecnica: !kit && v.usaFichaTecnica,
     tipo: v.tipo,
     unidadeId: v.unidadeId ?? '',
+    // Só gravados (F2-B52): sempre vão (vazio = apaga); a API mantém o gravado só quando o campo não vem.
+    unidadeTributavelId: v.unidadeTributavelId,
+    tributacaoUf: v.tributacaoUf.map((t) => ({
+      uf: t.uf,
+      cfopVendaEstado: t.cfopVendaEstado,
+      icmsSituacao: opcional(t.icmsSituacao),
+      icmsModalidadeBc: t.icmsModalidadeBc,
+      icmsModalidadeBcst: t.icmsModalidadeBcst,
+      beneficioFiscalCodigo: opcional(t.beneficioFiscalCodigo),
+      ...Object.fromEntries(PCT_UF.map((c) => [c, opcional(t[c])])),
+    })),
     ncm: v.ncm,
     marcaId: v.marcaId,
     categoriaPrincipalId: v.categoriaPrincipalId,
@@ -662,21 +776,19 @@ export function paraCorpo(
     fotoPrincipalArquivoId: v.fotoPrincipalArquivoId,
     imagens: v.imagens,
     codigosBarras,
-    lojas: v.lojas
-      .filter(
-        (l) =>
-          l.existente ||
-          !l.ativoNaLoja ||
-          [l.estoqueMinimo, l.estoqueMaximo, l.precoVenda, l.acrescimoGelada].some((x) => x.trim() !== ''),
-      )
-      .map((l) => ({
+    lojas: posicoesLojasDoCorpo(v).map((i) => {
+      const l = v.lojas[i]!;
+      return {
         lojaId: l.lojaId,
         estoqueMinimo: opcional(l.estoqueMinimo),
         estoqueMaximo: opcional(l.estoqueMaximo),
         precoVenda: opcional(l.precoVenda),
         ativoNaLoja: l.ativoNaLoja,
         acrescimoGelada: opcional(l.acrescimoGelada),
-      })),
+        // ST retido por loja (F2-B52): sempre os sete (vazio = apaga); sem `verCusto`, só os percentuais (D68).
+        ...Object.fromEntries(camposSt.map((c) => [c, opcional(l[c])])),
+      };
+    }),
     precosQuantidade: v.precosQuantidade.map((f) => ({
       id: f.id,
       lojaId: f.lojaId || null,
@@ -739,6 +851,26 @@ export function paraCorpo(
   };
 }
 
+/**
+ * Posições (em `v.lojas`) das lojas que vão no corpo: as gravadas e as novas com algum dado (o ST retido inclusive,
+ * F2-B52). `errosParaFormulario` usa as mesmas posições para trazer o erro de volta à linha certa.
+ */
+function posicoesLojasDoCorpo(v: ValoresProduto): number[] {
+  return v.lojas.flatMap((l, i) =>
+    l.existente ||
+    !l.ativoNaLoja ||
+    [
+      l.estoqueMinimo,
+      l.estoqueMaximo,
+      l.precoVenda,
+      l.acrescimoGelada,
+      ...CAMPOS_ST_RETIDO.map((c) => l[c]),
+    ].some((x) => x.trim() !== '')
+      ? [i]
+      : [],
+  );
+}
+
 const loteMudou = (l: LoteForm) =>
   !l.original ||
   l.lote.trim() !== l.original.lote ||
@@ -789,6 +921,7 @@ export function errosParaFormulario(
   const temEan = v.ean.trim() !== '';
   const lista = v.tipo === 'kit' ? 'posicoes' : 'insumos';
   const lotes = posicoesLotesDoCorpo(v);
+  const lojas = posicoesLojasDoCorpo(v);
   /** Linha N do corpo → linha da grade (também o "(linha N)" da mensagem do repetido). */
   const linhaLote = (n: number) => (lotes[n] ?? n) + 1;
   for (const [chave, msg] of Object.entries(campos)) {
@@ -798,6 +931,12 @@ export function errosParaFormulario(
         /\(linha (\d+)\)/,
         (_, n: string) => `(linha ${linhaLote(Number(n) - 1)})`,
       );
+      continue;
+    }
+    // A loja N do corpo é a linha `lojas[N]` da grade (o corpo leva só as lojas com dados).
+    const lj = /^lojas\.(\d+)\.(.+)$/.exec(chave);
+    if (lj) {
+      r[`lojas.${lojas[Number(lj[1])] ?? Number(lj[1])}.${lj[2]}`] = msg;
       continue;
     }
     // O excluído recusado (com saldo, movimento ou acerto em rascunho) cai acima da grade.

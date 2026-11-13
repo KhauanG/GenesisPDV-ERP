@@ -18,6 +18,10 @@ import { CONFIGURACOES_POR_CHAVE } from './configuracoes.js';
 import { ajusteEstoqueProdutoSchema } from './estoque.js';
 import { cadastroRapidoFornecedorSchema, tipoPessoaDoDocumento } from './pessoas.js';
 import {
+  alterarProdutoSchema,
+  AVISO_TRIBUTACAO_SO_REGISTRO,
+  CAMPOS_ST_RETIDO,
+  CAMPOS_ST_RETIDO_CUSTO,
   cadastroMassaSchema,
   CHAVES_TIPO_PRODUTO,
   chaveFornecedorProduto,
@@ -1022,5 +1026,207 @@ describe('complementos (F2-B51; ERP 8.2.16; MD 3.6.8)', () => {
         'gruposComplementos.0.complementos'
       ],
     ).toBe(`No máximo ${MAXIMO_LINHAS_COMPLEMENTOS_GRUPO} complementos por grupo, contando os inativos`);
+  });
+});
+
+describe('tributação só gravada (F2-B52; ERP 8.2.10, 8.2.15; MD 3.6.3, 3.6.9)', () => {
+  const base = {
+    nome: 'CERVEJA LATA 350ML',
+    unidadeId: UN,
+    precoVenda: '4,99',
+  };
+  const erros = (corpo: Record<string, unknown>) => {
+    const r = criarProdutoSchema.safeParse(corpo);
+    return r.success ? {} : Object.fromEntries(r.error.issues.map((i) => [i.path.join('.'), i.message]));
+  };
+
+  it('o aviso fixo do bloco', () => {
+    expect(AVISO_TRIBUTACAO_SO_REGISTRO).toBe(
+      'Somente registro. Nenhum cálculo fiscal é feito nesta versão.',
+    );
+  });
+
+  it('Imposto Seletivo, unidade tributável e fator: nas casas das colunas', () => {
+    const r = criarProdutoSchema.parse({
+      ...base,
+      unidadeTributavelId: A,
+      fatorTributavel: '12',
+      isCst: '000',
+      isClassificacao: '000001',
+      isAliquotaPct: '2,5',
+      isAliquotaEspecifica: '0,1234',
+      isUnidade: 'L',
+    });
+    expect(r).toMatchObject({
+      unidadeTributavelId: A,
+      fatorTributavel: '12.000',
+      isCst: '000',
+      isClassificacao: '000001',
+      isAliquotaPct: '2.5000',
+      isAliquotaEspecifica: '0.1234',
+      isUnidade: 'L',
+    });
+  });
+
+  it('ausentes = mantêm o gravado (importação, cadastro em massa, Definir NCM e o ERP antigo); vazio = apaga', () => {
+    const ausente = criarProdutoSchema.parse(base);
+    for (const c of [
+      'unidadeTributavelId',
+      'fatorTributavel',
+      'isCst',
+      'isClassificacao',
+      'isAliquotaPct',
+      'isAliquotaEspecifica',
+      'isUnidade',
+      'tributacaoUf',
+    ] as const)
+      expect(ausente[c]).toBeUndefined();
+    const vazio = criarProdutoSchema.parse({
+      ...base,
+      unidadeTributavelId: null,
+      fatorTributavel: '',
+      isCst: '',
+      isAliquotaPct: ' ',
+      isUnidade: '',
+      tributacaoUf: [],
+    });
+    expect(vazio).toMatchObject({
+      unidadeTributavelId: null,
+      fatorTributavel: null,
+      isCst: null,
+      isAliquotaPct: null,
+      isUnidade: null,
+      tributacaoUf: [],
+    });
+    // A linha da loja sem os campos do ST (o ERP antigo) os mantém; com eles vazios, apaga.
+    const loja = criarProdutoSchema.parse({ ...base, lojas: [{ lojaId: LOJA }] }).lojas[0]!;
+    for (const c of CAMPOS_ST_RETIDO) expect(loja[c]).toBeUndefined();
+    const lojaVazia = criarProdutoSchema.parse({
+      ...base,
+      lojas: [{ lojaId: LOJA, ...Object.fromEntries(CAMPOS_ST_RETIDO.map((c) => [c, ''])) }],
+    }).lojas[0]!;
+    for (const c of CAMPOS_ST_RETIDO) expect(lojaVazia[c]).toBeNull();
+  });
+
+  it('os valores em R$ do ST retido são custo (D68); os percentuais, não', () => {
+    expect(CAMPOS_ST_RETIDO_CUSTO).toEqual([
+      'stBcRetidoUnitario',
+      'stIcmsSubstitutoUnitario',
+      'stIcmsRetidoUnitario',
+      'fcpStBcRetidoUnitario',
+      'fcpStRetidoUnitario',
+    ]);
+  });
+
+  it('as faixas dos CHECKs do banco e os formatos (sem nenhuma regra fiscal nova)', () => {
+    expect(erros({ ...base, fatorTributavel: '0' }).fatorTributavel).toBe(
+      'Informe uma quantidade maior que zero',
+    );
+    expect(erros({ ...base, isCst: '12' }).isCst).toBe('CST com 3 dígitos');
+    expect(erros({ ...base, isClassificacao: '123' }).isClassificacao).toBe('cClassTrib com 6 dígitos');
+    expect(erros({ ...base, isAliquotaPct: '100,01' }).isAliquotaPct).toBe(
+      'Informe um percentual entre 0 e 100',
+    );
+    expect(erros({ ...base, isAliquotaEspecifica: '-1' }).isAliquotaEspecifica).toBe('Valor inválido');
+    expect(erros({ ...base, isUnidade: 'GARRAFA' })).toEqual({ isUnidade: 'No máximo 6 caracteres' });
+    // `ck_produtos_is`: a alíquota específica exige a unidade (com a unidade ausente, a API confere a gravada).
+    expect(erros({ ...base, isAliquotaEspecifica: '0,5', isUnidade: null }).isUnidade).toBe(
+      'Informe a unidade da alíquota específica',
+    );
+    expect(erros({ ...base, isAliquotaEspecifica: '0,5' })).toEqual({});
+    // `ck_produtos_lojas_st`: todos ≥ 0 e os percentuais até 100.
+    const st = erros({
+      ...base,
+      lojas: [{ lojaId: LOJA, stBcRetidoUnitario: '-0,01', stAliquotaPct: '101', fcpStAliquotaPct: '-1' }],
+    });
+    expect(st).toEqual({
+      'lojas.0.stBcRetidoUnitario': 'Valor inválido',
+      'lojas.0.stAliquotaPct': 'Informe um percentual entre 0 e 100',
+      'lojas.0.fcpStAliquotaPct': 'Informe um percentual entre 0 e 100',
+    });
+  });
+
+  it('o ST retido da Loja 1 em 4 casas (valores por unidade e percentuais)', () => {
+    const [l] = criarProdutoSchema.parse({
+      ...base,
+      lojas: [
+        {
+          lojaId: LOJA,
+          stBcRetidoUnitario: '5,1234',
+          stAliquotaPct: '19,5',
+          stIcmsSubstitutoUnitario: '0,4',
+          stIcmsRetidoUnitario: '0,6',
+          fcpStBcRetidoUnitario: '5,12',
+          fcpStAliquotaPct: '2',
+          fcpStRetidoUnitario: '0,1',
+        },
+      ],
+    }).lojas;
+    expect(l).toMatchObject({
+      stBcRetidoUnitario: '5.1234',
+      stAliquotaPct: '19.5000',
+      stIcmsSubstitutoUnitario: '0.4000',
+      stIcmsRetidoUnitario: '0.6000',
+      fcpStBcRetidoUnitario: '5.1200',
+      fcpStAliquotaPct: '2.0000',
+      fcpStRetidoUnitario: '0.1000',
+    });
+  });
+
+  it('Tributação por UF: os formatos e as faixas do produto, uma linha por UF', () => {
+    const r = alterarProdutoSchema.parse({
+      ...base,
+      versao: 3,
+      tributacaoUf: [
+        { uf: 'pr', cfopVendaEstado: '5.405', icmsSituacao: '60', fcpAliquota: '2', icmsMvaPct: '' },
+      ],
+    });
+    expect(r.tributacaoUf).toEqual([
+      {
+        uf: 'PR',
+        cfopVendaEstado: '5405',
+        icmsSituacao: '60',
+        icmsModalidadeBc: null,
+        icmsAliquota: null,
+        icmsReducaoBcPct: null,
+        icmsModalidadeBcst: null,
+        icmsMvaPct: null,
+        icmsAliquotaSt: null,
+        fcpAliquota: '2.0000',
+        fcpStAliquota: null,
+        beneficioFiscalCodigo: null,
+      },
+    ]);
+    expect(
+      erros({
+        ...base,
+        tributacaoUf: [
+          {
+            uf: 'PR',
+            icmsModalidadeBc: '4',
+            icmsModalidadeBcst: '7',
+            fcpStAliquota: '101',
+            cfopVendaEstado: '54',
+          },
+          { uf: 'SC' },
+          { uf: 'pr' },
+          { uf: 'P1' },
+        ],
+      }),
+    ).toEqual({
+      'tributacaoUf.0.cfopVendaEstado': 'CFOP com 4 dígitos',
+      'tributacaoUf.0.icmsModalidadeBc': 'Modalidade de 0 a 3',
+      'tributacaoUf.0.icmsModalidadeBcst': 'Modalidade de 0 a 6',
+      'tributacaoUf.0.fcpStAliquota': 'Informe um percentual entre 0 e 100',
+      'tributacaoUf.3.uf': 'UF inválida',
+    });
+    // A UF repetida só aparece com o resto válido (o `superRefine` roda depois dos campos).
+    expect(erros({ ...base, tributacaoUf: [{ uf: 'PR' }, { uf: 'SC' }, { uf: 'pr' }] })).toEqual({
+      'tributacaoUf.2.uf': 'UF repetida (linha 1)',
+    });
+    // Nada de regra de emissão nova na linha da UF: o CFOP 5405 com CST 00 só é guardado (fase fiscal).
+    expect(
+      erros({ ...base, tributacaoUf: [{ uf: 'PR', cfopVendaEstado: '5405', icmsSituacao: '00' }] }),
+    ).toEqual({});
   });
 });

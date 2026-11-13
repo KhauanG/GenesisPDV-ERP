@@ -1086,6 +1086,14 @@ recebimento de NF-e movimentado na loja (`fiscal.st_retido_criterio`, 9.4) ou po
 **preenchimento manual** (todos ≥ 0, `ck_produtos_lojas_st`) é auditado e é o que libera a venda do item quando
 `fiscal.exige_st_retido_nfce = true` e ainda não houve entrada (modelo 3.6.9).
 
+**Fase 2 (F2-B52; README do ERP › decisão 80, da API › 195):** só o preenchimento manual, **só gravado** (nada
+calculado, nenhum efeito em preço nem em venda), na sub-grade "ST retido por loja" do bloco Tributação (8.2.15), nas
+lojas permitidas ao usuário e auditado; mudar um valor atualiza `st_atualizado_em` e tira a NF-e de origem. O
+preenchimento pela NF-e e pela transferência e a liberação da venda com `fiscal.exige_st_retido_nfce` são da fase
+fiscal. Os **valores em R$** (vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet, vFCPSTRet) são **dado de custo**
+(D68; vale a recomendação até o dono responder): com eles e as alíquotas se chega ao preço de compra, então só aparecem, são gravados e saem na auditoria com
+`produtos.ver_custo`; sem ela, a sub-grade mostra só os percentuais (pST, pFCPSTRet).
+
 #### 8.2.11 Estoque (somente leitura)
 
 Saldo atual por estoque e por tipo de estoque (`saldos_estoque`), saldo em trânsito (transferências enviadas e não
@@ -1207,6 +1215,15 @@ Regras (Fase 2, F2-B13; README da API › decisão 158; README do ERP › decis�
 | `ibs_cbs_classificacao` **(Novo)** | Classificação tributária IBS/CBS | texto | preparado para a reforma tributária (NT de IBS/CBS); só gravação na P2, uso na P6 | — |
 | — | ST retido por loja | — | valores de ICMS-ST retido anteriormente por loja: editados na sub-grade **ST retido por loja** de 8.2.10 (modelo 3.6.9) | — |
 | — | Emite documento fiscal | — | **não adotado**: o modelo (3.1.2, 3.6.3, mapa de nomes 8) removeu `produtos.emite_nota` e a flag "Produto Emite NFe" — em loja NFC-e todo item vendido entra na nota | — |
+
+**Fase 2 (F2-B52; restrição do dono: nada fiscal até a fase fiscal; README do ERP › decisão 80, da API › 195):** o bloco
+mostra o aviso fixo **"Somente registro. Nenhum cálculo fiscal é feito nesta versão."** e passa a gravar também a
+**unidade tributável** e o **fator** (`unidade_tributavel_id`, `fator_tributavel`), o **Imposto Seletivo** (`is_cst`,
+`is_classificacao`, `is_aliquota_pct`, `is_aliquota_especifica`, `is_unidade`), a sub-grade **Tributação por UF** e a
+**ST retido por loja** (8.2.10). Só guardados: valem os formatos e as faixas das colunas e as FKs; o "Sugerir pela regra
+da UF", o aviso de divergência, as regras de emissão sobre o valor efetivo e o cBenef × `beneficios_fiscais_uf` ficam
+para a fase fiscal. A importação, o cadastro em massa, o "Definir NCM" e o ERP antigo não apagam esses campos (ausente
+mantém o gravado).
 
 #### 8.2.16 Modais
 

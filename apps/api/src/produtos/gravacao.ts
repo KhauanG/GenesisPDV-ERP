@@ -1,10 +1,12 @@
 /**
  * Regras do cadastro de produtos que dependem do banco (ERP 8.2, 8.2.17; MD 3.6.3–3.6.7, 3.6.13) e gravação das
- * filhas num só "Gravar" (códigos de barras, lojas, faixas, categorias, posições do combo/ficha técnica e
+ * filhas num só "Gravar" (códigos de barras, lojas com o ST retido, faixas, categorias, posições do combo/ficha técnica e
  * alternativas, produtos relacionados com a relação inversa, fornecedores, lotes do bloco Validade, a foto e a
- * galeria de imagens, os grupos de complementos).
+ * galeria de imagens, os grupos de complementos, a Tributação por UF).
  */
 import {
+  CAMPOS_ST_RETIDO,
+  CAMPOS_ST_RETIDO_CUSTO,
   CHAVES_TIPO_PRODUTO,
   chaveFornecedorProduto,
   chaveLoteProduto,
@@ -42,6 +44,7 @@ import {
   produtosLotes,
   produtosPrecosQuantidade,
   produtosRelacionados,
+  produtosTributacaoUf,
 } from '../database/empresa/schema/index.js';
 import { estoquesPermitidos } from '../estoques/permitidos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -197,6 +200,46 @@ export async function validarNoBanco(
     if (cfop && !(await existe(sql`select 1 from cfops where codigo = ${cfop} and excluido_em is null`))) {
       add(campos, campo, 'CFOP inexistente');
     }
+  }
+
+  // Tributação só gravada (F2-B52; nada fiscal até a fase fiscal): só as FKs e os CHECKs que já existem no banco, com
+  // a mensagem no campo em vez do 422 genérico do 23503/23514.
+  // Unidade tributável (`fk_produtos_unidade_tributavel_id`): existente; a nova (diferente da gravada) também ativa,
+  // como a unidade do produto. A gravada que ficou inativa continua gravável (mudar outro campo não obriga a trocá-la).
+  if (
+    d.unidadeTributavelId &&
+    !(await existe(sql`
+      select 1 from unidades_medida where id = ${d.unidadeTributavelId} and excluido_em is null
+         and (ativo or id = (select unidade_tributavel_id from produtos where id = ${id}::uuid))`))
+  )
+    add(campos, 'unidadeTributavelId', 'Unidade inexistente ou inativa');
+  // `ck_produtos_is` sobre o valor que fica: o campo ausente mantém o gravado.
+  const gravadoIs = id
+    ? await existe(sql`select is_aliquota_especifica, is_unidade from produtos where id = ${id}`)
+    : null;
+  const especifica =
+    d.isAliquotaEspecifica === undefined
+      ? (gravadoIs?.is_aliquota_especifica ?? null)
+      : d.isAliquotaEspecifica;
+  const unidadeIs = d.isUnidade === undefined ? (gravadoIs?.is_unidade ?? null) : d.isUnidade;
+  if (especifica !== null && unidadeIs === null)
+    add(campos, 'isUnidade', 'Informe a unidade da alíquota específica');
+  // Tributação por UF: a UF (`fk_produtos_tributacao_uf_uf`) e o CFOP (`fk_..._cfop_venda_estado`) existentes.
+  const tributacaoUf = d.tributacaoUf ?? [];
+  if (tributacaoUf.length) {
+    const { rows: ufsExistentes } = await tx.execute<{ sigla: string }>(sql`
+      select sigla from ufs where excluido_em is null and sigla = any(${`{${tributacaoUf.map((t) => t.uf).join(',')}}`}::text[])`);
+    const cfopsUf = [...new Set(tributacaoUf.map((t) => t.cfopVendaEstado).filter((c) => c !== null))];
+    const { rows: cfopsExistentes } = cfopsUf.length
+      ? await tx.execute<{ codigo: string }>(sql`
+          select codigo from cfops where excluido_em is null
+             and codigo = any(${`{${cfopsUf.join(',')}}`}::text[])`)
+      : { rows: [] };
+    tributacaoUf.forEach((t, i) => {
+      if (!ufsExistentes.some((u) => u.sigla === t.uf)) add(campos, `tributacaoUf.${i}.uf`, 'UF inexistente');
+      if (t.cfopVendaEstado && !cfopsExistentes.some((c) => c.codigo === t.cfopVendaEstado))
+        add(campos, `tributacaoUf.${i}.cfopVendaEstado`, 'CFOP inexistente');
+    });
   }
 
   // Tipos sem suporte (F2-B1; D43): só passa o tipo já gravado (legado do Nuvem3); criar ou trocar para ele, não.
@@ -424,13 +467,20 @@ export async function conferirEanDuplicado(tx: DbEmpresa, d: CriarProduto, id: s
   );
 }
 
-/** Grava as filhas: as que vieram atualizadas/criadas, as que saíram excluídas logicamente. */
+/** Decimal (string do banco ou do zod) comparável: `'1.5000'` e `'1.50'` são o mesmo valor. */
+const numeroOuNulo = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
+
+/**
+ * Grava as filhas: as que vieram atualizadas/criadas, as que saíram excluídas logicamente. Sem `verCusto`, os valores
+ * em R$ do ST retido do corpo são ignorados (D68: são custo; o gravado fica, como o `precoCusto`).
+ */
 export async function gravarFilhas(
   tx: DbEmpresa,
   sessao: SessaoErp,
   produtoId: string,
   d: CriarProduto,
   categoriaPrincipal: string | null,
+  verCusto: boolean,
 ): Promise<void> {
   const agora = new Date();
   const autor = { atualizadoPorId: sessao.usuarioId };
@@ -473,9 +523,9 @@ export async function gravarFilhas(
     }
   }
 
-  // Lojas (`loja_id` imutável: a linha é da loja).
+  // Lojas (`loja_id` imutável: a linha é da loja). O ST retido (F2-B52) vem junto para saber se mudou.
   const lojas = await tx
-    .select({ id: produtosLojas.id, lojaId: produtosLojas.lojaId })
+    .select()
     .from(produtosLojas)
     .where(and(eq(produtosLojas.produtoId, produtoId), isNull(produtosLojas.excluidoEm)));
   const visiveis = (lojaId: string) => sessao.lojas === null || sessao.lojas.includes(lojaId);
@@ -487,15 +537,26 @@ export async function gravarFilhas(
       .update(produtosLojas)
       .set({ excluidoEm: agora, ...autor })
       .where(inArray(produtosLojas.id, removerLojas));
-  for (const l of d.lojas) {
+  for (const corpo of d.lojas) {
+    // D68: quem não vê o custo não grava nem apaga os valores em R$ do ST (ausentes = mantêm o gravado, abaixo).
+    const l = verCusto
+      ? corpo
+      : { ...corpo, ...Object.fromEntries(CAMPOS_ST_RETIDO_CUSTO.map((c) => [c, undefined])) };
     const atual = lojas.find((x) => x.lojaId === l.lojaId);
     const { lojaId: _lojaId, ...valores } = l;
+    // ST retido preenchido à mão (F2-B52; MD 3.6.9): o campo ausente mantém o gravado (drizzle não grava `undefined`);
+    // quando algum valor muda, `st_atualizado_em` marca a gravação e a NF-e de origem sai (os valores já não são os
+    // dela). Repetir os valores de agora não conta (a importação e o cadastro em massa não mexem na data).
+    const stMudou = CAMPOS_ST_RETIDO.some(
+      (c) => l[c] !== undefined && numeroOuNulo(l[c]) !== numeroOuNulo(atual ? atual[c] : null),
+    );
+    const st = stMudou ? { stAtualizadoEm: agora, stNotaEntradaId: null } : {};
     if (atual)
       await tx
         .update(produtosLojas)
-        .set({ ...valores, ...autor })
+        .set({ ...valores, ...st, ...autor })
         .where(eq(produtosLojas.id, atual.id));
-    else await tx.insert(produtosLojas).values({ ...l, produtoId, ...criar });
+    else await tx.insert(produtosLojas).values({ ...l, ...st, produtoId, ...criar });
   }
 
   // Faixas de preço por quantidade: a faixa que mudou é excluída e recriada (o `exclude` de sobreposição não é
@@ -725,6 +786,64 @@ export async function gravarImagens(
         .where(eq(produtosImagens.id, atual.id));
   }
 }
+
+/**
+ * Tributação por UF (`produtos_tributacao_uf`, ERP 8.2.15; MD 3.6.9; F2-B52; README da API › decisão 195), só gravada:
+ * `undefined` mantém as gravadas (a importação, o cadastro em massa, o "Definir NCM" e o ERP antigo não mandam a lista).
+ * A linha é identificada pela UF (`uq_produtos_tributacao_uf`): a que saiu é excluída logicamente (o PDV recebe o
+ * tombstone), a nova entra, a que ficou só é regravada quando algum valor mudou (sem versão nova à toa: a linha desce
+ * ao PDV das lojas da UF).
+ */
+export async function gravarTributacaoUf(
+  tx: DbEmpresa,
+  sessao: SessaoErp,
+  produtoId: string,
+  tributacaoUf: CriarProduto['tributacaoUf'],
+): Promise<void> {
+  if (tributacaoUf === undefined) return;
+  const atuais = await tx
+    .select()
+    .from(produtosTributacaoUf)
+    .where(and(eq(produtosTributacaoUf.produtoId, produtoId), isNull(produtosTributacaoUf.excluidoEm)));
+  const sair = atuais.filter((a) => !tributacaoUf.some((t) => t.uf === a.uf)).map((a) => a.id);
+  if (sair.length)
+    await tx
+      .update(produtosTributacaoUf)
+      .set({ excluidoEm: new Date(), atualizadoPorId: sessao.usuarioId })
+      .where(inArray(produtosTributacaoUf.id, sair));
+  for (const t of tributacaoUf) {
+    const atual = atuais.find((a) => a.uf === t.uf);
+    if (!atual) {
+      await tx.insert(produtosTributacaoUf).values({
+        ...t,
+        produtoId,
+        criadoPorId: sessao.usuarioId,
+        atualizadoPorId: sessao.usuarioId,
+      });
+      continue;
+    }
+    const mudou = (Object.keys(t) as (keyof typeof t)[]).some((c) =>
+      PERCENTUAIS_TRIBUTACAO_UF.has(c)
+        ? numeroOuNulo(t[c]) !== numeroOuNulo(atual[c])
+        : (t[c] ?? null) !== (atual[c] ?? null),
+    );
+    if (mudou)
+      await tx
+        .update(produtosTributacaoUf)
+        .set({ ...t, atualizadoPorId: sessao.usuarioId })
+        .where(eq(produtosTributacaoUf.id, atual.id));
+  }
+}
+
+/** Colunas decimais da Tributação por UF (comparadas pelo valor: `'2.0000'` = `'2'`). */
+const PERCENTUAIS_TRIBUTACAO_UF = new Set<string>([
+  'icmsAliquota',
+  'icmsReducaoBcPct',
+  'icmsMvaPct',
+  'icmsAliquotaSt',
+  'fcpAliquota',
+  'fcpStAliquota',
+]);
 
 /** Relação inversa gravada no outro produto pelo "Criar relação inversa" (para a auditoria dele). */
 export interface RelacaoInversaCriada {

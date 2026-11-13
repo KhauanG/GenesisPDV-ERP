@@ -3,6 +3,7 @@
  * versão agregada do cadastro e saldos/combos montáveis.
  */
 import {
+  CAMPOS_ST_RETIDO_CUSTO,
   CST_COM_ST,
   type AvisoComboComponente,
   type ComponenteDetalhe,
@@ -11,6 +12,7 @@ import {
   type FornecedorProdutoDetalhe,
   type LoteProdutoDetalhe,
   type ProdutoDetalhe,
+  type TributacaoUf,
   type ProdutoOpcao,
   type RelacionadoDetalhe,
   type TipoProduto,
@@ -121,6 +123,7 @@ export const sqlVersaoAgregada = (id: SQL) => sql`greatest(
     (select versao from produtos where id = ${id}),
     (select max(versao) from produtos_codigos_barras where produto_id = ${id}),
     (select max(versao) from produtos_lojas where produto_id = ${id}),
+    (select max(versao) from produtos_tributacao_uf where produto_id = ${id}),
     (select max(versao) from produtos_precos_quantidade where produto_id = ${id}),
     (select max(versao) from produtos_categorias where produto_id = ${id}),
     (select max(versao) from produtos_componentes where produto_id = ${id}),
@@ -389,11 +392,13 @@ export async function lotesDoProduto(
  * detalhe. `lojasVisiveis` (lojas permitidas; `null` = todas) esconde as de outras lojas (decisão 88). Também é o
  * `depois` dessas filhas na auditoria da gravação (F2-B42; decisão 188): o corpo traz só as lojas permitidas de quem
  * grava e a gravação preserva as outras, então copiar o corpo registraria como removidas as que só não vieram.
+ * Sem `verCusto`, os valores em R$ do ST retido saem `null` (D68: revelam o custo; `CAMPOS_ST_RETIDO_CUSTO`).
  */
 export async function precosPorLojaDoProduto(
   db: DbEmpresa,
   id: string,
   lojasVisiveis: readonly string[] | null = null,
+  verCusto = true,
 ): Promise<Pick<ProdutoDetalhe, 'lojas' | 'precosQuantidade'>> {
   const lojaVisivel =
     lojasVisiveis === null
@@ -406,7 +411,13 @@ export async function precosPorLojaDoProduto(
         : sql` and loja_id is null`;
   const lojas = await db.execute<Linha>(sql`
     select loja_id, estoque_minimo::text as estoque_minimo, estoque_maximo::text as estoque_maximo,
-           preco_venda::text as preco_venda, ativo_na_loja, acrescimo_gelada::text as acrescimo_gelada
+           preco_venda::text as preco_venda, ativo_na_loja, acrescimo_gelada::text as acrescimo_gelada,
+           st_bc_retido_unitario::text as st_bc_retido_unitario, st_aliquota_pct::text as st_aliquota_pct,
+           st_icms_substituto_unitario::text as st_icms_substituto_unitario,
+           st_icms_retido_unitario::text as st_icms_retido_unitario,
+           fcp_st_bc_retido_unitario::text as fcp_st_bc_retido_unitario,
+           fcp_st_aliquota_pct::text as fcp_st_aliquota_pct, fcp_st_retido_unitario::text as fcp_st_retido_unitario,
+           st_atualizado_em
       from produtos_lojas where produto_id = ${id} and excluido_em is null${lojaVisivel}
      order by criado_em`);
   const faixas = await db.execute<Linha>(sql`
@@ -422,6 +433,16 @@ export async function precosPorLojaDoProduto(
       precoVenda: txt(l.preco_venda),
       ativoNaLoja: l.ativo_na_loja as boolean,
       acrescimoGelada: txt(l.acrescimo_gelada),
+      // ST retido por loja (F2-B52; só gravado).
+      stBcRetidoUnitario: txt(l.st_bc_retido_unitario),
+      stAliquotaPct: txt(l.st_aliquota_pct),
+      stIcmsSubstitutoUnitario: txt(l.st_icms_substituto_unitario),
+      stIcmsRetidoUnitario: txt(l.st_icms_retido_unitario),
+      fcpStBcRetidoUnitario: txt(l.fcp_st_bc_retido_unitario),
+      fcpStAliquotaPct: txt(l.fcp_st_aliquota_pct),
+      fcpStRetidoUnitario: txt(l.fcp_st_retido_unitario),
+      stAtualizadoEm: l.st_atualizado_em ? new Date(l.st_atualizado_em as string).toISOString() : null,
+      ...(verCusto ? {} : Object.fromEntries(CAMPOS_ST_RETIDO_CUSTO.map((c) => [c, null]))),
     })),
     precosQuantidade: faixas.rows.map((f) => ({
       id: f.id as string,
@@ -431,6 +452,34 @@ export async function precosPorLojaDoProduto(
       preco: f.preco as string,
     })),
   };
+}
+
+/**
+ * A Tributação por UF do produto (`produtos_tributacao_uf`, ERP 8.2.15; F2-B52), pela UF: no detalhe e no `depois` da
+ * auditoria. Não é de loja (desce às lojas da UF): todos os que veem o produto a veem.
+ */
+export async function tributacaoUfDoProduto(db: DbEmpresa, id: string): Promise<TributacaoUf[]> {
+  const { rows } = await db.execute<Linha>(sql`
+    select uf, cfop_venda_estado, icms_situacao, icms_modalidade_bc, icms_aliquota::text as icms_aliquota,
+           icms_reducao_bc_pct::text as icms_reducao_bc_pct, icms_modalidade_bcst, icms_mva_pct::text as icms_mva_pct,
+           icms_aliquota_st::text as icms_aliquota_st, fcp_aliquota::text as fcp_aliquota,
+           fcp_st_aliquota::text as fcp_st_aliquota, beneficio_fiscal_codigo
+      from produtos_tributacao_uf where produto_id = ${id} and excluido_em is null
+     order by uf`);
+  return rows.map((t) => ({
+    uf: t.uf as string,
+    cfopVendaEstado: txt(t.cfop_venda_estado),
+    icmsSituacao: txt(t.icms_situacao),
+    icmsModalidadeBc: txt(t.icms_modalidade_bc),
+    icmsAliquota: txt(t.icms_aliquota),
+    icmsReducaoBcPct: txt(t.icms_reducao_bc_pct),
+    icmsModalidadeBcst: txt(t.icms_modalidade_bcst),
+    icmsMvaPct: txt(t.icms_mva_pct),
+    icmsAliquotaSt: txt(t.icms_aliquota_st),
+    fcpAliquota: txt(t.fcp_aliquota),
+    fcpStAliquota: txt(t.fcp_st_aliquota),
+    beneficioFiscalCodigo: txt(t.beneficio_fiscal_codigo),
+  }));
 }
 
 /** Detalhe do produto com as filhas (sem custo quando o usuário não tem `produtos.ver_custo`). */
@@ -471,7 +520,7 @@ export async function detalheProduto(
       from produtos_codigos_barras
      where produto_id = ${id} and variacao_id is null and excluido_em is null
      order by principal desc, criado_em`);
-  const { lojas, precosQuantidade } = await precosPorLojaDoProduto(db, id, lojasVisiveis);
+  const { lojas, precosQuantidade } = await precosPorLojaDoProduto(db, id, lojasVisiveis, verCusto);
   const categorias = await db.execute<{ categoria_id: string }>(sql`
     select categoria_id from produtos_categorias where produto_id = ${id} and excluido_em is null
      order by principal desc, criado_em`);
@@ -573,6 +622,7 @@ export async function detalheProduto(
   const lotes = await lotesDoProduto(db, id, estoquesVisiveis);
   const imagens = await imagensDoProduto(db, id);
   const gruposComplementos = await complementosDoProduto(db, id, verCusto);
+  const tributacaoUf = await tributacaoUfDoProduto(db, id);
 
   const codigosBarras = codigos.rows.map((c) => ({
     id: c.id as string,
@@ -673,6 +723,15 @@ export async function detalheProduto(
     ibsCbsCst: txt(p.ibs_cbs_cst),
     ibsCbsClassificacao: txt(p.ibs_cbs_classificacao),
     servicoCodigoLc116: txt(p.servico_codigo_lc116),
+    // Só gravados (F2-B52).
+    unidadeTributavelId: txt(p.unidade_tributavel_id),
+    fatorTributavel: txt(p.fator_tributavel),
+    isCst: txt(p.is_cst),
+    isClassificacao: txt(p.is_classificacao),
+    isAliquotaPct: txt(p.is_aliquota_pct),
+    isAliquotaEspecifica: txt(p.is_aliquota_especifica),
+    isUnidade: txt(p.is_unidade),
+    tributacaoUf,
     ean: codigosBarras.find((c) => c.principal)?.codigo ?? null,
     codigosBarras,
     lojas,

@@ -219,3 +219,14 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     ICMS-ST e PIS/COFINS monofásico estão sendo separados no DAS.
   - Roadmap §16, D67; especificação do PDV › 18.
 
+## ST retido por loja: dado de custo (13/11/2026)
+
+- **D68 — ABERTA (13/11/2026); vale a recomendação (A) até o dono responder.** A revisão do F2-B52 achou que o ST
+  retido por loja (vICMSSubstituto, vBCSTRet e os demais valores em R$) aparecia no detalhe do produto, na auditoria e
+  no Histórico de produtos para quem tem `produtos.ver` mas não `produtos.ver_custo`, e que com eles dá para chegar ao
+  preço de compra (vICMSSubstituto ÷ alíquota própria; vBCSTRet ÷ (1 + MVA)). Opções: (A) tratá-los como custo, só com
+  `produtos.ver_custo` (recomendada, a implementada); (B) registrar que não são sensíveis e mostrá-los a todos que veem
+  o produto. Efeito da (A): sem a permissão, os cinco valores em R$ (vBCSTRet, vICMSSubstituto, vICMSSTRet,
+  vBCFCPSTRet, vFCPSTRet) saem vazios no ERP e na API, não são gravados nem apagados por esse usuário e somem da
+  auditoria e do histórico dele; os percentuais (pST, pFCPSTRet) continuam visíveis. README da API › decisão 195; do
+  ERP › 80; roadmap §16, D68.

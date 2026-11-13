@@ -9,8 +9,10 @@ import { idArquivoAnexo } from './arquivos.js';
 import {
   dataOpcionalValida,
   decimal,
+  percentualCampo,
   textoObrigatorio,
   textoOpcional,
+  ufCampo,
   uuidOpcional,
   vazioParaNulo,
   type MetadadosRegistro,
@@ -135,6 +137,51 @@ export interface AvisoComboComponente {
 export const CST_COM_ST = ['10', '30', '60', '70', '201', '202', '203', '500'] as const;
 /** CST/CSOSN do ICMS cobrado anteriormente por ST: CFOP 5405. */
 export const CST_ST_RETIDO = ['60', '500'] as const;
+
+/**
+ * Aviso fixo do bloco Tributação (F2-B52; restrição do dono: nada fiscal até a fase fiscal): os campos fiscais só são
+ * guardados; nada é calculado, nem mexe no preço ou na venda.
+ */
+export const AVISO_TRIBUTACAO_SO_REGISTRO = 'Somente registro. Nenhum cálculo fiscal é feito nesta versão.';
+
+/**
+ * ICMS-ST retido anteriormente por loja (`produtos_lojas`, ERP 8.2.10; MD 3.6.9; F2-B52): valores por unidade base do
+ * grupo de ST retido da NFC-e com CST 60/CSOSN 500, preenchidos à mão e só guardados nesta fase (o preenchimento pela
+ * NF-e e pela transferência é da fase fiscal). Os rótulos levam a tag do XML, que é como o contador os conhece.
+ */
+export const CAMPOS_ST_RETIDO = [
+  'stBcRetidoUnitario',
+  'stAliquotaPct',
+  'stIcmsSubstitutoUnitario',
+  'stIcmsRetidoUnitario',
+  'fcpStBcRetidoUnitario',
+  'fcpStAliquotaPct',
+  'fcpStRetidoUnitario',
+] as const;
+export type CampoStRetido = (typeof CAMPOS_ST_RETIDO)[number];
+export const ROTULOS_ST_RETIDO: Record<CampoStRetido, string> = {
+  stBcRetidoUnitario: 'BC do ST retido (vBCSTRet)',
+  stAliquotaPct: 'Alíquota ST % (pST)',
+  stIcmsSubstitutoUnitario: 'ICMS do substituto (vICMSSubstituto)',
+  stIcmsRetidoUnitario: 'ICMS-ST retido (vICMSSTRet)',
+  fcpStBcRetidoUnitario: 'BC do FCP-ST retido (vBCFCPSTRet)',
+  fcpStAliquotaPct: 'FCP-ST retido % (pFCPSTRet)',
+  fcpStRetidoUnitario: 'FCP-ST retido (vFCPSTRet)',
+};
+/** Os percentuais do ST retido (4 casas, 0 a 100); os demais são valores em R$ por unidade (4 casas). */
+export const CAMPOS_ST_RETIDO_PCT: readonly CampoStRetido[] = ['stAliquotaPct', 'fcpStAliquotaPct'];
+/**
+ * Os valores em R$ do ST retido (vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet, vFCPSTRet) são **dado de custo**
+ * (D68: vale a recomendação até o dono responder): cada um, com as alíquotas e o MVA que o detalhe mostra, dá o preço de compra da loja
+ * (vICMSSubstituto ÷ alíquota própria, vBCSTRet ÷ (1 + MVA)…). Só com `produtos.ver_custo`, como o custo: sem ela, a
+ * API os devolve `null`, ignora os do corpo (mantém o gravado) e os tira da auditoria; os percentuais ficam livres.
+ */
+export const CAMPOS_ST_RETIDO_CUSTO: readonly CampoStRetido[] = CAMPOS_ST_RETIDO.filter(
+  (c) => !CAMPOS_ST_RETIDO_PCT.includes(c),
+);
+
+/** Tributação por UF (`produtos_tributacao_uf`, F2-B52): no máximo uma linha por UF (são 27). */
+export const MAXIMO_TRIBUTACAO_UF = 27;
 
 /** Unidades que nascem com "Permite fração" (ERP 8.2.1). */
 export const UNIDADES_FRACIONADAS = ['KG', 'G', 'L', 'ML', 'M', 'M2', 'M3'] as const;
@@ -270,18 +317,42 @@ const percentualOpcional = opcional(
 const medidaOpcional = (casas: number) =>
   opcional(decimal({ min: 0, max: 99_999_999, casas, mensagem: 'Valor inválido' }));
 
+const regexDigitos = (n: number | [number, number]) =>
+  typeof n === 'number' ? new RegExp(`^\\d{${n}}$`) : new RegExp(`^\\d{${n[0]},${n[1]}}$`);
+const soDigitos = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') || null : v);
 const digitos = (n: number | [number, number], mensagem: string) =>
-  z.preprocess(
-    (v) => (typeof v === 'string' ? v.replace(/\D/g, '') || null : v),
-    z
-      .string()
-      .regex(
-        typeof n === 'number' ? new RegExp(`^\\d{${n}}$`) : new RegExp(`^\\d{${n[0]},${n[1]}}$`),
-        mensagem,
-      )
-      .nullable()
-      .default(null),
-  );
+  z.preprocess(soDigitos, z.string().regex(regexDigitos(n), mensagem).nullable().default(null));
+
+/**
+ * Campo que, **ausente, mantém o gravado** (F2-B52): vazio ou `null` apaga, o valor grava. A importação de planilha, o
+ * cadastro em massa, o "Definir NCM" e o ERP de antes desta versão (aba aberta durante a implantação) não conhecem os
+ * campos fiscais novos e não podem apagá-los; o formulário novo manda sempre todos.
+ */
+const mantido = <T extends z.ZodType>(campo: T, preparo: (v: unknown) => unknown = vazioParaNulo) =>
+  z.preprocess(preparo, campo.nullable()).optional();
+const digitosMantido = (n: number | [number, number], mensagem: string) =>
+  mantido(z.string().regex(regexDigitos(n), mensagem), soDigitos);
+
+// Campos de ICMS do produto e da Tributação por UF (8.2.15; MD 3.6.9: "mesmos CHECKs de faixa de `produtos`").
+const cfopCampo = digitos(4, 'CFOP com 4 dígitos');
+const cstIcmsCampo = digitos([2, 3], 'CST (2 dígitos) ou CSOSN (3 dígitos)');
+const modalidadeBcCampo = z.preprocess(
+  vazioParaNulo,
+  z
+    .string()
+    .regex(/^[0-3]$/, 'Modalidade de 0 a 3')
+    .nullable()
+    .default(null),
+);
+const modalidadeBcstCampo = z.preprocess(
+  vazioParaNulo,
+  z
+    .string()
+    .regex(/^[0-6]$/, 'Modalidade de 0 a 6')
+    .nullable()
+    .default(null),
+);
+const mvaCampo = opcional(decimal({ min: 0, max: 999, casas: 4, mensagem: 'MVA inválida' }));
 
 const dataHoraOpcional = z.preprocess(
   vazioParaNulo,
@@ -331,6 +402,9 @@ export const codigoBarrasSchema = z
   });
 export type CodigoBarrasEntrada = z.input<typeof codigoBarrasSchema>;
 
+/** Valor do ST retido por unidade (R$, `numeric(15,4)` ≥ 0), ausente = mantém. */
+const valorStMantido = mantido(decimal({ min: 0, max: LIMITE_PRECO, casas: 4, mensagem: 'Valor inválido' }));
+
 export const produtoLojaSchema = z
   .object({
     lojaId: z.uuid(),
@@ -339,6 +413,16 @@ export const produtoLojaSchema = z
     precoVenda: precoOpcional,
     ativoNaLoja: z.boolean().default(true),
     acrescimoGelada: precoOpcional,
+    // ST retido por loja (8.2.10; MD 3.6.9; F2-B52): só guardado. Ausente = mantém o gravado (a importação, o cadastro
+    // em massa e o ERP antigo mandam a linha da loja sem eles); os CHECKs de `ck_produtos_lojas_st` (todos ≥ 0, os
+    // percentuais até 100), nas casas das colunas.
+    stBcRetidoUnitario: valorStMantido,
+    stAliquotaPct: mantido(percentualCampo),
+    stIcmsSubstitutoUnitario: valorStMantido,
+    stIcmsRetidoUnitario: valorStMantido,
+    fcpStBcRetidoUnitario: valorStMantido,
+    fcpStAliquotaPct: mantido(percentualCampo),
+    fcpStRetidoUnitario: valorStMantido,
   })
   .superRefine((l, ctx) => {
     if (
@@ -349,6 +433,29 @@ export const produtoLojaSchema = z
       ctx.addIssue({ code: 'custom', path: ['estoqueMaximo'], message: 'Máximo menor que o mínimo' });
     }
   });
+
+/**
+ * Uma linha da Tributação por UF (`produtos_tributacao_uf`, ERP 8.2.15; MD 3.6.9; F2-B52): as sobreposições da
+ * tributação do produto naquela UF (vazio = o valor do produto), que já descem ao PDV das lojas da UF. Só guardadas:
+ * valem os formatos e os CHECKs de faixa das colunas (os mesmos do produto) e as FKs (UF e CFOP existentes, na API);
+ * as regras de emissão sobre o valor efetivo (5405 × CST 60, CEST com ST, cBenef) são da fase fiscal.
+ */
+export const tributacaoUfSchema = z.object({
+  uf: ufCampo,
+  cfopVendaEstado: cfopCampo,
+  icmsSituacao: cstIcmsCampo,
+  icmsModalidadeBc: modalidadeBcCampo,
+  icmsAliquota: percentualOpcional,
+  icmsReducaoBcPct: percentualOpcional,
+  icmsModalidadeBcst: modalidadeBcstCampo,
+  icmsMvaPct: mvaCampo,
+  icmsAliquotaSt: percentualOpcional,
+  fcpAliquota: percentualOpcional,
+  fcpStAliquota: percentualOpcional,
+  beneficioFiscalCodigo: textoOpcional(10),
+});
+export type TributacaoUfEntrada = z.input<typeof tributacaoUfSchema>;
+export type TributacaoUf = z.output<typeof tributacaoUfSchema>;
 
 export const faixaPrecoSchema = z
   .object({
@@ -785,9 +892,9 @@ const camposProduto = z.object({
     z.coerce.number().int().min(0).max(3650).nullable().default(null),
   ),
   // Tributação (8.2.15)
-  cfopVendaEstado: digitos(4, 'CFOP com 4 dígitos'),
-  cfopVendaForaEstado: digitos(4, 'CFOP com 4 dígitos'),
-  icmsSituacao: digitos([2, 3], 'CST (2 dígitos) ou CSOSN (3 dígitos)'),
+  cfopVendaEstado: cfopCampo,
+  cfopVendaForaEstado: cfopCampo,
+  icmsSituacao: cstIcmsCampo,
   icmsOrigem: z.preprocess(
     vazioParaNulo,
     z
@@ -796,25 +903,11 @@ const camposProduto = z.object({
       .nullable()
       .default(null),
   ),
-  icmsModalidadeBc: z.preprocess(
-    vazioParaNulo,
-    z
-      .string()
-      .regex(/^[0-3]$/, 'Modalidade de 0 a 3')
-      .nullable()
-      .default(null),
-  ),
-  icmsModalidadeBcst: z.preprocess(
-    vazioParaNulo,
-    z
-      .string()
-      .regex(/^[0-6]$/, 'Modalidade de 0 a 6')
-      .nullable()
-      .default(null),
-  ),
+  icmsModalidadeBc: modalidadeBcCampo,
+  icmsModalidadeBcst: modalidadeBcstCampo,
   icmsAliquota: percentualOpcional,
   icmsReducaoBcPct: percentualOpcional,
-  icmsMvaPct: opcional(decimal({ min: 0, max: 999, casas: 4, mensagem: 'MVA inválida' })),
+  icmsMvaPct: mvaCampo,
   icmsAliquotaSt: percentualOpcional,
   fcpAliquota: percentualOpcional,
   fcpStAliquota: percentualOpcional,
@@ -829,6 +922,16 @@ const camposProduto = z.object({
   ibsCbsCst: digitos(3, 'CST com 3 dígitos'),
   ibsCbsClassificacao: digitos(6, 'cClassTrib com 6 dígitos'),
   servicoCodigoLc116: textoOpcional(5),
+  // Só gravados (F2-B52; nada fiscal até a fase fiscal), **ausentes = mantêm o gravado** (`mantido`): a unidade
+  // tributável e o fator (MD 3.6.3; `ck_produtos_quantidades`: fator > 0, 3 casas) e o Imposto Seletivo (`ck_produtos_is`:
+  // a alíquota específica exige a unidade).
+  unidadeTributavelId: mantido(z.uuid('Escolha a unidade tributável')),
+  fatorTributavel: mantido(quantidadePositiva),
+  isCst: digitosMantido(3, 'CST com 3 dígitos'),
+  isClassificacao: digitosMantido(6, 'cClassTrib com 6 dígitos'),
+  isAliquotaPct: mantido(percentualCampo),
+  isAliquotaEspecifica: mantido(decimal({ min: 0, max: LIMITE_PRECO, casas: 4, mensagem: 'Valor inválido' })),
+  isUnidade: mantido(z.string().trim().max(6, 'No máximo 6 caracteres')),
   // Filhas
   codigosBarras: z.array(codigoBarrasSchema).max(50).default([]),
   lojas: z.array(produtoLojaSchema).max(200).default([]),
@@ -881,6 +984,14 @@ const camposProduto = z.object({
   gruposComplementos: z
     .array(grupoComplementosSchema)
     .max(MAXIMO_GRUPOS_COMPLEMENTOS, `No máximo ${MAXIMO_GRUPOS_COMPLEMENTOS} grupos de complementos`)
+    .optional(),
+  /**
+   * Tributação por UF (8.2.15; F2-B52; só gravada). **Ausente = mantém as gravadas**, como `relacionados`; o formulário
+   * manda sempre a lista inteira (vazia = remove todas). Uma linha por UF.
+   */
+  tributacaoUf: z
+    .array(tributacaoUfSchema)
+    .max(MAXIMO_TRIBUTACAO_UF, `No máximo ${MAXIMO_TRIBUTACAO_UF} UFs`)
     .optional(),
   /** `geral.ean_duplicado = 'avisar'`: o ERP confirma e reenvia com `true` (ERP 8.2, "EAN duplicado"). */
   confirmarEanDuplicado: z.boolean().default(false),
@@ -1076,6 +1187,18 @@ function regrasProduto(p: Produto, ctx: z.RefinementCtx) {
   if (p.categoriaPrincipalId && p.categorias.length && !p.categorias.includes(p.categoriaPrincipalId)) {
     erro(['categoriaPrincipalId'], 'A principal precisa estar entre as categorias marcadas');
   }
+
+  // Tributação por UF (F2-B52): uma linha por UF (`uq_produtos_tributacao_uf`).
+  const ufs = new Map<string, number>();
+  p.tributacaoUf?.forEach((t, i) => {
+    const anterior = ufs.get(t.uf);
+    if (anterior !== undefined) erro(['tributacaoUf', i, 'uf'], `UF repetida (linha ${anterior + 1})`);
+    else ufs.set(t.uf, i);
+  });
+  // Imposto Seletivo (`ck_produtos_is`): com os dois campos no corpo; com a unidade ausente (mantida), a API confere a
+  // gravada.
+  if (p.isAliquotaEspecifica != null && p.isUnidade === null)
+    erro(['isUnidade'], 'Informe a unidade da alíquota específica');
 
   // Tributação (MD 3.6.3, regras de emissão) — não exigida no combo (os componentes saem na NFC-e).
   if (p.cfopVendaEstado && !p.cfopVendaEstado.startsWith('5'))
@@ -1556,6 +1679,28 @@ export interface GrupoPrecoVinculado {
   }>;
 }
 
+/** Os campos fiscais só gravados do produto (F2-B52), que no corpo podem faltar (ausente = mantém). */
+export type CampoTributacaoMantido =
+  | 'unidadeTributavelId'
+  | 'fatorTributavel'
+  | 'isCst'
+  | 'isClassificacao'
+  | 'isAliquotaPct'
+  | 'isAliquotaEspecifica'
+  | 'isUnidade';
+
+/** A linha da loja no detalhe (8.2.10), com o ST retido (F2-B52). */
+export type ProdutoLojaDetalhe = {
+  lojaId: string;
+  estoqueMinimo: string | null;
+  estoqueMaximo: string | null;
+  precoVenda: string | null;
+  ativoNaLoja: boolean;
+  acrescimoGelada: string | null;
+  /** Quando o ST retido foi gravado pela última vez (o preenchimento manual do F2-B52 o atualiza). */
+  stAtualizadoEm: string | null;
+} & Record<CampoStRetido, string | null>;
+
 export interface ProdutoDetalhe
   extends
     MetadadosRegistro,
@@ -1574,8 +1719,19 @@ export interface ProdutoDetalhe
       | 'markupPct'
       | 'fotoPrincipalArquivoId'
       | 'imagens'
-    > {
+      | 'lojas'
+      | 'tributacaoUf'
+      | CampoTributacaoMantido
+    >,
+    Record<CampoTributacaoMantido, string | null> {
   codigo: number;
+  /**
+   * As lojas (8.2.10) com o ST retido por loja (F2-B52) e quando ele foi gravado (`stAtualizadoEm`, somente leitura).
+   * Só as lojas permitidas ao usuário (decisão 88).
+   */
+  lojas: ProdutoLojaDetalhe[];
+  /** A Tributação por UF (F2-B52), pela UF. */
+  tributacaoUf: TributacaoUf[];
   fotoPrincipalArquivoId: string | null;
   /** A galeria (`produtos_imagens`), pela ordem. */
   imagens: ImagemProdutoDetalhe[];
