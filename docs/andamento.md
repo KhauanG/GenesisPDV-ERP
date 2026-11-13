@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": juntado na `main` em 13/11/2026 (#10), falta implantar (junto com o PR-11); PR-14 "Tributação gravada e fechamento" iniciado (F2-B52); PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": juntado na `main` em 13/11/2026 (#10), falta implantar (junto com o PR-11); PR-14 "Tributação gravada e fechamento": F2-B52 e F2-B53 commitados no branch (falta a revisão de segurança do PR inteiro, D63, e abrir o PR); a execução real do fechamento da Fase 2 com o dono (checklist `docs/implantacao/checklist-fechamento-fase2.md`) está pendente; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -37,7 +37,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | Fase | Situação |
 |---|---|
 | 0 e 1 (fundação, cadastros, PDV MVP offline, implantação do piloto) | concluídas |
-| **2 (produtos e estoque completos)** | em andamento — plano em `docs/planos/fase2-plano.md` (blocos F2-B1..B53, PR-1..PR-12) |
+| **2 (produtos e estoque completos)** | código e documentação concluídos (blocos F2-B1..B53 do `docs/planos/fase2-plano.md`, PR-1..PR-14; as variações F2-B48..B50 e a base de GTIN F2-B47 no backlog); **falta a execução real com o dono** (checklist `docs/implantacao/checklist-fechamento-fase2.md`), que demonstra a Definição de pronto, e a auditoria de segurança (D64) |
 | Central do PDV (engrenagem ⚙, diagnóstico no caixa) | **concluída** e em produção (PDV 0.10.0) |
 | Repositório público (D60) | **concluído** em 06/11/2026 (falta só o SSH da VPS, ver Pendências) |
 | 3, 4, 5 e 3F (fiscal por último) | não iniciadas |
@@ -59,7 +59,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
 | PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, junto com o PR-11; sem migração e sem release do PDV) |
-| PR-14 tributação gravada e fechamento | B52–B53 | **em andamento** no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-13) |
+| PR-14 tributação gravada e fechamento | B52–B53 | blocos commitados no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-13); falta a revisão de segurança do PR inteiro (D63) e abrir o PR |
 
 ### PR-6 — blocos
 
@@ -96,7 +96,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | Bloco | Situação |
 |---|---|
 | F2-B52 tributação só gravada (sem cálculo fiscal; shared: `tributacaoUfSchema`, os campos do Imposto Seletivo, da unidade tributável e do ST retido na linha da loja com "ausente = mantém", `AVISO_TRIBUTACAO_SO_REGISTRO`; API: `gravarTributacaoUf`, o ST manual em `produtos_lojas` só nas lojas permitidas com `st_atualizado_em` e os valores em R$ só com `produtos.ver_custo` (D68: vale a recomendação até o dono responder), as FKs e o `ck_produtos_is` como 422, `produtos_tributacao_uf` na versão agregada e na exclusão, a auditoria legível; ERP: o aviso fixo "Somente registro. Nenhum cálculo fiscal é feito nesta versão.", a unidade tributável, o Imposto Seletivo e as sub-grades Tributação por UF e ST retido por loja no bloco Tributação; sem efeito em preço nem venda; **sem migração**, protocolo, `Esquema.g.cs` e PDV sem mudança; README da API › decisão 195, do ERP › 80) | **commitado** |
-| F2-B53 fechamento da Fase 2: documentação, Definição de pronto, auditoria de segurança completa (D64) e execução com o dono | a fazer |
+| F2-B53 fechamento da Fase 2 (**só documentação**: sem código, migração, protocolo, `Esquema.g.cs` nem PDV; roadmap Fase 2 com os itens entregues marcados [x] e o que depende dos dados reais aberto, "pela SEFAZ", o certificado e a conversão de CFOP levados para a Fase 3F, a D11 sem bloquear a Fase 2, os tipos de movimento sem gerador conferidos no código — `TROCA_PDV`, `BAIXA_INTERNA` e os do ERP na Fase 3, os de integração e o `AJUSTE_API` na 7 —, a Definição de pronto sem a SEFAZ com o teste que prova cada item e o passo do checklist, o quadro das F2-Q1..Q14 no §16 — D53, D54 e D66 "vale a recomendação", sem resposta explícita; a D45 corrigida para confirmada em bloco pelo dono; nenhuma D nova —; o checklist da execução real `docs/implantacao/checklist-fechamento-fase2.md`, para o dono, com o registro sem dado real; README da API › decisão 196 (a 76 conferida, o mapa das decisões e os padrões aplicados sem pergunta, com a D56 confirmada no código), do ERP › 81, do PDV › 87; a ERP 23.1 e as notas de fase nas 9.8, 10.3.2 e 13.4.2 da especificação; o `recalcular-saldos` na tabela de comandos do `infra/producao/README.md`). **Pendente do dono:** a execução real do checklist (passos 0 a 8) — a Definição de pronto **não** está demonstrada — e a auditoria completa de segurança (D64) | **commitado** |
 
 ### PR-13 — blocos
 
@@ -193,12 +193,23 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    complementos, e o Salvar grava. Os caixas 0.12.0 já recebem os grupos, mas continuam vendendo o produto sem pedir
    os complementos: a escolha na venda é da Fase 3. Depois: o
    PR-14 (F2-B52 tributação só gravada e F2-B53 fechamento da Fase 2, com a auditoria completa de segurança, D64).
-4. Numeração das próximas decisões nos READMEs: **API 195**, **ERP 80**, **PDV 87** (confira o último número no próprio
+4. Numeração das próximas decisões nos READMEs: **API 197**, **ERP 82**, **PDV 88** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D69** (D68 aberta em 13/11/2026: os valores em R$ do ST retido como custo, valendo a recomendação (A) até o dono responder; D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`; D54 registrada no F2-B39 como "vale a recomendação", sem resposta explícita).
+
+5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): falta a
+   revisão de segurança do PR inteiro (D63) e abrir o PR; merge e Implantação com a liberação do dono (sem migração,
+   sem release do PDV). **Depois, para o dono — o fechamento real da Fase 2:** seguir o checklist
+   `docs/implantacao/checklist-fechamento-fase2.md` (passo 0: versão nova, caixas no 0.12.0, permissões e
+   configurações; 1: importação completa e a ida e volta da planilha; 2: carga do Nuvem3 com a hora; 3: contagens por
+   setor e o teste do caixa sem internet; 4: primeiras NF-e reais com o vínculo reaproveitado; 5: transferência CD →
+   loja com divergência; 6: conferência com a tolerância da D47; 7: `implantar.sh tarefa recalcular-saldos` dando
+   "idêntico"; 8: Movimentação de 12 meses). A cada passo, mandar à sessão a data e o resultado (sem dado real); a
+   sessão preenche o registro do checklist e marca a Definição de pronto no roadmap. Depois, a auditoria completa de
+   segurança (D64) antes das outras lojas.
 
 ## Pendências e lembretes
 
@@ -214,6 +225,9 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
   e `DOCKER_BUILD_EXPORT_RETENTION_DAYS` — e passam ao Node 24). A primeira "Implantação" depois deles é a que prova a
   montagem das imagens com `load` e o cache `gha`.
 - **Verificação em duas etapas (2FA)** na conta do GitHub do dono: o GitHub exige a partir de 19/12/2026.
+- **Execução real do fechamento da Fase 2** (F2-B53): o checklist `docs/implantacao/checklist-fechamento-fase2.md`,
+  pelo dono; até o registro dele, a Definição de pronto da Fase 2 fica aberta no roadmap. Registro: nenhum passo feito
+  ainda (13/11/2026).
 - **XMLs reais de fornecedores** (para conferir a NF-e com notas de verdade, F2-B53): o dono envia depois; **não
   entram no repositório** (público, D60): ficam em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa
   (a pasta está no `.gitignore`) e o teste com eles roda só localmente.

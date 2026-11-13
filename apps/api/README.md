@@ -2660,7 +2660,8 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      ordens de efetivação), o estorno líquido por um usuário sem o negativo e a Entrada anulada por um "Definir" com
      a contagem 4 min à frente. Sem espelho no PDV (a 0018 é só da nuvem).
 149. **Estoques permitidos de verdade, com a virada sem perda de acesso** (Fase 2, F2-B5; ERP 2.1, 11.2; MD 3.3.5;
-     F2-Q4 = roadmap D45, **padrão até a confirmação do dono**; `src/estoques/permitidos.ts`, migração 0019).
+     F2-Q4 = roadmap D45, **decidida pelo dono em 05/11/2026, confirmada em bloco: manter como antes da virada**;
+     `src/estoques/permitidos.ts`, migração 0019).
      **Regra única**: o Master vê e movimenta todos os estoques; quem tem a permissão nova **`estoques.todos`**
      também (catálogo do shared, "Locais de estoque: Ver e movimentar todos"; fica em `SOMENTE_MASTER` dos perfis
      padrão, então só o Master a tem no seed, e a empresa pode concedê-la a um perfil ou usuário); os demais veem
@@ -6080,6 +6081,63 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        (nulos no detalhe, ignorados na gravação, fora do histórico; D68); o ERP antigo e o "Definir NCM" mantendo
        tudo; o 409; o 403 da loja de fora com o ST dela preservado; as FKs e os CHECKs como 422; o tombstone da UF
        tirada; a exclusão do produto). `mascarar.spec.ts` e `diferenca-produto.spec.ts`: os valores do ST como custo.
+
+196. **Fechamento da Fase 2: onde está cada decisão, os padrões aplicados sem pergunta e o que ficou para depois**
+     (Fase 2, F2-B53, o último bloco do plano; roadmap Fase 2 e §16; `docs/planos/decisoes-do-dono.md`;
+     `docs/implantacao/checklist-fechamento-fase2.md`). **Só documentação**: nenhum código de produção, migração,
+     protocolo, `Esquema.g.cs` nem versão do PDV muda.
+     - **Decisão 76 conferida**: o plano a dava como desatualizada (dizia "Fase 2" para a compensação). Ela já diz que a
+       compensação dos eventos tardios existe desde a 1C (T23; decisão 133) e que desde o F2-B4 é do motor (decisão
+       148); fica como está.
+     - **As decisões técnicas da Fase 2 que o plano pedia** já foram registradas bloco a bloco: a ordem de lançamento
+       `seq_lancamento` (decisão 146), o `db:recalcular-saldos` (147), a regra de data dos documentos do ERP com o
+       `retroativoPermitido` (148), os estoques permitidos e a virada sem perda de acesso (149), o FEFO dividindo o
+       movimento com o `saldos_lote` (151), a perda na transferência como retorno ao CD mais o acerto de Saída
+       `perda_transferencia` (172), a exportação em streaming (177) e "sem particionamento na Fase 2", com os gatilhos
+       para particionar (176).
+     - **Padrões aplicados sem pergunta** (plano da Fase 2; o dono pode mudar depois) e a situação de cada um:
+
+       | Padrão | Onde | Situação |
+       |---|---|---|
+       | Estorno de recebimento ou NF-e que deixa saldo negativo: bloqueado, salvo Master ou `estoque.permite_negativo_erp` | decisões 160, 165 e 169 | **D56 decidida pelo dono (05/11/2026), com o aviso.** Confirmada no código no fechamento: o núcleo de entrada (`conferirNegativosEstorno` em `entradas/entrada.ts`) confere o efeito líquido em cada linha de saldo e em cada lote; sem a permissão, 422; com ela, 422 com `detalhes.saldosNegativos` até o `confirmarNegativo` trazer a mesma lista, gravada na auditoria; o recebimento manual e a NF-e usam a mesma regra (`recebimento-movimentar.test.ts`, `notas-entrada-movimentar.test.ts`) |
+       | Data dos documentos do ERP: `data_movimento` = o lançamento (`now()`); só o "Definir" (na `data_contagem`) e o `AJUSTE_IMPORTACAO` (na hora da contagem) lançam no passado, pelo `retroativoPermitido` | decisão 148 | padrão até a confirmação do dono |
+       | Tipo de Estoque com o desenho atual (vendável, padrão, 5 tipos de sistema) | decisão 152 | D55 decidida pelo dono (05/11/2026) |
+       | Tipos de produto: os 8 valores do enum (ERP 23.2 questão 18) | decisões 145 e 194 | padrão até a confirmação do dono |
+       | Transferência: `tipo_estoque_id` no cabeçalho, a "Divergência a tratar" separada do "Em trânsito" (na origem) e o alerta da parada em `estoque.transferencia_alerta_dias = 3` | decisões 170 e 174 | D62 decidida pelo dono (06/11/2026) |
+       | Impressão pelo navegador: romaneio, folha de contagem, espelho do recebimento e ficha da marca | decisões 175, 154 e 190; README do ERP › 56 | padrão até a confirmação do dono |
+       | Exportação grande em streaming (`.xlsx`, com o `.csv` como alternativa) | decisão 177 | padrão até a confirmação do dono |
+       | `geral.ean_duplicado` volta de "avisar" para "bloquear" quando o relatório de EAN duplicado zerar | decisão 184 | padrão; a fazer pelo dono quando zerar (passo 1 do checklist) |
+       | `geral.produto_usa_fornecedores`: o padrão do catálogo segue `false`, e na Ice Beer é ligada | decisões 158 e 169 | padrão; o dono liga na produção (passo 0 do checklist) |
+       | `produtos_lotes.estoque_id` imutável depois de gravado | decisão 162 | D57 decidida pelo dono (05/11/2026) |
+
+     - **As perguntas F2-Q1 a F2-Q14** estão todas no roadmap §16 (D43 a D54, a F2-Q3 = D6 e a F2-Q14 = D66), com o
+       quadro do fechamento no fim da seção. Respondidas ou confirmadas pelo dono: D43, D44, D6, D45, D46, D47, D48, D49,
+       D50, D51 e D52 (a D45 deixou de ser "padrão" no fechamento: o dono a confirmou em bloco em 05/11/2026, decisão
+       149). **Vale a recomendação, sem resposta explícita do dono:** D53 (F4 "Outras lojas", decisão 182), D54 (sem
+       base externa de GTIN, decisão 185) e D66 (o mapeamento provisório do Nuvem3, decisão 186). Aberta, com a
+       recomendação valendo: D68 (o ST retido em R$ como custo, decisão 195). A **D11** (certificado) deixa de bloquear
+       a Fase 2.
+     - **O que saiu da Fase 2 e para onde foi** (roadmap, Fase 2 › Objetivo e Fase 3F):
+       - a entrada de NF-e **pela SEFAZ** (Distribuição DF-e, NSU, manifestação, a consulta da situação da nota) e o
+         **certificado A1** para a consulta: Fase 3F (D11). Na Fase 2, `notas_entrada.origem` é só `upload`, o
+         `dfe_documento_id` fica sem FK e a permissão `notas_entrada.manifestar` fica sem uso (decisão 163);
+       - a **conversão de CFOP** de entrada: 3F ou 4 (`itens_nota_entrada.cfop_entrada` nulo e reservado; decisão 163);
+       - o uso fiscal dos impostos da nota (`estoque.custo_abate_creditos`, o ST retido preenchido pela NF-e e pela
+         transferência): fase fiscal (decisão 195);
+       - a geração de `TROCA_PDV`, `ESTORNO_TROCA_PDV`, `BAIXA_INTERNA`, `VASILHAME_EMPRESTADO`, `VENDA_ERP`,
+         `CANC_VENDA_ERP`, `DEVOLUCAO_ERP` e `ESTORNO_DEVOLUCAO_ERP`: Fase 3; `VENDA_INTEGRACAO`,
+         `CANC_VENDA_INTEGRACAO` e `AJUSTE_API` (a origem de acerto `api`, sem quem a use): Fase 7. Conferido no código:
+         nenhum deles tem gerador, e os demais tipos do seed têm;
+       - a venda com complemento, variação ou lote escolhido no caixa: Fase 3 (PDV-2); o "Gerar financeiro" do
+         recebimento: Fase 4; a NF-e de transferência e a de devolução ao fornecedor: Fase 6 (D6);
+       - as variações (F2-B48 a F2-B50, D43) e a base externa de GTIN (F2-B47, D54): backlog.
+     - **A execução real com o dono não é deste bloco**: a importação completa, a carga do Nuvem3 com a hora, as
+       contagens por setor, as primeiras NF-e reais com o vínculo reaproveitado, a primeira transferência CD → loja, a
+       conferência com a tolerância da D47 e o `db:recalcular-saldos` em produção estão no checklist
+       `docs/implantacao/checklist-fechamento-fase2.md`, com o registro do resultado sem dado real (D60). Até o dono
+       registrar a execução, a **Definição de pronto da Fase 2 fica aberta** no roadmap, com o teste automático que já
+       prova cada item citado. Também ficam com o dono: a ida e volta com a planilha real (F2-B40), a lista oficial do
+       CEST (F2-B41) e a auditoria completa de segurança antes das outras lojas (D64).
 
 ### Operação – tarefas em segundo plano (API)
 

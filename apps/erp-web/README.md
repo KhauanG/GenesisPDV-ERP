@@ -494,7 +494,7 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     troca liberada com movimento).
 
 47. **Estoques permitidos no usuário e nos seletores** (Fase 2, F2-B5; README da API › decisão 149; roadmap D45,
-    **padrão até a confirmação do dono**). Os seletores de estoque (Acertos, Saldos, Lojas, Usuários) leem
+    **decidida pelo dono em 05/11/2026, confirmada em bloco**). Os seletores de estoque (Acertos, Saldos, Lojas, Usuários) leem
     `GET /estoques`, que já devolve só os estoques permitidos (Master e `estoques.todos`, todos): nenhuma tela filtra
     por conta própria. No formulário do usuário, o campo passou de "Estoques adicionais permitidos" para **Estoques
     permitidos** (a lista inteira do que o usuário vê e movimenta, inclusive o CD; some para o Master), com a contagem
@@ -1473,12 +1473,38 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       chamar a API, com a Tributação fechada antes do Salvar: o marcador e a abertura só nela, não no bloco Lojas; sem
       `produtos.ver_custo`, só os percentuais na tela e no corpo).
 
+81. **Fechamento da Fase 2 no ERP: as telas entregues, a guarda das variações e as releases R1 e R2 do PDV** (Fase 2,
+    F2-B53; roadmap Fase 2; README da API › decisão 196, do PDV › decisão 87). **Só documentação**: nenhuma tela,
+    rota ou teste muda.
+    - **Menu**: todos os itens marcados "Fase 2" estão prontos (Produtos › Cadastro em massa, Exportação; Estoque ›
+      Recebimento manual de produtos, Recebimento de NFe, Transferência de estoque; Relatórios › Produtos geral,
+      Histórico de produtos, NCMs inválidos, EAN duplicado, Estoque Atual e Movimentação), cada um na decisão do seu
+      bloco (46 a 80). A aba "Pela Sefaz" e a coluna Manifestação do Recebimento de NFe **não existem** e saíram da
+      Fase 2 (restrição do dono; roadmap Fase 3F): a tela mostra sempre o aviso fixo de que a SEFAZ não foi consultada
+      (decisão 59). Configurações › CFOP's (a conversão de CFOP de entrada) também foi para a fase fiscal.
+    - **Guarda das variações** (D43: variações fora da Fase 2; D44: o caixa recusa): o tipo "Com variações" continua
+      fora do select na criação e na cópia (`produtos.variacoes_habilitadas` = Não; decisão 46); a chave do caixa
+      `pdv.recusa_produto_com_variacoes` (padrão Sim) e o aviso dos caixas antigos ao ligar as variações (decisão 69)
+      ficam como estão. O aviso compara com a `VERSAO_PDV_GUARDA_VARIACOES` do shared, que é a **primeira** versão com a
+      guarda (0.11.0, a R1) e não acompanha as releases seguintes (README do PDV › decisões 84 e 85).
+    - **Releases do PDV na Fase 2, do lado do ERP**: a **R1** (PDV 0.11.0, PR-8) trouxe a recusa do produto com
+      variações, o `F4` "Outras lojas" (a chave `pdv.consulta_outras_lojas` em Parâmetros › PDV, decisão 70) e a
+      pesquisa F2 com FTS5; a **R2** (PDV 0.12.0, PR-10) trouxe as imagens do catálogo e as tabelas de complementos no
+      espelho, alimentadas pelo `<UploadArquivo>` (decisão 77), pela foto e galeria do produto e pelos logotipos e
+      imagens (decisão 78) e pelo modal Complementos (decisão 79). Nenhuma das duas exige tela nova no ERP; a versão de
+      cada caixa aparece em Terminais.
+    - **O que ficou para depois** (roadmap): a venda com complementos, variação ou lote escolhido no caixa (Fase 3),
+      as variações no produto (backlog, D43), a base externa de GTIN no "Pesquisar EAN" (backlog, D54), o "Gerar
+      financeiro" do recebimento (Fase 4) e o uso fiscal da tributação gravada (Fase 3F).
+    - **A execução real** (importação, carga do Nuvem3, contagens, NF-e reais, transferência, conferência) é do dono,
+      pelas telas do ERP, no checklist `docs/implantacao/checklist-fechamento-fase2.md`.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`; o `<UploadArquivo>` chegou no
-F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações,
-validade/lotes e o uso fiscal da tributação (a foto chegou no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79; a tributação por UF e o ST retido só gravados, no F2-B52, decisão 80) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
+F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, as variações
+(fora da Fase 2, D43) e o uso fiscal da tributação (a validade/lotes chegou no F2-B17, decisão 57; a foto, no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79; a tributação por UF e o ST retido só gravados, no F2-B52, decisão 80) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
 fornecedores no F2-B13, decisão 55); aba Acessos do usuário (sessões, últimos
 logins); abas Vendas e Financeiro/Total da pessoa; edição de planos e
 progresso em tempo real das migrações no painel; inatividade de sessão configurável por empresa; e2e no CI.

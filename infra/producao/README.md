@@ -363,7 +363,8 @@ Formato da resposta e regras sugeridas de alerta em [Monitoramento](#monitoramen
 | Mudar a configuração (`genesis.env`, `segredos/genesis-app.env`) | editar, `/opt/genesis/implantar.sh logs guardar` e `cd /opt/genesis && docker compose up -d` (recria a API: sem o `guardar`, o log dela some) |
 | Reiniciar a API | `docker restart genesis-api` |
 | Migrar as empresas de novo (ex.: depois de uma falha) | `/opt/genesis/implantar.sh tarefa migrar-empresas` |
-| Comandos da API | `/opt/genesis/implantar.sh tarefa <comando> [--argumentos]` (`admin-criar`, `empresa-criar`, `empresa-provisionamento`, `migrar-controle`, `migrar-empresas`, `ncm-atualizar`, `particoes`, `referencias`) |
+| Comandos da API | `/opt/genesis/implantar.sh tarefa <comando> [--argumentos]` (`admin-criar`, `empresa-criar`, `empresa-provisionamento`, `migrar-controle`, `migrar-empresas`, `ncm-atualizar`, `particoes`, `recalcular-saldos`, `referencias`) |
+| Conferir o saldo de estoque pelo razão (sem `--corrigir` não altera saldo nem movimento, só resolve o alerta de saldo divergente quando dá "idêntico"; "idêntico" é o esperado) | `/opt/genesis/implantar.sh tarefa recalcular-saldos --empresa=<código>` (README da API › decisão 147; `docs/implantacao/checklist-fechamento-fase2.md`, passo 7) |
 | Atualizar a tabela NCM (simular antes) | `/opt/genesis/implantar.sh tarefa ncm-atualizar --simular` e, depois, sem o `--simular` ([Tabela NCM](#tabela-ncm-atualização-pela-plataforma-f2-b46)) |
 | Uso de memória | `docker stats --no-stream genesis-api genesis-web genesis-cloudsql-proxy genesis-backup` |
 | Backup: último, dias guardados, um backup agora | `/opt/genesis/implantar.sh backup estado` / `backup listar` / `backup agora` |

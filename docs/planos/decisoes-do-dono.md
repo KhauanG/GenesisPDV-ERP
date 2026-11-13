@@ -230,3 +230,13 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   vBCFCPSTRet, vFCPSTRet) saem vazios no ERP e na API, não são gravados nem apagados por esse usuário e somem da
   auditoria e do histórico dele; os percentuais (pST, pFCPSTRet) continuam visíveis. README da API › decisão 195; do
   ERP › 80; roadmap §16, D68.
+
+## Fechamento da Fase 2 (13/11/2026)
+
+- **Nenhuma resposta nova do dono neste fechamento** (F2-B53). O quadro das F2-Q1 a F2-Q14 com a situação de cada uma
+  está no fim do roadmap §16: respondidas ou confirmadas pelo dono as F2-Q1 a F2-Q11 (D43, D44, D6, D45, D46 a D52);
+  **valem as recomendações, sem resposta explícita**, a F2-Q12 (D53), a F2-Q13 (D54) e a F2-Q14 (D66). A **D68** (ST
+  retido em R$ como custo) continua aberta, com a recomendação (A) valendo.
+- **Para o dono:** a execução real que fecha a Fase 2 na loja piloto (importação, carga do Nuvem3, contagens, NF-e
+  reais, transferência, conferência e `db:recalcular-saldos`) está em `docs/implantacao/checklist-fechamento-fase2.md`;
+  o resultado de cada passo é anotado lá e no `docs/andamento.md`, sem dado real.

@@ -342,7 +342,7 @@ dados.
 
 ### Gerar o instalador e publicar uma versão (desenvolvimento)
 
-- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.11.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84). A mesma aparece no
+- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.12.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84; a `0.12.0`, a R2 da Fase 2, decisões 85 e 86). A mesma aparece no
   nome do instalador, no rodapé do login e do assistente e no `versao_app` que vai à nuvem.
 - **Windows** (SDK do .NET 10; o Inno Setup 6 vem pelo Chocolatey se faltar):
   `pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao X.Y.Z] [-UrlApi https://...]` →
@@ -3597,7 +3597,9 @@ cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura 
 da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
 sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
-resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a venda com complementos e a
+escolha do lote no caixa (Fase 3: o espelho dos complementos chegou na R2, decisão 85, e a nuvem baixa o lote por FEFO,
+D48), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -3879,3 +3881,25 @@ reimpresso continua o original, com o número do caixa.
       fora viram nulo; o corpo sem `Content-Length` cortado no limite; o `If-None-Match` e o `304`; no máximo 2
       downloads presos na API ao mesmo tempo; e a mesma imagem pedida durante o download, que espera a vaga, relê o
       disco e não vai à rede).
+
+87. **Fechamento da Fase 2 no PDV: as releases R1 e R2 e a guarda das variações** (Fase 2, F2-B53; roadmap Fase 2;
+    README da API › decisão 196, do ERP › decisão 81). **Só documentação**: nenhum código, migração EF, pacote,
+    `Esquema.g.cs` nem versão muda; o PDV da Fase 2 é o **0.12.0**.
+    - **R1 = 0.11.0** (PR-8, decisão 84): a guarda das variações (decisão 81), o `F4` "Outras lojas" (decisão 82) e a
+      pesquisa F2 pelo índice FTS5 local (decisão 83). **R2 = 0.12.0** (PR-10, decisão 85): as colunas das imagens e os
+      espelhos dos complementos numa migração só e numa volta só do cursor do `catalogo`, e o cache das imagens
+      (decisão 86). Os blocos seguintes da Fase 2 (F2-B46 a F2-B52) não mexeram no PDV: o 0.12.0 já recebe o que eles
+      gravam (a tabela NCM atualizada pelo `ressincronizar_fluxo referencia`, os grupos de complementos do modal, a
+      Tributação por UF e o ST retido por loja, só guardados no espelho e sem uso até a Fase 3F).
+    - **Protocolo na Fase 2 inteira**: `venda.finalizada` continua v1 e `versoes_schema` não mudou (SYNC 17.5); nenhum
+      evento novo. O caixa instalado continua sincronizando com a API nova (campo e tabela desconhecidos são descartados
+      com log, SYNC 6.10), e o 0.10.x pode ir direto para o 0.12.0 (a abertura aplica as migrações da R1 e da R2
+      juntas). A ordem de sempre: a API antes do PDV (SYNC 17.2).
+    - **Guarda das variações** (D43: as variações ficaram fora da Fase 2; D44, decidida pelo dono: recusa): a guarda
+      não é provisória "até a R2" — vale enquanto o caixa não souber escolher a variação (Fase 3, PDV-2) e a chave
+      `pdv.recusa_produto_com_variacoes` (padrão Sim, por loja) continua a desligá-la. O pai "Com variações" **sem**
+      variação ativa e o "Com complementos" continuam vendendo (o complemento só é escolhido na Fase 3). A
+      `VERSAO_PDV_GUARDA_VARIACOES` do shared fica em 0.11.0, a primeira versão com a guarda (decisão 85).
+    - **Pendência do dono** (`docs/andamento.md`): atualizar os caixas das lojas para o 0.12.0, um de cada vez, antes
+      da execução real do fechamento (`docs/implantacao/checklist-fechamento-fase2.md`, passo 0); o saldo novo dos
+      passos 2 a 5 é conferido também na pesquisa F2 do caixa.

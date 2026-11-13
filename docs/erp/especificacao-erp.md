@@ -1879,6 +1879,8 @@ contas a pagar** (`recibo_pagar`, impresso na baixa).
 
 ### 9.8 Aba 8 – CFOP's [P2 para conversão no recebimento; P6 para emissão]
 
+> **Fase:** a conversão de CFOP de entrada saiu da Fase 2 pela restrição do dono (fechamento F2-B53) e vai para a Fase 3F ou a 4 (roadmap); na Fase 2 o item da NF-e de entrada grava só o CFOP do XML, e `itens_nota_entrada.cfop_entrada` fica nulo e reservado.
+
 **Grupos de CFOP** (`cfops_grupos`: grupo, cfop) — define quais CFOPs aparecem em cada contexto (51 CFOPs disponíveis
 no seed):
 
@@ -2202,6 +2204,8 @@ Taxas de entrega (Novo).
 | `pix_cidade_recebedor` **(Novo)** | Cidade do recebedor | texto(15) | N | campo 60 do BR Code; vazio: o caixa usa o município da loja (e "BRASIL" só sem município) | — |
 
 #### 10.3.2 Tributação [P6; certificado A1 em P2 para a consulta SEFAZ de 13.4]
+
+> **Fase:** o certificado A1 para a consulta da SEFAZ (13.4.2) saiu da Fase 2 com ela (restrição do dono; fechamento F2-B53) e entra na Fase 3F.
 
 | Campo | Rótulo | Tipo | Obr. | Regra |
 |---|---|---|---|---|
@@ -3228,6 +3232,8 @@ stateDiagram-v2
 ```
 
 #### 13.4.2 Consulta pela SEFAZ (Distribuição DF-e)
+
+> **Fase:** fora da Fase 2 pela restrição do dono (nada fiscal antes da fase fiscal; fechamento F2-B53): está na Fase 3F do roadmap, com o certificado A1 (D11). Na Fase 2 a NF-e de fornecedor entra só pelo upload do XML, com o aviso fixo de que a SEFAZ não foi consultada.
 
 | Regra | Detalhe |
 |---|---|
@@ -5155,10 +5161,10 @@ erDiagram
 
 | # | Questão | Impacto | Proposta até decidir |
 |---|---|---|---|
-| 1 | O **CD** da Ice Beer tem CNPJ próprio e emite NF-e de transferência para as lojas? As lojas têm CNPJs distintos entre si? | Fiscal da transferência (13.7) e cadastro do CD como Loja tipo Depósito ou só Estoque | cadastrar CD como Loja tipo `deposito` se tiver CNPJ; transferência sem nota até a P6 |
-| 2 | Qual a semântica real de "Tipo de Estoque", "Ativa" (Config › Geral), "Id Registro" e "Chave" (Lojas) no Nuvem3? ("Produto Emite NFe" não foi adotado, 9.4) | Campos desenhados por nós (13.6, 9.1, 10.3.1, 9.4) | manter o desenho; ajustar se o Khauan souber o uso no dia a dia |
+| 1 | O **CD** da Ice Beer tem CNPJ próprio e emite NF-e de transferência para as lojas? As lojas têm CNPJs distintos entre si? | Fiscal da transferência (13.7) e cadastro do CD como Loja tipo Depósito ou só Estoque | **decidida (dono, 04/11/2026; roadmap D6)**: o CD tem CNPJ próprio e é cadastrado como Loja tipo `deposito`; as lojas têm CNPJs próprios; a NF-e de transferência sai por fora até a fase fiscal e o número fica anotado na transferência (13.7) |
+| 2 | Qual a semântica real de "Tipo de Estoque", "Ativa" (Config › Geral), "Id Registro" e "Chave" (Lojas) no Nuvem3? ("Produto Emite NFe" não foi adotado, 9.4) | Campos desenhados por nós (13.6, 9.1, 10.3.1, 9.4) | manter o desenho; ajustar se o Khauan souber o uso no dia a dia. **Tipo de Estoque: decidida (dono, 05/11/2026; roadmap D55)**, mantém o desenho; os demais campos seguem a proposta |
 | 3 | Vendas pagas à vista (dinheiro/PIX) devem gerar conta a receber **por venda** ou **consolidada por sessão**? | Volume do financeiro e conciliação | `por_sessao` (14.10), configurável |
-| 4 | Política de **saldo negativo** e de "Bloqueia venda sem estoque" nas lojas (bebida gelada costuma vender sem entrada lançada) | PDV e acertos | aceitar negativo no razão; bloqueio desligado por padrão |
+| 4 | Política de **saldo negativo** e de "Bloqueia venda sem estoque" nas lojas (bebida gelada costuma vender sem entrada lançada) | PDV e acertos | **decidida (dono)**: a venda nunca é recusada por saldo (D27; D55: a loja nunca trava a venda por estoque negativo); no ERP, o documento que deixaria saldo negativo só com `estoque.permite_negativo_erp` ou Master, e o estorno de recebimento/NF-e pede a confirmação da lista (D56) |
 | 5 | **Dia operacional**: as lojas fecham depois da meia-noite? Qual hora de corte? | Caixa, Dashboard, relatórios | **decidida (dono, 31/10/2026)**: `geral.dia_operacional_hora_corte` = `05:00` na empresa, ajustável por loja; roadmap D7 |
 | 6 | Sangria/reforço devem poder ser lançados **no ERP** (ex.: gerente lança depois)? | Consistência do caixa local-first | só no PDV; correções via conferência (15.3) |
 | 7 | Quem pode **cancelar venda do PDV pelo ERP** e até quando (prazo da NFC-e na UF das lojas)? | 15.4.3 | permissão `vendas.cancelar`, prazo da UF da loja (parametrizado por UF; lojas da Ice Beer no PR, `docs/fiscal/nfce-parana.md`; padrão 30 min até confirmar) |
@@ -5168,10 +5174,10 @@ erDiagram
 | 11 | O **PDV mobile/comanda** precisa funcionar sem internet? | 18.9 | online na primeira versão — sem urgência: comandas são módulo [FUT] (D4), a Ice Beer não usa |
 | 12 | Quais **relatórios do Nuvem3 são usados de verdade** (para ordenar a P5)? Faltou algum (ex.: DRE, curva ABC, inventário)? | 16 | ordem recomendada pelo levantamento |
 | 13 | Ordem de Serviço (aba 2 das Configurações) será usada pela Ice Beer? | Módulo futuro | fora das fases 1–5 |
-| 14 | Migração de dados do Nuvem3 (produtos, clientes, saldos) — via planilhas de Exportação do Nuvem3 + Importação nossa? | Implantação | layout de importação (8.6) aceita as colunas do export do Nuvem3 com mapeamento |
+| 14 | Migração de dados do Nuvem3 (produtos, clientes, saldos) — via planilhas de Exportação do Nuvem3 + Importação nossa? | Implantação | layout de importação (8.6) aceita as colunas do export do Nuvem3 com mapeamento. **Decidida (dono, 04/11/2026; roadmap D46)**: os saldos entram pela exportação do Nuvem3 na virada (com a hora da contagem) e as contagens por setor corrigem depois; roteiro em `docs/implantacao/roteiro-inventario.md` e o fechamento da Fase 2 em `docs/implantacao/checklist-fechamento-fase2.md` |
 | 15 | Limites de plano: além de lojas e terminais, limitar usuários? Qual política comercial na suspensão — os PDVs param no próximo contato ou têm carência? | 19.3–19.4, sync 20.6 | usuários sem limite; **sem carência** (regra atual do modelo 2.3 e do sync 20.6: o PDV termina a venda e bloqueia novas; o push continua aceito). Carência exigiria `empresas.carencia_pdv_dias` e mudança no sync |
 | 16 | O painel da plataforma pode ficar no mesmo build do ERP (`/plataforma`) ou deve virar um app separado (mudaria o ADR-01)? | Segurança/deploy | mesmo build, token e host separados; revisar antes da produção |
-| 17 | Base externa de GTIN (consulta paga) e tabela IBPT: quem contrata/atualiza? | 18.13 | opcional, por empresa |
+| 17 | Base externa de GTIN (consulta paga) e tabela IBPT: quem contrata/atualiza? | 18.13 | opcional, por empresa. GTIN: **vale a recomendação (sem resposta explícita do dono; roadmap D54)**, não agora; o IBPT é da fase fiscal |
 
 ### 23.2 Semântica de campos do Nuvem3 e migração
 
