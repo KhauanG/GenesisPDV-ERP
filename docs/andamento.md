@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": F2-B51 commitado e PR aberto (#10), aguardando a liberação do merge; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": juntado na `main` em 13/11/2026 (#10), falta implantar (junto com o PR-11); PR-14 "Tributação gravada e fechamento": F2-B52 e F2-B53 commitados no branch (falta a revisão de segurança do PR inteiro, D63, e abrir o PR); a execução real do fechamento da Fase 2 com o dono (checklist `docs/implantacao/checklist-fechamento-fase2.md`) está pendente; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -37,7 +37,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | Fase | Situação |
 |---|---|
 | 0 e 1 (fundação, cadastros, PDV MVP offline, implantação do piloto) | concluídas |
-| **2 (produtos e estoque completos)** | em andamento — plano em `docs/planos/fase2-plano.md` (blocos F2-B1..B53, PR-1..PR-12) |
+| **2 (produtos e estoque completos)** | código e documentação concluídos (blocos F2-B1..B53 do `docs/planos/fase2-plano.md`, PR-1..PR-14; as variações F2-B48..B50 e a base de GTIN F2-B47 no backlog); **falta a execução real com o dono** (checklist `docs/implantacao/checklist-fechamento-fase2.md`), que demonstra a Definição de pronto, e a auditoria de segurança (D64) |
 | Central do PDV (engrenagem ⚙, diagnóstico no caixa) | **concluída** e em produção (PDV 0.10.0) |
 | Repositório público (D60) | **concluído** em 06/11/2026 (falta só o SSH da VPS, ver Pendências) |
 | 3, 4, 5 e 3F (fiscal por último) | não iniciadas |
@@ -58,8 +58,8 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-10 arquivos, imagens e protocolo do PDV | B43–B45 | concluído (#8, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 12/11/2026 (API e ERP, Implantação manual verde em `3cb46a1`; a CI da `main` ficou verde ao repetir só a integração no PostgreSQL 18, que falhou no teste de heap do `recalcular-saldos`, já conhecido como sensível); release **`pdv-v0.12.0`** publicado e posto na página de download em 12/11/2026 (Implantação com `publicar_pdv`, verde); **falta** atualizar os caixas, um de cada vez (roteiro do item 3b, passo 5) |
 | PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
-| PR-13 complementos: modal | B51 | **aberto** (#10, 13/11/2026), aguardando a liberação do dono para o merge; revisão de segurança do PR inteiro (D63): nenhum achado médio ou alto; sem migração e sem release do PDV |
-| PR-14 tributação gravada e fechamento | B52–B53 | não iniciado |
+| PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, junto com o PR-11; sem migração e sem release do PDV) |
+| PR-14 tributação gravada e fechamento | B52–B53 | **aberto** (#11, 13/11/2026), com a revisão de segurança do PR inteiro (D63) sem achado médio ou alto; aguarda a liberação do dono para o merge |
 
 ### PR-6 — blocos
 
@@ -90,6 +90,13 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | F2-B34 guarda de produto com variações no PDV (PDV: `ProdutoResolvido.ExigeVariacao`/`VariacaoId`, `ProdutoVenda.TemVariacoesAtivas` e `GuardaVariacoes` no Core, marcação no `CatalogoLocal` — o código da variação e o pai `com_variacoes` com variação ativa; o legado sem variação ativa e o `com_complementos` vendem —, recusa no `ServicoVenda.IncluirResolvidoAsync` pelo bipe e pela pesquisa F2 com "Produto com variações: venda disponível na próxima versão"; chave `pdv.recusa_produto_com_variacoes` = `true`, por loja, D44 decidida pelo dono em 05/11/2026, na aba 7 da Central; nuvem: a venda do pai sem a variação é aceita e abre o `CADASTRO_PRODUTO` `venda_sem_variacao` (`abrirAlertaCadastro`, o mesmo do `alerta.cadastro`); ERP: a chave em Parâmetros › PDV e, ao ligar `produtos.variacoes_habilitadas`, o aviso dos caixas abaixo de `VERSAO_PDV_GUARDA_VARIACOES` = 0.11.0 por `GET /configuracoes/terminais-sem-guarda-variacoes`; **sem migração**, sem `Esquema.g.cs` nem protocolo novos, versão do PDV inalterada (a R1 é do fechamento do PR-8); README da API › decisão 181, do ERP › 69, do PDV › 81) | **commitado** |
 | F2-B35 F4 "Outras lojas" (API: `GET /sync/consultas/saldos-outras-lojas?produto_id=` em `apps/api/src/sync/consultas.ts`, com o token do terminal, o hardware registrado (`exigirHardware`, endpoint `consulta-saldos`), o limite por terminal `SYNC_CONSULTA_SALDOS_POR_MINUTO` = 30 (429) e o produto desconhecido 404 com `detalhes.produto_id`; escopo da F2-Q12 = D53 (vale a recomendação, sem resposta explícita do dono): o estoque vendável das lojas reais ativas e dos depósitos sem loja (o CD), sem a loja de treino, a loja do terminal primeiro, só quantidades, nunca o custo; chave `pdv.consulta_outras_lojas` = Sim, por loja (403 desligada), em Parâmetros › PDV no ERP; contrato `respostaSaldosOutrasLojasSchema` + fixture `saldos-outras-lojas.resposta.json` = `RespostaSaldosOutrasLojas` no C#; PDV: `IClienteSync.SaldosOutrasLojasAsync` com prazo de 3 s, `ConsultaOutrasLojasHttp` (offline, prazo, 404 da API antiga → "Consulta indisponível (requer conexão)"), `F4`/botão no diálogo da pesquisa abrindo `DialogoOutrasLojasViewModel`, `Enter`/`Esc` voltam à pesquisa e a venda nunca espera; **sem migração**, sem `Esquema.g.cs`, fora do T13 (nenhum evento novo), versão do PDV inalterada; publicar a API antes do PDV; README da API › decisão 182, do ERP › 70, do PDV › 82) | **commitado** |
 | F2-B36 pesquisa F2 com FTS5 (opcional, incluído pela recomendação do plano; PDV: migração EF local `BuscaProdutosFts` — `produtos_busca_texto` + a tabela virtual FTS5 `produtos_busca` com o tokenizador `trigram` e conteúdo externo, gatilhos, idempotente, fora do `Esquema.g.cs` —; `IndiceBuscaProdutos` em `GenesisPDV.Data/Repositorios`: texto = nome, código interno, código numérico, marca e categoria principal sem acento, preenchido na abertura (`InicializadorBanco` → `GarantirAsync`: estrutura, marca pendente `busca.reconstruir_indice` ou contagem diferente → reconstrói em lotes de 5.000, sem voltar o cursor) e mantido pelo `AplicadorPull`/`RepositorioEspelhos` sob `SAVEPOINT` (a falha desfaz só o índice, marca a reconstrução e o pull refaz; a página e o cursor seguem); ausente ou corrompido → a busca em memória da Fase 1, e o `integrity_check` que acusa só a FTS5 descarta e refaz em vez de bloquear; tela da pesquisa com Marca, Local., Estoque (estimado, com `pdv.exibe_estoque_busca`, só no terminal real), Atac. e Promo. em destaque (só quando a venda os cobraria: menores que o varejo da linha, o combo sem atacado) e o estoque da linha da embalagem com a sigla da unidade; o filtro `(Tab)` da 10.3 fica nas lacunas do README; a restauração de backup aceita a FTS5 corrompida e o descarte na abertura só depois da conferência das migrações desconhecidas; 50 mil produtos ≈ 30 ms; nenhum pacote NuGet novo (o `e_sqlite3` 2.1.13 já tem a FTS5); sem migração na nuvem, sem `Esquema.g.cs`, fora do T13, versão do PDV inalterada; README do PDV › decisão 83) | **commitado** |
+
+### PR-14 — blocos
+
+| Bloco | Situação |
+|---|---|
+| F2-B52 tributação só gravada (sem cálculo fiscal; shared: `tributacaoUfSchema`, os campos do Imposto Seletivo, da unidade tributável e do ST retido na linha da loja com "ausente = mantém", `AVISO_TRIBUTACAO_SO_REGISTRO`; API: `gravarTributacaoUf`, o ST manual em `produtos_lojas` só nas lojas permitidas com `st_atualizado_em` e os valores em R$ só com `produtos.ver_custo` (D68, dono: A), as FKs e o `ck_produtos_is` como 422, `produtos_tributacao_uf` na versão agregada e na exclusão, a auditoria legível; ERP: o aviso fixo "Somente registro. Nenhum cálculo fiscal é feito nesta versão.", a unidade tributável, o Imposto Seletivo e as sub-grades Tributação por UF e ST retido por loja no bloco Tributação; sem efeito em preço nem venda; **sem migração**, protocolo, `Esquema.g.cs` e PDV sem mudança; README da API › decisão 195, do ERP › 80) | **commitado** |
+| F2-B53 fechamento da Fase 2 (**só documentação**: sem código, migração, protocolo, `Esquema.g.cs` nem PDV; roadmap Fase 2 com os itens entregues marcados [x] e o que depende dos dados reais aberto, "pela SEFAZ", o certificado e a conversão de CFOP levados para a Fase 3F, a D11 sem bloquear a Fase 2, os tipos de movimento sem gerador conferidos no código — `TROCA_PDV`, `BAIXA_INTERNA` e os do ERP na Fase 3, os de integração e o `AJUSTE_API` na 7 —, a Definição de pronto sem a SEFAZ com o teste que prova cada item e o passo do checklist, o quadro das F2-Q1..Q14 no §16 — D53, D54 e D66 "vale a recomendação", sem resposta explícita; a D45 corrigida para confirmada em bloco pelo dono; nenhuma D nova —; o checklist da execução real `docs/implantacao/checklist-fechamento-fase2.md`, para o dono, com o registro sem dado real; README da API › decisão 196 (a 76 conferida, o mapa das decisões e os padrões aplicados sem pergunta, com a D56 confirmada no código), do ERP › 81, do PDV › 87; a ERP 23.1 e as notas de fase nas 9.8, 10.3.2 e 13.4.2 da especificação; o `recalcular-saldos` na tabela de comandos do `infra/producao/README.md`). **Pendente do dono:** a execução real do checklist (passos 0 a 8) — a Definição de pronto **não** está demonstrada — e a auditoria completa de segurança (D64) | **commitado** |
 
 ### PR-13 — blocos
 
@@ -180,18 +187,29 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    PR-11 juntado na `main` (#9, 12/11/2026); falta a Implantação (sem migração, sem `publicar_pdv`).
 3d. **PR-13 "Complementos: modal"** (F2-B51; F2-Q1 = D43: complementos sim): workflow `genesis-bloco` no branch
    `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11). O PR-12 (variações) fica fora (D43). F2-B51
-   commitado; revisão de segurança do PR inteiro (D63) feita, sem achado médio ou alto; PR-13 aberto (#10): falta a liberação do dono para o merge. **Depois da implantação, para o
+   commitado; revisão de segurança do PR inteiro (D63) feita, sem achado médio ou alto; PR-13 juntado na `main` (#10, 13/11/2026); falta a Implantação (a mesma do PR-11). **Depois da implantação, para o
    dono:** "Cadastrar produtos "Com complementos"" já vem ligada (Configurações › Geral › Produtos); no produto do tipo
    "Com complementos", o bloco Complementos abre o modal para criar os grupos (ex.: "Molhos" de 0 a 2) e os
    complementos, e o Salvar grava. Os caixas 0.12.0 já recebem os grupos, mas continuam vendendo o produto sem pedir
    os complementos: a escolha na venda é da Fase 3. Depois: o
    PR-14 (F2-B52 tributação só gravada e F2-B53 fechamento da Fase 2, com a auditoria completa de segurança, D64).
-4. Numeração das próximas decisões nos READMEs: **API 195**, **ERP 80**, **PDV 87** (confira o último número no próprio
-   README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
+4. Numeração das próximas decisões nos READMEs: **API 197**, **ERP 82**, **PDV 88** (confira o último número no próprio
+   README antes de acrescentar). Próxima decisão D do roadmap §16: **D69** (D68 respondida pelo dono em 13/11/2026: (A) os valores em R$ do ST retido são custo, só com `produtos.ver_custo`; D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`; D54 registrada no F2-B39 como "vale a recomendação", sem resposta explícita).
+
+5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): **aberto**
+   (#11, 13/11/2026; revisão de segurança D63 feita, nenhum achado médio ou alto); merge e Implantação com a liberação do dono (sem migração,
+   sem release do PDV). **Depois, para o dono — o fechamento real da Fase 2:** seguir o checklist
+   `docs/implantacao/checklist-fechamento-fase2.md` (passo 0: versão nova, caixas no 0.12.0, permissões e
+   configurações; 1: importação completa e a ida e volta da planilha; 2: carga do Nuvem3 com a hora; 3: contagens por
+   setor e o teste do caixa sem internet; 4: primeiras NF-e reais com o vínculo reaproveitado; 5: transferência CD →
+   loja com divergência; 6: conferência com a tolerância da D47; 7: `implantar.sh tarefa recalcular-saldos` dando
+   "idêntico"; 8: Movimentação de 12 meses). A cada passo, mandar à sessão a data e o resultado (sem dado real); a
+   sessão preenche o registro do checklist e marca a Definição de pronto no roadmap. Depois, a auditoria completa de
+   segurança (D64) antes das outras lojas.
 
 ## Pendências e lembretes
 
@@ -207,6 +225,9 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
   e `DOCKER_BUILD_EXPORT_RETENTION_DAYS` — e passam ao Node 24). A primeira "Implantação" depois deles é a que prova a
   montagem das imagens com `load` e o cache `gha`.
 - **Verificação em duas etapas (2FA)** na conta do GitHub do dono: o GitHub exige a partir de 19/12/2026.
+- **Execução real do fechamento da Fase 2** (F2-B53): o checklist `docs/implantacao/checklist-fechamento-fase2.md`,
+  pelo dono; até o registro dele, a Definição de pronto da Fase 2 fica aberta no roadmap. Registro: nenhum passo feito
+  ainda (13/11/2026).
 - **XMLs reais de fornecedores** (para conferir a NF-e com notas de verdade, F2-B53): o dono envia depois; **não
   entram no repositório** (público, D60): ficam em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa
   (a pasta está no `.gitignore`) e o teste com eles roda só localmente.

@@ -7,7 +7,9 @@ com a loja aberta. A conferência usa a tolerância **D47** (decidida pelo dono 
 item, ajustável em Configurações › Geral › Estoque e, por loja, em Lojas › Parâmetros). Tudo pelo ERP (navegador); nada fiscal.
 
 > Os termos são os das telas. "(D46)", "(D47)" etc. são as decisões do roadmap (`docs/roadmap.md`, seção 16). O
-> roteiro do caixa (cadastros, PDV, dia D) é o [`roteiro-piloto.md`](roteiro-piloto.md).
+> roteiro do caixa (cadastros, PDV, dia D) é o [`roteiro-piloto.md`](roteiro-piloto.md), e a execução que fecha a
+> Fase 2 na loja piloto (este roteiro mais as NF-e reais, a transferência e o `db:recalcular-saldos`, com o registro
+> do resultado) é o [`checklist-fechamento-fase2.md`](checklist-fechamento-fase2.md).
 
 ---
 

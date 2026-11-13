@@ -1,5 +1,7 @@
 import {
   alterarProdutoSchema,
+  AVISO_TRIBUTACAO_SO_REGISTRO,
+  CAMPOS_ST_RETIDO,
   criarProdutoSchema,
   dec,
   gerarCodigoInterno,
@@ -9,6 +11,7 @@ import {
   motivoTipoProdutoBloqueado,
   precoPeloMarkupTexto,
   resumoCombo,
+  ROTULOS_ST_RETIDO,
   ROTULOS_MODO_PRECO_GRUPO,
   ROTULOS_TIPO_PRODUTO,
   TIPOS_INSUMO_FICHA,
@@ -60,6 +63,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { apiErp } from '../../api/clientes';
+import { useUfs } from '../../api/referencias';
 import { ErroRequisicao } from '../../api/http';
 import {
   useCategorias,
@@ -93,6 +97,7 @@ import { BlocoComplementos, resumoComplementos } from './Complementos';
 import { ModalHistoricoPrecos } from './HistoricoPrecos';
 import { ROTA_PRODUTOS } from './ListaProdutos';
 import {
+  camposStSemCusto,
   decimalParaTela,
   errosParaFormulario,
   novaChave,
@@ -100,6 +105,7 @@ import {
   paraCorpo,
   paraValores,
   produtoVazio,
+  tributacaoUfVazia,
   type PosicaoForm,
   type ValoresProduto,
 } from './valores';
@@ -111,6 +117,13 @@ const reais = (n: number | null | undefined) =>
 const pct = (n: number | null) => (n === null ? '—' : `${decimalParaTela(String(n))}%`);
 
 const TIPOS_COMPONENTE_COMBO = TIPOS_PRODUTO.filter((t) => !TIPOS_PROIBIDOS_NO_COMBO.includes(t));
+
+/**
+ * O erro do ST retido de uma loja (`lojas.N.stX`) abre a Tributação, onde fica a sub-grade (F2-B52), e não o bloco
+ * Lojas; o resto da linha da loja abre o bloco Lojas. `temErro` compara pelo início da chave: estes casam por
+ * expressão (e saem das chaves do bloco Lojas).
+ */
+const ERRO_ST_RETIDO = new RegExp(`^lojas\\.\\d+\\.(${CAMPOS_ST_RETIDO.join('|')})$`);
 
 /** Campos de cada bloco do acordeão: o bloco com erro ganha o marcador e abre sozinho (ERP 3.2). */
 const CAMPOS_BLOCO: Record<string, readonly string[]> = {
@@ -187,6 +200,15 @@ const CAMPOS_BLOCO: Record<string, readonly string[]> = {
     'ipiAliquota',
     'ipiEnquadramento',
     'ibsCbsClassificacao',
+    // F2-B52 (só gravados): a unidade tributável, o Imposto Seletivo, a Tributação por UF e o ST retido por loja.
+    'unidadeTributavelId',
+    'fatorTributavel',
+    'isCst',
+    'isClassificacao',
+    'isAliquotaPct',
+    'isAliquotaEspecifica',
+    'isUnidade',
+    'tributacaoUf',
   ],
 };
 
@@ -267,7 +289,7 @@ export function FormularioProduto() {
     form,
     paraValores: (d) => paraValores(d, lojas),
     paraCorpo: (v) => ({
-      ...paraCorpo(v, { comFornecedores: usaFornecedores }),
+      ...paraCorpo(v, { comFornecedores: usaFornecedores, verCusto }),
       confirmarEanDuplicado: confirmarEan.current,
     }),
     schemaCriar: criarProdutoSchema,
@@ -342,6 +364,8 @@ export function FormularioProduto() {
   };
 
   const erros = form.errors;
+  // O erro do ST retido da loja é da Tributação: não marca nem abre o bloco Lojas, onde o campo não aparece.
+  const errosSemSt = Object.fromEntries(Object.entries(erros).filter(([k]) => !ERRO_ST_RETIDO.test(k)));
   const bloco = (
     valor: string,
     rotulo: string,
@@ -356,7 +380,11 @@ export function FormularioProduto() {
     resumo,
     aberto,
     fixo,
-    comErro: temErro(erros, CAMPOS_BLOCO[valor] ?? []),
+    comErro:
+      valor === 'lojas'
+        ? temErro(errosSemSt, CAMPOS_BLOCO.lojas!)
+        : temErro(erros, CAMPOS_BLOCO[valor] ?? []) ||
+          (valor === 'tributacao' && Object.keys(erros).some((k) => ERRO_ST_RETIDO.test(k))),
   });
   // Resumos dos blocos fechados (ERP 8.2: "Categorias: CERVEJA › LATA").
   const categoriaPrincipal = categorias.data?.find(
@@ -377,6 +405,8 @@ export function FormularioProduto() {
       v.ncm && `NCM ${v.ncm}`,
       v.cfopVendaEstado && `CFOP ${v.cfopVendaEstado}`,
       v.icmsSituacao && `CST/CSOSN ${v.icmsSituacao}`,
+      v.tributacaoUf.length && `${v.tributacaoUf.length} UF(s)`,
+      v.lojas.some((l) => CAMPOS_ST_RETIDO.some((c) => l[c].trim() !== '')) && 'ST retido',
     ]
       .filter(Boolean)
       .join(' · ') || null;
@@ -544,7 +574,12 @@ export function FormularioProduto() {
       <Balanca form={form} />,
       v.balancaTipo !== 'nao_usa' ? `PLU ${v.balancaPlu}` : null,
     ),
-    bloco('tributacao', 'Tributação', <Tributacao form={form} kit={kit} />, resumoTributacao),
+    bloco(
+      'tributacao',
+      'Tributação',
+      <Tributacao form={form} kit={kit} lojasPermitidas={lojas} verCusto={verCusto} />,
+      resumoTributacao,
+    ),
   ];
 
   return (
@@ -1992,7 +2027,22 @@ function Balanca({ form }: { form: Form }) {
   );
 }
 
-function Tributacao({ form, kit }: { form: Form; kit: boolean }) {
+/**
+ * Tributação (ERP 8.2.15). F2-B52 (restrição do dono: nada fiscal até a fase fiscal): o aviso fixo, a unidade
+ * tributável, o Imposto Seletivo, a sub-grade Tributação por UF e a ST retido por loja (só das lojas permitidas, como
+ * o bloco Lojas) são só gravados; nenhum cálculo, nada muda no preço nem na venda.
+ */
+function Tributacao({
+  form,
+  kit,
+  lojasPermitidas,
+  verCusto,
+}: {
+  form: Form;
+  kit: boolean;
+  lojasPermitidas: ReadonlyArray<{ id: string; nome: string }>;
+  verCusto: boolean;
+}) {
   const cfop5 = useCfops('5');
   const cfop6 = useCfops('6');
   const op = (l: Array<{ codigo: string; descricao: string }> | undefined) =>
@@ -2001,6 +2051,9 @@ function Tributacao({ form, kit }: { form: Form; kit: boolean }) {
     Array.from({ length: n }, (_, i) => ({ value: String(i), label: String(i) }));
   return (
     <Stack gap="sm">
+      <Alert color="blue" variant="light" p="xs">
+        {AVISO_TRIBUTACAO_SO_REGISTRO}
+      </Alert>
       <Text size="xs" c="dimmed">
         {kit
           ? 'No combo a tributação não vai para a NFC-e: cada componente sai com a própria tributação.'
@@ -2063,6 +2116,241 @@ function Tributacao({ form, kit }: { form: Form; kit: boolean }) {
           {...form.getInputProps('ibsCbsClassificacao')}
         />
       </SimpleGrid>
+      <UnidadeTributavelEImpostoSeletivo form={form} />
+      <TributacaoPorUf
+        form={form}
+        cfops={op(cfop5.data)}
+        modalidades={{ bc: digitos(4), bcst: digitos(7) }}
+      />
+      <StRetidoPorLoja form={form} lojasPermitidas={lojasPermitidas} verCusto={verCusto} />
     </Stack>
+  );
+}
+
+/** Unidade tributável e fator (MD 3.6.3) e Imposto Seletivo (F2-B52; só gravados). */
+function UnidadeTributavelEImpostoSeletivo({ form }: { form: Form }) {
+  const unidades = useUnidades();
+  return (
+    <>
+      <Title order={5} size="h6">
+        Unidade tributável
+      </Title>
+      <SimpleGrid cols={{ base: 2, sm: 4 }}>
+        <Select
+          label="Unidade tributável"
+          description="Vazio = a unidade do produto"
+          clearable
+          searchable
+          data={(unidades.data ?? []).map((u) => ({ value: u.id, label: u.sigla }))}
+          {...form.getInputProps('unidadeTributavelId')}
+        />
+        <TextInput
+          label="Fator tributável"
+          description="Unidades do produto por unidade tributável"
+          {...form.getInputProps('fatorTributavel')}
+        />
+      </SimpleGrid>
+      <Title order={5} size="h6">
+        Imposto Seletivo (IS)
+      </Title>
+      <SimpleGrid cols={{ base: 2, sm: 4 }}>
+        <TextInput label="IS – situação (CST)" maxLength={3} {...form.getInputProps('isCst')} />
+        <TextInput label="IS – classificação" maxLength={6} {...form.getInputProps('isClassificacao')} />
+        <TextInput label="IS – alíquota %" {...form.getInputProps('isAliquotaPct')} />
+        <TextInput
+          label="IS – alíquota específica"
+          leftSection="R$"
+          {...form.getInputProps('isAliquotaEspecifica')}
+        />
+        <TextInput
+          label="IS – unidade"
+          description="Obrigatória com a alíquota específica"
+          maxLength={6}
+          {...form.getInputProps('isUnidade')}
+        />
+      </SimpleGrid>
+    </>
+  );
+}
+
+/**
+ * Sub-grade Tributação por UF (8.2.15; `produtos_tributacao_uf`; F2-B52): uma linha por UF, vazio = o valor do
+ * produto. A UF gravada não muda (a linha é da UF: trocar = remover e inserir outra).
+ */
+function TributacaoPorUf({
+  form,
+  cfops,
+  modalidades,
+}: {
+  form: Form;
+  cfops: Array<{ value: string; label: string }>;
+  modalidades: { bc: Array<{ value: string; label: string }>; bcst: Array<{ value: string; label: string }> };
+}) {
+  const ufs = useUfs();
+  const v = form.getValues();
+  const usadas = new Set(v.tributacaoUf.map((t) => t.uf));
+  return (
+    <>
+      <Title order={5} size="h6">
+        Tributação por UF
+      </Title>
+      <Text size="xs" c="dimmed">
+        Para lojas em mais de uma UF: o que ficar vazio usa o valor do produto acima.
+      </Text>
+      {v.tributacaoUf.map((t, i) => (
+        <Paper key={t.chave} withBorder p="xs" data-testid={`tributacao-uf-${i}`}>
+          <Group gap="xs" align="flex-start" wrap="wrap">
+            <Select
+              aria-label={`UF da linha ${i + 1}`}
+              label="UF"
+              w={90}
+              searchable
+              allowDeselect={false}
+              data={(ufs.data ?? [])
+                .filter((u) => u.sigla === t.uf || !usadas.has(u.sigla))
+                .map((u) => ({ value: u.sigla, label: u.sigla }))}
+              {...form.getInputProps(`tributacaoUf.${i}.uf`)}
+            />
+            <Select
+              label="CFOP dentro do estado"
+              w={220}
+              searchable
+              clearable
+              data={cfops}
+              {...form.getInputProps(`tributacaoUf.${i}.cfopVendaEstado`)}
+            />
+            <TextInput
+              label="CST/CSOSN"
+              w={100}
+              maxLength={3}
+              {...form.getInputProps(`tributacaoUf.${i}.icmsSituacao`)}
+            />
+            <Select
+              label="Modalidade BC"
+              w={120}
+              clearable
+              data={modalidades.bc}
+              {...form.getInputProps(`tributacaoUf.${i}.icmsModalidadeBc`)}
+            />
+            <TextInput label="Alíquota %" w={100} {...form.getInputProps(`tributacaoUf.${i}.icmsAliquota`)} />
+            <TextInput
+              label="Redução de BC %"
+              w={120}
+              {...form.getInputProps(`tributacaoUf.${i}.icmsReducaoBcPct`)}
+            />
+            <Select
+              label="Modalidade BC ST"
+              w={130}
+              clearable
+              data={modalidades.bcst}
+              {...form.getInputProps(`tributacaoUf.${i}.icmsModalidadeBcst`)}
+            />
+            <TextInput label="MVA ST %" w={100} {...form.getInputProps(`tributacaoUf.${i}.icmsMvaPct`)} />
+            <TextInput
+              label="Alíquota ST %"
+              w={110}
+              {...form.getInputProps(`tributacaoUf.${i}.icmsAliquotaSt`)}
+            />
+            <TextInput label="FCP %" w={90} {...form.getInputProps(`tributacaoUf.${i}.fcpAliquota`)} />
+            <TextInput label="FCP-ST %" w={90} {...form.getInputProps(`tributacaoUf.${i}.fcpStAliquota`)} />
+            <TextInput
+              label="cBenef"
+              w={120}
+              maxLength={10}
+              {...form.getInputProps(`tributacaoUf.${i}.beneficioFiscalCodigo`)}
+            />
+            <ActionIcon
+              mt={24}
+              color="red"
+              variant="subtle"
+              aria-label={`Remover a UF ${t.uf || i + 1}`}
+              onClick={() => form.removeListItem('tributacaoUf', i)}
+            >
+              <IconTrash size={16} />
+            </ActionIcon>
+          </Group>
+        </Paper>
+      ))}
+      {typeof form.errors.tributacaoUf === 'string' && (
+        <Text size="xs" c="red">
+          {form.errors.tributacaoUf}
+        </Text>
+      )}
+      <Group>
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconPlus size={14} />}
+          onClick={() => form.insertListItem('tributacaoUf', tributacaoUfVazia())}
+        >
+          Inserir UF
+        </Button>
+      </Group>
+    </>
+  );
+}
+
+/**
+ * Sub-grade ST retido por loja (ERP 8.2.10; MD 3.6.9; F2-B52): os valores por unidade do grupo de ST retido da NFC-e
+ * (CST 60/CSOSN 500), preenchidos à mão e só gravados, nas lojas permitidas (as mesmas linhas do bloco Lojas). Sem
+ * `produtos.ver_custo`, só os percentuais (D68: os valores em R$ revelam o preço de compra; a API os devolve vazios).
+ */
+function StRetidoPorLoja({
+  form,
+  lojasPermitidas,
+  verCusto,
+}: {
+  form: Form;
+  lojasPermitidas: ReadonlyArray<{ id: string; nome: string }>;
+  verCusto: boolean;
+}) {
+  const v = form.getValues();
+  const campos = verCusto ? CAMPOS_ST_RETIDO : camposStSemCusto;
+  return (
+    <>
+      <Title order={5} size="h6">
+        ST retido por loja
+      </Title>
+      {!lojasPermitidas.length || !v.lojas.length ? (
+        <Text size="sm" c="dimmed">
+          Nenhuma loja ativa permitida.
+        </Text>
+      ) : (
+        <Table.ScrollContainer minWidth={900}>
+          <Table>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Loja</Table.Th>
+                {campos.map((c) => (
+                  <Table.Th key={c}>{ROTULOS_ST_RETIDO[c]}</Table.Th>
+                ))}
+                <Table.Th>Atualizado em</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {v.lojas.map((l, i) => (
+                <Table.Tr key={l.lojaId}>
+                  <Table.Td>{l.nome}</Table.Td>
+                  {campos.map((c) => (
+                    <Table.Td key={c}>
+                      <TextInput
+                        aria-label={`${ROTULOS_ST_RETIDO[c]} ${l.nome}`}
+                        size="xs"
+                        {...form.getInputProps(`lojas.${i}.${c}`)}
+                      />
+                    </Table.Td>
+                  ))}
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">
+                      {l.stAtualizadoEm ? formatarDataHora(l.stAtualizadoEm) : '—'}
+                    </Text>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+    </>
   );
 }

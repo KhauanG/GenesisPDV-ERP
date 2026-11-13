@@ -221,6 +221,31 @@ describe('diferença legível do produto (ERP 16.2; F2-B42)', () => {
     });
   });
 
+  it('os valores em R$ do ST retido da loja são custo (D68): sem produtos.ver_custo, só os percentuais', () => {
+    const comSt = (st: Record<string, string | null>) => ({
+      ...base(),
+      lojas: [{ ...base().lojas[0]!, ...st }],
+    });
+    const antes = comSt({ stAliquotaPct: null, stIcmsSubstitutoUnitario: null, stBcRetidoUnitario: null });
+    const depois = comSt({ stAliquotaPct: '18', stIcmsSubstitutoUnitario: '1.8', stBcRetidoUnitario: '17' });
+    expect(texto(antes, depois)).toBe(
+      'Loja Centro: BC do ST retido (vBCSTRet) — → 17,00, Alíquota ST % (pST) — → 18,00, ' +
+        'ICMS do substituto (vICMSSubstituto) — → 1,80',
+    );
+    const semCusto: EscopoDiferenca = { custo: 'oculto', lojas: null, estoques: null };
+    expect(texto(antes, depois, semCusto)).toBe('Loja Centro: Alíquota ST % (pST) — → 18,00');
+    expect(alteracoesDiferencas(diferencasProduto(antes, depois), nomes, semCusto)).toEqual([
+      { campo: 'Loja Centro › Alíquota ST % (pST)', antes: '—', depois: '18,00' },
+    ]);
+    // Só o valor mudou: nada para quem não vê o custo.
+    const outroValor = comSt({
+      stAliquotaPct: '18',
+      stIcmsSubstitutoUnitario: '2',
+      stBcRetidoUnitario: '17',
+    });
+    expect(texto(depois, outroValor, semCusto)).toBe('');
+  });
+
   it('os trechos de custo do texto gravado (TRECHO_CUSTO_GRAVADO): o filtro "Histórico" de quem não tem produtos.ver_custo', () => {
     // O PostgreSQL aplica a mesma expressão (`regexp_replace(..., 'gi')`) antes do `ilike`.
     const tirar = (t: string) => t.replace(new RegExp(TRECHO_CUSTO_GRAVADO, 'gi'), '');

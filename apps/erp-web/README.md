@@ -494,7 +494,7 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     troca liberada com movimento).
 
 47. **Estoques permitidos no usuário e nos seletores** (Fase 2, F2-B5; README da API › decisão 149; roadmap D45,
-    **padrão até a confirmação do dono**). Os seletores de estoque (Acertos, Saldos, Lojas, Usuários) leem
+    **decidida pelo dono em 05/11/2026, confirmada em bloco**). Os seletores de estoque (Acertos, Saldos, Lojas, Usuários) leem
     `GET /estoques`, que já devolve só os estoques permitidos (Master e `estoques.todos`, todos): nenhuma tela filtra
     por conta própria. No formulário do usuário, o campo passou de "Estoques adicionais permitidos" para **Estoques
     permitidos** (a lista inteira do que o usuário vê e movimenta, inclusive o CD; some para o Master), com a contagem
@@ -1444,13 +1444,67 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     - Testes: `Complementos.test.tsx` (o formulário ⇄ corpo e a cópia; a "Porção" ganhando o grupo "Molhos (0 a 2)"
       com um complemento livre e o `PUT` com a lista; o gravado só inativado e a confirmação do grupo; o máximo menor
       que o mínimo no campo do modal, sem chamar a API; o teto de 50 contando só os ativos).
+80. **Tributação só gravada no bloco Tributação** (Fase 2, F2-B52; ERP 8.2.10, 8.2.15; MD 3.6.3, 3.6.9; restrição do
+    dono: nada fiscal até a fase fiscal; README da API › decisão 195; o bloco em `FormularioProduto.tsx` e o
+    formulário ⇄ corpo em `valores.ts`).
+    - **Aviso fixo** no alto do bloco: "Somente registro. Nenhum cálculo fiscal é feito nesta versão." (o texto vem
+      de `AVISO_TRIBUTACAO_SO_REGISTRO` do shared). Nada é calculado nem sugerido e nada mexe no preço.
+    - **Campos novos**, depois de PIS/COFINS/IPI: a **unidade tributável** (as unidades do cadastro; vazio = a do
+      produto) e o **fator**; o **Imposto Seletivo** (situação, classificação, alíquota %, alíquota específica em R$ e
+      a unidade dela). Na tela, os decimais como os outros (4 casas no máximo, sem zeros à direita).
+    - **Sub-grade "Tributação por UF"**: uma linha por UF ("Inserir UF"; a UF já usada some do select das outras
+      linhas), com CFOP, CST/CSOSN, modalidades, alíquotas, MVA, FCP, FCP-ST e cBenef; vazio = o valor do produto.
+      Remover a linha a exclui ao gravar.
+    - **Sub-grade "ST retido por loja"**: as mesmas lojas do bloco Lojas (só as permitidas e ativas), com os sete
+      valores do grupo de ST retido (o rótulo com a tag do XML, para o contador reconhecer: "ICMS-ST retido
+      (vICMSSTRet)") e o "Atualizado em" (somente leitura). Fica na Tributação, e não no bloco Lojas, para o contador
+      achar tudo num lugar só; o erro de um desses campos marca e abre só a Tributação (o bloco Lojas, onde o campo
+      não aparece, fica sem marcador). **Sem `produtos.ver_custo`**, só os dois percentuais (pST e pFCPSTRet): os cinco
+      valores em R$ revelam o preço de compra (D68; README da API › decisão 195), então nem aparecem nem vão no corpo
+      (`paraCorpo` com `verCusto` falso; ausentes = a API mantém os gravados).
+    - **Corpo**: sempre todos os campos e a lista inteira de UFs (vazio apaga; a API só mantém o gravado quando o
+      campo não vem, o que protege a importação e o ERP de antes desta versão). A loja só com o ST preenchido entra no
+      corpo (cria a linha da loja); o erro que a API devolve em `lojas.N.…` volta para a linha certa da grade (o corpo
+      leva só as lojas com dados). O detalhe da API de antes desta versão (sem os campos) abre como vazio.
+    - **Cópia** (Duplicar): leva os campos fiscais do produto e a Tributação por UF; o ST retido das lojas não (vem das
+      compras da mercadoria do produto de origem, como os lotes).
+    - Testes: `Tributacao.test.tsx` (o formulário ⇄ corpo, a loja só com ST, o erro na linha certa, a cópia, o detalhe
+      antigo; o aviso, a UF do PR e o ST da Loja 1 no `PUT` com o preço intacto; o erro do zod no campo do ST sem
+      chamar a API, com a Tributação fechada antes do Salvar: o marcador e a abertura só nela, não no bloco Lojas; sem
+      `produtos.ver_custo`, só os percentuais na tela e no corpo).
+
+81. **Fechamento da Fase 2 no ERP: as telas entregues, a guarda das variações e as releases R1 e R2 do PDV** (Fase 2,
+    F2-B53; roadmap Fase 2; README da API › decisão 196, do PDV › decisão 87). **Só documentação**: nenhuma tela,
+    rota ou teste muda.
+    - **Menu**: todos os itens marcados "Fase 2" estão prontos (Produtos › Cadastro em massa, Exportação; Estoque ›
+      Recebimento manual de produtos, Recebimento de NFe, Transferência de estoque; Relatórios › Produtos geral,
+      Histórico de produtos, NCMs inválidos, EAN duplicado, Estoque Atual e Movimentação), cada um na decisão do seu
+      bloco (46 a 80). A aba "Pela Sefaz" e a coluna Manifestação do Recebimento de NFe **não existem** e saíram da
+      Fase 2 (restrição do dono; roadmap Fase 3F): a tela mostra sempre o aviso fixo de que a SEFAZ não foi consultada
+      (decisão 59). Configurações › CFOP's (a conversão de CFOP de entrada) também foi para a fase fiscal.
+    - **Guarda das variações** (D43: variações fora da Fase 2; D44: o caixa recusa): o tipo "Com variações" continua
+      fora do select na criação e na cópia (`produtos.variacoes_habilitadas` = Não; decisão 46); a chave do caixa
+      `pdv.recusa_produto_com_variacoes` (padrão Sim) e o aviso dos caixas antigos ao ligar as variações (decisão 69)
+      ficam como estão. O aviso compara com a `VERSAO_PDV_GUARDA_VARIACOES` do shared, que é a **primeira** versão com a
+      guarda (0.11.0, a R1) e não acompanha as releases seguintes (README do PDV › decisões 84 e 85).
+    - **Releases do PDV na Fase 2, do lado do ERP**: a **R1** (PDV 0.11.0, PR-8) trouxe a recusa do produto com
+      variações, o `F4` "Outras lojas" (a chave `pdv.consulta_outras_lojas` em Parâmetros › PDV, decisão 70) e a
+      pesquisa F2 com FTS5; a **R2** (PDV 0.12.0, PR-10) trouxe as imagens do catálogo e as tabelas de complementos no
+      espelho, alimentadas pelo `<UploadArquivo>` (decisão 77), pela foto e galeria do produto e pelos logotipos e
+      imagens (decisão 78) e pelo modal Complementos (decisão 79). Nenhuma das duas exige tela nova no ERP; a versão de
+      cada caixa aparece em Terminais.
+    - **O que ficou para depois** (roadmap): a venda com complementos, variação ou lote escolhido no caixa (Fase 3),
+      as variações no produto (backlog, D43), a base externa de GTIN no "Pesquisar EAN" (backlog, D54), o "Gerar
+      financeiro" do recebimento (Fase 4) e o uso fiscal da tributação gravada (Fase 3F).
+    - **A execução real** (importação, carga do Nuvem3, contagens, NF-e reais, transferência, conferência) é do dono,
+      pelas telas do ERP, no checklist `docs/implantacao/checklist-fechamento-fase2.md`.
 
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`; o `<UploadArquivo>` chegou no
-F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações,
-validade/lotes e tributação por UF (a foto chegou no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
+F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, as variações
+(fora da Fase 2, D43) e o uso fiscal da tributação (a validade/lotes chegou no F2-B17, decisão 57; a foto, no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79; a tributação por UF e o ST retido só gravados, no F2-B52, decisão 80) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
 fornecedores no F2-B13, decisão 55); aba Acessos do usuário (sessões, últimos
 logins); abas Vendas e Financeiro/Total da pessoa; edição de planos e
 progresso em tempo real das migrações no painel; inatividade de sessão configurável por empresa; e2e no CI.

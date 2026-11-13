@@ -2212,6 +2212,10 @@ Regras de ST retido em `produtos_lojas`:
   `fiscal.exige_st_retido_nfce = true`. Sem valores e com a exigência ligada, o item gera `alerta.cadastro` e não é
   vendável na loja até haver uma entrada de NF-e ou o preenchimento manual dos valores no ERP (aba Tributação por
   loja, ERP 8.2.15), registrado em `auditoria`.
+- Fase 2 (F2-B52; README da API › decisão 195): só o preenchimento manual, **só gravado** (nas lojas permitidas ao
+  usuário, auditado; mudar um valor grava `st_atualizado_em` e limpa `st_nota_entrada_id`). A Tributação por UF também
+  é só gravada (uma linha por UF, a excluída sai logicamente), sem as regras de emissão sobre o valor efetivo. O
+  preenchimento automático (NF-e, transferência) e o uso no PDV são da fase fiscal.
 
 #### 3.6.10 `produtos_historico_precos` (L)
 

@@ -736,9 +736,10 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
     `tipo_emissao <> 'nao_fiscal'`, exceto combo (não vai para a NFC-e), serviço e matéria-prima. CFOP dentro do
     estado 5xxx e fora 6xxx (e existentes), 5405 ⇔ CST 60/CSOSN 500, CEST obrigatório com CST/CSOSN de ST (no
     `zod`). No combo, componente ou alternativa sem NCM válido ou com CFOP × CST incoerente aparece em
-    `avisos` do detalhe (não bloqueia, ERP 8.2.17). Ficam para a fase fiscal: tributação por UF
-    (`produtos_tributacao_uf`), "Sugerir pela regra da UF", cBenef × `beneficios_fiscais_uf`, CEST × NCM (a tabela
-    `cests` está vazia, decisão 41) e o ST retido por loja manual.
+    `avisos` do detalhe (não bloqueia, ERP 8.2.17). Ficam para a fase fiscal: as regras de emissão na tributação por
+    UF (`produtos_tributacao_uf`; desde o F2-B52 ela e o ST retido por loja manual são só gravados, decisão 195),
+    "Sugerir pela regra da UF", cBenef × `beneficios_fiscais_uf` e CEST × NCM (a tabela `cests` está vazia, decisão
+    41).
 68. **Permissões de custo e preço**: sem `produtos.ver_custo` custo, custo médio e markup voltam `null` (listagem,
     detalhe, busca, saldos), o custo enviado é ignorado e ordenar por custo é 403. Com `geral.altera_preco_produto_erp
     = false`, alterar preço do produto, da loja, das faixas ou o preço adicional dos complementos (F2-B51, decisão
@@ -2659,7 +2660,8 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      ordens de efetivação), o estorno líquido por um usuário sem o negativo e a Entrada anulada por um "Definir" com
      a contagem 4 min à frente. Sem espelho no PDV (a 0018 é só da nuvem).
 149. **Estoques permitidos de verdade, com a virada sem perda de acesso** (Fase 2, F2-B5; ERP 2.1, 11.2; MD 3.3.5;
-     F2-Q4 = roadmap D45, **padrão até a confirmação do dono**; `src/estoques/permitidos.ts`, migração 0019).
+     F2-Q4 = roadmap D45, **decidida pelo dono em 05/11/2026, confirmada em bloco: manter como antes da virada**;
+     `src/estoques/permitidos.ts`, migração 0019).
      **Regra única**: o Master vê e movimenta todos os estoques; quem tem a permissão nova **`estoques.todos`**
      também (catálogo do shared, "Locais de estoque: Ver e movimentar todos"; fica em `SOMENTE_MASTER` dos perfis
      padrão, então só o Master a tem no seed, e a empresa pode concedê-la a um perfil ou usuário); os demais veem
@@ -6008,6 +6010,134 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        desligam a chave antes.
      - **Fora** (Fase 3): a escolha dos complementos na venda do PDV (o diálogo, o preço somado, a baixa do vinculado e
        o `itens_venda_complementos` preenchido), o cardápio e o e-commerce.
+195. **Tributação só gravada: Tributação por UF, ST retido por loja, unidade tributável e Imposto Seletivo** (Fase 2,
+     F2-B52, o último bloco funcional; restrição do dono: nada fiscal até a fase fiscal; ERP 8.2.10, 8.2.15; MD 3.6.3,
+     3.6.9; decisões 47, 67, 88 e 188; `@genesis/shared` `produtos.ts` (`tributacaoUfSchema`, `CAMPOS_ST_RETIDO`,
+     `ROTULOS_ST_RETIDO`, `AVISO_TRIBUTACAO_SO_REGISTRO`, `MAXIMO_TRIBUTACAO_UF` = 27, os campos novos de
+     `camposProduto` e `produtoLojaSchema`, `ProdutoLojaDetalhe`); `src/produtos/gravacao.ts` (`gravarTributacaoUf`, o
+     ST em `gravarFilhas`, as FKs e o `ck_produtos_is` em `validarNoBanco`), `consultas.ts` (`tributacaoUfDoProduto`, o
+     ST em `precosPorLojaDoProduto`, `sqlVersaoAgregada`), `produtos.controller.ts` (gravação, exclusão,
+     `entradaDoDetalhe`, `filhasAuditoria`) e `src/auditoria/diferenca-produto.ts`; **sem migração** (as colunas e a
+     tabela já existem desde a Fase 1A), protocolo, `Esquema.g.cs` e PDV sem mudança).
+     - **Só guarda**: os campos fiscais que existiam no schema e não estavam no zod nem na tela passam a ser gravados
+       pelo `POST`/`PUT /produtos`, com as permissões do formulário (`produtos.criar`/`produtos.editar`). **Nenhum
+       cálculo**, nenhuma validação fiscal nova, nada de SEFAZ ou emissão, e **nenhum efeito em preço nem em venda**: o
+       preço não muda, o histórico de preços não ganha linha, e o PDV continua só guardando as linhas que já recebia
+       (o espelho de `produtos_tributacao_uf` e as colunas do ST em `produtos_lojas` existem no SQLite e nada as lê).
+       O ERP mostra o aviso fixo "Somente registro. Nenhum cálculo fiscal é feito nesta versão." no bloco.
+     - **Campos do produto** (`unidadeTributavelId`, `fatorTributavel`, `isCst`, `isClassificacao`, `isAliquotaPct`,
+       `isAliquotaEspecifica`, `isUnidade`): nas casas das colunas (fator 3, percentual e alíquota específica 4) e com os
+       formatos delas (CST com 3 dígitos, cClassTrib com 6, unidade até 6 caracteres). **Ausentes = mantêm o gravado**
+       (o helper `mantido` do zod: `undefined` não entra no `UPDATE`, vazio ou `null` apaga): a importação de planilha,
+       o cadastro em massa e o "Definir NCM" passam pelo `entradaDoDetalhe` com os valores do detalhe, e o ERP de antes
+       desta versão não os manda. Os campos que já estavam no formulário continuam como eram.
+     - **Tributação por UF** (`tributacaoUf`, a sub-grade de `produtos_tributacao_uf`): uma linha por UF (zod), a lista
+       inteira quando vem e **ausente = mantém as gravadas** (`entradaDoDetalhe` a tira). A linha casa pela UF (a chave
+       de `uq_produtos_tributacao_uf`): a que saiu é excluída logicamente (o tombstone desce ao caixa das lojas da UF),
+       a nova entra e a que ficou só é regravada quando algum valor mudou (sem versão nova à toa, os percentuais
+       comparados pelo valor). Valem os formatos e as faixas das colunas, os mesmos do produto (CFOP com 4 dígitos, CST
+       ou CSOSN, modalidades 0–3 e 0–6, percentuais 0–100, MVA 0–999, cBenef até 10) e as FKs como 422 no campo ("UF
+       inexistente", "CFOP inexistente"); as regras de emissão sobre o valor efetivo (5405 × CST 60, CEST com ST, cBenef
+       × `beneficios_fiscais_uf`, MD 3.6.9) e o "Sugerir pela regra da UF" ficam para a fase fiscal: a linha só é
+       guardada como o contador a digitou.
+     - **ST retido por loja** (os sete campos de `produtos_lojas` na linha da loja: vBCSTRet, pST, vICMSSubstituto,
+       vICMSSTRet, vBCFCPSTRet, pFCPSTRet, vFCPSTRet, por unidade base, 4 casas, os CHECKs de `ck_produtos_lojas_st` no
+       zod): o preenchimento manual da MD 3.6.9. **Só nas lojas permitidas ao usuário**: a linha de loja fora das
+       permitidas é o 403 de sempre (decisão 88) e a gravação mantém a dela. Cada campo **ausente mantém** o gravado (a
+       importação, o cadastro em massa e o ERP antigo mandam a linha da loja sem eles). Quando algum valor muda,
+       `st_atualizado_em` marca a gravação e `st_nota_entrada_id` sai (os valores já não são os da NF-e); repetir os de
+       agora não mexe na data. O detalhe traz os sete e o `stAtualizadoEm` (somente leitura). O preenchimento pela NF-e
+       e pela transferência (`fiscal.st_retido_criterio`) e o uso na NFC-e são da fase fiscal.
+     - **Os valores em R$ do ST retido são dado de custo** (D68, decisão do dono de 13/11/2026, opção A; revisão do
+       F2-B52): o vICMSSubstituto é o ICMS da operação própria do fornecedor (base própria × alíquota própria), e a base
+       própria é, na prática, o preço de compra da loja (1,80 ÷ 18% = 10,00); o vBCSTRet ÷ (1 + MVA), com o MVA da
+       Tributação por UF do mesmo detalhe, também o dá, e o vBCFCPSTRet, o vICMSSTRet e o vFCPSTRet o dão com as
+       alíquotas. Pelo mesmo critério do markup do item (ERP 9.x, "revelaria a base") e da ordenação por custo, os
+       cinco valores (`CAMPOS_ST_RETIDO_CUSTO` no shared: vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet,
+       vFCPSTRet) só existem para quem tem `produtos.ver_custo`: sem ela, `precosPorLojaDoProduto`/`detalheProduto`
+       os devolvem `null`, `gravarFilhas` **ignora** os do corpo (o gravado fica, como o `precoCusto`, para que quem não
+       vê não apague sem saber) e a auditoria os trata como custo (`custo: true` no catálogo da diferença e
+       `CUSTO_ST_RETIDO` no `redigirParaVisao`, em camelCase e snake_case): o texto gravado já os resume em "Dados de
+       loja alterados", e o histórico e o "ver diferença completa" de quem consulta sem a permissão não os trazem. Os
+       percentuais (pST, pFCPSTRet) seguem livres. O ERP sem a permissão mostra só os percentuais na sub-grade e não
+       manda os valores (ausentes = mantêm). O pull do PDV não muda (o caixa da loja recebe a linha inteira, como
+       recebe o custo).
+     - **Unidade tributável e Imposto Seletivo na API**: a unidade existe (e é ativa quando diferente da gravada, como a
+       unidade do produto) e o `ck_produtos_is` (a alíquota específica exige a unidade) é conferido sobre o valor que
+       fica (o campo ausente vale o gravado), como 422 no campo, em vez do 422 genérico do 23503/23514.
+     - **Versão e auditoria**: `produtos_tributacao_uf` entra na versão agregada do cadastro (decisão 47: quem abriu
+       antes da mudança recebe o 409; as linhas do ST já estavam, em `produtos_lojas`); a exclusão do produto exclui as
+       UFs logicamente. O detalhe traz `tributacaoUf` e os campos novos, e a auditoria do produto leva a lista e as
+       lojas relidas do banco no `depois`; o texto legível (decisão 188) ganha a filha "Tributação da UF adicionada PR
+       (CFOP dentro do estado 5405, ICMS – situação 60, …)" / "Tributação da UF PR: ICMS – alíquota % 19,50 → 18,00" e
+       os campos do ST na linha da loja (com a tag do XML no rótulo: "Loja 1: ICMS-ST retido (vICMSSTRet) — → 0,7373"),
+       que no texto gravado viram "Dados de loja alterados" e no histórico de quem consulta aparecem só nas lojas
+       permitidas, como o preço da loja. O `stAtualizadoEm` não é mudança.
+     - Testes: `produtos.spec.ts` do shared (o zod: casas, ausente × vazio, CHECKs, UF repetida, nenhuma regra fiscal
+       nova) e `produto-tributacao.test.ts` (o critério de pronto pelo `PUT` do contador restrito à Loja 1, com o preço
+       e o histórico de preços intactos, o pull HTTP do `catalogo` do caixa da Loja 1 com a UF e o ST, e a auditoria
+       gravada e a do relatório; a linha igual sem versão nova, também quando outro usuário (o admin) salva o mesmo
+       corpo (o `atualizado_por_id` da linha da UF continua o do contador); os valores do ST sem `produtos.ver_custo`
+       (nulos no detalhe, ignorados na gravação, fora do histórico; D68); o ERP antigo e o "Definir NCM" mantendo
+       tudo; o 409; o 403 da loja de fora com o ST dela preservado; as FKs e os CHECKs como 422; o tombstone da UF
+       tirada; a exclusão do produto). `mascarar.spec.ts` e `diferenca-produto.spec.ts`: os valores do ST como custo.
+
+196. **Fechamento da Fase 2: onde está cada decisão, os padrões aplicados sem pergunta e o que ficou para depois**
+     (Fase 2, F2-B53, o último bloco do plano; roadmap Fase 2 e §16; `docs/planos/decisoes-do-dono.md`;
+     `docs/implantacao/checklist-fechamento-fase2.md`). **Só documentação**: nenhum código de produção, migração,
+     protocolo, `Esquema.g.cs` nem versão do PDV muda.
+     - **Decisão 76 conferida**: o plano a dava como desatualizada (dizia "Fase 2" para a compensação). Ela já diz que a
+       compensação dos eventos tardios existe desde a 1C (T23; decisão 133) e que desde o F2-B4 é do motor (decisão
+       148); fica como está.
+     - **As decisões técnicas da Fase 2 que o plano pedia** já foram registradas bloco a bloco: a ordem de lançamento
+       `seq_lancamento` (decisão 146), o `db:recalcular-saldos` (147), a regra de data dos documentos do ERP com o
+       `retroativoPermitido` (148), os estoques permitidos e a virada sem perda de acesso (149), o FEFO dividindo o
+       movimento com o `saldos_lote` (151), a perda na transferência como retorno ao CD mais o acerto de Saída
+       `perda_transferencia` (172), a exportação em streaming (177) e "sem particionamento na Fase 2", com os gatilhos
+       para particionar (176).
+     - **Padrões aplicados sem pergunta** (plano da Fase 2; o dono pode mudar depois) e a situação de cada um:
+
+       | Padrão | Onde | Situação |
+       |---|---|---|
+       | Estorno de recebimento ou NF-e que deixa saldo negativo: bloqueado, salvo Master ou `estoque.permite_negativo_erp` | decisões 160, 165 e 169 | **D56 decidida pelo dono (05/11/2026), com o aviso.** Confirmada no código no fechamento: o núcleo de entrada (`conferirNegativosEstorno` em `entradas/entrada.ts`) confere o efeito líquido em cada linha de saldo e em cada lote; sem a permissão, 422; com ela, 422 com `detalhes.saldosNegativos` até o `confirmarNegativo` trazer a mesma lista, gravada na auditoria; o recebimento manual e a NF-e usam a mesma regra (`recebimento-movimentar.test.ts`, `notas-entrada-movimentar.test.ts`) |
+       | Data dos documentos do ERP: `data_movimento` = o lançamento (`now()`); só o "Definir" (na `data_contagem`) e o `AJUSTE_IMPORTACAO` (na hora da contagem) lançam no passado, pelo `retroativoPermitido` | decisão 148 | padrão até a confirmação do dono |
+       | Tipo de Estoque com o desenho atual (vendável, padrão, 5 tipos de sistema) | decisão 152 | D55 decidida pelo dono (05/11/2026) |
+       | Tipos de produto: os 8 valores do enum (ERP 23.2 questão 18) | decisões 145 e 194 | padrão até a confirmação do dono |
+       | Transferência: `tipo_estoque_id` no cabeçalho, a "Divergência a tratar" separada do "Em trânsito" (na origem) e o alerta da parada em `estoque.transferencia_alerta_dias = 3` | decisões 170 e 174 | D62 decidida pelo dono (06/11/2026) |
+       | Impressão pelo navegador: romaneio, folha de contagem, espelho do recebimento e ficha da marca | decisões 175, 154 e 190; README do ERP › 56 | padrão até a confirmação do dono |
+       | Exportação grande em streaming (`.xlsx`, com o `.csv` como alternativa) | decisão 177 | padrão até a confirmação do dono |
+       | `geral.ean_duplicado` volta de "avisar" para "bloquear" quando o relatório de EAN duplicado zerar | decisão 184 | padrão; a fazer pelo dono quando zerar (passo 1 do checklist) |
+       | `geral.produto_usa_fornecedores`: o padrão do catálogo segue `false`, e na Ice Beer é ligada | decisões 158 e 169 | padrão; o dono liga na produção (passo 0 do checklist) |
+       | `produtos_lotes.estoque_id` imutável depois de gravado | decisão 162 | D57 decidida pelo dono (05/11/2026) |
+
+     - **As perguntas F2-Q1 a F2-Q14** estão todas no roadmap §16 (D43 a D54, a F2-Q3 = D6 e a F2-Q14 = D66), com o
+       quadro do fechamento no fim da seção. Respondidas ou confirmadas pelo dono: D43, D44, D6, D45, D46, D47, D48, D49,
+       D50, D51 e D52 (a D45 deixou de ser "padrão" no fechamento: o dono a confirmou em bloco em 05/11/2026, decisão
+       149). **Vale a recomendação, sem resposta explícita do dono:** D53 (F4 "Outras lojas", decisão 182), D54 (sem
+       base externa de GTIN, decisão 185) e D66 (o mapeamento provisório do Nuvem3, decisão 186). Respondida pelo
+       dono depois do fechamento: D68 (A), o ST retido em R$ como custo (decisão 195). A **D11** (certificado) deixa de bloquear
+       a Fase 2.
+     - **O que saiu da Fase 2 e para onde foi** (roadmap, Fase 2 › Objetivo e Fase 3F):
+       - a entrada de NF-e **pela SEFAZ** (Distribuição DF-e, NSU, manifestação, a consulta da situação da nota) e o
+         **certificado A1** para a consulta: Fase 3F (D11). Na Fase 2, `notas_entrada.origem` é só `upload`, o
+         `dfe_documento_id` fica sem FK e a permissão `notas_entrada.manifestar` fica sem uso (decisão 163);
+       - a **conversão de CFOP** de entrada: 3F ou 4 (`itens_nota_entrada.cfop_entrada` nulo e reservado; decisão 163);
+       - o uso fiscal dos impostos da nota (`estoque.custo_abate_creditos`, o ST retido preenchido pela NF-e e pela
+         transferência): fase fiscal (decisão 195);
+       - a geração de `TROCA_PDV`, `ESTORNO_TROCA_PDV`, `BAIXA_INTERNA`, `VASILHAME_EMPRESTADO`, `VENDA_ERP`,
+         `CANC_VENDA_ERP`, `DEVOLUCAO_ERP` e `ESTORNO_DEVOLUCAO_ERP`: Fase 3; `VENDA_INTEGRACAO`,
+         `CANC_VENDA_INTEGRACAO` e `AJUSTE_API` (a origem de acerto `api`, sem quem a use): Fase 7. Conferido no código:
+         nenhum deles tem gerador, e os demais tipos do seed têm;
+       - a venda com complemento, variação ou lote escolhido no caixa: Fase 3 (PDV-2); o "Gerar financeiro" do
+         recebimento: Fase 4; a NF-e de transferência e a de devolução ao fornecedor: Fase 6 (D6);
+       - as variações (F2-B48 a F2-B50, D43) e a base externa de GTIN (F2-B47, D54): backlog.
+     - **A execução real com o dono não é deste bloco**: a importação completa, a carga do Nuvem3 com a hora, as
+       contagens por setor, as primeiras NF-e reais com o vínculo reaproveitado, a primeira transferência CD → loja, a
+       conferência com a tolerância da D47 e o `db:recalcular-saldos` em produção estão no checklist
+       `docs/implantacao/checklist-fechamento-fase2.md`, com o registro do resultado sem dado real (D60). Até o dono
+       registrar a execução, a **Definição de pronto da Fase 2 fica aberta** no roadmap, com o teste automático que já
+       prova cada item citado. Também ficam com o dono: a ida e volta com a planilha real (F2-B40), a lista oficial do
+       CEST (F2-B41) e a auditoria completa de segurança antes das outras lojas (D64).
 
 ### Operação – tarefas em segundo plano (API)
 
