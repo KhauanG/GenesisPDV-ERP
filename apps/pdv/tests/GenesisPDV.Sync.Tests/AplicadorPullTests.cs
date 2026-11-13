@@ -430,6 +430,112 @@ public sealed class AplicadorPullTests
     }
 
     [Fact]
+    public async Task Porcao_com_o_grupo_Molhos_de_0_a_2_cadastrada_no_ERP_desce_ao_SQLite_e_o_caixa_vende_sem_complementos()
+    {
+        // Critério de pronto do F2-B51 (ERP 8.2.16; MD 3.6.8): a página como a API devolve depois do "Salvar" do produto
+        // "Porção" com o grupo "Molhos (0 a 2)" — o produto, o grupo e as duas opções (uma livre, uma vinculada com a
+        // baixa), todas as colunas, autoria inclusive (o teste de integração `produto-complementos.test.ts` da API confere
+        // o mesmo formato pelo pull HTTP). O PDV 0.12.0 grava tudo nos espelhos; a venda continua sem complementos
+        // (Fase 3): o produto resolve pelo código e não pede variação nem complemento.
+        using var amb = await AmbienteSync.CriarAsync();
+        const string porcao = "01a18790-0000-7000-8000-000000000060";
+        const string cheddar = "01a18790-0000-7000-8000-000000000031";
+        const string usuario = "01a18790-0000-7000-8000-0000000000e1";
+        var grupo = Guid.CreateVersion7().ToString("D");
+        var barbecue = Guid.CreateVersion7().ToString("D");
+        var comCheddar = Guid.CreateVersion7().ToString("D");
+        JsonObject Autoria(JsonObject linha, string? excluido = null)
+        {
+            linha["criado_em"] = "2026-11-12T23:00:00.000Z";
+            linha["atualizado_em"] = "2026-11-12T23:00:00.000Z";
+            linha["excluido_em"] = excluido;
+            linha["criado_por_id"] = usuario;
+            linha["atualizado_por_id"] = usuario;
+            return linha;
+        }
+        var produto = ProdutoLinha("PORÇÃO DE BATATA FRITA", "29.9000");
+        produto["id"] = porcao;
+        produto["codigo"] = 1060;
+        produto["tipo"] = "com_complementos";
+        JsonObject Opcao(string id, string? produtoId, string? descricao, string preco, bool baixa, string qtd, int ordem, bool ativo = true, string? excluido = null) =>
+            Autoria(new JsonObject
+            {
+                ["id"] = id,
+                ["grupo_id"] = grupo,
+                ["produto_id"] = produtoId,
+                ["descricao"] = descricao,
+                ["preco_adicional"] = preco,
+                ["baixa_estoque"] = baixa,
+                ["quantidade_baixa"] = qtd,
+                ["ordem"] = ordem,
+                ["ativo"] = ativo,
+            }, excluido);
+        JsonObject Grupo(string? excluido = null) => Autoria(new JsonObject
+        {
+            ["id"] = grupo,
+            ["produto_id"] = porcao,
+            ["nome"] = "Molhos",
+            ["minimo"] = 0,
+            ["maximo"] = 2,
+            ["obrigatorio"] = false,
+            ["ordem"] = 1,
+        }, excluido);
+
+        var r = await amb.Aplicador.AplicarAsync(Pagina(
+            "catalogo", 30,
+            ("produtos", 20, produto),
+            ("produtos_grupos_complementos", 21, Grupo()),
+            ("produtos_complementos", 22, Opcao(barbecue, null, "Barbecue", "2.0000", false, "1.000", 1)),
+            ("produtos_complementos", 23, Opcao(comCheddar, cheddar, null, "3.5000", true, "0.050", 2))), ct: Ct);
+        Assert.Equal((4, 0), (r.Gravadas, r.Ignoradas));
+        Assert.Equal(30L, await CursorAsync(amb, "catalogo"));
+
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            var g = await db.Set<ProdutoGrupoComplementosRegistro>().SingleAsync(Ct);
+            Assert.Equal((Guid.Parse(porcao), "Molhos", (short)0, (short)2, false, 1), (g.ProdutoId, g.Nome, g.Minimo, g.Maximo, g.Obrigatorio, g.Ordem));
+            var opcoes = await db.Set<ProdutoComplementoRegistro>().OrderBy(o => o.Ordem).ToListAsync(Ct);
+            Assert.Equal(
+                [("Barbecue", (Guid?)null, 2.0m, false, 1m, true), (null, Guid.Parse(cheddar), 3.5m, true, 0.05m, true)],
+                opcoes.Select(o => (o.Descricao, o.ProdutoId, o.PrecoAdicional, o.BaixaEstoque, o.QuantidadeBaixa, o.Ativo)));
+            Assert.All(opcoes, o => Assert.Equal(Guid.Parse(grupo), o.GrupoId));
+        }
+
+        // O caixa continua vendendo o produto como antes (sem complementos até a Fase 3).
+        var resolvido = Assert.Single(await new CatalogoLocal(amb.Fabrica).ResolverAsync("1060", Ct));
+        Assert.Equal(Guid.Parse(porcao), resolvido.Produto.Id);
+        Assert.False(resolvido.ExigeVariacao);
+
+        // Tirar o Barbecue só o inativa (um "Salvar"): só a opção desce, sem tombstone, e o grupo fica vivo.
+        var inativado = await amb.Aplicador.AplicarAsync(Pagina(
+            "catalogo", 40,
+            ("produtos_complementos", 31, Opcao(barbecue, null, "Barbecue", "2.0000", false, "1.000", 1, ativo: false))), ct: Ct);
+        Assert.Equal((1, 0), (inativado.Gravadas, inativado.Ignoradas));
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            Assert.Null((await db.Set<ProdutoGrupoComplementosRegistro>().SingleAsync(Ct)).ExcluidoEm);
+            var opcoes = await db.Set<ProdutoComplementoRegistro>().OrderBy(o => o.Ordem).ToListAsync(Ct);
+            Assert.Equal([(false, false), (true, false)], opcoes.Select(o => (o.Ativo, o.ExcluidoEm is not null)));
+        }
+
+        // Excluir o grupo (outro "Salvar"): como a API grava, o tombstone vai no grupo e em todas as opções dele, a que
+        // já estava inativa inclusive (`gravarComplementos` marca `excluido_em` em todas as não excluídas do grupo).
+        var excluido = await amb.Aplicador.AplicarAsync(Pagina(
+            "catalogo", 50,
+            ("produtos_complementos", 41, Opcao(barbecue, null, "Barbecue", "2.0000", false, "1.000", 1, ativo: false, excluido: "2026-11-12T23:10:00.000Z")),
+            ("produtos_complementos", 42, Opcao(comCheddar, cheddar, null, "3.5000", true, "0.050", 2, ativo: false, excluido: "2026-11-12T23:10:00.000Z")),
+            ("produtos_grupos_complementos", 43, Grupo("2026-11-12T23:10:00.000Z"))), ct: Ct);
+        Assert.Equal((3, 0), (excluido.Gravadas, excluido.Ignoradas));
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            Assert.NotNull((await db.Set<ProdutoGrupoComplementosRegistro>().SingleAsync(Ct)).ExcluidoEm);
+            var opcoes = await db.Set<ProdutoComplementoRegistro>().OrderBy(o => o.Ordem).ToListAsync(Ct);
+            Assert.Equal([(false, true), (false, true)], opcoes.Select(o => (o.Ativo, o.ExcluidoEm is not null)));
+        }
+        Assert.Equal(50L, await CursorAsync(amb, "catalogo"));
+    }
+
+    [Fact]
     public async Task Lotes_e_saldo_por_lote_descidos_sao_gravados_e_a_venda_dividida_em_FEFO_na_nuvem_atualiza_cada_lote()
     {
         // Fase 2 (F2-B6): o motor da nuvem passa a gravar `saldos_lote` (a venda do PDV-1, sem lote, é dividida em FEFO

@@ -318,6 +318,19 @@ describe('EAN duplicado (geral.ean_duplicado)', () => {
 describe('tipos sem suporte (F2-B1; D43)', () => {
   const tipo = async (id: string, t: string) =>
     consultar(emp.nomeBanco, 'update produtos set tipo = $2 where id = $1', [id, t]);
+  // A chave de complementos nasce ligada desde o F2-B51: aqui ela é desligada, para conferir a trava nos dois tipos.
+  const chaveComplementos = (valor: boolean | null) =>
+    amb
+      .http()
+      .put('/api/configuracoes')
+      .set(bearer(admin))
+      .send({ valores: { 'produtos.complementos_habilitados': valor } });
+  beforeAll(async () => {
+    expect((await chaveComplementos(false)).status).toBe(200);
+  });
+  afterAll(async () => {
+    await chaveComplementos(null);
+  });
   const semSuporte = async () =>
     (
       await amb
@@ -441,7 +454,7 @@ describe('tipos sem suporte (F2-B1; D43)', () => {
     const r = await criar({ nome: 'DRINK COM COMPLEMENTOS', tipo: 'com_complementos' });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect((await criar({ nome: 'AINDA TRAVADO', tipo: 'com_variacoes' })).status).toBe(422);
-    expect((await config(null)).status).toBe(200);
+    expect((await config(false)).status).toBe(200);
     expect((await criar({ nome: 'DE NOVO TRAVADO', tipo: 'com_complementos' })).status).toBe(422);
   });
 });

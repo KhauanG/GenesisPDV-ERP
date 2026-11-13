@@ -741,8 +741,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
     `cests` está vazia, decisão 41) e o ST retido por loja manual.
 68. **Permissões de custo e preço**: sem `produtos.ver_custo` custo, custo médio e markup voltam `null` (listagem,
     detalhe, busca, saldos), o custo enviado é ignorado e ordenar por custo é 403. Com `geral.altera_preco_produto_erp
-    = false`, alterar preço do produto, da loja ou das faixas exige `produtos.alterar_preco` (403); na criação o preço é
-    livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
+    = false`, alterar preço do produto, da loja, das faixas ou o preço adicional dos complementos (F2-B51, decisão
+    194) exige `produtos.alterar_preco` (403); na criação o preço é livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
 69. **Troca de tipo com movimento** (ERP 8.2.1): só entre Simples, Matéria-prima e Serviço, e Serviço só sem saldo.
     **Exclusão** (ERP 8.2 "Regras"): bloqueada com saldo ≠ 0 ou se o produto é padrão/alternativa ativa de combo ou
     insumo de ficha técnica de produto não excluído; exclui logicamente as filhas junto.
@@ -2488,7 +2488,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      `motivoTipoProdutoBloqueado` em `@genesis/shared` `produtos.ts`; `produtos/gravacao.ts` › `tiposHabilitados` e
      `validarNoBanco`). O ERP deixava escolher "Com variações" sem grade nenhuma, e o caixa resolve o EAN da variação
      para o pai e vende com o preço e o saldo dele. Duas chaves novas no catálogo, grupo `produtos` (entrou em
-     `GRUPOS_CONFIGURACAO`), `produtos.variacoes_habilitadas` e `produtos.complementos_habilitados`, padrão `false`,
+     `GRUPOS_CONFIGURACAO`), `produtos.variacoes_habilitadas` e `produtos.complementos_habilitados`, padrão `false` (a de complementos nasce ligada desde o F2-B51, decisão 194),
      só na empresa e sem descer ao PDV (não há seed: o catálogo só grava o que difere do padrão); quem as liga são os
      blocos da grade (F2-B49) e do modal (F2-B51), e até lá aparecem em Configurações › Geral › Produtos marcadas como
      "módulo futuro". Com a chave desligada, **escolher** o tipo é recusado: o `POST /produtos` com o tipo e o `PUT` que
@@ -5796,7 +5796,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        de ordenação), `ix_<tabela>_versao` e as FKs de autoria, como as demais filhas; `TABELAS_COM_AUTORIA` e o
        `Esquema.g.cs` (espelhos novos no PDV 0.12.0, decisão 85 do README do PDV) acompanham. O PDV anterior descarta as
        tabelas que não conhece sem travar o cursor (SYNC 6.10). Até o F2-B51 elas ficam vazias e
-       `produtos.complementos_habilitados` continua desligada.
+       `produtos.complementos_habilitados` continua desligada (ligada por padrão desde o F2-B51, decisão 194).
      - **Exclusão física recusada** (`fn_exclusao_fisica_proibida`, `before delete` por linha e `before truncate` por
        comando, nas duas): o erro `P0001 EXCLUSAO_FISICA_PROIBIDA`. Só a exclusão lógica (`excluido_em`, que desce como
        tombstone) e o `ativo`: o caixa offline pode ter na venda o id de uma opção, e a nuvem continua conhecendo esse
@@ -5936,6 +5936,78 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      - **Fora**: a atualização automática (agendada) e o botão no painel da plataforma (o dono roda o comando quando
        quiser, ver `infra/producao/README.md` › Tabela NCM); a lista oficial do CEST (pendência da decisão 187: sem
        fonte oficial em formato de dados, segue o arquivo versionado); IBPT e qualquer uso fiscal.
+
+194. **Complementos no cadastro do produto e a liberação do tipo "Com complementos"** (Fase 2, F2-B51; F2-Q1 = roadmap
+     D43, decidida pelo dono: complementos sim; ERP 8.2.16; MD 3.6.8; decisões 145 e 191; `@genesis/shared` `produtos.ts`
+     (`grupoComplementosSchema`, `complementoSchema`, `TIPOS_COMPLEMENTO_VINCULADO`, `rotuloGrupoComplementos`, os
+     tetos `MAXIMO_GRUPOS_COMPLEMENTOS` = 20, `MAXIMO_COMPLEMENTOS_GRUPO` = 50 ativos e
+     `MAXIMO_LINHAS_COMPLEMENTOS_GRUPO` = 300 linhas), `configuracoes.ts`;
+     `src/produtos/gravacao.ts` (`gravarComplementos`, as regras de tipo em `validarNoBanco`), `consultas.ts`
+     (`complementosDoProduto`, `complementoDe`, `sqlVersaoAgregada`), `produtos.controller.ts` (gravação, exclusão,
+     `entradaDoDetalhe`) e `src/auditoria/diferenca-produto.ts`; **sem migração** (as tabelas são da 0028), protocolo,
+     `Esquema.g.cs` e PDV sem mudança).
+     - **A liberação**: `produtos.complementos_habilitados` passa a nascer **ligada** (padrão `true` no catálogo). Como
+       o catálogo só grava o que difere do padrão (decisão 145), toda empresa que nunca mexeu na chave passa a poder
+       criar (e trocar para) "Com complementos" no formulário, na importação e no cadastro em massa; quem gravar "Não"
+       em Configurações › Geral › Produtos volta à trava do F2-B1 (o legado continua editável). O que a chave libera é
+       só **escolher o tipo**: o modal vale para qualquer produto do tipo, inclusive o legado do Nuvem3. Nada desce ao
+       PDV: o caixa continua vendendo o produto sem complementos (PDV 10.2) até a Fase 3, mas já recebe os grupos e as
+       opções no `catalogo` (PDV 0.12.0, decisão 85 do README do PDV; o 0.11.0 os descarta sem travar o cursor).
+     - **Gravação junto do produto** (`gruposComplementos` no `POST`/`PUT /produtos`, as permissões do formulário:
+       `produtos.criar`/`produtos.editar`). **Ausente = mantém os gravados** (a planilha, o cadastro em massa e o ERP
+       antigo não conhecem a lista; `entradaDoDetalhe` a tira); presente = a lista inteira. O grupo casa pelo `id` entre
+       os do próprio produto e o complemento pelo `id` dentro do mesmo grupo (o id de outro produto ou de outro grupo
+       vale como linha nova). **Nada se apaga** (a 0028 recusa o DELETE): o grupo que não veio é **excluído
+       logicamente** com os complementos (`excluido_em` e `ativo = false`, tombstone ao caixa), e o complemento que não
+       veio no grupo que ficou é só **inativado** (`ativo = false`; continua no detalhe e pode ser reativado). A linha
+       igual à gravada não é regravada (a versão não sobe nem desce de novo ao caixa). A ordem é a posição na lista.
+     - **Regras** (422 por campo). No zod, as dos CHECKs (`minimo ≥ 0`, `maximo ≥ minimo`, obrigatório ⇒ mínimo ≥ 1,
+       vinculado ou livre, baixa só no vinculado, preço adicional ≥ 0 e quantidade da baixa > 0) e as da tela: máximo
+       ≥ 1 e ≤ 99, nome do grupo único no produto, um complemento por produto vinculado (e por descrição livre) no
+       grupo, o grupo obrigatório com ao menos um complemento ativo, até 20 grupos e até 50 complementos **ativos**
+       por grupo (o inativo não conta, porque o gravado nunca sai: o grupo "Sabores" que troca as frutas da estação
+       acumula inativos e continua aceitando a fruta nova; a lista inteira, com os inativos, tem só o limite técnico
+       de 300 linhas) e **grupos só no tipo "Com complementos"**. O preço
+       adicional tem 4 casas e a quantidade da baixa 3, como o resto do catálogo (`precoCampo`, `quantidadePositiva`).
+       Na API, o produto vinculado: existe e não está excluído, não é o próprio produto, é Simples, Matéria-prima ou
+       Produzido (`TIPOS_COMPLEMENTO_VINCULADO`: os que têm o que baixar; o Produzido baixa os insumos da ficha, decisão
+       91; fora o combo, o "Com variações" — a opção não tem a variação —, o "Com complementos", o serviço e o casco),
+       está ativo no complemento ativo, e a baixa é inteira quando ele não permite fração. O complemento gravado que
+       não muda o vínculo nem a baixa não é conferido de novo (o produto que ficou inativo depois não trava o resto;
+       reativar o complemento dele, sim). A gravação do complemento ao mesmo tempo que a exclusão ou a troca de tipo do
+       vinculado não passa junto com ela: as duas começam pela trava de ordenação (`travaVersao`, MD 1.5), e o
+       vinculado conferido ainda é lido com `for share` (espera o `for update` da exclusão e relê a linha: "Produto
+       inexistente" ou o tipo recusado), para a regra não depender só da trava de ordenação.
+     - **Preço adicional e a trava de preço**: com Configurações › Geral › "Altera Preço do Produto no ERP" = Não
+       (`geral.altera_preco_produto_erp`), mudar o preço adicional de um complemento gravado, ou criar um complemento
+       com preço, exige `produtos.alterar_preco` (403, como os preços do produto, da loja e das faixas, decisão 68;
+       `garantirAlterarPreco` casa o complemento como `gravarComplementos`). Repetir o preço de agora, inativar e o
+       complemento novo sem preço não contam; a lista ausente mantém os gravados.
+     - **Tipo e exclusão**: sair de "Com complementos" com grupos vivos exige mandar a lista (vazia exclui os grupos;
+       sem ela, 422 em `tipo`); o produto que é complemento **ativo** de outro (`complementoDe`) não troca para um tipo
+       fora de `TIPOS_COMPLEMENTO_VINCULADO` nem se exclui (422, "O produto é complemento de …": a venda da Fase 3
+       baixaria o estoque dele); o complemento inativo não conta. Excluir o produto exclui logicamente os grupos e os
+       complementos dele (pelo grupo: `produtos_complementos.produto_id` é o vinculado, não o dono).
+     - **Versão e auditoria**: as duas tabelas entram na versão agregada do cadastro (`sqlVersaoAgregada`, decisão 47:
+       quem abriu antes da mudança dos complementos recebe o 409). O detalhe traz `gruposComplementos` (os grupos vivos
+       com os complementos não excluídos, os inativos inclusive, e o produto vinculado como `ProdutoOpcao`), e a
+       auditoria do produto leva a lista relida do banco no `depois`; o texto legível (decisão 188) ganha duas filhas:
+       "Grupo de complementos adicionado Molhos (Máximo 2)", "Complemento Molhos: Barbecue: Preço adicional 2,00 →
+       2,50", "Complemento Molhos: Barbecue: Ativo Sim → Não" (a filha dos complementos sai de dentro dos grupos pelo
+       novo `Filha.de`). O preço adicional não entra no histórico de preços (MD 3.6.10 não tem o tipo; a auditoria o
+       registra).
+     - Testes: `produtos.spec.ts` do shared (o zod e a chave ligada), `diferenca-produto.spec.ts` (o texto),
+       `produto-complementos.test.ts` (o critério de pronto pelo pull HTTP do `catalogo` com todas as colunas; a
+       inativação, o tombstone, as linhas que continuam na nuvem, a linha igual sem versão nova, o 409, a lista
+       ausente mantendo, o 403 sem `produtos.editar`, as regras do vinculado, o vinculado ativo que não se exclui nem
+       troca de tipo, o vinculado inativado depois que não trava o resto e o complemento dele que não se reativa, o
+       403 do preço adicional sem `produtos.alterar_preco`, a corrida com a exclusão do vinculado em outra transação,
+       o complemento inativo num grupo vivo que libera a exclusão, a troca de tipo que exige a lista, a exclusão do
+       produto) e, no PDV, o `AplicadorPullTests` com as mesmas páginas aplicadas no SQLite (a inativação e a exclusão
+       do grupo, com o tombstone em todas as opções, como a API grava). Os testes da trava do F2-B1 (`produtos.test.ts`, `importacao-nuvem3.test.ts`)
+       desligam a chave antes.
+     - **Fora** (Fase 3): a escolha dos complementos na venda do PDV (o diálogo, o preço somado, a baixa do vinculado e
+       o `itens_venda_complementos` preenchido), o cardápio e o e-commerce.
 
 ### Operação – tarefas em segundo plano (API)
 

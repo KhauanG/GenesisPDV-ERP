@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal" iniciado (F2-B51); PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": F2-B51 commitado, falta a revisão de segurança do PR e abri-lo; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -95,7 +95,7 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 
 | Bloco | Situação |
 |---|---|
-| F2-B51 complementos: modal no ERP e liberação do tipo | em andamento |
+| F2-B51 complementos: modal no ERP e liberação do tipo (shared: `grupoComplementosSchema`/`complementoSchema` com os CHECKs da MD 3.6.8 e as regras da tela — máximo 1 a 99 e ≥ mínimo, obrigatório ⇒ mínimo ≥ 1 e um ativo, nome único, sem repetir o produto no grupo, até 20 grupos e 50 ativos por grupo (o inativo não conta; 300 linhas de limite técnico), grupos só no tipo "Com complementos" —, preço adicional em 4 casas e a baixa em 3; `produtos.complementos_habilitados` passa a nascer **ligada**; API: `gruposComplementos` no `POST`/`PUT /produtos` com as permissões do formulário, ausente = mantém (planilha, cadastro em massa, ERP antigo), grupo removido excluído logicamente com os complementos (tombstone), complemento removido só inativado, linha igual não regravada, o vinculado Simples/Matéria-prima/Produzido, ativo, não o próprio e com a baixa inteira sem fração, sair do tipo exige a lista, o vinculado ativo não se exclui nem troca de tipo, a exclusão do produto leva os grupos, o vinculado conferido com `for share` além da trava de ordenação (a corrida com a exclusão ou a troca de tipo dele), o preço adicional sob a trava "Altera Preço do Produto no ERP" (`produtos.alterar_preco`), as duas tabelas na versão agregada (409), `gruposComplementos` no detalhe e a auditoria legível ("Grupo de complementos adicionado Molhos (Máximo 2)", "Complemento Molhos: Barbecue: Ativo Sim → Não"); ERP: bloco "Complementos" com o modal que edita o formulário (gravado no Salvar), o gravado só inativa, a exclusão do grupo confirmada, a ajuda da chave sem "módulo futuro"; critério de pronto: `produto-complementos.test.ts` (a "Porção" com "Molhos (0 a 2)" no pull HTTP do `catalogo`) e o `AplicadorPullTests` do PDV (as mesmas páginas no SQLite, o produto vendendo sem complementos); a venda com complementos entrou como item da Fase 3 no roadmap (D43) e saiu do FUT/Fase 8 na especificação do PDV; **sem migração**, protocolo, `Esquema.g.cs` e código do PDV sem mudança; README da API › decisão 194, do ERP › 79) | commitado |
 
 ### PR-11 — blocos
 
@@ -179,9 +179,14 @@ _Última atualização: 12/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    4. Repetir uma vez por mês, ou quando houver resolução nova do Gecex.
    PR-11 juntado na `main` (#9, 12/11/2026); falta a Implantação (sem migração, sem `publicar_pdv`).
 3d. **PR-13 "Complementos: modal"** (F2-B51; F2-Q1 = D43: complementos sim): workflow `genesis-bloco` no branch
-   `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11). O PR-12 (variações) fica fora (D43). Depois: o
+   `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-11). O PR-12 (variações) fica fora (D43). F2-B51
+   commitado (falta a revisão de segurança do PR, D63, e abrir o PR). **Depois da implantação, para o
+   dono:** "Cadastrar produtos "Com complementos"" já vem ligada (Configurações › Geral › Produtos); no produto do tipo
+   "Com complementos", o bloco Complementos abre o modal para criar os grupos (ex.: "Molhos" de 0 a 2) e os
+   complementos, e o Salvar grava. Os caixas 0.12.0 já recebem os grupos, mas continuam vendendo o produto sem pedir
+   os complementos: a escolha na venda é da Fase 3. Depois: o
    PR-14 (F2-B52 tributação só gravada e F2-B53 fechamento da Fase 2, com a auditoria completa de segurança, D64).
-4. Numeração das próximas decisões nos READMEs: **API 194**, **ERP 79**, **PDV 87** (confira o último número no próprio
+4. Numeração das próximas decisões nos READMEs: **API 195**, **ERP 80**, **PDV 87** (confira o último número no próprio
    README antes de acrescentar). Próxima decisão D do roadmap §16: **D68** (D67 respondida pelo dono em 11/11/2026: o documento da venda por regime da loja na fase fiscal; D66 registrada no F2-B40 como "vale a
    recomendação", sem resposta explícita: o mapeamento provisório do Nuvem3 num ponto só; D65 respondida pelo dono em 11/11/2026: (A) 100 linhas por gravação do cadastro em massa, tudo ou nada; D63 e D64 respondidas pelo dono em 10/11/2026: revisão de
    segurança do PR inteiro a partir do PR-9 e auditoria completa no fim da Fase 2; D51, D52, D61 e D62 respondidas pelo

@@ -2,7 +2,7 @@
  * Regras do cadastro de produtos que dependem do banco (ERP 8.2, 8.2.17; MD 3.6.3–3.6.7, 3.6.13) e gravação das
  * filhas num só "Gravar" (códigos de barras, lojas, faixas, categorias, posições do combo/ficha técnica e
  * alternativas, produtos relacionados com a relação inversa, fornecedores, lotes do bloco Validade, a foto e a
- * galeria de imagens).
+ * galeria de imagens, os grupos de complementos).
  */
 import {
   CHAVES_TIPO_PRODUTO,
@@ -14,6 +14,7 @@ import {
   TIPOS_GRUPO_PRECO,
   TIPOS_INSUMO_FICHA,
   TIPOS_PROIBIDOS_NO_COMBO,
+  TIPOS_COMPLEMENTO_VINCULADO,
   TIPOS_TROCA_COM_MOVIMENTO,
   ROTULOS_TIPO_PRODUTO,
   type ConflitoVinculoFornecedor,
@@ -30,9 +31,11 @@ import { lerConfiguracao, lerConfiguracoes } from '../configuracoes/valores.js';
 import {
   produtosCategorias,
   produtosCodigosBarras,
+  produtosComplementos,
   produtosComponentes,
   produtosComponentesAlternativas,
   produtosFornecedores,
+  produtosGruposComplementos,
   produtosHistoricoPrecos,
   produtosImagens,
   produtosLojas,
@@ -42,6 +45,7 @@ import {
 } from '../database/empresa/schema/index.js';
 import { estoquesPermitidos } from '../estoques/permitidos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { complementoDe } from './consultas.js';
 import { ncmVigente } from './ncm.js';
 
 type Linha = Record<string, unknown>;
@@ -200,6 +204,33 @@ export async function validarNoBanco(
   if (tipoBloqueado) add(campos, 'tipo', tipoBloqueado);
   if (antes?.tipo === 'com_variacoes' && d.tipo !== 'com_variacoes' && antes.variacoesAtivas) {
     add(campos, 'tipo', 'O produto tem variações ativas: inative as variações antes de trocar o tipo');
+  }
+
+  // Complementos (8.2.16; F2-B51). Sair de "Com complementos" com grupos vivos exige mandar a lista (vazia = exclui os
+  // grupos): o corpo sem a lista (a importação, o ERP antigo) manteria grupos num produto que não os usa.
+  if (
+    antes?.tipo === 'com_complementos' &&
+    d.tipo !== 'com_complementos' &&
+    d.gruposComplementos === undefined &&
+    id &&
+    (await existe(
+      sql`select 1 from produtos_grupos_complementos where produto_id = ${id} and excluido_em is null limit 1`,
+    ))
+  )
+    add(
+      campos,
+      'tipo',
+      'O produto tem grupos de complementos: exclua-os no modal Complementos antes de trocar o tipo',
+    );
+  // O produto que é complemento ativo de outro só troca para um tipo que pode ser complemento.
+  if (antes && id && antes.tipo !== d.tipo && !TIPOS_COMPLEMENTO_VINCULADO.includes(d.tipo)) {
+    const de = await complementoDe(tx, id);
+    if (de.length)
+      add(
+        campos,
+        'tipo',
+        `O produto é complemento de ${de.map((p) => `${p.codigo} - ${p.nome}`).join(', ')}: retire-o dos complementos antes de trocar para ${ROTULOS_TIPO_PRODUTO[d.tipo]}`,
+      );
   }
 
   // Troca de tipo com movimento (8.2.1). "Com variações" sem grade só movimentou o pai: troca como Simples (F2-B1).
@@ -1176,6 +1207,248 @@ export async function gravarLotes(
       await tx
         .insert(produtosLotes)
         .values({ ...valores, produtoId, estoqueId: l.estoqueId, criadoPorId: sessao.usuarioId });
+  }
+}
+
+/**
+ * Grupos de complementos do produto (ERP 8.2.16; MD 3.6.8; F2-B51; README da API › decisão 194). `undefined` mantém os
+ * gravados (a importação, o cadastro em massa e o ERP antigo não mandam a lista); o modal manda a lista inteira. Cada
+ * grupo do corpo casa com um gravado deste produto pelo `id` (o id de outro produto, ou de um grupo excluído, vale como
+ * grupo novo), e cada complemento casa pelo `id` dentro do **mesmo** grupo.
+ *
+ * **Nada é apagado** (a exclusão física é recusada por trigger, 0028): o grupo gravado que não veio é excluído
+ * logicamente, com os complementos dele (`excluido_em` e `ativo = false`), e desce ao caixa como tombstone; o
+ * complemento gravado que não veio no seu grupo é **inativado** (`ativo = false`), continua no detalhe e pode ser
+ * reativado. Assim o caixa offline que tem o id de uma opção numa venda sempre a acha na nuvem.
+ *
+ * O produto vinculado (422 por campo, `gruposComplementos.N.complementos.M.produtoId`): existe e não está excluído, não
+ * é o próprio produto, é de um tipo que pode ser complemento (`TIPOS_COMPLEMENTO_VINCULADO`) e, no complemento ativo,
+ * está ativo; com a baixa de estoque, a quantidade é inteira quando o produto não permite fração (`quantidadeBaixa`).
+ * O complemento gravado que não muda o vínculo nem a baixa não é conferido de novo: o produto que ficou inativo, ou
+ * trocou de tipo depois, não trava a gravação do resto. A linha igual à gravada não é regravada (cada UPDATE sobe a
+ * versão e desce de novo ao caixa).
+ */
+export async function gravarComplementos(
+  tx: DbEmpresa,
+  sessao: SessaoErp,
+  produtoId: string,
+  grupos: CriarProduto['gruposComplementos'],
+): Promise<void> {
+  if (grupos === undefined) return;
+  const agora = new Date();
+  const autor = { atualizadoPorId: sessao.usuarioId };
+  const criar = { criadoPorId: sessao.usuarioId, atualizadoPorId: sessao.usuarioId };
+  const minusculo = (v: string | null) => v?.toLowerCase() ?? null;
+  const { rows: gruposAtuais } = await tx.execute<{
+    id: string;
+    nome: string;
+    minimo: number;
+    maximo: number;
+    obrigatorio: boolean;
+    ordem: number;
+  }>(sql`
+    select id, nome, minimo, maximo, obrigatorio, ordem from produtos_grupos_complementos
+     where produto_id = ${produtoId} and excluido_em is null
+     order by id
+       for update`);
+  const { rows: itensAtuais } = gruposAtuais.length
+    ? await tx.execute<{
+        id: string;
+        grupo_id: string;
+        produto_id: string | null;
+        descricao: string | null;
+        preco_adicional: string;
+        baixa_estoque: boolean;
+        quantidade_baixa: string;
+        ordem: number;
+        ativo: boolean;
+      }>(sql`
+        select id, grupo_id, produto_id, descricao, preco_adicional::text as preco_adicional, baixa_estoque,
+               quantidade_baixa::text as quantidade_baixa, ordem, ativo
+          from produtos_complementos
+         where excluido_em is null and grupo_id = any(${`{${gruposAtuais.map((g) => g.id).join(',')}}`}::uuid[])
+         order by id
+           for update`)
+    : { rows: [] };
+
+  // Casamento pelo id: o grupo entre os deste produto, o complemento entre os do grupo casado.
+  const gruposCasados = new Map<number, (typeof gruposAtuais)[number]>();
+  const gruposUsados = new Set<string>();
+  grupos.forEach((g, i) => {
+    const a = gruposAtuais.find((x) => x.id === minusculo(g.id) && !gruposUsados.has(x.id));
+    if (a) {
+      gruposCasados.set(i, a);
+      gruposUsados.add(a.id);
+    }
+  });
+  const itensCasados = new Map<string, (typeof itensAtuais)[number]>();
+  const itensUsados = new Set<string>();
+  grupos.forEach((g, i) => {
+    const grupo = gruposCasados.get(i);
+    if (!grupo) return;
+    g.complementos.forEach((c, j) => {
+      const a = itensAtuais.find(
+        (x) => x.grupo_id === grupo.id && x.id === minusculo(c.id) && !itensUsados.has(x.id),
+      );
+      if (a) {
+        itensCasados.set(`${i}:${j}`, a);
+        itensUsados.add(a.id);
+      }
+    });
+  });
+
+  // O produto vinculado: só o do complemento novo ou que mudou o vínculo, a baixa ou foi reativado é conferido.
+  const campos: Campos = {};
+  const mantido = (
+    i: number,
+    j: number,
+    c: NonNullable<CriarProduto['gruposComplementos']>[number]['complementos'][number],
+  ) => {
+    const a = itensCasados.get(`${i}:${j}`);
+    return (
+      !!a &&
+      a.produto_id === minusculo(c.produtoId) &&
+      a.baixa_estoque === c.baixaEstoque &&
+      Number(a.quantidade_baixa) === Number(c.quantidadeBaixa) &&
+      (a.ativo || !c.ativo)
+    );
+  };
+  const vinculados = [
+    ...new Set(
+      grupos.flatMap((g, i) =>
+        g.complementos.flatMap((c, j) => (c.produtoId && !mantido(i, j, c) ? [minusculo(c.produtoId)!] : [])),
+      ),
+    ),
+  ];
+  // A corrida com a exclusão ou a troca de tipo do vinculado (que travam a linha dele com `for update` e conferem o
+  // `complementoDe` antes de gravar) não deixa um complemento ativo apontando para um produto excluído ou um combo:
+  // as gravações do produto no ERP começam pela trava de ordenação 7300001 (`travaVersao`, MD 1.5), então uma espera
+  // o commit da outra e já lê o estado novo. O `for share` garante o mesmo sem depender dela (um caminho futuro que
+  // grave o produto sem a trava): esta espera o `for update` da outra e relê a linha (excluída: "Produto inexistente";
+  // tipo novo: recusado). Só linhas de `produtos`, depois da trava de ordenação, sem ciclo com a do produto dono. O
+  // complemento mantido não precisa dela: já está gravado e ativo, e o `complementoDe` da outra o vê.
+  const { rows: produtosVinculados } = vinculados.length
+    ? await tx.execute<{
+        id: string;
+        nome: string;
+        tipo: TipoProduto;
+        ativo: boolean;
+        permite_fracao: boolean;
+      }>(
+        sql`select id, nome, tipo, ativo, permite_fracao from produtos
+             where excluido_em is null and id = any(${`{${vinculados.join(',')}}`}::uuid[])
+             order by id
+               for share`,
+      )
+    : { rows: [] };
+  const porId = new Map(produtosVinculados.map((p) => [p.id, p]));
+  grupos.forEach((g, i) =>
+    g.complementos.forEach((c, j) => {
+      if (!c.produtoId || mantido(i, j, c)) return;
+      const caminho = `gruposComplementos.${i}.complementos.${j}`;
+      if (minusculo(c.produtoId) === produtoId.toLowerCase())
+        return add(campos, `${caminho}.produtoId`, 'O produto não pode ser complemento de si mesmo');
+      const p = porId.get(minusculo(c.produtoId)!);
+      if (!p) return add(campos, `${caminho}.produtoId`, 'Produto inexistente');
+      if (!TIPOS_COMPLEMENTO_VINCULADO.includes(p.tipo))
+        return add(
+          campos,
+          `${caminho}.produtoId`,
+          `${ROTULOS_TIPO_PRODUTO[p.tipo]} não pode ser complemento: use Simples, Matéria-prima ou Produzido, ou um complemento livre`,
+        );
+      if (c.ativo && !p.ativo) return add(campos, `${caminho}.produtoId`, `O produto ${p.nome} está inativo`);
+      if (c.baixaEstoque && !p.permite_fracao && !Number.isInteger(Number(c.quantidadeBaixa)))
+        add(
+          campos,
+          `${caminho}.quantidadeBaixa`,
+          `O produto ${p.nome} não permite fração: informe uma quantidade inteira`,
+        );
+    }),
+  );
+  if (Object.keys(campos).length)
+    throw new ErroApi('VALIDACAO', 'Verifique os complementos destacados.', { campos });
+
+  // O grupo que saiu: excluído logicamente com os complementos (tombstone ao caixa).
+  const sair = gruposAtuais.filter((g) => !gruposUsados.has(g.id)).map((g) => g.id);
+  if (sair.length) {
+    await tx
+      .update(produtosComplementos)
+      .set({ excluidoEm: agora, ativo: false, ...autor })
+      .where(and(inArray(produtosComplementos.grupoId, sair), isNull(produtosComplementos.excluidoEm)));
+    await tx
+      .update(produtosGruposComplementos)
+      .set({ excluidoEm: agora, ...autor })
+      .where(inArray(produtosGruposComplementos.id, sair));
+  }
+  // O complemento que saiu do grupo que ficou: só inativado.
+  const inativar = itensAtuais
+    .filter((c) => gruposUsados.has(c.grupo_id) && !itensUsados.has(c.id) && c.ativo)
+    .map((c) => c.id);
+  if (inativar.length)
+    await tx
+      .update(produtosComplementos)
+      .set({ ativo: false, ...autor })
+      .where(inArray(produtosComplementos.id, inativar));
+
+  for (const [i, g] of grupos.entries()) {
+    const valores = {
+      nome: g.nome,
+      minimo: g.minimo,
+      maximo: g.maximo,
+      obrigatorio: g.obrigatorio,
+      ordem: g.ordem || i + 1,
+    };
+    const atual = gruposCasados.get(i);
+    let grupoId: string;
+    if (atual) {
+      grupoId = atual.id;
+      const igual =
+        atual.nome === valores.nome &&
+        Number(atual.minimo) === valores.minimo &&
+        Number(atual.maximo) === valores.maximo &&
+        atual.obrigatorio === valores.obrigatorio &&
+        Number(atual.ordem) === valores.ordem;
+      if (!igual)
+        await tx
+          .update(produtosGruposComplementos)
+          .set({ ...valores, ...autor })
+          .where(eq(produtosGruposComplementos.id, atual.id));
+    } else {
+      const [n] = await tx
+        .insert(produtosGruposComplementos)
+        .values({ ...valores, produtoId, ...criar })
+        .returning({ id: produtosGruposComplementos.id });
+      grupoId = n!.id;
+    }
+    for (const [j, c] of g.complementos.entries()) {
+      const item = {
+        produtoId: c.produtoId,
+        descricao: c.descricao,
+        precoAdicional: c.precoAdicional,
+        baixaEstoque: c.baixaEstoque,
+        quantidadeBaixa: c.quantidadeBaixa,
+        ordem: c.ordem || j + 1,
+        ativo: c.ativo,
+      };
+      const a = itensCasados.get(`${i}:${j}`);
+      if (!a) {
+        await tx.insert(produtosComplementos).values({ ...item, grupoId, ...criar });
+        continue;
+      }
+      const igual =
+        a.produto_id === minusculo(item.produtoId) &&
+        a.descricao === item.descricao &&
+        Number(a.preco_adicional) === Number(item.precoAdicional) &&
+        a.baixa_estoque === item.baixaEstoque &&
+        Number(a.quantidade_baixa) === Number(item.quantidadeBaixa) &&
+        Number(a.ordem) === item.ordem &&
+        a.ativo === item.ativo;
+      if (!igual)
+        await tx
+          .update(produtosComplementos)
+          .set({ ...item, ...autor })
+          .where(eq(produtosComplementos.id, a.id));
+    }
   }
 }
 

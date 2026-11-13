@@ -324,4 +324,77 @@ describe('diferença legível do produto (ERP 16.2; F2-B42)', () => {
       { campo: 'Loja Centro › Preço de venda', antes: '9,90', depois: '10,90' },
     ]);
   });
+
+  it('complementos (F2-B51): o grupo e cada complemento com o nome do grupo; a inativação e o grupo excluído', () => {
+    const GRUPO = id(80);
+    const BARBECUE = id(81);
+    const VINCULADO = id(82);
+    const complemento = (extra: Record<string, unknown>) => ({
+      produtoId: null,
+      produto: null,
+      descricao: null,
+      precoAdicional: '0.0000',
+      baixaEstoque: false,
+      quantidadeBaixa: '1.000',
+      ordem: 1,
+      ativo: true,
+      ...extra,
+    });
+    const grupo = (complementos: unknown[], extra: Record<string, unknown> = {}) => ({
+      id: GRUPO,
+      nome: 'Molhos',
+      minimo: 0,
+      maximo: 2,
+      obrigatorio: false,
+      ordem: 1,
+      complementos,
+      ...extra,
+    });
+    const comGrupos = (gruposComplementos: unknown[]) => ({
+      ...base(),
+      tipo: 'com_complementos',
+      gruposComplementos,
+    });
+    const antes = comGrupos([
+      grupo([complemento({ id: BARBECUE, descricao: 'Barbecue', precoAdicional: '2.0000' })]),
+    ]);
+    const depois = comGrupos([
+      grupo(
+        [
+          complemento({ id: BARBECUE, descricao: 'Barbecue', precoAdicional: '2.5000' }),
+          complemento({
+            id: VINCULADO,
+            produtoId: COMPONENTE,
+            produto: { id: COMPONENTE, nome: 'LATA TESTE' },
+            precoAdicional: '3.5000',
+            baixaEstoque: true,
+            quantidadeBaixa: '0.050',
+            ordem: 2,
+          }),
+        ],
+        { maximo: 3 },
+      ),
+    ]);
+    expect(texto(antes, depois)).toBe(
+      [
+        'Grupo de complementos Molhos: Máximo 2 → 3',
+        'Complemento Molhos: Barbecue: Preço adicional 2,00 → 2,50',
+        'Complemento adicionado Molhos: 12 - LATA TESTE (Preço adicional 3,50, Baixa estoque Sim, Qtd da baixa 0,05)',
+      ].join('; '),
+    );
+    // O complemento que saiu da lista fica inativo (a gravação não o apaga).
+    const inativo = comGrupos([
+      grupo([complemento({ id: BARBECUE, descricao: 'Barbecue', precoAdicional: '2.0000', ativo: false })]),
+    ]);
+    expect(texto(antes, inativo)).toBe('Complemento Molhos: Barbecue: Ativo Sim → Não');
+    // O grupo excluído leva os complementos; a criação lista os dois.
+    expect(texto(antes, comGrupos([]))).toBe(
+      'Grupo de complementos removido Molhos; Complemento removido Molhos: Barbecue',
+    );
+    expect(texto(null, antes)).toContain(
+      'Grupo de complementos adicionado Molhos (Máximo 2); Complemento adicionado Molhos: Barbecue (Preço adicional 2,00)',
+    );
+    // A lista ausente de um lado (o corpo antigo sem os grupos) não é mudança.
+    expect(texto(antes, base())).toBe('Tipo: Com complementos → Simples');
+  });
 });

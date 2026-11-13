@@ -33,8 +33,12 @@ import {
   MAXIMO_FORNECEDORES_PRODUTO,
   MAXIMO_IMAGENS_PRODUTO,
   MAXIMO_LOTES_PRODUTO,
+  MAXIMO_COMPLEMENTOS_GRUPO,
+  MAXIMO_GRUPOS_COMPLEMENTOS,
+  MAXIMO_LINHAS_COMPLEMENTOS_GRUPO,
   motivoTipoProdutoBloqueado,
   pesquisaEanCadastroMassaSchema,
+  rotuloGrupoComplementos,
   TIPOS_PRODUTO,
   TIPOS_SEM_SALDO_PROPRIO,
   tiposProdutoHabilitados,
@@ -495,14 +499,19 @@ describe('grupo de preço e restrição de horário', () => {
 });
 
 describe('tipos sem suporte (F2-B1; D43)', () => {
-  it('as chaves existem no catálogo, desligadas por padrão, e não descem ao PDV', () => {
+  it('as chaves existem no catálogo, só na empresa, e não descem ao PDV; a de complementos nasce ligada (F2-B51)', () => {
     for (const chave of Object.values(CHAVES_TIPO_PRODUTO)) {
       const def = CONFIGURACOES_POR_CHAVE.get(chave!);
-      expect(def, chave).toMatchObject({ padrao: false, loja: false, pdv: false });
+      expect(def, chave).toMatchObject({ loja: false, pdv: false });
     }
+    expect(CONFIGURACOES_POR_CHAVE.get('produtos.variacoes_habilitadas')?.padrao).toBe(false);
+    expect(CONFIGURACOES_POR_CHAVE.get('produtos.complementos_habilitados')?.padrao).toBe(true);
   });
 
-  it('padrão: todos os tipos menos Com variações e Com complementos; cada chave libera o seu', () => {
+  it('as duas chaves desligadas: todos os tipos menos Com variações e Com complementos; cada chave libera o seu', () => {
+    // O padrão do catálogo (F2-B51): só "Com variações" fica travado.
+    const doCatalogo = tiposProdutoHabilitados((c) => CONFIGURACOES_POR_CHAVE.get(c)?.padrao === true);
+    expect(doCatalogo).toEqual(TIPOS_PRODUTO.filter((t) => t !== 'com_variacoes'));
     expect(tiposProdutoHabilitados(() => false)).toEqual(
       TIPOS_PRODUTO.filter((t) => t !== 'com_variacoes' && t !== 'com_complementos'),
     );
@@ -513,15 +522,17 @@ describe('tipos sem suporte (F2-B1; D43)', () => {
   });
 
   it('recusa só a escolha do tipo travado: o produto já gravado com ele continua aceito', () => {
-    const padrao = tiposProdutoHabilitados(() => false);
+    const desligadas = tiposProdutoHabilitados(() => false);
     // Criação (sem tipo gravado).
-    expect(motivoTipoProdutoBloqueado('com_variacoes', null, padrao)).toMatch(/^Tipo disponível em breve/);
-    expect(motivoTipoProdutoBloqueado('com_complementos', null, padrao)).toContain('Com complementos');
-    expect(motivoTipoProdutoBloqueado('simples', null, padrao)).toBeNull();
+    expect(motivoTipoProdutoBloqueado('com_variacoes', null, desligadas)).toMatch(
+      /^Tipo disponível em breve/,
+    );
+    expect(motivoTipoProdutoBloqueado('com_complementos', null, desligadas)).toContain('Com complementos');
+    expect(motivoTipoProdutoBloqueado('simples', null, desligadas)).toBeNull();
     // Edição: o legado mantém o tipo; trocar para o tipo travado é recusado; sair dele é livre.
-    expect(motivoTipoProdutoBloqueado('com_complementos', 'com_complementos', padrao)).toBeNull();
-    expect(motivoTipoProdutoBloqueado('com_variacoes', 'simples', padrao)).not.toBeNull();
-    expect(motivoTipoProdutoBloqueado('simples', 'com_variacoes', padrao)).toBeNull();
+    expect(motivoTipoProdutoBloqueado('com_complementos', 'com_complementos', desligadas)).toBeNull();
+    expect(motivoTipoProdutoBloqueado('com_variacoes', 'simples', desligadas)).not.toBeNull();
+    expect(motivoTipoProdutoBloqueado('simples', 'com_variacoes', desligadas)).toBeNull();
     // Chave ligada: livre.
     expect(motivoTipoProdutoBloqueado('com_variacoes', null, [...TIPOS_PRODUTO])).toBeNull();
   });
@@ -868,5 +879,148 @@ describe('imagens do produto (F2-B44)', () => {
     expect(
       caminhos({ ...base, imagens: Array.from({ length: MAXIMO_IMAGENS_PRODUTO }, (_, i) => img(i + 1)) }),
     ).toEqual([]);
+  });
+});
+
+describe('complementos (F2-B51; ERP 8.2.16; MD 3.6.8)', () => {
+  const base = {
+    nome: 'PORÇÃO DE FRITAS',
+    tipo: 'com_complementos' as const,
+    unidadeId: '01a18760-0000-7000-8000-000000000001',
+    precoVenda: '29,90',
+  };
+  const produtoVinculado = '01a18760-0000-7000-8000-0000000000aa';
+  const molhos = (extra: Record<string, unknown> = {}) => ({
+    nome: 'Molhos',
+    minimo: 0,
+    maximo: 2,
+    complementos: [
+      { descricao: 'Barbecue', precoAdicional: '2,00' },
+      { produtoId: produtoVinculado, precoAdicional: '3,5', baixaEstoque: true, quantidadeBaixa: '0,05' },
+    ],
+    ...extra,
+  });
+  const erros = (corpo: Record<string, unknown>) => {
+    const r = criarProdutoSchema.safeParse(corpo);
+    return r.success ? {} : Object.fromEntries(r.error.issues.map((i) => [i.path.join('.'), i.message]));
+  };
+
+  it('"Porção" com "Molhos (0 a 2)": o preço adicional em 4 casas, a baixa em 3, os padrões preenchidos', () => {
+    const r = criarProdutoSchema.parse({ ...base, gruposComplementos: [molhos()] });
+    const [g] = r.gruposComplementos!;
+    expect(g).toMatchObject({ nome: 'Molhos', minimo: 0, maximo: 2, obrigatorio: false, ordem: 0, id: null });
+    expect(g!.complementos).toEqual([
+      {
+        id: null,
+        produtoId: null,
+        descricao: 'Barbecue',
+        precoAdicional: '2.0000',
+        baixaEstoque: false,
+        quantidadeBaixa: '1.000',
+        ordem: 0,
+        ativo: true,
+      },
+      {
+        id: null,
+        produtoId: produtoVinculado,
+        descricao: null,
+        precoAdicional: '3.5000',
+        baixaEstoque: true,
+        quantidadeBaixa: '0.050',
+        ordem: 0,
+        ativo: true,
+      },
+    ]);
+    expect(rotuloGrupoComplementos(g!)).toBe('Molhos (0 a 2)');
+    expect(rotuloGrupoComplementos({ nome: 'Gelo', minimo: 1, maximo: 1, obrigatorio: true })).toBe(
+      'Gelo (1, obrigatório)',
+    );
+  });
+
+  it('ausente = mantém os gravados (a importação e o ERP antigo não mandam a lista)', () => {
+    expect(criarProdutoSchema.parse(base).gruposComplementos).toBeUndefined();
+    expect(criarProdutoSchema.parse({ ...base, gruposComplementos: [] }).gruposComplementos).toEqual([]);
+  });
+
+  it('as regras dos CHECKs do banco e as da tela', () => {
+    const grupo = (g: Record<string, unknown>) => erros({ ...base, gruposComplementos: [molhos(g)] });
+    expect(grupo({ minimo: 3, maximo: 2 })['gruposComplementos.0.maximo']).toBe(
+      'O máximo não pode ser menor que o mínimo',
+    );
+    expect(grupo({ maximo: 0 })['gruposComplementos.0.maximo']).toBe('O máximo é ao menos 1');
+    expect(grupo({ obrigatorio: true, minimo: 0 })['gruposComplementos.0.minimo']).toBe(
+      'O grupo obrigatório tem mínimo de ao menos 1',
+    );
+    expect(grupo({ minimo: -1 })['gruposComplementos.0.minimo']).toBe('Não pode ser negativo');
+    expect(grupo({ maximo: 100 })['gruposComplementos.0.maximo']).toBe('No máximo 99');
+    expect(grupo({ nome: ' ' })['gruposComplementos.0.nome']).toBe('Informe o nome do grupo');
+    expect(
+      grupo({ obrigatorio: true, minimo: 1, complementos: [{ descricao: 'Ketchup', ativo: false }] })[
+        'gruposComplementos.0.complementos'
+      ],
+    ).toBe('O grupo obrigatório precisa de ao menos um complemento ativo');
+    const item = (c: Record<string, unknown>) => grupo({ complementos: [c] });
+    expect(item({})['gruposComplementos.0.complementos.0.descricao']).toBe(
+      'Escolha o produto ou digite a descrição',
+    );
+    expect(
+      item({ descricao: 'Livre', baixaEstoque: true })['gruposComplementos.0.complementos.0.baixaEstoque'],
+    ).toBe('Só o complemento vinculado a um produto baixa estoque');
+    expect(item({ descricao: 'Livre', precoAdicional: '-1' })).toHaveProperty(
+      'gruposComplementos.0.complementos.0.precoAdicional',
+    );
+    expect(item({ produtoId: produtoVinculado, quantidadeBaixa: '0' })).toHaveProperty(
+      'gruposComplementos.0.complementos.0.quantidadeBaixa',
+    );
+    expect(
+      grupo({ complementos: [{ descricao: 'Barbecue' }, { descricao: 'barbecue' }] })[
+        'gruposComplementos.0.complementos.1.descricao'
+      ],
+    ).toBe('Complemento repetido no grupo (linha 1)');
+    expect(
+      grupo({
+        complementos: [{ produtoId: produtoVinculado }, { produtoId: produtoVinculado.toUpperCase() }],
+      })['gruposComplementos.0.complementos.1.produtoId'],
+    ).toBe('Complemento repetido no grupo (linha 1)');
+  });
+
+  it('só o tipo "Com complementos" tem grupos; nome de grupo único; tetos', () => {
+    expect(erros({ ...base, tipo: 'simples', gruposComplementos: [molhos()] }).gruposComplementos).toBe(
+      'Só o tipo Com complementos tem complementos',
+    );
+    expect(erros({ ...base, tipo: 'simples', gruposComplementos: [] })).toEqual({});
+    expect(
+      erros({ ...base, gruposComplementos: [molhos(), molhos({ nome: 'MOLHOS' })] })[
+        'gruposComplementos.1.nome'
+      ],
+    ).toBe('Grupo repetido (linha 1)');
+    const muitos = Array.from({ length: MAXIMO_GRUPOS_COMPLEMENTOS + 1 }, (_, i) =>
+      molhos({ nome: `G${i}` }),
+    );
+    expect(erros({ ...base, gruposComplementos: muitos }).gruposComplementos).toBe(
+      `No máximo ${MAXIMO_GRUPOS_COMPLEMENTOS} grupos de complementos`,
+    );
+    const itens = Array.from({ length: MAXIMO_COMPLEMENTOS_GRUPO + 1 }, (_, i) => ({ descricao: `C${i}` }));
+    expect(
+      erros({ ...base, gruposComplementos: [molhos({ complementos: itens })] })[
+        'gruposComplementos.0.complementos'
+      ],
+    ).toBe(`No máximo ${MAXIMO_COMPLEMENTOS_GRUPO} complementos ativos por grupo`);
+    // O inativo não conta no teto (o gravado só se inativa): 45 inativos e 6 ativos passam; só o limite técnico da
+    // lista inteira recusa.
+    const trocas = Array.from({ length: MAXIMO_COMPLEMENTOS_GRUPO + 1 }, (_, i) => ({
+      descricao: `Fruta ${i}`,
+      ativo: i > 44,
+    }));
+    expect(erros({ ...base, gruposComplementos: [molhos({ complementos: trocas })] })).toEqual({});
+    const linhas = Array.from({ length: MAXIMO_LINHAS_COMPLEMENTOS_GRUPO + 1 }, (_, i) => ({
+      descricao: `C${i}`,
+      ativo: false,
+    }));
+    expect(
+      erros({ ...base, gruposComplementos: [molhos({ complementos: linhas })] })[
+        'gruposComplementos.0.complementos'
+      ],
+    ).toBe(`No máximo ${MAXIMO_LINHAS_COMPLEMENTOS_GRUPO} complementos por grupo, contando os inativos`);
   });
 });

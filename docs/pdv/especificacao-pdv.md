@@ -99,10 +99,10 @@ Prioridade 6 no levantamento e no ERP 18). A correspondência com as fases do ro
 | Etiqueta | Nome | O que entrega | Critério de pronto da fase | Roadmap |
 |---|---|---|---|---|
 | **PDV-1** | MVP – Vender offline | Ativação, login offline, abertura, venda por código/busca, multiplicador, **fardo/caixa com fator e preço de embalagem**, **atacarejo: atacado por quantidade, faixas de preço por quantidade por loja e grupo de preço por quantidade (mix)**, **combo/kit (o "grupo de itens" do Nuvem3, com troca de componente) e ficha técnica (baixa dos componentes)**, **vasilhames/cascos retornáveis (cascos trazidos, cobrança do casco faltante, devolução avulsa)**, produto genérico, **confirmação de idade (+18) e horário restrito**, desconto com limite e senha de liberação, cancelamentos, CPF na nota, pagamento **dinheiro / cartão em POS externo / PIX (QR estático ou confirmação manual)**, múltiplas formas, **cupom não fiscal**, gaveta, sangria/reforço, fechamento cego, reimpressão, sincronização, recuperação após queda, backup local | Uma loja vende um dia inteiro sem internet e, ao reconectar, ERP mostra vendas, caixa e estoque corretos | Fase 1 |
-| **PDV-2** | Operação completa de loja | Balança (EAN prefixo 2 e serial), lote, variações, tipo de preço (F8), parcelado, promoções e preço "gelada", **comodato de cascos e crédito de casco em vale** (10.12), vendedor, cadastro rápido de cliente, crediário, **recebimento de crediário no caixa**, crédito funcionário, vale-compra, troca/devolução, cupom de troca, orçamentos/pré-vendas, PIX dinâmico, produtos vencidos, atualização automática, limites, acréscimo | Loja opera sem precisar do ERP para nada do balcão | Fases 3 e 4 (crediário e recebimento de crediário no caixa na 4); PIX dinâmico na 6 |
+| **PDV-2** | Operação completa de loja | Balança (EAN prefixo 2 e serial), lote, variações, **complementos na venda (10.2; D43)**, tipo de preço (F8), parcelado, promoções e preço "gelada", **comodato de cascos e crédito de casco em vale** (10.12), vendedor, cadastro rápido de cliente, crediário, **recebimento de crediário no caixa**, crédito funcionário, vale-compra, troca/devolução, cupom de troca, orçamentos/pré-vendas, PIX dinâmico, produtos vencidos, atualização automática, limites, acréscimo | Loja opera sem precisar do ERP para nada do balcão | Fases 3 e 4 (crediário e recebimento de crediário no caixa na 4); PIX dinâmico na 6 |
 | **PDV-3** | TEF | Cartão integrado por TEF (pinpad físico/virtual), comprovantes TEF, administrativo TEF, resolução de pendências | Venda com cartão sem digitação manual, com conciliação automática | Fase 6 |
 | **FISCAL** | NFC-e (ADR-11) | NFC-e modelo 65 emitida pelo PDV, contingência offline (tpEmis=9) com cancelamento por substituição, cancelamento, inutilização, DANFE NFC-e (completo/resumido/eletrônico), XML na nuvem | Loja em produção fiscal sem ECF/SAT | Fase 3F (ADR-11; NF-e, TEF e PIX dinâmico ficam na Fase 6) |
-| **FUT** | Futuro / módulos opcionais | SAT-CF-e ou MFE (se algum estado exigir), NFS-e de serviço, ordem de serviço, agenda, **módulos de bar/restaurante/delivery, não usados pela Ice Beer (decisão D4): comandas (25), taxa de serviço (25.3), impressoras de produção (6.2.1), pedidos/delivery e balcão (26), taxas de entrega, cardápio interno (9.1)**, PDV mobile/comanda eletrônica, totem, menu digital, integrações de delivery, complementos na venda, display do cliente | — | Fases 7–8 (os módulos opcionais entram quando um cliente precisar; a especificação fica mantida) |
+| **FUT** | Futuro / módulos opcionais | SAT-CF-e ou MFE (se algum estado exigir), NFS-e de serviço, ordem de serviço, agenda, **módulos de bar/restaurante/delivery, não usados pela Ice Beer (decisão D4): comandas (25), taxa de serviço (25.3), impressoras de produção (6.2.1), pedidos/delivery e balcão (26), taxas de entrega, cardápio interno (9.1)**, PDV mobile/comanda eletrônica, totem, menu digital, integrações de delivery, display do cliente (a venda com complementos foi para a PDV-2 pela D43) | — | Fases 7–8 (os módulos opcionais entram quando um cliente precisar; a especificação fica mantida) |
 
 > **Decisões do dono (out/2026, roadmap 16).** (D1) As lojas da Ice Beer ficam no **Paraná** e emitem **NFC-e**; o
 > PDV pode atender empresas de todo o Brasil, por isso **todo comportamento fiscal é parametrizado pela UF da loja**
@@ -1095,7 +1095,7 @@ escolher a variação (PDV-2), com `pdv.recusa_produto_com_variacoes = true` (pa
 pela pesquisa F2 recusa, com "Produto com variações: venda disponível na próxima versão" (sem abrir a venda nem gastar
 número): o código que resolve para uma variação (`produtos_codigos_barras.variacao_id` não nulo) e o produto pai
 `com_variacoes` com variação ativa no espelho (`produtos_variacoes` ativa e não excluída). O pai sem variação ativa (o
-legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos. Com a chave desligada, o código
+legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos (até a PDV-2, na Fase 3, D43). Com a chave desligada, o código
 da variação vende o pai, com o preço e o saldo dele (o comportamento do piloto); a nuvem aceita a venda e abre o alerta
 de cadastro (SYNC 15.1). Na pesquisa só por números, o código de uma variação dá a linha dele (como o da embalagem).
 
@@ -1139,7 +1139,7 @@ Validações do produto encontrado:
 | Produto com `idade_minima` | Seção 10.11 |
 | Produto com vasilhame retornável | Seção 10.12 (PDV-1) |
 | Tipo **Com variações** lido pelo código do produto pai | Abre seleção de variação (PDV-2) |
-| Tipo **Com complementos** | Abre seleção de complementos (FUT; na PDV-1 vende sem complementos) |
+| Tipo **Com complementos** | Abre seleção de complementos (PDV-2, Fase 3, decisão D43; na PDV-1 vende sem complementos) |
 | Tipo **Kit** (combo) | Seção 10.9.1 (PDV-1): diálogo Montar combo quando há posições com alternativas; uma linha por componente |
 | Tipo **Produzido** (ficha técnica) | Seção 10.9.2 (PDV-1) |
 | Produto membro de **grupo de preço por quantidade** (`grupo_preco_quantidade_id`) | Preço pela soma do grupo (11.3.1, PDV-1) |
@@ -4445,7 +4445,7 @@ carrega só as formas de uso PDV.
 
 | Campo/flag | Comportamento | Seção | Fase |
 |---|---|---|---|
-| Tipo: Simples / Kit / Com variações / Com complementos / Matéria-prima (+ Produzido, Vasilhame) | Ver regras por tipo | 10.2, 10.9, 10.12 | PDV-1 (simples, kit, produzido, vasilhame, matéria-prima não vendável) / PDV-2 (variações) / FUT (complementos) |
+| Tipo: Simples / Kit / Com variações / Com complementos / Matéria-prima (+ Produzido, Vasilhame) | Ver regras por tipo | 10.2, 10.9, 10.12 | PDV-1 (simples, kit, produzido, vasilhame, matéria-prima não vendável) / PDV-2 (variações; complementos, Fase 3, D43) |
 | Ativo | Inativo não vende | 10.2 | PDV-1 |
 | Código Interno, Cód Barras (EAN-13) | Resolução do código; duplicados abrem seleção | 10.2 | PDV-1 |
 | Unid. tributável venda | Unidade do item; fracionável ou não | 10.1 | PDV-1 |

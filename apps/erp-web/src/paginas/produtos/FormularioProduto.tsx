@@ -89,6 +89,7 @@ import {
   BlocoValidade,
   ModalAjustarEstoque,
 } from './BlocosProduto';
+import { BlocoComplementos, resumoComplementos } from './Complementos';
 import { ModalHistoricoPrecos } from './HistoricoPrecos';
 import { ROTA_PRODUTOS } from './ListaProdutos';
 import {
@@ -137,6 +138,7 @@ const CAMPOS_BLOCO: Record<string, readonly string[]> = {
   ],
   codigos: ['codigosAdicionais'],
   composicao: ['posicoes', 'insumos', 'usaFichaTecnica'],
+  complementos: ['gruposComplementos'],
   outras: [
     'localizacao',
     'qtdMinimaVenda',
@@ -434,6 +436,22 @@ export function FormularioProduto() {
           <FichaTecnica form={form} verCusto={verCusto} produtoId={p?.id ?? null} />,
           v.usaFichaTecnica ? `${v.insumos.length} insumo(s)` : null,
         ),
+    // Complementos (8.2.16; F2-B51): no tipo "Com complementos" e, depois de trocar o tipo, enquanto houver grupos
+    // (para excluí-los: a API recusa grupos fora do tipo).
+    ...(v.tipo === 'com_complementos' || v.gruposComplementos.length
+      ? [
+          bloco(
+            'complementos',
+            'Complementos',
+            <BlocoComplementos
+              form={form}
+              produtoId={p?.id ?? null}
+              somenteLeitura={!pode(c.novo ? 'produtos.criar' : 'produtos.editar')}
+            />,
+            resumoComplementos(v),
+          ),
+        ]
+      : []),
     bloco('outras', 'Outras informações', <OutrasInformacoes form={form} />, resumoOutras),
     bloco(
       'imagens',

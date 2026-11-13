@@ -550,6 +550,154 @@ export interface ImagemProdutoDetalhe {
   ordem: number;
 }
 
+// ---------------------------------------------------------------- Complementos (8.2.16; MD 3.6.8; F2-B51)
+
+/**
+ * Tetos do ERP 8.2.16: grupos de complementos de um produto, e complementos **ativos** de um grupo. O inativo não conta
+ * no teto de 50, porque o gravado nunca sai (só se inativa): o grupo "Sabores" que troca as frutas da estação a cada
+ * temporada acumula inativos e continua aceitando a fruta nova. `MAXIMO_LINHAS_COMPLEMENTOS_GRUPO` é só o limite
+ * técnico da lista inteira (ativos e inativos), para o corpo do PUT não crescer sem fim.
+ */
+export const MAXIMO_GRUPOS_COMPLEMENTOS = 20;
+export const MAXIMO_COMPLEMENTOS_GRUPO = 50;
+export const MAXIMO_LINHAS_COMPLEMENTOS_GRUPO = 300;
+/** Teto do mínimo e do máximo de escolhas de um grupo (`smallint` no banco; a tela de venda não passa disso). */
+export const MAXIMO_ESCOLHAS_GRUPO_COMPLEMENTOS = 99;
+
+/**
+ * Tipos que podem ser o produto **vinculado** de um complemento (MD 3.6.8): os que têm o que baixar na venda (o
+ * Produzido baixa os insumos da ficha técnica, decisão 91). Fora: combo (sem combo dentro de complemento), "Com
+ * variações" (a opção não tem a variação), "Com complementos" (sem complemento de complemento), serviço e casco.
+ */
+export const TIPOS_COMPLEMENTO_VINCULADO: readonly TipoProduto[] = ['simples', 'materia_prima', 'produzido'];
+
+/**
+ * Uma opção do grupo (MD 3.6.8; ERP 8.2.16): **vinculada** a um produto (`produtoId`; pode baixar o estoque dele,
+ * `quantidadeBaixa` por escolha, na unidade do produto) ou **livre** (só a `descricao`). Com o produto, a descrição é
+ * opcional (o nome que o caixa mostra; vazia = o nome do produto). `precoAdicional` (4 casas, como os preços do
+ * catálogo) é somado ao item na venda (Fase 3). O complemento gravado nunca sai: tirar da lista o **inativa**
+ * (`ativo = false`), para o caixa offline que já o tem continuar achando o id na nuvem.
+ */
+export const complementoSchema = z
+  .object({
+    id: idFilha,
+    produtoId: uuidOpcional,
+    descricao: textoOpcional(60),
+    precoAdicional: precoCampo.default('0.0000'),
+    baixaEstoque: z.boolean().default(false),
+    quantidadeBaixa: quantidadePositiva.default('1.000'),
+    ordem: z.coerce.number().int().min(0).max(9999).default(0),
+    ativo: z.boolean().default(true),
+  })
+  .superRefine((c, ctx) => {
+    // `ck_produtos_complementos_origem` e `ck_produtos_complementos_baixa`.
+    if (c.produtoId === null && c.descricao === null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['descricao'],
+        message: 'Escolha o produto ou digite a descrição',
+      });
+    if (c.baixaEstoque && c.produtoId === null)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baixaEstoque'],
+        message: 'Só o complemento vinculado a um produto baixa estoque',
+      });
+  });
+export type ComplementoEntrada = z.input<typeof complementoSchema>;
+
+const escolhasGrupo = z.coerce
+  .number('Informe um número inteiro')
+  .int('Informe um número inteiro')
+  .min(0, 'Não pode ser negativo')
+  .max(MAXIMO_ESCOLHAS_GRUPO_COMPLEMENTOS, `No máximo ${MAXIMO_ESCOLHAS_GRUPO_COMPLEMENTOS}`);
+
+/**
+ * Grupo de complementos (MD 3.6.8; ERP 8.2.16): "Molhos" de 0 a 2, "Gelo" de 0 a 1. `minimo`/`maximo` = quantas
+ * escolhas o caixa aceita (Fase 3); `obrigatorio` exige ao menos uma (`minimo ≥ 1`, o CHECK do banco). A lista é a
+ * **inteira**: o complemento gravado que não vem é inativado, e o grupo gravado que não vem é excluído logicamente com
+ * os complementos dele (tombstone ao caixa).
+ */
+export const grupoComplementosSchema = z
+  .object({
+    id: idFilha,
+    nome: textoObrigatorio(40, 'Informe o nome do grupo'),
+    minimo: escolhasGrupo.default(0),
+    maximo: escolhasGrupo.default(1),
+    obrigatorio: z.boolean().default(false),
+    ordem: z.coerce.number().int().min(0).max(9999).default(0),
+    complementos: z
+      .array(complementoSchema)
+      .max(
+        MAXIMO_LINHAS_COMPLEMENTOS_GRUPO,
+        `No máximo ${MAXIMO_LINHAS_COMPLEMENTOS_GRUPO} complementos por grupo, contando os inativos`,
+      )
+      .default([]),
+  })
+  .superRefine((g, ctx) => {
+    const erro = (path: (string | number)[], message: string) =>
+      ctx.addIssue({ code: 'custom', path, message });
+    // `ck_produtos_grupos_complementos_quantidades`, e o máximo 0 (um grupo sem escolha nenhuma).
+    if (g.maximo < 1) erro(['maximo'], 'O máximo é ao menos 1');
+    else if (g.maximo < g.minimo) erro(['maximo'], 'O máximo não pode ser menor que o mínimo');
+    if (g.obrigatorio && g.minimo < 1) erro(['minimo'], 'O grupo obrigatório tem mínimo de ao menos 1');
+    if (g.obrigatorio && !g.complementos.some((c) => c.ativo))
+      erro(['complementos'], 'O grupo obrigatório precisa de ao menos um complemento ativo');
+    if (g.complementos.filter((c) => c.ativo).length > MAXIMO_COMPLEMENTOS_GRUPO)
+      erro(['complementos'], `No máximo ${MAXIMO_COMPLEMENTOS_GRUPO} complementos ativos por grupo`);
+    // Um por produto vinculado (e uma descrição livre por grupo), para o caixa não mostrar a mesma opção duas vezes.
+    const vistos = new Map<string, number>();
+    g.complementos.forEach((c, i) => {
+      const chave = c.produtoId
+        ? `p:${c.produtoId.toLowerCase()}`
+        : `d:${(c.descricao ?? '').toLocaleLowerCase('pt-BR')}`;
+      const anterior = vistos.get(chave);
+      if (anterior !== undefined)
+        erro(
+          ['complementos', i, c.produtoId ? 'produtoId' : 'descricao'],
+          `Complemento repetido no grupo (linha ${anterior + 1})`,
+        );
+      else vistos.set(chave, i);
+    });
+  });
+export type GrupoComplementosEntrada = z.input<typeof grupoComplementosSchema>;
+export type GrupoComplementos = z.output<typeof grupoComplementosSchema>;
+
+/** Complemento no detalhe: `produto` = o vinculado (com o nome e a unidade), `null` no livre. */
+export interface ComplementoDetalhe {
+  id: string;
+  produtoId: string | null;
+  produto: ProdutoOpcao | null;
+  descricao: string | null;
+  precoAdicional: string;
+  baixaEstoque: boolean;
+  quantidadeBaixa: string;
+  ordem: number;
+  ativo: boolean;
+}
+
+/** Grupo no detalhe, com todos os complementos não excluídos (os inativos inclusive), pela ordem. */
+export interface GrupoComplementosDetalhe {
+  id: string;
+  nome: string;
+  minimo: number;
+  maximo: number;
+  obrigatorio: boolean;
+  ordem: number;
+  complementos: ComplementoDetalhe[];
+}
+
+/** O texto do grupo na tela e no resumo: "Molhos (0 a 2)", "Gelo (1, obrigatório)". */
+export function rotuloGrupoComplementos(g: {
+  nome: string;
+  minimo: number;
+  maximo: number;
+  obrigatorio: boolean;
+}): string {
+  const faixa = g.minimo === g.maximo ? String(g.maximo) : `${g.minimo} a ${g.maximo}`;
+  return `${g.nome} (${faixa}${g.obrigatorio ? ', obrigatório' : ''})`;
+}
+
 // ---------------------------------------------------------------- Produto
 
 const camposProduto = z.object({
@@ -725,6 +873,15 @@ const camposProduto = z.object({
     .array(z.uuid())
     .max(MAXIMO_LOTES_PRODUTO, `No máximo ${MAXIMO_LOTES_PRODUTO} lotes excluídos numa gravação`)
     .optional(),
+  /**
+   * Grupos de complementos (8.2.16; F2-B51; só no tipo "Com complementos"). **Ausente = mantém os gravados**, como
+   * `relacionados`: a importação de planilha, o cadastro em massa e o ERP de antes desta versão não os conhecem; o
+   * modal manda sempre a lista inteira (vazia = exclui todos os grupos).
+   */
+  gruposComplementos: z
+    .array(grupoComplementosSchema)
+    .max(MAXIMO_GRUPOS_COMPLEMENTOS, `No máximo ${MAXIMO_GRUPOS_COMPLEMENTOS} grupos de complementos`)
+    .optional(),
   /** `geral.ean_duplicado = 'avisar'`: o ERP confirma e reenvia com `true` (ERP 8.2, "EAN duplicado"). */
   confirmarEanDuplicado: z.boolean().default(false),
 });
@@ -888,6 +1045,24 @@ function regrasProduto(p: Produto, ctx: z.RefinementCtx) {
   });
   if (TIPOS_SEM_SALDO_PROPRIO.includes(p.tipo) && p.lotes?.length)
     erro(['lotes'], `${ROTULOS_TIPO_PRODUTO[p.tipo]} não tem estoque próprio: não tem lote`);
+
+  // Complementos (8.2.16; MD 3.6.8): só o tipo "Com complementos" tem grupos; um nome por grupo; um grupo gravado
+  // (o mesmo id) uma vez só. As regras com o banco (o produto vinculado) ficam na API.
+  if (p.gruposComplementos?.length && p.tipo !== 'com_complementos')
+    erro(['gruposComplementos'], 'Só o tipo Com complementos tem complementos');
+  const nomesGrupo = new Map<string, number>();
+  const idsGrupo = new Map<string, number>();
+  p.gruposComplementos?.forEach((g, i) => {
+    const nome = g.nome.toLocaleLowerCase('pt-BR');
+    const anterior = nomesGrupo.get(nome);
+    if (anterior !== undefined)
+      erro(['gruposComplementos', i, 'nome'], `Grupo repetido (linha ${anterior + 1})`);
+    else nomesGrupo.set(nome, i);
+    if (g.id === null) return;
+    const mesmo = idsGrupo.get(g.id.toLowerCase());
+    if (mesmo !== undefined) erro(['gruposComplementos', i, 'id'], `Grupo repetido (linha ${mesmo + 1})`);
+    else idsGrupo.set(g.id.toLowerCase(), i);
+  });
 
   // Imagens (8.2.6): uma vez cada na galeria (`uq_produtos_imagens`).
   const imagens = new Map<string, number>();
@@ -1394,6 +1569,7 @@ export interface ProdutoDetalhe
       | 'fornecedores'
       | 'lotes'
       | 'lotesExcluidos'
+      | 'gruposComplementos'
       | 'precoCusto'
       | 'markupPct'
       | 'fotoPrincipalArquivoId'
@@ -1424,6 +1600,11 @@ export interface ProdutoDetalhe
   fornecedores: FornecedorProdutoDetalhe[];
   /** Lotes do bloco Validade (8.2.12; F2-B17), na ordem FEFO (validade, sem validade por último, lote). */
   lotes: LoteProdutoDetalhe[];
+  /**
+   * Grupos de complementos (8.2.16; F2-B51), pela ordem, com os complementos não excluídos (os inativos também: o
+   * gravado não sai, só se inativa). Vazio fora do tipo "Com complementos".
+   */
+  gruposComplementos: GrupoComplementosDetalhe[];
   grupoPreco: GrupoPrecoVinculado | null;
   vasilhame: ProdutoOpcao | null;
   /** Combos e fichas técnicas ativos que usam este produto (padrão ou alternativa) — bloqueiam a exclusão. */

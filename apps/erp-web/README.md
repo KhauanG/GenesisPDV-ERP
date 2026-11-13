@@ -1415,13 +1415,42 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       avisado e a árvore recarregada; sem `categorias.editar` não arrasta; a imagem no Gravar do painel) e
       `Marcas.test.tsx` (o logotipo no Gravar, Imprimir em aba nova, sem Imprimir sem `produtos.ver`; a ficha com o
       logotipo, os produtos e a impressão).
+79. **Modal Complementos do produto** (Fase 2, F2-B51; ERP 8.2.16; MD 3.6.8; F2-Q1 = roadmap D43; README da API ›
+    decisão 194; `src/paginas/produtos/Complementos.tsx`, o bloco em `FormularioProduto.tsx` e o formulário ⇄ corpo em
+    `valores.ts`; `src/paginas/configuracoes/rotulos.ts`).
+    - **Bloco "Complementos"** do acordeão (depois da Ficha técnica), no tipo "Com complementos" e, depois de trocar o
+      tipo, enquanto houver grupos (com o aviso para excluí-los: a API recusa grupos fora do tipo). Fechado, resume
+      "1 grupo(s): Molhos (0 a 2)"; aberto, lista cada grupo com os complementos ativos e o preço adicional ("Molhos
+      (0 a 2): Barbecue +R$ 2,00, CHEDDAR CREMOSO +R$ 3,50") e o primeiro erro dos complementos, e o botão
+      **"Complementos…"** abre o modal (somente leitura: "Ver complementos").
+    - **O modal edita o próprio formulário** (não uma cópia): a gravação é a do produto, pelo "Salvar", com as mesmas
+      permissões e o mesmo 409; "Concluir" só fecha. Por grupo: nome, mínimo, máximo, obrigatório, subir/descer (a
+      ordem é a da tela) e excluir. Por complemento: o **produto vinculado** (`<SeletorProduto>` só com Simples,
+      Matéria-prima e Produzido, sem o próprio produto) ou a **descrição livre** (com o vinculado, a descrição é o nome
+      que o caixa mostra; vazia = o nome do produto), o **preço adicional** (+R$, 4 casas na API), a **baixa de
+      estoque** com a quantidade na unidade do produto (só com o vinculado) e o **Ativo**. O complemento gravado não
+      tem "Remover": o botão o **inativa** (a API nunca o exclui, para o caixa offline que o tem numa venda); a linha
+      nova sai da lista. Excluir um grupo gravado pede confirmação ("sai do cadastro e dos caixas com os N
+      complementos"). "Inserir complemento" para nos 50 complementos **ativos** do grupo (o inativo gravado não sai
+      e não conta) ou nas 300 linhas da lista. Os erros do zod e da API caem no campo do modal pelo mesmo caminho
+      (`gruposComplementos.N.…`) e o bloco abre com o marcador de erro; o 403 do preço adicional sem "Produtos:
+      Alterar preço" (com "Altera Preço do Produto no ERP" = Não) vem da API, como o dos outros preços.
+    - **Corpo**: sempre a lista inteira (vazia = exclui os grupos; a API mantém só quando o campo não vem), com o
+      mínimo e o máximo digitados, o preço adicional vazio como zero e a quantidade da baixa vazia como 1. O detalhe da
+      API de antes desta versão (sem a lista) vira a lista vazia. A **cópia** (Duplicar) leva os grupos e os
+      complementos ativos, sem os ids.
+    - **Configurações**: "Cadastrar produtos "Com complementos"" deixa de ser "módulo futuro" e nasce ligada, com a
+      ajuda de que o caixa ainda vende sem os complementos (a escolha na venda vem com a Fase 3).
+    - Testes: `Complementos.test.tsx` (o formulário ⇄ corpo e a cópia; a "Porção" ganhando o grupo "Molhos (0 a 2)"
+      com um complemento livre e o `PUT` com a lista; o gravado só inativado e a confirmação do grupo; o máximo menor
+      que o mínimo no campo do modal, sem chamar a API; o teto de 50 contando só os ativos).
 
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
 excluídos" e Restaurar; seletores que dependem de cadastros futuros (`<SeletorEstoque>`, `<ArvoreSelecao>`; o `<UploadArquivo>` chegou no
-F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações, complementos,
-validade/lotes e tributação por UF (a foto chegou no F2-B44, decisão 78) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
+F2-B43, decisão 77, e o `<SeletorPessoa>` chegou no F2-B13, decisão 55); no produto, variações,
+validade/lotes e tributação por UF (a foto chegou no F2-B44, decisão 78; os complementos, no F2-B51, decisão 79) (Fase 2/fiscal; relacionados e "Ajustar" vieram no F2-B12, decisão 54, e
 fornecedores no F2-B13, decisão 55); aba Acessos do usuário (sessões, últimos
 logins); abas Vendas e Financeiro/Total da pessoa; edição de planos e
 progresso em tempo real das migrações no painel; inatividade de sessão configurável por empresa; e2e no CI.
