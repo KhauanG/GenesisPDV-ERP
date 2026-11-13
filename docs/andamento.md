@@ -4,7 +4,7 @@
 > merge/implantação: o que mudou, o que está aberto e o próximo passo. As regras estão no `CLAUDE.md`; o histórico das
 > decisões técnicas fica nos READMEs; as respostas do dono, em `docs/planos/decisoes-do-dono.md`.
 
-_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": juntado na `main` em 13/11/2026 (#10), falta implantar (junto com o PR-11); PR-14 "Tributação gravada e fechamento": F2-B52 e F2-B53 commitados no branch (falta a revisão de segurança do PR inteiro, D63, e abrir o PR); a execução real do fechamento da Fase 2 com o dono (checklist `docs/implantacao/checklist-fechamento-fase2.md`) está pendente; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
+_Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11/2026; PR-10 "Arquivos, imagens e protocolo do PDV" juntado na `main` em 12/11/2026 (#8) e implantado no mesmo dia (API e ERP), release `pdv-v0.12.0` publicado e na página de download; falta atualizar os caixas; PR-11 "Utilitários" juntado na `main` em 12/11/2026 (#9), falta implantar; PR-13 "Complementos: modal": juntado na `main` em 13/11/2026 (#10), falta implantar (junto com o PR-11); PR-14 "Tributação gravada e fechamento": juntado na `main` em 13/11/2026 (#11), falta implantar (uma Implantação só para o PR-11, o PR-13 e o PR-14); a execução real do fechamento da Fase 2 com o dono (checklist `docs/implantacao/checklist-fechamento-fase2.md`) está pendente; PR-7 e PR-8 em produção desde 10/11/2026, falta atualizar os caixas das lojas).__
 
 ## Repositório
 
@@ -59,7 +59,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
 | PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, junto com o PR-11; sem migração e sem release do PDV) |
-| PR-14 tributação gravada e fechamento | B52–B53 | **aberto** (#11, 13/11/2026), com a revisão de segurança do PR inteiro (D63) sem achado médio ou alto; aguarda a liberação do dono para o merge |
+| PR-14 tributação gravada e fechamento | B52–B53 | concluído (#11, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (a mesma Implantação do PR-11 e do PR-13, sem migração e sem `publicar_pdv`) |
 
 ### PR-6 — blocos
 
@@ -200,9 +200,9 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`; D54 registrada no F2-B39 como "vale a recomendação", sem resposta explícita).
 
-5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): **aberto**
-   (#11, 13/11/2026; revisão de segurança D63 feita, nenhum achado médio ou alto); merge e Implantação com a liberação do dono (sem migração,
-   sem release do PDV). **Depois, para o dono — o fechamento real da Fase 2:** seguir o checklist
+5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): juntado na
+   `main` (#11, 13/11/2026; revisão de segurança D63 feita, nenhum achado médio ou alto); falta a Implantação, a mesma do
+   PR-11 e do PR-13 (sem migração, sem release do PDV). **Depois, para o dono — o fechamento real da Fase 2:** seguir o checklist
    `docs/implantacao/checklist-fechamento-fase2.md` (passo 0: versão nova, caixas no 0.12.0, permissões e
    configurações; 1: importação completa e a ida e volta da planilha; 2: carga do Nuvem3 com a hora; 3: contagens por
    setor e o teste do caixa sem internet; 4: primeiras NF-e reais com o vínculo reaproveitado; 5: transferência CD →
