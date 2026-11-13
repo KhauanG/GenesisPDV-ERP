@@ -59,7 +59,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-11 utilitários | B46 (o B47 só se a F2-Q13 = D54 for "sim"; hoje vale a recomendação, "não agora") | concluído (#9, juntado em 12/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, sem migração e sem release do PDV; depois, quando quiser, o `ncm-atualizar`, `infra/producao/README.md` › Tabela NCM) |
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
 | PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** (só a Implantação, junto com o PR-11; sem migração e sem release do PDV) |
-| PR-14 tributação gravada e fechamento | B52–B53 | blocos commitados no branch `claude/blissful-cray-cvroui` (recomeçado da `main` com o PR-13); falta a revisão de segurança do PR inteiro (D63) e abrir o PR |
+| PR-14 tributação gravada e fechamento | B52–B53 | **aberto** (#11, 13/11/2026), com a revisão de segurança do PR inteiro (D63) sem achado médio ou alto; aguarda a liberação do dono para o merge |
 
 ### PR-6 — blocos
 
@@ -200,8 +200,8 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
    dono em 06/11/2026: as recomendações; D53 registrada no F2-B35 como "vale a recomendação", sem resposta explícita;
    `docs/planos/decisoes-do-dono.md`; D54 registrada no F2-B39 como "vale a recomendação", sem resposta explícita).
 
-5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): falta a
-   revisão de segurança do PR inteiro (D63) e abrir o PR; merge e Implantação com a liberação do dono (sem migração,
+5. **PR-14 "Tributação gravada e fechamento"** (F2-B52 e F2-B53 no branch `claude/blissful-cray-cvroui`): **aberto**
+   (#11, 13/11/2026; revisão de segurança D63 feita, nenhum achado médio ou alto); merge e Implantação com a liberação do dono (sem migração,
    sem release do PDV). **Depois, para o dono — o fechamento real da Fase 2:** seguir o checklist
    `docs/implantacao/checklist-fechamento-fase2.md` (passo 0: versão nova, caixas no 0.12.0, permissões e
    configurações; 1: importação completa e a ida e volta da planilha; 2: carga do Nuvem3 com a hora; 3: contagens por
