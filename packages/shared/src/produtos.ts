@@ -172,7 +172,7 @@ export const ROTULOS_ST_RETIDO: Record<CampoStRetido, string> = {
 export const CAMPOS_ST_RETIDO_PCT: readonly CampoStRetido[] = ['stAliquotaPct', 'fcpStAliquotaPct'];
 /**
  * Os valores em R$ do ST retido (vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet, vFCPSTRet) são **dado de custo**
- * (D68: vale a recomendação até o dono responder): cada um, com as alíquotas e o MVA que o detalhe mostra, dá o preço de compra da loja
+ * (D68, decisão do dono): cada um, com as alíquotas e o MVA que o detalhe mostra, dá o preço de compra da loja
  * (vICMSSubstituto ÷ alíquota própria, vBCSTRet ÷ (1 + MVA)…). Só com `produtos.ver_custo`, como o custo: sem ela, a
  * API os devolve `null`, ignora os do corpo (mantém o gravado) e os tira da auditoria; os percentuais ficam livres.
  */

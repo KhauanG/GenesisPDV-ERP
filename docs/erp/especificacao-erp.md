@@ -1091,7 +1091,7 @@ calculado, nenhum efeito em preço nem em venda), na sub-grade "ST retido por lo
 lojas permitidas ao usuário e auditado; mudar um valor atualiza `st_atualizado_em` e tira a NF-e de origem. O
 preenchimento pela NF-e e pela transferência e a liberação da venda com `fiscal.exige_st_retido_nfce` são da fase
 fiscal. Os **valores em R$** (vBCSTRet, vICMSSubstituto, vICMSSTRet, vBCFCPSTRet, vFCPSTRet) são **dado de custo**
-(D68; vale a recomendação até o dono responder): com eles e as alíquotas se chega ao preço de compra, então só aparecem, são gravados e saem na auditoria com
+(D68, decisão do dono): com eles e as alíquotas se chega ao preço de compra, então só aparecem, são gravados e saem na auditoria com
 `produtos.ver_custo`; sem ela, a sub-grade mostra só os percentuais (pST, pFCPSTRet).
 
 #### 8.2.11 Estoque (somente leitura)

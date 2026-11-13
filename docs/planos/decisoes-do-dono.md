@@ -221,11 +221,12 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
 
 ## ST retido por loja: dado de custo (13/11/2026)
 
-- **D68 — ABERTA (13/11/2026); vale a recomendação (A) até o dono responder.** A revisão do F2-B52 achou que o ST
+- **D68 — RESPONDIDA (13/11/2026): (A).** O dono respondeu "1A" à pergunta D68 em 13/11/2026, depois da abertura do
+  PR-14: os valores em R$ do ST retido são dado de custo, só com `produtos.ver_custo`. A revisão do F2-B52 achou que o ST
   retido por loja (vICMSSubstituto, vBCSTRet e os demais valores em R$) aparecia no detalhe do produto, na auditoria e
   no Histórico de produtos para quem tem `produtos.ver` mas não `produtos.ver_custo`, e que com eles dá para chegar ao
   preço de compra (vICMSSubstituto ÷ alíquota própria; vBCSTRet ÷ (1 + MVA)). Opções: (A) tratá-los como custo, só com
-  `produtos.ver_custo` (recomendada, a implementada); (B) registrar que não são sensíveis e mostrá-los a todos que veem
+  `produtos.ver_custo` (recomendada, a escolhida e implementada); (B) registrar que não são sensíveis e mostrá-los a todos que veem
   o produto. Efeito da (A): sem a permissão, os cinco valores em R$ (vBCSTRet, vICMSSubstituto, vICMSSTRet,
   vBCFCPSTRet, vFCPSTRet) saem vazios no ERP e na API, não são gravados nem apagados por esse usuário e somem da
   auditoria e do histórico dele; os percentuais (pST, pFCPSTRet) continuam visíveis. README da API › decisão 195; do
@@ -236,7 +237,7 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
 - **Nenhuma resposta nova do dono neste fechamento** (F2-B53). O quadro das F2-Q1 a F2-Q14 com a situação de cada uma
   está no fim do roadmap §16: respondidas ou confirmadas pelo dono as F2-Q1 a F2-Q11 (D43, D44, D6, D45, D46 a D52);
   **valem as recomendações, sem resposta explícita**, a F2-Q12 (D53), a F2-Q13 (D54) e a F2-Q14 (D66). A **D68** (ST
-  retido em R$ como custo) continua aberta, com a recomendação (A) valendo.
+  retido em R$ como custo) foi respondida pelo dono depois, no mesmo dia: (A) (seção acima).
 - **Para o dono:** a execução real que fecha a Fase 2 na loja piloto (importação, carga do Nuvem3, contagens, NF-e
   reais, transferência, conferência e `db:recalcular-saldos`) está em `docs/implantacao/checklist-fechamento-fase2.md`;
   o resultado de cada passo é anotado lá e no `docs/andamento.md`, sem dado real.

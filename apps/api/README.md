@@ -6048,7 +6048,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `st_atualizado_em` marca a gravação e `st_nota_entrada_id` sai (os valores já não são os da NF-e); repetir os de
        agora não mexe na data. O detalhe traz os sete e o `stAtualizadoEm` (somente leitura). O preenchimento pela NF-e
        e pela transferência (`fiscal.st_retido_criterio`) e o uso na NFC-e são da fase fiscal.
-     - **Os valores em R$ do ST retido são dado de custo** (D68: pergunta ao dono aberta em 13/11/2026; vale a recomendação, opção A, até a resposta; revisão do
+     - **Os valores em R$ do ST retido são dado de custo** (D68, decisão do dono de 13/11/2026, opção A; revisão do
        F2-B52): o vICMSSubstituto é o ICMS da operação própria do fornecedor (base própria × alíquota própria), e a base
        própria é, na prática, o preço de compra da loja (1,80 ÷ 18% = 10,00); o vBCSTRet ÷ (1 + MVA), com o MVA da
        Tributação por UF do mesmo detalhe, também o dá, e o vBCFCPSTRet, o vICMSSTRet e o vFCPSTRet o dão com as
@@ -6114,8 +6114,8 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        quadro do fechamento no fim da seção. Respondidas ou confirmadas pelo dono: D43, D44, D6, D45, D46, D47, D48, D49,
        D50, D51 e D52 (a D45 deixou de ser "padrão" no fechamento: o dono a confirmou em bloco em 05/11/2026, decisão
        149). **Vale a recomendação, sem resposta explícita do dono:** D53 (F4 "Outras lojas", decisão 182), D54 (sem
-       base externa de GTIN, decisão 185) e D66 (o mapeamento provisório do Nuvem3, decisão 186). Aberta, com a
-       recomendação valendo: D68 (o ST retido em R$ como custo, decisão 195). A **D11** (certificado) deixa de bloquear
+       base externa de GTIN, decisão 185) e D66 (o mapeamento provisório do Nuvem3, decisão 186). Respondida pelo
+       dono depois do fechamento: D68 (A), o ST retido em R$ como custo (decisão 195). A **D11** (certificado) deixa de bloquear
        a Fase 2.
      - **O que saiu da Fase 2 e para onde foi** (roadmap, Fase 2 › Objetivo e Fase 3F):
        - a entrada de NF-e **pela SEFAZ** (Distribuição DF-e, NSU, manifestação, a consulta da situação da nota) e o
