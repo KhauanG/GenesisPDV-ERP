@@ -76,6 +76,15 @@ export class FiltroErros implements ExceptionFilter {
       return new ErroSync('LIMITE_TAXA', 'Muitas requisições.', {}, { 'Retry-After': '60' });
     }
     if (excecao instanceof ErroApi) {
+      // Corpo acima do limite (decisão 199): o mesmo 413 de sempre, com que o PDV divide o lote ao meio (SYNC 19.2).
+      if (excecao.codigo === 'CORPO_GRANDE') {
+        return new ErroSync(
+          'LOTE_GRANDE_DEMAIS',
+          'Lote acima do limite. Divida e reenvie.',
+          {},
+          excecao.extras.cabecalhos ?? {},
+        );
+      }
       const mapa: Partial<Record<ErroApi['codigo'], CodigoSync>> = {
         VALIDACAO: 'REQUISICAO_INVALIDA',
         NAO_AUTENTICADO: 'TOKEN_INVALIDO',
@@ -85,6 +94,9 @@ export class FiltroErros implements ExceptionFilter {
         LIMITE_TAXA: 'LIMITE_TAXA',
         MANUTENCAO: 'MANUTENCAO',
         NAO_ENCONTRADO: 'NAO_ENCONTRADO',
+        TIPO_NAO_SUPORTADO: 'REQUISICAO_INVALIDA',
+        // O lote que não chegou no prazo: o PDV trata como qualquer falha do push e reenvia depois (SYNC 18.3).
+        TEMPO_ESGOTADO: 'REQUISICAO_INVALIDA',
       };
       const codigo = mapa[excecao.codigo] ?? 'ERRO_INTERNO';
       const detalhes = {

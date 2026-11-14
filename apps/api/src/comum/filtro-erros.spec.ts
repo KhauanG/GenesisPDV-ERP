@@ -92,4 +92,35 @@ describe('FiltroErros (envelope ERP 1.8)', () => {
     expect(r.corpo).toMatchObject({ erro: { codigo: 'MANUTENCAO', requisicao_id: 'req-1' } });
     expect(r.logger.error).not.toHaveBeenCalled();
   });
+
+  it('corpo acima do limite no sync é o 413 LOTE_GRANDE_DEMAIS de sempre; o formato recusado e o prazo esgotado, 400 (decisão 199)', () => {
+    const grande = executar(
+      new ErroApi('CORPO_GRANDE', 'O conteúdo enviado passa do tamanho aceito nesta operação.'),
+      '/sync/push',
+    );
+    expect(grande.statusCode).toBe(413);
+    expect(grande.corpo).toMatchObject({ erro: { codigo: 'LOTE_GRANDE_DEMAIS' } });
+    const tipo = executar(
+      new ErroApi('TIPO_NAO_SUPORTADO', 'Esta operação não aceita conteúdo comprimido.', {
+        cabecalhos: { Connection: 'close' },
+      }),
+      '/sync/ativar',
+    );
+    expect(tipo.statusCode).toBe(400);
+    expect(tipo.corpo).toMatchObject({ erro: { codigo: 'REQUISICAO_INVALIDA' } });
+    expect(tipo.cabecalhos.Connection).toBe('close');
+    const prazo = executar(
+      new ErroApi('TEMPO_ESGOTADO', 'O envio do conteúdo demorou além do prazo. Tente de novo.', {
+        cabecalhos: { Connection: 'close' },
+      }),
+      '/sync/push',
+    );
+    expect(prazo.statusCode).toBe(400);
+    expect(prazo.corpo).toMatchObject({ erro: { codigo: 'REQUISICAO_INVALIDA' } });
+    expect(prazo.cabecalhos.Connection).toBe('close');
+    expect(executar(new ErroApi('TEMPO_ESGOTADO', 'x')).statusCode).toBe(408);
+    const erp = executar(new ErroApi('CORPO_GRANDE', 'x'));
+    expect(erp.statusCode).toBe(413);
+    expect(erp.corpo).toMatchObject({ codigo: 'CORPO_GRANDE' });
+  });
 });

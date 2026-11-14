@@ -83,6 +83,31 @@ const esquema = z
     LOGIN_LIMITE_POR_MINUTO: z.coerce.number().int().min(1).default(20),
     /** Limite por conta (código da empresa + login, ou e-mail do admin), somado ao limite por IP (ERP 4.1). */
     LOGIN_LIMITE_POR_CONTA_MINUTO: z.coerce.number().int().min(1).default(10),
+    /**
+     * Limites do corpo JSON das requisições, em KiB (decisão 199): o padrão vale para toda rota, inclusive as sem login;
+     * o grande, só para as rotas autenticadas que gravam documentos com muitos itens (lido depois da autenticação); o
+     * do lote, só para o `POST /sync/push`, lido depois de autenticar o terminal. Cada um vale para os bytes recebidos
+     * e para os descomprimidos.
+     */
+    CORPO_JSON_LIMITE_KB: z.coerce.number().int().min(16).max(1024).default(100),
+    CORPO_JSON_LIMITE_GRANDE_KB: z.coerce
+      .number()
+      .int()
+      .min(256)
+      .max(16 * 1024)
+      .default(4 * 1024),
+    /** Um evento tem até 2 MiB (SYNC 19.2), e o lote maior que o limite volta 413 e o PDV o divide ao meio. */
+    CORPO_JSON_LIMITE_LOTE_KB: z.coerce
+      .number()
+      .int()
+      .min(4 * 1024)
+      .max(32 * 1024)
+      .default(9 * 1024),
+    /**
+     * Prazo para o corpo chegar inteiro, em segundos, contado do início da leitura (decisão 199): o envio lento não
+     * segura a requisição autenticada indefinidamente (o PDV desiste do push em 60 s). Acima: 408 e a conexão fecha.
+     */
+    CORPO_JSON_PRAZO_LEITURA_S: z.coerce.number().int().min(5).max(300).default(60),
     POOL_CACHE_MAXIMO: z.coerce.number().int().min(1).default(50),
     POOL_OCIOSO_MS: z.coerce
       .number()
@@ -228,6 +253,8 @@ export interface Configuracao {
     limitePorMinuto: number;
     limitePorContaMinuto: number;
   };
+  /** Limites do corpo JSON em bytes (decisão 199): `padrao` em toda rota, `grande` e `loteSync` só onde marcado. */
+  corpoJson: { padrao: number; grande: number; loteSync: number; prazoLeituraMs: number };
   pools: { cacheMaximo: number; ociosoMs: number; conexoesPorEmpresa: number };
   tenancyCacheMs: number;
   /** Cache do `GET /dashboard` por empresa × loja × mês (ERP 6: 60 s); 0 desliga. */
@@ -315,6 +342,12 @@ export function carregarConfiguracao(env: Record<string, string | undefined> = p
       bloqueioMinutos: v.LOGIN_BLOQUEIO_MINUTOS,
       limitePorMinuto: v.LOGIN_LIMITE_POR_MINUTO,
       limitePorContaMinuto: v.LOGIN_LIMITE_POR_CONTA_MINUTO,
+    },
+    corpoJson: {
+      padrao: v.CORPO_JSON_LIMITE_KB * 1024,
+      grande: Math.max(v.CORPO_JSON_LIMITE_GRANDE_KB, v.CORPO_JSON_LIMITE_KB) * 1024,
+      loteSync: v.CORPO_JSON_LIMITE_LOTE_KB * 1024,
+      prazoLeituraMs: v.CORPO_JSON_PRAZO_LEITURA_S * 1000,
     },
     pools: {
       cacheMaximo: v.POOL_CACHE_MAXIMO,

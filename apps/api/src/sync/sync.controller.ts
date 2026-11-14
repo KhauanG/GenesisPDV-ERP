@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { Publico } from '../autorizacao/decorators.js';
+import { CorpoJson, lerCorpoJson, limiteDaFaixa, type OpcoesCorpoJson } from '../comum/corpo-json.js';
 import { LimiteTaxaGuard } from '../autorizacao/limite-taxa.guard.js';
 import { Req, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
@@ -32,6 +33,16 @@ import {
 } from './contratos.js';
 import { ErroSync } from './erros.js';
 import { exigirHardware, lerCabecalhos, type EndpointSync, type TerminalAutenticado } from './terminal.js';
+
+/**
+ * Corpo das rotas que autenticam o terminal (decisão 199): lido só depois do token e do hardware conferidos. O lote do
+ * push tem o limite próprio e aceita compressão (SYNC 2.1, 19.2); o heartbeat (até 100 resultados de comando e 500
+ * confirmações) usa o limite grande; a renovação do token, o padrão. Com o corpo lido, o terminal é conferido de novo:
+ * o envio leva até o prazo de leitura, e a revogação feita nesse meio-tempo não deixa o lote ser gravado.
+ */
+const CORPO_PUSH: OpcoesCorpoJson = { faixa: 'loteSync', comprimido: true, adiado: true };
+const CORPO_HEARTBEAT: OpcoesCorpoJson = { faixa: 'grande', adiado: true };
+const CORPO_TOKEN: OpcoesCorpoJson = { faixa: 'padrao', adiado: true };
 
 /**
  * Protocolo de sincronização PDV ↔ nuvem (SYNC; fora do prefixo `/api`). Autenticação pelo token do terminal,
@@ -57,6 +68,24 @@ export class SyncController {
     });
     res.setHeader('X-Agora-Servidor', new Date().toISOString());
     return r;
+  }
+
+  /**
+   * O corpo da rota `adiado`, já com o terminal autenticado; recusado, o resto é descartado e a conexão continua (o
+   * prazo esgotado fecha). Depois de lido, o terminal é conferido de novo no controle (`conferirDeNovo`).
+   */
+  private async corpo(
+    req: RequisicaoGenesis,
+    t: TerminalAutenticado,
+    opcoes: OpcoesCorpoJson,
+  ): Promise<unknown> {
+    const corpo = await lerCorpoJson(req, limiteDaFaixa(this.s.config, opcoes.faixa), {
+      comprimido: opcoes.comprimido,
+      drenarAoRecusar: true,
+      prazoMs: this.s.config.corpoJson.prazoLeituraMs,
+    });
+    await this.s.terminalAuth.conferirDeNovo(t);
+    return corpo;
   }
 
   @UseGuards(LimiteTaxaGuard)
@@ -90,32 +119,32 @@ export class SyncController {
 
   @Post('push')
   @HttpCode(200)
-  push(@Body() corpo: unknown, @Req() req: RequisicaoGenesis, @Res({ passthrough: true }) res: Response) {
-    return this.noTerminal(req, res, 'push', (t) => this.s.push.receber(t, corpo));
+  @CorpoJson(CORPO_PUSH)
+  push(@Req() req: RequisicaoGenesis, @Res({ passthrough: true }) res: Response) {
+    return this.noTerminal(req, res, 'push', async (t) =>
+      this.s.push.receber(t, await this.corpo(req, t, CORPO_PUSH)),
+    );
   }
 
   /** Rotação do token (SYNC 3.7): autenticada pelo token atual, ou pelo anterior só na repetição do mesmo `requisicao_id`. */
   @Post('token/renovar')
   @HttpCode(200)
-  renovarToken(
-    @Body() corpo: unknown,
-    @Req() req: RequisicaoGenesis,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    return this.noTerminal(req, res, 'token', (t) =>
-      this.s.token.renovar(t, validarSync(renovarTokenSchema, corpo)),
+  @CorpoJson(CORPO_TOKEN)
+  renovarToken(@Req() req: RequisicaoGenesis, @Res({ passthrough: true }) res: Response) {
+    return this.noTerminal(req, res, 'token', async (t) =>
+      this.s.token.renovar(t, validarSync(renovarTokenSchema, await this.corpo(req, t, CORPO_TOKEN))),
     );
   }
 
   @Post('heartbeat')
   @HttpCode(200)
-  heartbeat(
-    @Body() corpo: unknown,
-    @Req() req: RequisicaoGenesis,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    return this.noTerminal(req, res, 'heartbeat', (t) =>
-      this.s.heartbeat.receber(t, validarSync(heartbeatSchema, corpo ?? {})),
+  @CorpoJson(CORPO_HEARTBEAT)
+  heartbeat(@Req() req: RequisicaoGenesis, @Res({ passthrough: true }) res: Response) {
+    return this.noTerminal(req, res, 'heartbeat', async (t) =>
+      this.s.heartbeat.receber(
+        t,
+        validarSync(heartbeatSchema, (await this.corpo(req, t, CORPO_HEARTBEAT)) ?? {}),
+      ),
     );
   }
 

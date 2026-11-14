@@ -63,6 +63,7 @@ import { acharOuCriarFornecedorPorDocumento, opcoesPessoaPorId } from './fornece
 import { manterNoPdv, recalcularRelevancia } from './relevancia.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Pessoas';
 
@@ -258,6 +259,7 @@ export class PessoasController {
 
   @Permissao('pessoas.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -327,6 +329,7 @@ export class PessoasController {
 
   @Permissao('pessoas.editar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,

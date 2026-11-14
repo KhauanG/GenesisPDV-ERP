@@ -66,6 +66,7 @@ import {
 } from '../seguranca/senhas.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 type LinhaUsuario = typeof usuarios.$inferSelect;
 
@@ -652,6 +653,7 @@ export class UsuariosController {
 
   @Permissao('usuarios.permissoes')
   @Put(':id/permissoes')
+  @CorpoGrande()
   async alterarPermissoes(
     @Param('id') id: string,
     @Body() corpo: unknown,

@@ -65,6 +65,7 @@ import {
 } from './acertos.js';
 import { folhaContagem, gravarContagem, planejarContagem } from './contagem.js';
 import { estoqueVisivel } from './permitidos.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Estoque › Acerto de Estoque';
 
@@ -239,6 +240,7 @@ export class AcertosController {
 
   @Permissao('estoque_acertos.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -284,6 +286,7 @@ export class AcertosController {
 
   @Permissao('estoque_acertos.criar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,

@@ -230,7 +230,14 @@ Formato de erro: `{ "codigo": "VALIDACAO", "mensagem": "texto para o usuário", 
 Códigos: `VALIDACAO` (422), `NAO_AUTENTICADO` (401), `SEM_PERMISSAO` (403), `EMPRESA_SUSPENSA` (403),
 `NAO_ENCONTRADO` (404), `CONFLITO_VERSAO` (409), `REGRA_NEGOCIO` (422), `LIMITE_PLANO` (422), `ERRO_INTERNO` (500),
 `SISTEMA_OCUPADO` (503, com `Retry-After`: a gravação esperou além do limite pela trava de ordenação enquanto os caixas
-enviavam vendas; nada foi gravado e a tela pede para salvar de novo em alguns segundos — Fase 1C, modelo-de-dados.md 1.5).
+enviavam vendas; nada foi gravado e a tela pede para salvar de novo em alguns segundos — Fase 1C, modelo-de-dados.md 1.5),
+`CORPO_GRANDE` (413), `TEMPO_ESGOTADO` (408) e `TIPO_NAO_SUPORTADO` (415).
+
+Corpo das requisições (README da API › decisão 199): só JSON em UTF-8, sem compressão; até 100 KiB em toda rota e até
+4 MiB nas que gravam documentos com muitos itens (produto, acerto, recebimento, nota de entrada, transferência, cadastro
+em massa, grupo de preço, pessoa, perfil, permissões do usuário), lido depois do login e da permissão conferidos. Acima,
+413 `CORPO_GRANDE`; formulário, texto ou conteúdo comprimido, 415 `TIPO_NAO_SUPORTADO`; o corpo que não chega inteiro em
+60 s (`CORPO_JSON_PRAZO_LEITURA_S`), 408 `TEMPO_ESGOTADO`. Arquivos vão em multipart, com os limites de cada envio.
 
 ---
 

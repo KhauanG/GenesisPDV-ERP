@@ -113,6 +113,7 @@ import {
   vincularImagensProduto,
   type ProdutoAntes,
 } from './gravacao.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Produtos › Cadastro de produtos';
 
@@ -618,6 +619,7 @@ export class ProdutosController {
 
   @Permissao('produtos.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -638,6 +640,7 @@ export class ProdutosController {
 
   @Permissao('produtos.editar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,

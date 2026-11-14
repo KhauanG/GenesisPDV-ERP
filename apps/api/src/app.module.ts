@@ -9,6 +9,7 @@ import { AuditoriaController } from './auditoria/auditoria.controller.js';
 import { AuthController } from './auth/auth.controller.js';
 import { AutenticacaoGuard, PermissaoGuard } from './autorizacao/guards.js';
 import { limitesDeTaxa } from './autorizacao/limite-taxa.guard.js';
+import { CorpoJsonGuard } from './comum/corpo-json.js';
 import { SERVICOS } from './comum/tokens-nest.js';
 import { EmpresaController } from './empresa/empresa.controller.js';
 import { NotasEntradaController } from './entradas/notas-entrada.controller.js';
@@ -130,6 +131,8 @@ export class AppModule {
         { provide: SERVICOS, useValue: servicos },
         { provide: APP_GUARD, useClass: AutenticacaoGuard },
         { provide: APP_GUARD, useClass: PermissaoGuard },
+        // Depois da sessão e das permissões, antes dos guards da rota (o limite de taxa lê o login do corpo).
+        { provide: APP_GUARD, useClass: CorpoJsonGuard },
         { provide: APP_INTERCEPTOR, useClass: ContextoEmpresaInterceptor },
       ],
     };

@@ -73,6 +73,7 @@ import {
 } from './notas-entrada.js';
 import { dadosCompraProdutos, resumoMovimentacao } from './recebimentos.js';
 import { recalcularStatusNotaEntrada, vincularItensNotaEntrada } from './vinculacao.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 /** O que o multer entrega (memória; o tamanho de cada arquivo e o do pedido são conferidos antes de ler). */
 interface ArquivoEnviado {
@@ -487,6 +488,7 @@ export class NotasEntradaController {
    */
   @Permissao('notas_entrada.importar')
   @Put(':id/itens')
+  @CorpoGrande()
   async vincularItens(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,
@@ -601,6 +603,7 @@ export class NotasEntradaController {
    */
   @Permissao('notas_entrada.estornar')
   @Post(':id/estornar')
+  @CorpoGrande()
   @HttpCode(200)
   async estornar(
     @Param('id') idBruto: string,

@@ -36,6 +36,7 @@ import {
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { opcoesPorId } from './consultas.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Produtos › Grupos de preço por quantidade';
 
@@ -128,6 +129,7 @@ export class GruposPrecoController {
 
   @Permissao('grupos_preco.editar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -166,6 +168,7 @@ export class GruposPrecoController {
 
   @Permissao('grupos_preco.editar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,

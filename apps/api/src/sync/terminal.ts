@@ -215,6 +215,39 @@ export class AutenticacaoTerminal {
   }
 
   /**
+   * Confere de novo o terminal depois de o corpo `adiado` chegar (decisão 199): a autenticação vem antes da leitura, e
+   * o envio pode levar até o prazo de leitura. Revogado, excluído ou com o token trocado nesse meio-tempo, nada é
+   * gravado. Vale o mesmo critério de `autenticar`: o token atual, ou o anterior ainda no prazo (a renovação feita por
+   * outra requisição do mesmo caixa durante o envio não derruba este).
+   */
+  async conferirDeNovo(t: TerminalAutenticado): Promise<void> {
+    const [r] = await this.controle.db
+      .select({
+        status: terminaisPdv.status,
+        excluidoEm: terminaisPdv.excluidoEm,
+        revogadoEm: terminaisPdv.revogadoEm,
+        tokenHash: terminaisPdv.tokenHash,
+        tokenHashAnterior: terminaisPdv.tokenHashAnterior,
+        tokenAnteriorValidoAte: terminaisPdv.tokenAnteriorValidoAte,
+      })
+      .from(terminaisPdv)
+      .where(eq(terminaisPdv.id, t.terminalId));
+    if (!r || r.excluidoEm) throw ErroSync.token();
+    const valido =
+      iguaisTempoConstante(t.hashToken, r.tokenHash) ||
+      (r.tokenHashAnterior !== null &&
+        r.tokenAnteriorValidoAte !== null &&
+        r.tokenAnteriorValidoAte > new Date() &&
+        iguaisTempoConstante(t.hashToken, r.tokenHashAnterior));
+    if (!valido) throw ErroSync.token();
+    if (r.status === 'revogado') {
+      throw new ErroSync('TERMINAL_REVOGADO', 'Este terminal foi desativado no ERP.', {
+        revogado_em: r.revogadoEm?.toISOString() ?? null,
+      });
+    }
+  }
+
+  /**
    * Empresa por status (MD 2.3): suspensa ainda aceita push (os dados são do cliente) e a recuperação (22.2), que
    * existe para o push de um banco restaurado não perder nem duplicar nada.
    */

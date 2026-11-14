@@ -148,6 +148,7 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `TRUST_PROXY`                                                                                     | `false` (dev/teste)                                             | Proxies confiáveis à frente da API (número de saltos, `false` ou IPs/CIDRs). Obrigatória em homologação/produção: define o IP usado no limite de taxa e na auditoria                                                                 |
 | `LOGIN_MAX_TENTATIVAS` / `LOGIN_BLOQUEIO_MINUTOS`                                                 | 5 / 15                                                          | ERP 4.1 (login, senha atual na troca e painel)                                                                                                                                                                                       |
 | `LOGIN_LIMITE_POR_MINUTO` / `LOGIN_LIMITE_POR_CONTA_MINUTO`                                       | 20 / 10                                                         | Limites por IP e por conta (código+login; e-mail no painel; usuário na troca de senha)                                                                                                                                               |
+| `CORPO_JSON_LIMITE_KB` / `CORPO_JSON_LIMITE_GRANDE_KB` / `CORPO_JSON_LIMITE_LOTE_KB` | 100 / 4096 / 9216 | Corpo JSON por requisição, nos bytes recebidos e nos descomprimidos (decisão 199): o padrão em toda rota (inclusive sem login), o grande só nas rotas autenticadas marcadas com `@CorpoGrande`, o do lote só no `POST /sync/push`; acima, 413 |
 | `SESSAO_INATIVIDADE_MINUTOS` / `SESSAO_ADMIN_INATIVIDADE_MINUTOS` / `REFRESH_TOLERANCIA_SEGUNDOS` | 60 / 30 / 20                                                    | Inatividade pela última requisição real; janela em que o mesmo refresh simultâneo responde 409 sem derrubar a sessão                                                                                                                 |
 | `POOL_CACHE_MAXIMO` / `POOL_OCIOSO_MS`                                                            | 50 / 300000                                                     | Cache de pools por empresa (pool em uso nunca é fechado)                                                                                                                                                                             |
 | `DASHBOARD_CACHE_MS` | 60000 | Cache do `GET /dashboard` por empresa × loja × mês × o que o usuário enxerga (ERP 6); 0 desliga (testes e e2e) |
@@ -6216,6 +6217,70 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        Testes: `clientes.spec.ts` (a descrição pelo CPF/CNPJ, pelo código e pelo id sem `pessoas.ver`, e o nome com
        ela) e a integração "sem "Pessoas: Ver" a prévia (também em .xlsx) e o 409 do documento não mostram o nome nem o
        id de quem já existe" (perfil personalizado com `pessoas.importar`, `pessoas.editar` e `pessoas.criar`).
+
+199. **Corpo JSON: limite pequeno em toda rota, o grande só depois da autenticação, e sem formulário** (PR-15, SEG-B02;
+     SYNC 2.1, 19.2; ERP 1.8; `src/comum/corpo-json.ts`, `src/app.ts`, `src/app.module.ts`, `src/sync/sync.controller.ts`,
+     `src/config/configuracao.ts`). Antes, um parser JSON de 9 MiB (o tamanho do lote do PDV), com descompressão, valia
+     para toda rota, inclusive as sem login e as inexistentes, e lia o corpo antes de qualquer guard; o parser de
+     formulário do Nest também estava ligado. Agora:
+     - **Sem os parsers do Nest** (`bodyParser: false`). Quem lê o corpo é o `CorpoJsonGuard`, o **último guard global**
+       (depois do `AutenticacaoGuard` e do `PermissaoGuard`, antes dos guards da rota — o `LimiteTaxaGuard` lê o login do
+       corpo). Rota inexistente não lê corpo nenhum.
+     - **Três faixas, configuráveis** (KiB): `CORPO_JSON_LIMITE_KB` = 100 em toda rota, inclusive as sem login (login,
+       refresh, esqueci/redefinir senha, painel, `/sync/ativar`); `CORPO_JSON_LIMITE_GRANDE_KB` = 4.096 só nas rotas
+       autenticadas marcadas com `@CorpoGrande()` — e então lido já com a sessão e a permissão conferidas;
+       `CORPO_JSON_LIMITE_LOTE_KB` = 9.216 só no `POST /sync/push`.
+     - **O limite vale para os bytes recebidos e para os descomprimidos**, e a leitura para no limite: `Content-Length`
+       acima dele volta 413 sem ler nada; o corpo em partes (o PDV manda assim, sem `Content-Length`) volta 413 no byte
+       seguinte; o comprimido que passa do limite ao descomprimir para ali, sem descomprimir o resto, e o comprimido que
+       não descomprime nada é cortado pelos bytes recebidos. O `JSON.parse` só roda no que coube.
+     - **Compressão só no lote do PDV** (`gzip`, `deflate`, `br`, como a SYNC 2.1 prevê). Nas outras rotas, e para
+       codificação desconhecida (antes 500), 415 `TIPO_NAO_SUPORTADO`. O PDV 0.12.0 manda o lote sem compressão
+       (`JsonContent` do .NET, em partes, `charset=utf-8`) e continua igual.
+     - **Só JSON em UTF-8** (`application/json` ou `+json`; `charset` ausente, `utf-8` ou `utf8`). Formulário
+       (`application/x-www-form-urlencoded`), texto e outro conjunto de caracteres com corpo: 415, sem chegar ao
+       handler — um formulário de outro site não chega ao login. Multipart fica para o multer das 5 rotas de envio de
+       arquivo (nas outras o corpo não é lido e a validação recusa); corpo sem `Content-Type` não é lido. Vazio com
+       JSON vira `{}`, JSON malformado ou valor solto no topo, 422 `VALIDACAO` "Requisição inválida." (como antes).
+     - **As rotas do PDV que autenticam o terminal no handler leem o corpo depois** do token e do hardware conferidos
+       (`@CorpoJson({ ..., adiado: true })` + `lerCorpoJson`): o push (faixa do lote, com compressão), o heartbeat
+       (faixa grande: até 100 resultados de comando e 500 confirmações, ~65 KiB no máximo de hoje) e a renovação do
+       token (padrão). Sem token válido, 401 `TOKEN_INVALIDO` sem ler o lote; acima do limite, o mesmo 413
+       `LOTE_GRANDE_DEMAIS` de sempre (o PDV divide o lote ao meio).
+     - **O terminal é conferido de novo depois de o corpo chegar** (`AutenticacaoTerminal.conferirDeNovo`, antes do
+       `push.receber`, do `heartbeat.receber` e do `token.renovar`): como a autenticação agora vem antes da leitura, a
+       revogação (imediata ou como perdido/roubado), a exclusão ou a troca do token feitas enquanto o lote ainda chegava
+       devolvem 401 `TERMINAL_REVOGADO`/`TOKEN_INVALIDO` sem gravar nada. Vale o mesmo critério da autenticação: o
+       token atual ou o anterior ainda no prazo (a renovação feita no meio do envio não derruba o lote).
+     - **Prazo de leitura**: `CORPO_JSON_PRAZO_LEITURA_S` = 60 (o mesmo prazo com que o PDV desiste do push), contado
+       do início da leitura, em toda rota. O corpo que não chega inteiro nele volta 408 `TEMPO_ESGOTADO` (no
+       `/sync/*`, 400 `REQUISICAO_INVALIDA`; o PDV trata como qualquer falha do push e reenvia) e a conexão fecha mesmo
+       com o terminal ou a sessão conferidos: o envio lento não segura a requisição autenticada até o `requestTimeout`
+       do Node (300 s). Nas rotas `@CorpoGrande` do ERP a sessão não é conferida de novo depois do corpo: a janela fica
+       limitada a esse prazo.
+     - **Depois da recusa**: com o terminal, a sessão do ERP ou a do painel conferidos, o resto do corpo é descartado sem
+       guardar e a conexão continua utilizável (o navegador e o PDV recebem o 413/415, não uma conexão cortada no meio
+       do envio); sem login, a resposta leva `Connection: close` e o resto não é recebido.
+     - **Rotas com `@CorpoGrande()`** (o maior corpo legítimo de cada uma passa ou chega perto dos 100 KiB, medido pelo
+       contrato com as listas no máximo): produto (criar/alterar: lojas, tributação por UF, complementos — até ~3,3 MiB
+       com tudo no máximo), acerto (criar/alterar: 5.000 itens, ~0,9 MiB como o ERP monta, ~1,7 MiB no pior caso),
+       recebimento (criar/alterar/estornar), nota de entrada (`PUT :id/itens` e estornar), transferência
+       (criar/alterar: 990 itens, ~0,2–0,3 MiB; receber; tratar divergência), cadastro em massa, grupo de preço
+       (criar/alterar: até 2.000 produtos), pessoa (criar/alterar), perfil (criar/alterar) e as permissões do usuário
+       (`PUT /usuarios/:id/permissoes`, até 1.000 ajustes). Todas as outras ficam abaixo de ~45 KiB no pior caso.
+     - Códigos novos no contrato (`@genesis/shared`): `CORPO_GRANDE` (413) e `TEMPO_ESGOTADO` (408); o
+       `TIPO_NAO_SUPORTADO` (415) passa a valer também para o corpo. No `/sync/*` viram `LOTE_GRANDE_DEMAIS` e
+       `REQUISICAO_INVALIDA`.
+     - Sem migração, sem mudança no PDV nem no ERP (o ERP já manda JSON sem compressão). Testes:
+       `src/comum/corpo-json.spec.ts` (servidor HTTP local: formatos, limite pelo `Content-Length` e em partes, o
+       limite exato, compressão aceita e recusada, o comprimido acima do limite e o fluxo válido que não descomprime
+       nada, a conexão mantida no terminal, o prazo de leitura com 408 e a conexão fechada) e a integração `test/integracao/corpo-json.test.ts` (gzip nas rotas sem login → 415
+       sem interpretar; 100 KiB+ → 413 pelo `Content-Length` e em partes; formulário e texto no login → 415 sem cookie;
+       rota autenticada sem token → 401 sem ler; acerto de 5.000 itens lido até a recusa de negócio do estoque, o mesmo
+       tamanho noutra rota → 413; o push de ~570 KiB em partes e com gzip aplicado, sem token → 401 sem descomprimir,
+       acima do lote → 413 `LOTE_GRANDE_DEMAIS` e o lote seguinte aceito; heartbeat e renovação do token sem token
+       válido → 401 sem interpretar ~3 MiB; heartbeat 200; o terminal revogado no meio do envio do lote → 401
+       `TERMINAL_REVOGADO` sem nenhum evento gravado).
 
 ### Operação – tarefas em segundo plano (API)
 

@@ -163,7 +163,7 @@ online, 4.1), `GET /cep/{cep}`. Todo endpoint online que altera estado exige `X-
 | Item | Regra |
 |---|---|
 | Protocolo | HTTPS, TLS 1.2 ou 1.3 (1.3 preferido); HTTP/2 quando disponível, com keep-alive |
-| Corpo | JSON UTF-8. Requisições de push e respostas de pull/push com `gzip` (`Content-Encoding: gzip` no push; `Accept-Encoding: gzip, br` no pull) |
+| Corpo | JSON UTF-8 (`application/json`). Requisições de push e respostas de pull/push com `gzip` (`Content-Encoding: gzip` no push; `Accept-Encoding: gzip, br` no pull). Só o push aceita corpo comprimido (`gzip`, `deflate`, `br`); nas outras rotas, `400 REQUISICAO_INVALIDA`. O corpo das rotas autenticadas pelo token é lido depois de autenticar o terminal, e o terminal é conferido de novo quando o corpo termina de chegar (revogado no meio do envio: `401 TERMINAL_REVOGADO`, nada gravado); o corpo que não chega inteiro em 60 s (`CORPO_JSON_PRAZO_LEITURA_S`) volta `400 REQUISICAO_INVALIDA` e a conexão fecha (README da API › decisão 199) |
 | Tempo limite (PDV) | Conexão 5 s; pull 30 s; push 60 s; heartbeat 10 s; ativação 30 s |
 | Proxy | Respeita o proxy do sistema ou o proxy configurado no assistente de ativação (PDV 5.3) |
 
@@ -4231,9 +4231,10 @@ de 10 MB/dia: cabe em 4G de contingência (PDV 32.7).
 | Linhas por página de pull | padrão 500, máximo 2000 | API usa o máximo |
 | Bytes por página de pull | 4 MiB sem compressão | API corta a página (sempre ≥ 1 linha) |
 | Eventos por lote de push | 50 | `413 LOTE_GRANDE_DEMAIS` |
-| Bytes por lote de push | 8 MiB sem compressão | `413` → PDV divide o lote ao meio |
+| Bytes por lote de push | 8 MiB sem compressão (a API aceita até 9 MiB, `CORPO_JSON_LIMITE_LOTE_KB`, contados nos bytes recebidos e nos descomprimidos, e lê o lote só depois de autenticar o terminal) | `413 LOTE_GRANDE_DEMAIS` → PDV divide o lote ao meio |
 | Bytes por evento | 2 MiB | Não há divisão de evento: o PDV impede na origem (venda limitada a 990 itens; o XML de NFC-e é bem menor); se acontecer, `PAYLOAD_INVALIDO` |
-| Heartbeat | 16 KiB | `413` |
+| Heartbeat | 16 KiB típico; até ~65 KiB com 100 resultados de comando e 500 confirmações (a API aceita até o limite grande, 4 MiB, lido depois de autenticar o terminal) | `413` |
+| Ativação e outras rotas | 100 KiB (`CORPO_JSON_LIMITE_KB`), sem compressão | `413` / `400 REQUISICAO_INVALIDA` |
 | Conexão SSE | 1 por terminal | A nova encerra a anterior |
 
 ### 19.3 Recuperação de longo período offline

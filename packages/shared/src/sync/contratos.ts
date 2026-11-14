@@ -36,7 +36,7 @@ export const MAX_COMANDOS_HEARTBEAT = 100;
 /** Alfabeto do código de ativação, sem caracteres ambíguos (0/O, 1/I/L) (SYNC 3.1). */
 export const ALFABETO_ATIVACAO = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 
-/** SYNC 19.2: até 50 eventos ou 8 MiB por lote (o limite de bytes vale no corpo, `useBodyParser` da API). */
+/** SYNC 19.2: até 50 eventos ou 8 MiB por lote (o limite de bytes vale no corpo: `CORPO_JSON_LIMITE_LOTE_KB` da API). */
 export const MAXIMO_EVENTOS_LOTE = 50;
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -57,6 +57,7 @@ import {
   sqlVersaoTransferencia,
   type TransferenciaATratar,
 } from './transferencias.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Estoque › Transferências';
 
@@ -243,6 +244,7 @@ export class TransferenciasController {
   /** Cria o rascunho (origem permitida, destino qualquer estoque ativo da empresa). */
   @Permissao('transferencias.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -283,6 +285,7 @@ export class TransferenciasController {
   /** Altera o rascunho inteiro (cabeçalho e itens) conferindo a versão do documento (409 se outro mexeu). */
   @Permissao('transferencias.criar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,
@@ -426,6 +429,7 @@ export class TransferenciasController {
    */
   @Permissao('transferencias.receber')
   @Post(':id/receber')
+  @CorpoGrande()
   @HttpCode(200)
   async receber(
     @Param('id') idBruto: string,
@@ -475,6 +479,7 @@ export class TransferenciasController {
    */
   @Permissao('transferencias.receber')
   @Post(':id/tratar-divergencia')
+  @CorpoGrande()
   @HttpCode(200)
   async tratarDivergencia(
     @Param('id') idBruto: string,

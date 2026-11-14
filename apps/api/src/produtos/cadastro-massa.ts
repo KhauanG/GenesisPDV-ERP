@@ -65,6 +65,7 @@ import {
   entradaDoDetalhe,
   inserirProduto,
 } from './produtos.controller.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 type Campos = Record<string, string[]>;
 const add = (campos: Campos, campo: string, msg: string) => (campos[campo] ??= []).push(msg);
@@ -680,6 +681,7 @@ export class CadastroMassaController {
    */
   @Permissao('produtos.cadastro_massa')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async gravar(
     @Body() corpo: unknown,
