@@ -27,6 +27,7 @@ import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import type { Servicos } from '../servicos.js';
 import { formatoPlanilha } from './planilha.js';
+import { PrazoLeituraEnvio } from '../comum/prazo-envio.js';
 
 /** O que o multer entrega (memória; o limite de 10 MB é conferido antes de ler). */
 interface ArquivoEnviado {
@@ -87,7 +88,7 @@ export class ImportacoesController {
   @Permissao('produtos.importar')
   @Post('produtos/previa')
   @HttpCode(200)
-  @UseInterceptors(upload)
+  @UseInterceptors(PrazoLeituraEnvio, upload)
   previaProdutos(
     @UploadedFile() arquivo: ArquivoEnviado | undefined,
     @Body() corpo: unknown,
@@ -100,7 +101,7 @@ export class ImportacoesController {
   @Permissao('pessoas.importar')
   @Post('clientes/previa')
   @HttpCode(200)
-  @UseInterceptors(upload)
+  @UseInterceptors(PrazoLeituraEnvio, upload)
   previaClientes(
     @UploadedFile() arquivo: ArquivoEnviado | undefined,
     @Body() corpo: unknown,

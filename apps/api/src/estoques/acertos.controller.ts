@@ -66,6 +66,7 @@ import {
 import { folhaContagem, gravarContagem, planejarContagem } from './contagem.js';
 import { estoqueVisivel } from './permitidos.js';
 import { CorpoGrande } from '../comum/corpo-json.js';
+import { PrazoLeituraEnvio } from '../comum/prazo-envio.js';
 
 const LOCALIZACAO = 'Estoque › Acerto de Estoque';
 
@@ -370,7 +371,7 @@ export class AcertosController {
   @Permissao('estoque_acertos.criar')
   @Post(':id/importar-contagem')
   @HttpCode(200)
-  @UseInterceptors(uploadContagem)
+  @UseInterceptors(PrazoLeituraEnvio, uploadContagem)
   async importarContagem(
     @Param('id') idBruto: string,
     @UploadedFile() arquivo: ArquivoEnviado | undefined,

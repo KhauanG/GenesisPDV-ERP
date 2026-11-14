@@ -9,7 +9,11 @@
  *   `fast-xml-parser` roda com `processEntities: false` e só as 5 entidades do XML e as referências numéricas são
  *   decodificadas aqui, sem expansão nem arquivo externo;
  * - XML malformado recusado pelo `XMLValidator` (iterativo, sem recursão) antes da leitura;
- * - teto de profundidade (`maxNestedTags`) e de itens, duplicatas, volumes e lotes por item.
+ * - teto de profundidade (`maxNestedTags`) e de itens, duplicatas, volumes e lotes por item;
+ * - **teto de estrutura** contado no texto, antes do `XMLValidator`, do parser e do DOM da assinatura (README da API ›
+ *   decisão 203): elementos e atributos, declarações de namespace e comentários e instruções de processamento
+ *   (`LIMITES_XML_NFE`). O custo da leitura e da conferência da assinatura cresce com o número de nós, e 1 MiB de
+ *   texto cabe muito mais nós do que uma nota real tem: com o teto, o pior arquivo custa o que custa a maior NF-e.
  *
  * Grupo repetido onde o layout tem um só (duas `infNFe`, dois `protNFe`) é recusado: a leitura nunca escolhe um deles.
  */
@@ -95,7 +99,94 @@ export function textoXmlNfe(conteudo: Buffer | string): string {
   }
   if (texto.charCodeAt(0) === 0xfeff) texto = texto.slice(1);
   if (/<!\s*(DOCTYPE|ENTITY)/i.test(texto)) throw new RecusaNfe('XML_COM_DTD');
+  conferirEstruturaXml(texto);
   return texto;
+}
+
+const numero = (n: number) => n.toLocaleString('pt-BR');
+const ESPACO = new Set([0x20, 0x09, 0x0a, 0x0d]);
+
+/**
+ * Conta, numa passada pelo texto, o que o parser e o DOM vão montar e recusa (`XML_COMPLEXO_DEMAIS`) acima dos tetos
+ * de `LIMITES_XML_NFE`: cada marca de abertura é um elemento e cada `=` fora das aspas dentro dela é um atributo
+ * (`xmlns` e `xmlns:p` contam também como declaração de namespace); `<!-- -->` e `<? ?>` (fora a declaração `<?xml`
+ * do começo) contam como comentário ou instrução. O conteúdo de comentário, CDATA e instrução não é marcação e não
+ * conta. A contagem é um teto do que o parser monta para qualquer XML bem formado (o malformado o `XMLValidator`
+ * recusa depois); para assim que um teto passa.
+ */
+function conferirEstruturaXml(texto: string): void {
+  const { elementosEAtributos, declaracoesNamespace, comentariosEInstrucoes } = LIMITES_XML_NFE;
+  let nos = 0;
+  let declaracoes = 0;
+  let outros = 0;
+  const complexo = (detalhe: string) => new RecusaNfe('XML_COMPLEXO_DEMAIS', detalhe);
+  const pularAte = (fim: string, de: number) => {
+    const j = texto.indexOf(fim, de);
+    return j === -1 ? texto.length : j + fim.length;
+  };
+  let i = texto.indexOf('<');
+  while (i !== -1) {
+    const c = texto.charCodeAt(i + 1);
+    let depois: number;
+    if (c === 0x2f /* / */) depois = i + 2;
+    else if (texto.startsWith('<!--', i)) {
+      if (++outros > comentariosEInstrucoes)
+        throw complexo(`mais de ${comentariosEInstrucoes} comentários e instruções de processamento`);
+      depois = pularAte('-->', i + 4);
+    } else if (texto.startsWith('<![CDATA[', i)) depois = pularAte(']]>', i + 9);
+    else if (c === 0x3f /* ? */) {
+      if (i !== 0 && ++outros > comentariosEInstrucoes)
+        throw complexo(`mais de ${comentariosEInstrucoes} comentários e instruções de processamento`);
+      depois = pularAte('?>', i + 2);
+    } else if (c === 0x21 /* ! */) depois = pularAte('>', i + 2);
+    else {
+      if (++nos > elementosEAtributos)
+        throw complexo(`mais de ${numero(elementosEAtributos)} elementos e atributos`);
+      // Os atributos até o `>` que fecha a marca (um `>` dentro das aspas é do valor). O nome do atributo é a última
+      // palavra antes do `=` (`a="1"` ou `a = "1"`), guardada pelo início e pelo fim: cada caractere é visto uma vez.
+      let j = i + 1;
+      let aspas = 0;
+      let inicioPalavra = j;
+      let inicioNome = -1;
+      let fimNome = -1;
+      for (; j < texto.length; j++) {
+        const d = texto.charCodeAt(j);
+        if (aspas !== 0) {
+          if (d === aspas) {
+            aspas = 0;
+            inicioPalavra = j + 1;
+          }
+          continue;
+        }
+        if (d === 0x22 || d === 0x27) aspas = d;
+        else if (d === 0x3e /* > */) break;
+        else if (ESPACO.has(d)) {
+          if (j > inicioPalavra) {
+            inicioNome = inicioPalavra;
+            fimNome = j;
+          }
+          inicioPalavra = j + 1;
+        } else if (d === 0x3d /* = */) {
+          if (j > inicioPalavra) {
+            inicioNome = inicioPalavra;
+            fimNome = j;
+          }
+          if (++nos > elementosEAtributos)
+            throw complexo(`mais de ${numero(elementosEAtributos)} elementos e atributos`);
+          const ehDeclaracao =
+            inicioNome !== -1 &&
+            texto.startsWith('xmlns', inicioNome) &&
+            (fimNome - inicioNome === 5 || texto.charCodeAt(inicioNome + 5) === 0x3a); /* : */
+          if (ehDeclaracao && ++declaracoes > declaracoesNamespace)
+            throw complexo(`mais de ${numero(declaracoesNamespace)} declarações de namespace`);
+          inicioNome = -1;
+          inicioPalavra = j + 1;
+        }
+      }
+      depois = j + 1;
+    }
+    i = texto.indexOf('<', depois);
+  }
 }
 
 type No = Record<string, unknown>;

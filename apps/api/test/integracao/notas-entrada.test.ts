@@ -12,6 +12,10 @@
  * importações simultâneas da mesma chave (o 23505 vira "duplicada") e o segundo envio simultâneo do mesmo usuário
  * (429), a trava ocupada além da espera do ERP recusando só aquele arquivo, o rastro com as datas trocadas no meio de
  * um ZIP, a tarefa que espera a trava sem limite e a tarefa de quem perdeu a permissão ou o estoque.
+ *
+ * PR-15 (README da API › decisões 202 e 203): os envios lentos de uma empresa não seguram a vaga do processo (o envio de
+ * outra empresa passa na hora), o limite de envios simultâneos da empresa (429), o prazo de leitura do envio (408 com a
+ * conexão fechada, e os contadores de volta) e o XML com estrutura demais recusado no envio direto e no lote em tarefa.
  */
 import { request as pedidoHttp } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -21,6 +25,7 @@ import {
   completarCnpj,
   formatarCpfCnpj,
   LIMITES_UPLOAD_NFE,
+  LIMITES_XML_NFE,
   MOTIVOS_RECUSA_NFE,
 } from '@genesis/shared';
 import type pg from 'pg';
@@ -43,9 +48,13 @@ import { iniciarS3Falso, type S3Falso } from './s3-falso.js';
 process.env.NFE_IMPORTACOES_POR_MINUTO = '1000';
 /** Espera do ERP pela trava de versão neste arquivo: curta, para os testes da trava ocupada não demorarem. */
 const ESPERA_TRAVA_MS = 2_500;
+/** Prazo de leitura do envio neste arquivo: o mínimo, para o teste do envio lento não demorar. */
+const PRAZO_LEITURA_S = 5;
 
 let amb: Ambiente;
 let emp: EmpresaTeste;
+let outra: EmpresaTeste;
+let adminOutra: string;
 let s3: S3Falso | null = null;
 let admin: string;
 let estoquista: string;
@@ -65,6 +74,7 @@ beforeAll(async () => {
     env: {
       FILA_TRABALHADOR: 'true',
       ERP_ESPERA_TRAVA_MS: String(ESPERA_TRAVA_MS),
+      ENVIO_ARQUIVO_PRAZO_LEITURA_S: String(PRAZO_LEITURA_S),
       ARMAZENAMENTO_ENDPOINT: s3Real ?? s3!.url,
       ARMAZENAMENTO_BUCKET: `genesis-teste-nfe-${Date.now()}`,
     },
@@ -105,6 +115,8 @@ beforeAll(async () => {
   estoquista = await amb.entrar(emp.codigo, 'estoquista', SENHA_TESTE);
   await criarUsuario(emp.nomeBanco, { login: 'vendedor', perfil: 'vendedor', lojas: [ids.loja1] });
   vendedor = await amb.entrar(emp.codigo, 'vendedor', SENHA_TESTE);
+  outra = await amb.criarEmpresa();
+  adminOutra = await amb.entrar(outra.codigo, 'admin', outra.senha);
 }, 120_000);
 
 afterAll(async () => {
@@ -170,6 +182,61 @@ async function aguardarTarefa(id: string) {
     await esperar(200);
   }
 }
+
+const CABECALHO_PARTE =
+  '--xyz\r\nContent-Disposition: form-data; name="arquivos"; filename="lenta.xml"\r\n' +
+  'Content-Type: text/xml\r\n\r\n<nfeProc>';
+
+/**
+ * Um envio que declara 500 KB e manda só o começo do corpo, sem terminar (o envio lento). `resposta` resolve com o
+ * status, o corpo e o `Connection` se o servidor responder antes de o corpo terminar, ou com `null` depois de
+ * `esperaMs`; `fechou` resolve quando a conexão fecha; `fechar` derruba a conexão.
+ */
+function envioLento(token: string, esperaMs = 60_000) {
+  const { port } = amb.app!.getHttpServer().address() as AddressInfo;
+  const req = pedidoHttp({
+    host: '127.0.0.1',
+    port,
+    method: 'POST',
+    path: '/api/notas-entrada/importar',
+    headers: {
+      ...bearer(token),
+      'Content-Type': 'multipart/form-data; boundary=xyz',
+      'Content-Length': String(500_000),
+    },
+  });
+  req.on('error', () => undefined);
+  const fechou = new Promise<void>((ok) => req.on('close', () => ok()));
+  const resposta = new Promise<{
+    status: number;
+    corpo: { codigo?: string; mensagem?: string };
+    conexao: string | undefined;
+  } | null>((ok) => {
+    const prazo = setTimeout(() => ok(null), esperaMs);
+    req.on('response', (res) => {
+      let texto = '';
+      res.setEncoding('utf8');
+      res.on('data', (d: string) => (texto += d));
+      res.on('end', () => {
+        clearTimeout(prazo);
+        ok({
+          status: res.statusCode ?? 0,
+          corpo: texto ? JSON.parse(texto) : {},
+          conexao: res.headers.connection,
+        });
+      });
+    });
+  });
+  req.write(CABECALHO_PARTE);
+  return { resposta, fechou, fechar: () => req.destroy() };
+}
+
+/** A fixture com `<x/>` repetido antes do fim do `infNFe`: abaixo de 1 MiB, com um elemento além do teto. */
+const xmlComElementosDemais = () =>
+  fixtureNfe('01-icms-st.xml').replace(
+    '</infNFe>',
+    `${'<x/>'.repeat(LIMITES_XML_NFE.elementosEAtributos + 1)}</infNFe>`,
+  );
 
 describe('upload de XML (ERP 13.4 "Por Arquivo")', () => {
   it('exige notas_entrada.importar', async () => {
@@ -882,5 +949,140 @@ describe('tarefa importar_xml_nfe (revisão do F2-B19)', () => {
       'select count(*)::int as n from notas_entrada',
     );
     expect(depois).toEqual(antes);
+  });
+});
+
+describe('vagas, prazo de leitura e estrutura do XML (PR-15)', () => {
+  /** Três usuários de importação a mais na empresa (o limite de envios simultâneos é por usuário). */
+  async function importadores(prefixo: string): Promise<string[]> {
+    const tokens: string[] = [];
+    for (let i = 1; i <= 3; i++) {
+      await criarUsuario(emp.nomeBanco, { login: `${prefixo}${i}`, master: true });
+      tokens.push(await amb.entrar(emp.codigo, `${prefixo}${i}`, SENHA_TESTE));
+    }
+    return tokens;
+  }
+
+  /** Abre um envio lento por usuário, com folga para o servidor contar cada um antes do próximo. */
+  async function abrirLentos(tokens: readonly string[]) {
+    const lentos = [];
+    for (const t of tokens) {
+      lentos.push(envioLento(t));
+      await esperar(200);
+    }
+    return lentos;
+  }
+
+  it('envios lentos de três usuários não seguram a vaga do processo: o envio de outra empresa passa na hora', async () => {
+    // As 3 vagas de `NFE_ENVIOS_SIMULTANEOS` com um envio lento de cada usuário (cada um no limite dele): a vaga só é
+    // pega com o corpo lido, então o envio da outra empresa não fica na fila atrás deles.
+    const lentos = await abrirLentos(await importadores('lento'));
+    try {
+      const inicio = Date.now();
+      const r = await importar(adminOutra, [
+        { nome: 'nota.xml', conteudo: fixtureNfe('01-icms-st.xml') },
+      ]).timeout(10_000);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      // A outra empresa não tem loja com o CNPJ do destinatário: a nota volta recusada, mas o envio foi processado.
+      expect(r.body.resultados[0]).toMatchObject({
+        situacao: 'recusada',
+        motivo: 'DESTINATARIO_FORA_DA_EMPRESA',
+      });
+      // Bem antes do prazo de leitura (5 s), que é quando os envios lentos seriam cortados.
+      expect(Date.now() - inicio).toBeLessThan(2_500);
+    } finally {
+      for (const l of lentos) l.fechar();
+    }
+  });
+
+  it('o quarto envio simultâneo da mesma empresa volta 429 na hora; o de outra empresa não conta; terminados, voltam', async () => {
+    const lentos = await abrirLentos(await importadores('simultaneo'));
+    try {
+      const quarto = await importar(admin, [{ nome: 'nota.xml', conteudo: fixtureNfe('01-icms-st.xml') }]);
+      expect(quarto.status, JSON.stringify(quarto.body)).toBe(429);
+      expect(quarto.body).toMatchObject({
+        codigo: 'LIMITE_TAXA',
+        mensagem:
+          'Há outros envios de NF-e da empresa em andamento. Aguarde um deles terminar e envie de novo.',
+      });
+      expect(quarto.headers['retry-after']).toBe('5');
+      const daOutra = await importar(adminOutra, [
+        { nome: 'nota.xml', conteudo: fixtureNfe('01-icms-st.xml') },
+      ]);
+      expect(daOutra.status, JSON.stringify(daOutra.body)).toBe(200);
+    } finally {
+      for (const l of lentos) l.fechar();
+    }
+    await Promise.all(lentos.map((l) => l.fechou));
+    let depois = 0;
+    for (let i = 0; i < 50 && depois !== 200; i++) {
+      depois = (await importar(admin, [{ nome: 'nota.xml', conteudo: fixtureNfe('08-nfce.xml') }])).status;
+      if (depois !== 200) await esperar(100);
+    }
+    expect(depois).toBe(200);
+  });
+
+  it('o envio que não chega inteiro no prazo volta 408 e a conexão fecha; o mesmo usuário envia de novo em seguida', async () => {
+    const [token] = await importadores('prazo');
+    const inicio = Date.now();
+    const lento = envioLento(token!, 20_000);
+    try {
+      const r = await lento.resposta;
+      expect(r).not.toBeNull();
+      expect(r!.status).toBe(408);
+      expect(r!.corpo).toMatchObject({
+        codigo: 'TEMPO_ESGOTADO',
+        mensagem: 'O envio do arquivo demorou além do prazo. Tente de novo.',
+      });
+      expect(r!.conexao).toBe('close');
+      expect(Date.now() - inicio).toBeGreaterThanOrEqual(PRAZO_LEITURA_S * 1000 - 200);
+      await lento.fechou;
+    } finally {
+      lento.fechar();
+    }
+    // O contador do usuário e o da empresa voltaram com a resposta: o envio seguinte não é 429.
+    const r = await importar(token!, [{ nome: 'nota.xml', conteudo: fixtureNfe('08-nfce.xml') }]);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.resultados[0]).toMatchObject({ situacao: 'recusada', motivo: 'MODELO_NAO_ACEITO' });
+  }, 30_000);
+
+  it('o XML com elementos demais é recusado no envio direto (XML_COMPLEXO_DEMAIS), e os outros arquivos seguem', async () => {
+    const xml = xmlComElementosDemais();
+    expect(Buffer.byteLength(xml)).toBeLessThan(1024 * 1024);
+    const inicio = Date.now();
+    const r = await importar(admin, [
+      { nome: 'pesada.xml', conteudo: xml },
+      { nome: 'nfce.xml', conteudo: fixtureNfe('08-nfce.xml') },
+    ]);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.resultados.map((x: { arquivo: string; motivo: string }) => [x.arquivo, x.motivo])).toEqual([
+      ['pesada.xml', 'XML_COMPLEXO_DEMAIS'],
+      ['nfce.xml', 'MODELO_NAO_ACEITO'],
+    ]);
+    expect(r.body.resultados[0].mensagem).toContain('elementos, atributos ou comentários demais');
+    expect(Date.now() - inicio).toBeLessThan(5_000);
+  });
+
+  it('o XML com elementos demais dentro do .zip é recusado também na tarefa do lote grande', async () => {
+    process.env.NFE_IMPORTACAO_SINCRONA_MAX = '1';
+    try {
+      const zip = montarZip([
+        { nome: 'pesada.xml', dados: Buffer.from(xmlComElementosDemais()), guardar: true },
+        { nome: 'nfce.xml', dados: Buffer.from(fixtureNfe('08-nfce.xml')), guardar: true },
+      ]);
+      const r = await importar(admin, [{ nome: 'lote.zip', conteudo: zip }]);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.tarefaId).toEqual(expect.any(String));
+      const t = await aguardarTarefa(r.body.tarefaId);
+      expect(t.status, JSON.stringify(t)).toBe('concluida');
+      expect(
+        t.resultado.resultados.map((x: { arquivo: string; motivo: string }) => [x.arquivo, x.motivo]),
+      ).toEqual([
+        ['lote.zip › pesada.xml', 'XML_COMPLEXO_DEMAIS'],
+        ['lote.zip › nfce.xml', 'MODELO_NAO_ACEITO'],
+      ]);
+    } finally {
+      delete process.env.NFE_IMPORTACAO_SINCRONA_MAX;
+    }
   });
 });

@@ -4,6 +4,7 @@
  * memória da instância, como o armazenamento do throttler). Um usuário autenticado não pode, sozinho, esgotar a
  * memória do processo.
  */
+import { defer, finalize, mergeMap, type Observable } from 'rxjs';
 import { ErroApi } from './erros.js';
 
 export class Semaforo {
@@ -37,6 +38,29 @@ export class Semaforo {
       else this.emUso--;
     };
   }
+}
+
+/**
+ * A resposta de `executar` com uma vaga do `semaforo`, pega antes e solta quando a resposta termina, com erro ou não (os
+ * interceptors `VagaEnvioNfe` e `VagaEnvioArquivo`, decisões 189 e 202). Cancelada enquanto ainda espera na fila, a
+ * vaga que chegar depois é devolvida na hora: ela nunca fica presa sem ninguém para soltar. É defesa: hoje nada cancela
+ * quem espera aqui (o corpo já foi lido, então o prazo de leitura não corta, e a desconexão do cliente não cancela a
+ * resposta); a fila fica limitada pelos limites de envios simultâneos por empresa e por usuário.
+ */
+export function comVaga<T>(semaforo: Semaforo, executar: () => Observable<T>): Observable<T> {
+  let liberar: (() => void) | undefined;
+  let encerrada = false;
+  return defer(async () => {
+    const vaga = await semaforo.adquirir();
+    if (encerrada) vaga();
+    else liberar = vaga;
+  }).pipe(
+    mergeMap(() => executar()),
+    finalize(() => {
+      encerrada = true;
+      liberar?.();
+    }),
+  );
 }
 
 const usos = new Map<string, number[]>();

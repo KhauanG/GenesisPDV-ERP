@@ -108,6 +108,12 @@ const esquema = z
      * segura a requisição autenticada indefinidamente (o PDV desiste do push em 60 s). Acima: 408 e a conexão fecha.
      */
     CORPO_JSON_PRAZO_LEITURA_S: z.coerce.number().int().min(5).max(300).default(60),
+    /**
+     * Prazo para o arquivo de um envio em multipart (NF-e, planilha, contagem, imagem) chegar inteiro, em segundos,
+     * contado de quando a rota começa a ler (decisão 202): o envio lento não segura os contadores do envio até o
+     * `requestTimeout` do Node. Acima: 408 e a conexão fecha. O padrão é o `readTimeout` do proxy de produção.
+     */
+    ENVIO_ARQUIVO_PRAZO_LEITURA_S: z.coerce.number().int().min(5).max(300).default(60),
     POOL_CACHE_MAXIMO: z.coerce.number().int().min(1).default(50),
     POOL_OCIOSO_MS: z.coerce
       .number()
@@ -255,6 +261,8 @@ export interface Configuracao {
   };
   /** Limites do corpo JSON em bytes (decisão 199): `padrao` em toda rota, `grande` e `loteSync` só onde marcado. */
   corpoJson: { padrao: number; grande: number; loteSync: number; prazoLeituraMs: number };
+  /** Prazo de leitura dos envios em multipart (decisão 202). */
+  envioArquivo: { prazoLeituraMs: number };
   pools: { cacheMaximo: number; ociosoMs: number; conexoesPorEmpresa: number };
   tenancyCacheMs: number;
   /** Cache do `GET /dashboard` por empresa × loja × mês (ERP 6: 60 s); 0 desliga. */
@@ -349,6 +357,7 @@ export function carregarConfiguracao(env: Record<string, string | undefined> = p
       loteSync: v.CORPO_JSON_LIMITE_LOTE_KB * 1024,
       prazoLeituraMs: v.CORPO_JSON_PRAZO_LEITURA_S * 1000,
     },
+    envioArquivo: { prazoLeituraMs: v.ENVIO_ARQUIVO_PRAZO_LEITURA_S * 1000 },
     pools: {
       cacheMaximo: v.POOL_CACHE_MAXIMO,
       ociosoMs: v.POOL_OCIOSO_MS,

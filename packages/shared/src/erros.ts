@@ -25,7 +25,8 @@ export const CODIGOS_ERRO = {
   CORPO_GRANDE: 413,
   /**
    * O corpo JSON não chegou inteiro dentro do prazo de leitura (README da API › decisão 199,
-   * `CORPO_JSON_PRAZO_LEITURA_S`): a conexão fecha e nada é gravado.
+   * `CORPO_JSON_PRAZO_LEITURA_S`), ou o arquivo de um envio em multipart (decisão 202,
+   * `ENVIO_ARQUIVO_PRAZO_LEITURA_S`): a conexão fecha e nada é gravado.
    */
   TEMPO_ESGOTADO: 408,
   /**

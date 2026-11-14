@@ -42,14 +42,14 @@ import {
   type XmlNotaEntrada,
 } from '@genesis/shared';
 import { sql, type SQL } from 'drizzle-orm';
-import { catchError, defer, finalize, mergeMap, throwError } from 'rxjs';
+import { catchError, finalize, throwError } from 'rxjs';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { lojaPermitida } from '../autorizacao/lojas.js';
 import { conflitoVersao, erroCampo, escaparLike, ordemDaQuery } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
-import { garantirLimitePorMinuto, limiteDoAmbiente, Semaforo } from '../comum/limites-processo.js';
+import { comVaga, garantirLimitePorMinuto, limiteDoAmbiente, Semaforo } from '../comum/limites-processo.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
@@ -74,6 +74,7 @@ import {
 import { dadosCompraProdutos, resumoMovimentacao } from './recebimentos.js';
 import { recalcularStatusNotaEntrada, vincularItensNotaEntrada } from './vinculacao.js';
 import { CorpoGrande } from '../comum/corpo-json.js';
+import { PrazoLeituraEnvio } from '../comum/prazo-envio.js';
 
 /** O que o multer entrega (memória; o tamanho de cada arquivo e o do pedido são conferidos antes de ler). */
 interface ArquivoEnviado {
@@ -86,8 +87,14 @@ const enviosPorMinuto = () => limiteDoAmbiente('NFE_IMPORTACOES_POR_MINUTO', 20)
 /** Envios ao mesmo tempo de um usuário (`NFE_ENVIOS_SIMULTANEOS_USUARIO`): o segundo recebe 429 na hora. */
 const enviosSimultaneosPorUsuario = () => limiteDoAmbiente('NFE_ENVIOS_SIMULTANEOS_USUARIO', 1);
 /**
- * Envios ao mesmo tempo no processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3): cada um tem até 20 MB lidos e até 100 MiB
- * descompactados dos `.zip` em memória; o seguinte espera a vaga **antes** de o multer ler o corpo.
+ * Envios ao mesmo tempo de uma empresa (`NFE_ENVIOS_SIMULTANEOS_EMPRESA`, padrão 3; decisão 202): o seguinte recebe 429
+ * na hora. É o que limita a memória da leitura por empresa (cada envio lê até 20 MB), já que a vaga do processo só é
+ * pega com o corpo lido: muitos usuários da mesma empresa não somam mais do que isso.
+ */
+const enviosSimultaneosPorEmpresa = () => limiteDoAmbiente('NFE_ENVIOS_SIMULTANEOS_EMPRESA', 3);
+/**
+ * Envios processados ao mesmo tempo no processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3): cada um tem até 20 MB lidos e
+ * até 100 MiB descompactados dos `.zip` em memória. A vaga é pega com o corpo **já lido** (`VagaEnvioNfe`).
  */
 const semaforoEnvios = new Semaforo(limiteDoAmbiente('NFE_ENVIOS_SIMULTANEOS', 3));
 const enviosEmAndamento = new Map<string, number>();
@@ -95,13 +102,29 @@ const enviosEmAndamento = new Map<string, number>();
 const erroEnvio = (mensagem: string, campo: string) =>
   new ErroApi('VALIDACAO', mensagem, { campos: { arquivos: [campo] } });
 
+/** Mais um envio na `chave` se couber em `limite`; devolve quem o tira (uma vez só). */
+function contarEnvio(chave: string, limite: number, erro: () => ErroApi): () => void {
+  const emAndamento = enviosEmAndamento.get(chave) ?? 0;
+  if (emAndamento >= limite) throw erro();
+  enviosEmAndamento.set(chave, emAndamento + 1);
+  let tirado = false;
+  return () => {
+    if (tirado) return;
+    tirado = true;
+    const n = (enviosEmAndamento.get(chave) ?? 1) - 1;
+    if (n > 0) enviosEmAndamento.set(chave, n);
+    else enviosEmAndamento.delete(chave);
+  };
+}
+
 /**
- * O que protege a memória do processo de todas as empresas, **antes** do multer ler as partes do pedido (o multer
- * só limita cada arquivo: 100 arquivos de 20 MB seriam 2 GB): o teto do pedido inteiro pelo `Content-Length` (sem
- * ele, envio em pedaços, que o navegador não usa para `FormData`, o pedido é recusado), o limite de envios por
- * minuto do usuário, um envio por vez de cada usuário e a vaga do semáforo do processo, liberada quando a resposta
- * termina (com erro ou não). Os erros do multer (arquivos demais, arquivo grande demais) voltam como 422 no campo
- * `arquivos`, com a mensagem da tela.
+ * O que vale **antes** do multer ler as partes do pedido (o multer só limita cada arquivo: 100 arquivos de 20 MB
+ * seriam 2 GB): o teto do pedido inteiro pelo `Content-Length` (sem ele, envio em pedaços, que o navegador não usa
+ * para `FormData`, o pedido é recusado), o limite de envios por minuto do usuário, um envio por vez de cada usuário e
+ * até `NFE_ENVIOS_SIMULTANEOS_EMPRESA` da empresa, contados até a resposta terminar (com erro ou não). Tudo isso
+ * custa só à própria empresa: um envio lento segura a vaga do usuário e da empresa dele, nunca a do processo (essa é
+ * do `VagaEnvioNfe`, depois da leitura), e tem o prazo de leitura do `PrazoLeituraEnvio`. Os erros do multer (arquivos
+ * demais, arquivo grande demais) voltam como 422 no campo `arquivos`, com a mensagem da tela.
  */
 @Injectable()
 class LimiteEnvioNfe implements NestInterceptor {
@@ -115,27 +138,53 @@ class LimiteEnvioNfe implements NestInterceptor {
     if (!sessao) throw ErroApi.naoAutenticado();
     const chave = `nfe:${sessao.empresa.empresaId}:${sessao.usuarioId}`;
     garantirLimitePorMinuto(chave, enviosPorMinuto());
-    const emAndamento = enviosEmAndamento.get(chave) ?? 0;
-    if (emAndamento >= enviosSimultaneosPorUsuario())
-      throw new ErroApi(
-        'LIMITE_TAXA',
-        'Já há um envio de NF-e seu em andamento. Aguarde ele terminar e envie de novo.',
-        { cabecalhos: { 'Retry-After': '5' } },
+    const tirarDoUsuario = contarEnvio(
+      chave,
+      enviosSimultaneosPorUsuario(),
+      () =>
+        new ErroApi(
+          'LIMITE_TAXA',
+          'Já há um envio de NF-e seu em andamento. Aguarde ele terminar e envie de novo.',
+          {
+            cabecalhos: { 'Retry-After': '5' },
+          },
+        ),
+    );
+    let tirarDaEmpresa: () => void;
+    try {
+      tirarDaEmpresa = contarEnvio(
+        `nfe-empresa:${sessao.empresa.empresaId}`,
+        enviosSimultaneosPorEmpresa(),
+        () =>
+          new ErroApi(
+            'LIMITE_TAXA',
+            'Há outros envios de NF-e da empresa em andamento. Aguarde um deles terminar e envie de novo.',
+            { cabecalhos: { 'Retry-After': '5' } },
+          ),
       );
-    enviosEmAndamento.set(chave, emAndamento + 1);
-    let liberar: (() => void) | undefined;
-    return defer(async () => {
-      liberar = await semaforoEnvios.adquirir();
-    }).pipe(
-      mergeMap(() => next.handle()),
+    } catch (e) {
+      tirarDoUsuario();
+      throw e;
+    }
+    return next.handle().pipe(
       catchError((e: unknown) => throwError(() => erroDoMulter(e))),
       finalize(() => {
-        liberar?.();
-        const n = (enviosEmAndamento.get(chave) ?? 1) - 1;
-        if (n > 0) enviosEmAndamento.set(chave, n);
-        else enviosEmAndamento.delete(chave);
+        tirarDaEmpresa();
+        tirarDoUsuario();
       }),
     );
+  }
+}
+
+/**
+ * A vaga do semáforo do processo, pega com o corpo **já lido** (este interceptor roda depois do multer) e liberada
+ * quando a resposta termina, como o `VagaEnvioArquivo` (decisões 189 e 202). Quem espera aqui espera só o
+ * processamento dos outros (a leitura dos XML, os `.zip`, a gravação), nunca a rede de um envio lento de outra empresa.
+ */
+@Injectable()
+class VagaEnvioNfe implements NestInterceptor {
+  intercept(_ctx: ExecutionContext, next: CallHandler) {
+    return comVaga(semaforoEnvios, () => next.handle());
   }
 }
 
@@ -290,7 +339,7 @@ export class NotasEntradaController {
   @Permissao('notas_entrada.importar')
   @Post('importar')
   @HttpCode(200)
-  @UseInterceptors(LimiteEnvioNfe, upload)
+  @UseInterceptors(PrazoLeituraEnvio, LimiteEnvioNfe, upload, VagaEnvioNfe)
   async importar(
     @UploadedFiles() arquivos: ArquivoEnviado[] | undefined,
     @Body() corpo: unknown,

@@ -3594,7 +3594,9 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        e casas máximas; o que passa das casas é recusado, nunca arredondado) e completados até as casas da coluna;
        datas existem; textos respeitam o tamanho do layout; tetos de 990 itens, 120 duplicatas, 5.000 volumes e 500
        lotes por item; grupo repetido onde o layout tem um só (duas `infNFe`, dois `protNFe`, dois grupos de ICMS) e
-       `nItem` repetido são recusados — a leitura nunca escolhe um deles. O resultado é a `NfeLida` do shared.
+       `nItem` repetido são recusados — a leitura nunca escolhe um deles. O resultado é a `NfeLida` do shared. Desde o
+       PR-15, também o teto de estrutura (elementos e atributos, declarações de namespace, comentários), contado no
+       texto antes do `XMLValidator` (decisão 203).
      - **Validações** (`validarNfe`, puras, e `lerEValidarXmlNfe`, com o contexto do banco: as lojas não excluídas,
        a nota viva com a mesma chave e a chave da assinatura). **Sempre recusa**, nesta ordem e com o motivo do shared
        (`MOTIVOS_RECUSA_NFE`): modelo ≠ 55 (a NFC-e); **nota de homologação** (tpAmb 2: sem valor fiscal, não estava
@@ -3669,8 +3671,9 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `tipoEstoqueId`. **Antes do multer** (o interceptor `LimiteEnvioNfe`, porque o processo é de todas as empresas
        e do `/sync`): o `Content-Length`, o limite de envios por minuto, **um envio por vez de cada usuário**
        (`NFE_ENVIOS_SIMULTANEOS_USUARIO`, padrão 1; o segundo simultâneo é 429 `LIMITE_TAXA`) e a vaga do semáforo do
-       processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3: o seguinte espera a vaga sem o corpo lido), liberada quando a
-       resposta termina; os erros do multer (mais de 100 arquivos, arquivo acima do teto) voltam como 422 no campo
+       processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3), liberada quando a resposta termina — desde o PR-15 a vaga do
+       processo é pega com o corpo já lido (`VagaEnvioNfe`), há o limite de envios simultâneos da empresa e o prazo de
+       leitura (decisão 202); os erros do multer (mais de 100 arquivos, arquivo acima do teto) voltam como 422 no campo
        `arquivos`, com a mensagem da tela. O "20 MB" das mensagens vem do shared (`TETO_UPLOAD_NFE_TEXTO`). O `.zip`
        (pela extensão ou pelo conteúdo) é aberto com os limites de zip-bomba da decisão 163 (`extrairXmlsDoZip`), que
        valem também **somados para o envio inteiro** (`OrcamentoZipNfe`: 1.000 entradas e 100 MiB descompactados para
@@ -5648,7 +5651,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `requestTimeout` de 300 s do Node, ou os 60 s do `readTimeout` do Traefik) prendiam as 4 vagas e deixavam os
        envios de todas as outras empresas na fila, sem resposta. Agora o envio lento segura só a vaga do próprio
        usuário; quem espera o semáforo espera só o processamento dos outros, que tem fim. O envio da NF-e (decisão 164)
-       tem o mesmo desenho antigo e fica como está (fora do bloco; o corpo dele vai a 20 MB).
+       ficou com o desenho antigo neste bloco e passou a seguir o mesmo desenho no PR-15 (decisão 202).
      - **O tipo é o do conteúdo** (`detectarTipoArquivo`, os magic bytes: PNG pela assinatura de 8 bytes, JPEG por
        `FF D8 FF`, WebP pelo `RIFF….WEBP`, PDF por `%PDF-`), nunca a extensão nem o `Content-Type` do cliente; fora
        dos tipos do destino, 415 `TIPO_NAO_SUPORTADO`. **SVG nunca** (é documento com script, não imagem: o ERP 9.1
@@ -6281,6 +6284,84 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        acima do lote → 413 `LOTE_GRANDE_DEMAIS` e o lote seguinte aceito; heartbeat e renovação do token sem token
        válido → 401 sem interpretar ~3 MiB; heartbeat 200; o terminal revogado no meio do envio do lote → 401
        `TERMINAL_REVOGADO` sem nenhum evento gravado).
+
+202. **Envio de NF-e: a vaga do processo depois da leitura, o limite da empresa e o prazo de leitura do multipart**
+     (PR-15, SEG-B03; ERP 13.4; decisões 164 e 189; `src/entradas/notas-entrada.controller.ts`,
+     `src/comum/prazo-envio.ts`, `src/config/configuracao.ts`). O `POST /notas-entrada/importar` passa a ter o desenho do
+     envio de imagens (decisão 189): o que custa à rede fica com quem envia, e a vaga do processo cobre só o trabalho do
+     servidor.
+     - **Antes da leitura** (`LimiteEnvioNfe`): o `Content-Length` (20 MB + folga), o limite por minuto do usuário, um
+       envio por vez de cada usuário (`NFE_ENVIOS_SIMULTANEOS_USUARIO`, 1) e, novo, **até 3 envios ao mesmo tempo da
+       empresa** (`NFE_ENVIOS_SIMULTANEOS_EMPRESA`, 3; o quarto, 429 `LIMITE_TAXA` "Há outros envios de NF-e da empresa
+       em andamento…" com `Retry-After: 5`). Os dois contadores voltam quando a resposta termina. O da empresa é o que
+       limita a memória da leitura (cada envio lê até 20 MB para a memória do multer) agora que a vaga do processo não
+       vem mais antes dela: muitos usuários da mesma empresa não somam mais de 3 × 20 MB.
+     - **Depois da leitura** (`VagaEnvioNfe`, listado depois do multer, como o `VagaEnvioArquivo`): a vaga do semáforo
+       do processo (`NFE_ENVIOS_SIMULTANEOS`, 3), liberada quando a resposta termina. Quem espera por ela espera só o
+       processamento dos outros envios (a leitura dos XML e dos `.zip`, a gravação), que tem fim; um envio que ainda está
+       chegando segura só a vaga do usuário e a da empresa dele.
+     - **Prazo de leitura do multipart** (`PrazoLeituraEnvio`, o primeiro interceptor da rota;
+       `ENVIO_ARQUIVO_PRAZO_LEITURA_S` = 60, de 5 a 300, o mesmo `readTimeout` do proxy de produção): o arquivo que não
+       chega inteiro no prazo, contado de quando a rota começa a ler (depois do login e da permissão), volta 408
+       `TEMPO_ESGOTADO` ("O envio do arquivo demorou além do prazo. Tente de novo.") com `Connection: close`; a leitura
+       para, o multer descarta o que juntou quando a conexão fecha e os contadores voltam na hora, em vez de esperar o
+       `requestTimeout` de 300 s do Node. Com o corpo já lido o prazo não corta nada (o processamento tem o tempo dele).
+     - **Variantes**: o mesmo prazo vale para as outras 4 rotas de envio em multipart — `POST /arquivos` (imagens), as
+       prévias da importação de produtos e de clientes e o `POST /acertos/:id/importar-contagem` —, onde o envio lento
+       segurava o contador do usuário até o `requestTimeout`. Nenhuma delas pega vaga do processo antes da leitura (o
+       semáforo da planilha, o de imagens e o de envios de arquivo são pegos com o corpo lido). Os limites de envios
+       simultâneos por empresa das outras rotas ficam como estão (o de imagens é de 2 MB por envio e 2 por usuário).
+     - **A vaga nunca fica presa** (`comVaga`, em `src/comum/limites-processo.ts`, usado pelo `VagaEnvioNfe` e pelo
+       `VagaEnvioArquivo`): a resposta cancelada enquanto ainda espera a vaga na fila devolve a vaga que chegar depois,
+       em vez de ela ficar com ninguém para soltar. É uma defesa para quem vier a cancelar no futuro: hoje nada cancela
+       quem está nessa fila (o prazo de leitura só corta a leitura do corpo, e quem espera a vaga já leu o corpo inteiro;
+       a desconexão do cliente não cancela a resposta). Um envio na fila fica até ser processado, e o que limita essa
+       fila (e a memória dos corpos já lidos nela) é o limite por empresa (`NFE_ENVIOS_SIMULTANEOS_EMPRESA`) com o de
+       um envio por usuário, não o prazo.
+     - Sem mudança de contrato (o 408 `TEMPO_ESGOTADO` já existe, decisão 199; o ERP mostra a mensagem), sem migração e
+       sem PDV. Testes: `src/comum/limites-processo.spec.ts` (o `comVaga` solta a vaga no fim, cancelado na fila e
+       cancelado com a vaga na mão), `src/comum/prazo-envio.spec.ts` (o prazo vencido com o corpo chegando: 408 com
+       `Connection: close`, a rota encerrada e a leitura parada; com o corpo lido, nada é cortado; as 5 rotas com o prazo
+       como o primeiro interceptor; na NF-e, a vaga do processo depois do multer) e a integração
+       `test/integracao/notas-entrada.test.ts` › "vagas, prazo de leitura e estrutura do XML (PR-15)" (três usuários com
+       envios lentos e o envio de outra empresa processado na hora; o quarto envio simultâneo da empresa 429 e o da
+       outra empresa 200; o envio que não chega no prazo, 408 com a conexão fechada, e o mesmo usuário envia de novo em
+       seguida).
+
+203. **XML de NF-e: teto de estrutura antes do parser e da assinatura** (PR-15, SEG-B03; ERP 13.4; decisão 163;
+     `src/entradas/xml/parser.ts`, `LIMITES_XML_NFE` e `MOTIVOS_RECUSA_NFE` do shared). A leitura (`XMLValidator`,
+     `fast-xml-parser`) e a conferência da assinatura (`@xmldom/xmldom`, `xml-crypto`) são síncronas, e o tamanho de
+     cada parte da estrutura do XML fica limitado a uma folga sobre o que uma nota real usa. O `textoXmlNfe`, antes de
+     qualquer parser, conta numa passada pelo texto
+     (`conferirEstruturaXml`) e recusa com o motivo novo **`XML_COMPLEXO_DEMAIS`** ("O XML tem elementos, atributos ou
+     comentários demais para uma NF-e.", com o teto que passou no detalhe):
+     - **elementos e atributos: até 60.000** (`LIMITES_XML_NFE.elementosEAtributos`). Medido com as fixtures: uma NF-e
+       de 990 itens montada com os itens mais completos da biblioteca (ICMS-ST, IPI, `rastro`, `infAdProd`) tem de 39 a
+       43 mil elementos e ~1.000 atributos em 845–880 KB (acima dos 500 KB que a SEFAZ aceita, então a nota real
+       máxima tem menos); o teto deixa ~40% de folga, e o pior arquivo dentro dele custa o mesmo que essa nota
+       (~2 s na máquina de desenvolvimento, quase tudo na assinatura);
+     - **declarações de namespace: até 1.000** (`xmlns` e `xmlns:p`; a nota real tem umas 5), com teto próprio, abaixo
+       do de elementos e atributos;
+     - **comentários e instruções de processamento: até 100** (a nota real não tem; a declaração `<?xml …?>` do início
+       não conta), também com teto próprio.
+     - A contagem é um teto do que o parser monta para qualquer XML bem formado: cada marca de abertura é um elemento,
+       cada `=` fora das aspas dentro dela é um atributo; o conteúdo de comentário, CDATA e instrução não é marcação e não
+       conta. Cada caractere é visto uma vez, e a contagem para no primeiro teto que passa.
+     - **Vale para o envio direto e para o lote em tarefa** (os dois passam por `lerEValidarXmlNfe` → `lerXmlNfe` →
+       `textoXmlNfe`), em qualquer modo da assinatura (D50). O resultado por arquivo mostra a recusa e os outros arquivos
+       do envio seguem.
+     - **Fora do bloco, registrado**: rodar a leitura e a assinatura num `worker_threads` com orçamento de tempo. Com o
+       teto, o pior arquivo custa o que custa a maior NF-e legítima (que já rodava no laço), cada arquivo é dividido em
+       dois trechos (a leitura e a assinatura, com a consulta ao banco entre eles) e o lote em tarefa cede o laço entre
+       um XML e outro; o trabalhador separado exigiria outro ponto de entrada no build (`tsc`) e nos testes (que rodam
+       o TypeScript direto), e fica para quando a medição em produção pedir.
+     - Contrato: o motivo novo entra em `MOTIVOS_RECUSA_NFE` (a API e o ERP saem juntos; o ERP mostra a mensagem do
+       resultado). Sem migração e sem PDV. Testes: `src/entradas/xml/parser.spec.ts` › "teto de estrutura antes de
+       qualquer parser" (um elemento acima do teto recusado rápido, com a mensagem; o teto de elementos
+       e atributos juntos, com a nota lida logo abaixo dele; o que não é marcação não conta; a contagem linear em
+       qualquer formato de marca; os tetos de namespace e de comentários e instruções; a NF-e de 990 itens aceita, com a
+       assinatura válida) e a integração "o XML com elementos demais é recusado no envio direto" e "… dentro do .zip é
+       recusado também na tarefa do lote grande".
 
 ### Operação – tarefas em segundo plano (API)
 

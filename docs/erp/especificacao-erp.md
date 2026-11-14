@@ -237,7 +237,9 @@ Corpo das requisições (README da API › decisão 199): só JSON em UTF-8, sem
 4 MiB nas que gravam documentos com muitos itens (produto, acerto, recebimento, nota de entrada, transferência, cadastro
 em massa, grupo de preço, pessoa, perfil, permissões do usuário), lido depois do login e da permissão conferidos. Acima,
 413 `CORPO_GRANDE`; formulário, texto ou conteúdo comprimido, 415 `TIPO_NAO_SUPORTADO`; o corpo que não chega inteiro em
-60 s (`CORPO_JSON_PRAZO_LEITURA_S`), 408 `TEMPO_ESGOTADO`. Arquivos vão em multipart, com os limites de cada envio.
+60 s (`CORPO_JSON_PRAZO_LEITURA_S`), 408 `TEMPO_ESGOTADO`. Arquivos vão em multipart, com os limites de cada envio e o
+mesmo prazo de 60 s para o arquivo chegar inteiro (`ENVIO_ARQUIVO_PRAZO_LEITURA_S`, 408 `TEMPO_ESGOTADO`; README da
+API › decisão 202).
 
 ---
 
@@ -3154,7 +3156,10 @@ Colunas: **Nome** (emitente, link), **Data Recebimento**, **Data Movimentação*
 pelo mesmo método da importação de planilha, com limites próprios (1.000 entradas, 100 MiB descompactados, taxa ≤ 100
 acima de 64 KiB, cada XML até 1 MiB). A assinatura conferida é a da `NFe` (a do protocolo, que algumas autorizadoras
 assinam, não conta). Os totais que não batem com os itens só avisam. A nota guarda o CFOP do XML e os impostos
-só gravados; a aba **Conversão de CFOP** e a coluna CFOP de entrada ficam para a 3F/4.
+só gravados; a aba **Conversão de CFOP** e a coluna CFOP de entrada ficam para a 3F/4. Desde o PR-15 (README da API ›
+decisão 203), o XML também tem teto de estrutura, contado antes de ler: até 60.000 elementos e atributos, 1.000
+declarações de namespace e 100 comentários ou instruções (a NF-e de 990 itens tem uns 43 mil elementos); acima, a nota
+é recusada com "O XML tem elementos, atributos ou comentários demais para uma NF-e.", no envio direto e no lote.
 
 **Fase 2, F2-B19** (README da API › decisão 164; README do ERP › decisão 59): sem a aba "Pela Sefaz", a "Tela de
 entrada" é a área de upload no topo da listagem (arrastar ou escolher `.xml`/`.zip`, até 20 MB no envio), sem campo
@@ -3165,7 +3170,10 @@ nota existente, só para quem vê a loja e o estoque dela) ou recusada com o mot
 ocupado com os caixas, por exemplo) recusa só aquele arquivo. Acima de 20 XMLs o envio vira uma tarefa, acompanhada
 na própria tela do upload (progresso e, no fim, o mesmo resultado por arquivo, ou a mensagem da falha) e também no
 ícone Tarefas do cabeçalho (F2-B30). Os limites contra zip-bomba (1.000 entradas e 100 MiB descompactados) valem
-por `.zip` e somados para o envio inteiro. O emitente vira o
+por `.zip` e somados para o envio inteiro. Cada usuário faz um envio por vez e a empresa, até 3 ao mesmo tempo (o
+seguinte recebe "Há outros envios de NF-e da empresa em andamento…" e envia de novo em seguida); o arquivo tem 60 s
+para chegar inteiro (acima, "O envio do arquivo demorou além do prazo. Tente de novo."), e a fila de processamento só
+conta os envios que já chegaram (README da API › decisão 202). O emitente vira o
 fornecedor pelo CNPJ/CPF normalizado: a pessoa que já existe não é alterada (só ganha a categoria Fornecedor), e a
 nova nasce com o nome, a fantasia, a IE, o telefone e o endereço do XML. O aviso fixo "Sem consulta à SEFAZ: confira se
 a nota não foi cancelada pelo emitente." aparece no upload e em toda nota. "Ignorar nota" (pendente ou pronta, com
