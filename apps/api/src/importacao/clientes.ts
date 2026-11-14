@@ -359,7 +359,16 @@ export function analisarClientes(
     const linha: LinhaCliente = {
       linha: l.numero,
       acao: erros.length ? 'ignorar' : existente ? 'atualizar' : 'criar',
-      descricao: (nome ?? existente?.nome ?? docBruto ?? '').slice(0, 120),
+      // Sem `pessoas.ver` a descrição é só o que veio na planilha: o nome do cadastro achado pelo documento ou pelo
+      // código não aparece (o `registroId` fica para a gravação e sai da prévia, `paraPrevia`; decisão 198).
+      descricao: (
+        nome ??
+        (pode.verPessoas ? existente?.nome : undefined) ??
+        docBruto ??
+        (codigo !== null ? String(codigo) : undefined) ??
+        id ??
+        ''
+      ).slice(0, 120),
       registroId: existente?.id ?? null,
       erros,
       avisos,

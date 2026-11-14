@@ -96,7 +96,7 @@ describe('XMLs dentro do zip', () => {
     expect((await extrairXmlsDoZip(muitas)).xmls).toHaveLength(LIMITES_ZIP.entradas + 1);
     // 200 KiB de um caractere só: taxa acima de 100, conferida acima de 64 KiB no zip de NF-e e de 1 MiB na planilha.
     const comprimivel = montarZip([{ nome: 'a.xml', dados: Buffer.alloc(200 * 1024, 0x41) }]);
-    await expect(conferirZip(comprimivel)).resolves.toBeUndefined();
+    expect((await conferirZip(comprimivel)).map((e) => e.nome)).toEqual(['a.xml']);
     await expect(extrairXmlsDoZip(comprimivel)).rejects.toMatchObject({ motivo: 'ZIP_GRANDE_DEMAIS' });
     // O corrompido é o mesmo para os dois.
     await expect(conferirZip(muitas.subarray(0, muitas.length - 30))).rejects.toMatchObject({

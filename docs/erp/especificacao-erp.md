@@ -1458,6 +1458,16 @@ Fluxo: upload → **pré-visualização** (validação de todas as linhas; tabel
 tarefa em segundo plano → relatório final (criados, atualizados, inativados, sem alteração, com erro, planilha de
 erros para download). Auditoria por produto gravado com origem `importacao`.
 
+**Leitura do `.xlsx`** (PR-15, README da API › decisão 197): o arquivo precisa ser um zip só, exatamente o que o
+diretório central descreve (cabeçalhos locais um atrás do outro desde o início do arquivo, iguais às entradas, sem bytes
+antes, entre ou depois); a prévia e a releitura da confirmação conferem os limites (entradas, tamanho descompactado por
+entrada e total, taxa de compressão por entrada e do arquivo inteiro) e descompactam uma vez, com o teto declarado, só o
+que o leitor da planilha usa; fora disso, "O arquivo .xlsx está corrompido." ou "A planilha é grande demais depois de
+descompactada.". **Clientes sem `pessoas.ver`** (decisão 198): a prévia e o relatório mostram na Descrição só o que veio
+na planilha (nome, CPF/CNPJ, código ou id digitado), nunca o nome do cadastro achado, e a linha sai sem o id do
+cadastro; a ação "Atualizar" continua indicada. O 409 do CPF/CNPJ repetido (no formulário e na gravação da importação)
+diz só que o documento já está cadastrado, sem o código e o nome da outra pessoa.
+
 **Identificação do produto existente**, nesta ordem: `id` (UUID) → `codigo` (Id Produto; aceita a coluna `IdProduto`
 do Nuvem3) → `codigo_interno` → `ean` (pelo EAN só quando a linha não traz código interno ou o produto achado não tem
 um). Código inválido (não inteiro de 1 a 2.147.483.647) ou repetido na planilha é erro da linha; código de produto

@@ -456,6 +456,65 @@ describe('importação de clientes (ERP 8.6)', () => {
     const p2 = await previa();
     expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 0, sem_alteracao: 2 });
   });
+
+  it('sem "Pessoas: Ver" a prévia (também em .xlsx) e o 409 do documento não mostram o nome nem o id de quem já existe', async () => {
+    const perfil = await amb
+      .http()
+      .post('/api/perfis')
+      .set(bearer(admin))
+      .send({
+        nome: 'Importador sem ver',
+        permissoes: ['pessoas.importar', 'pessoas.editar', 'pessoas.criar'],
+      });
+    expect(perfil.status, JSON.stringify(perfil.body)).toBe(201);
+    const uid = await criarUsuario(emp.nomeBanco, {
+      login: 'importador',
+      perfil: 'vendedor',
+      lojas: [lojaId],
+    });
+    await consultar(emp.nomeBanco, 'update usuarios set perfil_id = $1 where id = $2', [perfil.body.id, uid]);
+    const importador = await amb.entrar(emp.codigo, 'importador', SENHA_TESTE);
+    const [maria] = await consultar<{ id: string; codigo: number }>(
+      emp.nomeBanco,
+      "select id, codigo from pessoas where cpf_cnpj = '52998224725'",
+    );
+    const xlsx = await writeXlsxFile([[{ value: 'CPF/CNPJ' }], [{ value: '529.982.247-25' }]]).toBuffer();
+    const previa = (token: string) =>
+      amb
+        .http()
+        .post('/api/importacoes/clientes/previa')
+        .set(bearer(token))
+        .attach('arquivo', xlsx, 'clientes.xlsx');
+    const sem = await previa(importador);
+    expect(sem.status, JSON.stringify(sem.body)).toBe(200);
+    expect(sem.body.linhas).toEqual([
+      expect.objectContaining({ acao: 'atualizar', descricao: '529.982.247-25', registroId: null }),
+    ]);
+    expect(JSON.stringify(sem.body)).not.toContain('MARIA');
+    expect(JSON.stringify(sem.body)).not.toContain(maria!.id);
+    // Com "Pessoas: Ver" (o admin) a mesma prévia mostra quem foi achado.
+    const com = await previa(admin);
+    expect(com.body.linhas).toEqual([
+      expect.objectContaining({ descricao: 'MARIA DA SILVA', registroId: maria!.id }),
+    ]);
+    // O CPF/CNPJ repetido no cadastro: o 409 só diz que já existe (a gravação da importação usa a mesma regra).
+    const repetido = { tipo: 'PF', nome: 'OUTRA PESSOA', cpfCnpj: '52998224725', categorias: ['cliente'] };
+    const r409 = await amb.http().post('/api/pessoas').set(bearer(importador)).send(repetido);
+    expect(r409.status, JSON.stringify(r409.body)).toBe(409);
+    expect(r409.body.mensagem).toBe('Já existe uma pessoa com este documento.');
+    // Nem o código, o nome ou o id da outra pessoa: sem `detalhes` e o campo só com "Já cadastrado" (decisão 198).
+    expect(r409.body.detalhes).toBeUndefined();
+    expect(r409.body.campos).toEqual({ cpfCnpj: ['Já cadastrado'] });
+    expect(JSON.stringify(r409.body)).not.toContain('MARIA');
+    expect(JSON.stringify(r409.body)).not.toContain(maria!.id);
+    const admin409 = await amb.http().post('/api/pessoas').set(bearer(admin)).send(repetido);
+    expect(admin409.status).toBe(409);
+    expect(admin409.body.detalhes).toEqual({
+      pessoaId: maria!.id,
+      codigo: maria!.codigo,
+      nome: 'MARIA DA SILVA',
+    });
+  });
 });
 
 describe('dashboard (ERP 6)', () => {
@@ -578,6 +637,44 @@ describe('importação: limites, permissões e combo (revisão da Fase 1)', () =
       'Não foi possível ler a planilha: salve de novo como .xlsx ou .csv e envie outra vez.',
     );
     expect((await amb.http().get('/api/saude').set(bearer(admin))).status).toBeLessThan(500);
+  });
+
+  it('xlsx fora da estrutura de um zip só → 422 antes de descompactar, na prévia e na releitura da confirmação', async () => {
+    const { entradaSoLocal, fimSemEntradas, inserirAntesDoCentral } =
+      await import('../fixtures/nfe/montar-zip.js');
+    // Só o cabeçalho local (gravado em fluxo) e o fim sem entradas: nada no diretório central a conferir.
+    const soLocal = entradaSoLocal('xl/worksheets/sheet1.xml', Buffer.alloc(16 * 1024 * 1024), true);
+    const r1 = await previa(admin, Buffer.concat([soLocal, fimSemEntradas(soLocal.length)]), 'so-local.xlsx');
+    expect(r1.status).toBe(422);
+    expect(r1.body.mensagem).toBe('O arquivo .xlsx está corrompido.');
+    // Uma planilha normal com uma entrada a mais, só no cabeçalho local, antes do diretório central.
+    const normal = await writeXlsxFile([[{ value: 'Nome' }], [{ value: 'CERV TESTE' }]]).toBuffer();
+    const comExtra = inserirAntesDoCentral(
+      normal,
+      entradaSoLocal('xl/worksheets/sheet1.xml', Buffer.from('<worksheet/>'), true),
+    );
+    const r2 = await previa(admin, comExtra, 'com-extra.xlsx');
+    expect(r2.status).toBe(422);
+    expect(r2.body.mensagem).toBe('O arquivo .xlsx está corrompido.');
+    expect((await amb.http().get('/api/saude').set(bearer(admin))).status).toBeLessThan(500);
+    // A confirmação lê o arquivo guardado de novo, com a mesma conferência: o objeto trocado depois da prévia falha.
+    const ok = await previa(admin, normal, 'normal.xlsx');
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const [arq] = await consultar<{ chave_armazenamento: string }>(
+      emp.nomeBanco,
+      'select chave_armazenamento from arquivos where id = $1',
+      [ok.body.arquivoId],
+    );
+    await amb.servicos.armazenamento.gravar(arq!.chave_armazenamento, comExtra, 'application/octet-stream');
+    const c = await amb
+      .http()
+      .post('/api/importacoes/produtos/confirmar')
+      .set(bearer(admin))
+      .send({ arquivoId: ok.body.arquivoId, lojaId });
+    expect(c.status, JSON.stringify(c.body)).toBe(202);
+    const t = await aguardarTarefa(c.body.tarefaId);
+    expect(t.status).toBe('falhou');
+    expect(t.erro).toContain('O arquivo .xlsx está corrompido.');
   });
 
   it('Estoquista: sem marcas.criar/categorias.editar não cria marca nem categoria; sem acertos não atualiza estoque; sem criar/editar a linha vira erro', async () => {

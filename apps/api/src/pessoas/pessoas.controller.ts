@@ -432,8 +432,17 @@ async function validarReferencias(tx: DbEmpresa, d: DadosPessoa): Promise<void> 
   }
 }
 
-/** CPF/CNPJ único entre não excluídas (ERP 7.2): o 409 traz a pessoa existente para o link "abrir cadastro". */
-async function garantirDocumentoUnico(tx: DbEmpresa, doc: string | null, exceto?: string): Promise<void> {
+/**
+ * CPF/CNPJ único entre não excluídas (ERP 7.2): o 409 traz a pessoa existente para o link "abrir cadastro". Sem
+ * `pessoas.ver` (quem só cria, edita ou importa) o 409 só diz que o documento já está cadastrado, sem o código, o nome
+ * nem o id da outra pessoa (README da API › decisão 198).
+ */
+async function garantirDocumentoUnico(
+  tx: DbEmpresa,
+  sessao: SessaoErp,
+  doc: string | null,
+  exceto?: string,
+): Promise<void> {
   if (!doc) return;
   const [outra] = await tx
     .select({ id: pessoas.id, codigo: pessoas.codigo, nome: pessoas.nome })
@@ -441,6 +450,11 @@ async function garantirDocumentoUnico(tx: DbEmpresa, doc: string | null, exceto?
     .where(
       and(eq(pessoas.cpfCnpj, doc), isNull(pessoas.excluidoEm), exceto ? ne(pessoas.id, exceto) : undefined),
     );
+  if (outra && !sessao.permissoes.has('pessoas.ver')) {
+    throw new ErroApi('CONFLITO', 'Já existe uma pessoa com este documento.', {
+      campos: { cpfCnpj: ['Já cadastrado'] },
+    });
+  }
   if (outra) {
     throw new ErroApi('CONFLITO', `Já existe a pessoa ${outra.codigo} - ${outra.nome} com este documento.`, {
       campos: { cpfCnpj: [`Já cadastrado: ${outra.codigo} - ${outra.nome}`] },
@@ -639,7 +653,7 @@ export async function inserirPessoa(
   origemCadastro = 'erp',
 ): Promise<string> {
   await validarReferencias(tx, dados);
-  await garantirDocumentoUnico(tx, dados.cpfCnpj);
+  await garantirDocumentoUnico(tx, sessao, dados.cpfCnpj);
   const { categorias, enderecos, telefones, emails, manterNoPdv: manual, ...colunas } = dados;
   const [p] = await tx
     .insert(pessoas)
@@ -695,7 +709,7 @@ export async function atualizarPessoa(
     );
   }
   await validarReferencias(tx, dados);
-  if (dados.cpfCnpj !== antes.cpfCnpj) await garantirDocumentoUnico(tx, dados.cpfCnpj, id);
+  if (dados.cpfCnpj !== antes.cpfCnpj) await garantirDocumentoUnico(tx, sessao, dados.cpfCnpj, id);
   const antesFilhas = await filhas(tx, id);
   const antesManual = await manterNoPdv(tx, id);
   const { categorias, enderecos, telefones, emails, manterNoPdv: manual, ...colunas } = dados;

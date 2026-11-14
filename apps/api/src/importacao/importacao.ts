@@ -277,7 +277,9 @@ export class Importacoes {
       colunasReconhecidas: Object.keys(mapa.indices),
       colunasIgnoradas: [...mapa.ignoradas, ...mapa.repetidas.map((r) => `${r} (repetida)`)],
       resumo: resumirLinhas(linhas),
-      linhas: ordenadas.slice(0, LIMITE_LINHAS_PREVIA).map(paraPrevia),
+      linhas: ordenadas
+        .slice(0, LIMITE_LINHAS_PREVIA)
+        .map((l) => paraPrevia(l, tipo === 'produtos' || sessao.permissoes.has('pessoas.ver'))),
     };
   }
 
@@ -968,12 +970,16 @@ export class Importacoes {
   }
 }
 
-function paraPrevia(l: LinhaAnalisada): LinhaPreviaImportacao {
+/**
+ * A linha da prévia. `verRegistro` falso (clientes sem `pessoas.ver`): o id do cadastro achado não sai (a gravação da
+ * tarefa o acha de novo pela planilha), e a descrição já é só o que veio na planilha (`analisarClientes`).
+ */
+function paraPrevia(l: LinhaAnalisada, verRegistro: boolean): LinhaPreviaImportacao {
   return {
     linha: l.linha,
     acao: l.acao,
     descricao: l.descricao,
-    registroId: l.registroId,
+    registroId: verRegistro ? l.registroId : null,
     erros: l.erros,
     avisos: l.avisos,
     ...(l.alteracoes ? { alteracoes: l.alteracoes } : {}),

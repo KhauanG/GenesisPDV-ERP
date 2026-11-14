@@ -906,7 +906,9 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     armazenamento vem do conteúdo (`formatoPlanilha`), nunca do `Content-Type` do cliente; o multer limita campos e
     partes; o erro da biblioteca vai para o log e o usuário recebe uma mensagem genérica. A leitura em `worker_thread`
     com `resourceLimits` não foi adotada: o teto de descompactação já limita a memória e o executor roda o mesmo código
-    em TS (dev/teste) e JS (build). Testes: "zip-bomba…" e "PIN: limite de hashes…".
+    em TS (dev/teste) e JS (build). Testes: "zip-bomba…" e "PIN: limite de hashes…". Desde o PR-15 o
+    `readSheet` não descompacta mais nada: recebe um zip montado com as entradas já descompactadas e conferidas, e o
+    percurso comum exige a estrutura de um zip só (decisão 197).
 94. **Dinheiro e quantidade em decimal** (ADR-05). `@genesis/shared` exporta `Dec` (`decimal.js` com `ROUND_HALF_UP`,
     o `MidpointRounding.AwayFromZero` do PDV) e `dec`/`decTexto`/`decNumero`; as funções de `precos.ts` (margem,
     markup, "Calcular", resumo do combo, combos montáveis, Simular) e `estoque.ts` (custo médio, diferença do
@@ -6138,6 +6140,82 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        registrar a execução, a **Definição de pronto da Fase 2 fica aberta** no roadmap, com o teste automático que já
        prova cada item citado. Também ficam com o dono: a ida e volta com a planilha real (F2-B40), a lista oficial do
        CEST (F2-B41) e a auditoria completa de segurança antes das outras lojas (D64).
+
+### Segurança – PR-15 (D64/D69) (API)
+
+197. **Planilha `.xlsx`: o leitor só recebe o que foi conferido, e o zip é um só** (PR-15, SEG-B01; ERP 8.6;
+     `src/comum/zip.ts`, `src/importacao/planilha.ts`). O `read-excel-file` percorre o `.xlsx` pelos cabeçalhos
+     locais, na ordem do arquivo, e descompacta o que acha lá; a conferência dos limites (`percorrerZip`) é pelo
+     diretório central. As duas leituras passam a ver **o mesmo** e o leitor deixa de descompactar:
+     - **Caminho escolhido: (a), com o (b) como estrutura comum.** O `conferirZip` descompacta, uma vez e com o teto do
+       tamanho declarado, só as entradas que o leitor usa (as `.xml` e `.xml.rels`, o filtro dele; pastas e imagens
+       ficam de fora sem descompactar) e devolve o conteúdo; o `lerXlsx` entrega ao `readSheet` um zip novo
+       (`zipConferido`), em fluxo, com essas entradas **guardadas sem compressão** (método 0), com o tamanho e o CRC
+       certos e sem descritor de dados. O leitor só copia bytes que já estão dentro dos limites; uma entrada que a
+       conferência não viu não chega até ele. Vale para a prévia e para a releitura da confirmação (a tarefa chama o
+       mesmo `lerPlanilha`). A memória não dobra: cada entrada sai da lista quando é entregue ao leitor, e a
+       descompactação, que antes acontecia duas vezes (na conferência e no leitor), acontece uma.
+     - **Um zip só, sem bytes de fora** (no `percorrerZip`, para a planilha e para o `.zip` de NF-e): o fim fecha o
+       arquivo (só o comentário que ele declara depois dele) e é de um disco só; o diretório central vai do início que
+       o fim declara até o fim, com o tamanho declarado; cada entrada central aponta para um cabeçalho local com o
+       mesmo nome (os bytes), o mesmo método e as mesmas flags de criptografia e de descritor (0x01, 0x08), e os
+       tamanhos iguais — ou zerados, com a flag 0x08, e então o descritor de dados (com ou sem assinatura) repete o CRC
+       e os tamanhos do diretório central; e as entradas, ordenadas pelo cabeçalho local, cobrem o arquivo do byte 0
+       até o diretório central, uma atrás da outra: nada antes, entre, por cima de outra (duas entradas centrais no
+       mesmo cabeçalho) nem fora do diretório central. Fora disso, `corrompido` ("O arquivo .xlsx está corrompido.";
+       `ZIP_CORROMPIDO` na NF-e). Tudo isso antes de descompactar qualquer entrada (o percurso confere a estrutura
+       inteira e só depois chama quem percorre).
+     - **Arquivo pequeno com cabeçalhos ZIP64 continua aceito** (correção da revisão do bloco): quem grava com o ZIP64
+       sempre ligado (Python `zipfile` com `force_zip64`, Info-ZIP lendo da entrada padrão, bibliotecas que geram o
+       zip em fluxo) põe 0xFFFFFFFF nos dois tamanhos do cabeçalho local e os de verdade no extra 0x0001 dele, e às
+       vezes o registro de fim ZIP64 (`PK\x06\x06`) e o localizador (`PK\x06\x07`) entre o diretório central e o
+       fim; o `.zip` de NF-e assim era lido antes do bloco. Agora: os 0xFFFFFFFF do cabeçalho local valem só nos dois
+       campos juntos e com o extra 0x0001 trazendo os tamanhos (8 bytes cada) iguais aos do diretório central (ou
+       zerados, com a flag 0x08); com esse extra, o descritor de dados tem os tamanhos de 8 bytes, iguais aos do
+       diretório central; entre o diretório central e o fim só cabe esse par, sem dados extensíveis, de um disco só e
+       com o mesmo número de entradas, início e tamanho do diretório central que o fim declara (o localizador
+       apontando para o registro). O ZIP64 de verdade (0xFFFFFFFF/0xFFFF no diretório central ou no fim) continua
+       recusado como `grande_demais`.
+     - **Descritor de dados continua aceito.** O `write-excel-file` (o nosso modelo e as exportações pequenas) e o
+       `WorkbookWriter` do exceljs (as exportações em tarefa) gravam em fluxo, com a flag 0x08 em todas as entradas: a
+       alternativa de recusar essa flag quebraria a importação das nossas próprias planilhas. Por isso o leitor não
+       recebe mais o arquivo original, e a flag só é aceita com o descritor batendo com o diretório central.
+     - **Taxa do arquivo inteiro**: além da taxa por entrada (acima de `taxaAPartirDeBytes`), a soma descompactada
+       acima de `taxaAPartirDeBytes` não pode passar de `taxa` × a soma compactada (`grande_demais`): muitas entradas
+       pequenas e muito comprimidas não somam o que uma grande não pode. Os limites de sempre (planilha: 100 entradas,
+       120 MiB por entrada, 150 MiB, taxa 100 acima de 1 MiB; NF-e: 1.000 entradas, 1 MiB por XML, 100 MiB, taxa 100
+       acima de 64 KiB) não mudam.
+     - Sem migração, sem mudança de contrato nem de PDV. Testes: `src/comum/zip.spec.ts` (cada regra da estrutura,
+       o zip normal com e sem descritor, o zip vazio, a taxa do arquivo inteiro; o cabeçalho local com o extra ZIP64,
+       com e sem descritor, e o registro de fim ZIP64 aceitos, e o extra, o descritor de 8 bytes ou o registro de fim
+       ZIP64 divergentes recusados), `src/importacao/planilha.spec.ts`
+       (a planilha gravada em fluxo e a regravada lidas igual; a entrada só no cabeçalho local, antes do diretório
+       central, recusada; o arquivo só com cabeçalho local
+       e o fim sem entradas recusado antes de descompactar; o cabeçalho local com outro tamanho recusado),
+       `src/entradas/notas-entrada.spec.ts` (a taxa do `.zip` de NF-e inteiro) e a integração
+       `importacao-dashboard.test.ts` ("xlsx fora da estrutura de um zip só → 422 antes de descompactar, na prévia e
+       na releitura da confirmação": o objeto trocado no armazenamento depois da prévia faz a tarefa falhar com a mesma
+       mensagem; a API continua saudável). O `montarZip` dos testes ganhou o `descritor` e as peças `entradaSoLocal`,
+       `inserirAntesDoCentral` e `fimSemEntradas`, e o `zip64` e o `comFimZip64` para as variantes ZIP64.
+
+198. **Importação de clientes sem `pessoas.ver`: a prévia não mostra quem já existe** (PR-15, SEG-B01; ERP 8.6;
+     `src/importacao/clientes.ts`, `src/importacao/importacao.ts`, `src/pessoas/pessoas.controller.ts`). Completa a
+     minimização da revisão do PR-9 (decisão 186, D63: sem `pessoas.ver` a linha não é comparada):
+     - a **Descrição** da linha é só o que veio na planilha — o nome, o CPF/CNPJ como foi digitado, o código ou o id —,
+       nunca o nome do cadastro achado pelo documento, pelo código ou pelo id; vale para a prévia e para o relatório
+       do resultado da tarefa (que usa a mesma descrição);
+     - o **`registroId`** sai `null` na prévia de clientes de quem não tem `pessoas.ver` (`paraPrevia`); a análise
+       continua guardando o id para a gravação da tarefa, que acha o cadastro de novo pela planilha. A ação
+       ("Atualizar") continua indicada, como a D63 aceitou;
+     - **variante corrigida junto**: o 409 do CPF/CNPJ repetido (`garantirDocumentoUnico`, usado pelo `POST /pessoas`,
+       pelo `PUT /pessoas/:id` e pela gravação da importação, cujo erro vai para o relatório) trazia o código, o nome e
+       o id da outra pessoa; sem `pessoas.ver` passa a dizer só "Já existe uma pessoa com este documento." (campo
+       `cpfCnpj`: "Já cadastrado"), sem `detalhes`. Com `pessoas.ver` nada muda (o link "abrir cadastro" do ERP usa os
+       `detalhes`, opcionais lá).
+     - A importação de produtos não muda: o catálogo não é dado pessoal e o custo já segue `produtos.ver_custo`.
+       Testes: `clientes.spec.ts` (a descrição pelo CPF/CNPJ, pelo código e pelo id sem `pessoas.ver`, e o nome com
+       ela) e a integração "sem "Pessoas: Ver" a prévia (também em .xlsx) e o 409 do documento não mostram o nome nem o
+       id de quem já existe" (perfil personalizado com `pessoas.importar`, `pessoas.editar` e `pessoas.criar`).
 
 ### Operação – tarefas em segundo plano (API)
 
