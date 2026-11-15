@@ -742,6 +742,344 @@ describe('grupos de preço por quantidade – mix (ERP 8.10)', () => {
   });
 });
 
+/** O detalhe como o PUT o recebe de volta, com as filhas que os casos mexem. */
+type CorpoProduto = Record<string, unknown> & {
+  codigosBarras: Array<Record<string, unknown>>;
+  lojas: Array<Record<string, unknown>>;
+  componentes: Array<Record<string, unknown> & { alternativas: Array<Record<string, unknown>> }>;
+};
+
+describe('trava "Altera Preço do Produto no ERP": todos os campos de preço (decisões 68 e 208)', () => {
+  let id: string;
+  let combo: string;
+  let outroCombo: string;
+  let mix: string;
+  let refri: string;
+  let suco: string;
+  let agua: string;
+  let cha: string;
+  /** Perfil Estoquista (`produtos.editar` sem `produtos.alterar_preco`) com acesso à loja. */
+  let estoquistaLoja: string;
+
+  async function putCom(produto: string, mexer: (p: CorpoProduto) => void, token = estoquistaLoja) {
+    const atual = (await obter(produto)) as CorpoProduto;
+    mexer(atual);
+    return amb.http().put(`/api/produtos/${produto}`).set(bearer(token)).send(atual);
+  }
+
+  const gravado = async (sqlTexto: string, params: unknown[]) =>
+    (await consultar<Record<string, string | null>>(emp.nomeBanco, sqlTexto, params))[0];
+
+  beforeAll(async () => {
+    await criarUsuario(emp.nomeBanco, { login: 'estoquista_loja', perfil: 'estoquista', lojas: [lojaId] });
+    estoquistaLoja = await amb.entrar(emp.codigo, 'estoquista_loja', SENHA_TESTE);
+    const p = await criar({
+      nome: 'GUARANA LT 350ML TRAVA',
+      precoVenda: '5',
+      precoAtacado: '4,50',
+      qtdMinimaAtacado: '12',
+      precoPromocional: '4',
+      promocaoInicio: '2026-11-01T00:00:00-03:00',
+      promocaoFim: '2026-11-30T23:59:00-03:00',
+      codigosBarras: [
+        { codigo: 'TRAVA-UN', tipo: 'interno', principal: true },
+        {
+          codigo: 'TRAVA-FD',
+          tipo: 'interno',
+          descricao: 'Fardo 12 un',
+          unidadeId: cx,
+          fator: '12',
+          preco: '54',
+        },
+      ],
+      lojas: [{ lojaId, precoVenda: '5,50', acrescimoGelada: '1' }],
+      precosQuantidade: [{ lojaId: null, quantidadeInicial: '6', quantidadeFinal: null, preco: '4,80' }],
+    });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    id = p.body.id;
+    const g = await amb
+      .http()
+      .post('/api/grupos-preco-quantidade')
+      .set(bearer(admin))
+      .send({ nome: 'Mix trava', modoPreco: 'grupo', faixas: [{ quantidadeInicial: '12', preco: '3,99' }] });
+    expect(g.status, JSON.stringify(g.body)).toBe(201);
+    mix = g.body.id;
+    const simples = async (nome: string) => {
+      const r = await criar({ nome, precoCusto: '3', precoVenda: '6', ncm: '22029900' });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.id as string;
+    };
+    refri = await simples('REFRI TRAVA 2L');
+    suco = await simples('SUCO TRAVA 1L');
+    agua = await simples('AGUA TRAVA 1,5L');
+    cha = await simples('CHA TRAVA 1L');
+    const kit = async (nome: string, acrescimo: string) => {
+      const r = await criar({
+        nome,
+        tipo: 'kit',
+        precoVenda: '30',
+        componentes: [
+          {
+            tipo: 'kit',
+            componenteId: refri,
+            quantidade: '1',
+            permiteSubstituicao: true,
+            alternativas: [{ produtoId: suco, acrescimo }],
+          },
+        ],
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.id as string;
+    };
+    combo = await kit('COMBO TRAVA', '2');
+    outroCombo = await kit('COMBO TRAVA 2', '3');
+    await consultar(
+      emp.nomeBanco,
+      `insert into configuracoes (escopo, chave, valor) values ('empresa', 'geral.altera_preco_produto_erp', 'false')`,
+    );
+  });
+
+  afterAll(async () => {
+    await consultar(
+      emp.nomeBanco,
+      `delete from configuracoes where chave = 'geral.altera_preco_produto_erp'`,
+    );
+  });
+
+  const casos: Array<[string, 'produto' | 'combo', (p: CorpoProduto) => void]> = [
+    ['o preço do código principal', 'produto', (p) => (p.codigosBarras[0]!.preco = '0.01')],
+    ['o preço da embalagem', 'produto', (p) => (p.codigosBarras[1]!.preco = '30')],
+    ['o preço da embalagem retirado', 'produto', (p) => (p.codigosBarras[1]!.preco = null)],
+    ['o fator da embalagem com preço', 'produto', (p) => (p.codigosBarras[1]!.fator = '24')],
+    [
+      'a embalagem com preço excluída e recriada sem preço',
+      'produto',
+      (p) => {
+        const i = p.codigosBarras.findIndex((c) => c.codigo === 'TRAVA-FD');
+        p.codigosBarras[i] = { codigo: 'TRAVA-FD', tipo: 'interno', fator: '12', preco: null };
+      },
+    ],
+    [
+      'o código sem preço que fica com o número da embalagem retirada',
+      'produto',
+      (p) => {
+        p.codigosBarras = p.codigosBarras.filter((c) => c.codigo !== 'TRAVA-FD');
+        p.codigosBarras[0]!.codigo = 'TRAVA-FD';
+      },
+    ],
+    [
+      'o código novo com preço',
+      'produto',
+      (p) => p.codigosBarras.push({ codigo: 'TRAVA-PK6', tipo: 'interno', fator: '6', preco: '0' }),
+    ],
+    ['o acréscimo gelado da loja', 'produto', (p) => (p.lojas[0]!.acrescimoGelada = '9')],
+    ['a linha da loja com preço retirada', 'produto', (p) => (p.lojas = [])],
+    ['a quantidade mínima do atacado', 'produto', (p) => (p.qtdMinimaAtacado = '1')],
+    ['o fim da promoção', 'produto', (p) => (p.promocaoFim = '2026-12-31T23:59:00-03:00')],
+    ['o grupo de preço por quantidade', 'produto', (p) => (p.grupoPrecoQuantidadeId = mix)],
+    ['o "Solicita preço PDV"', 'produto', (p) => (p.solicitaPrecoPdv = true)],
+    [
+      'o acréscimo da alternativa do combo',
+      'combo',
+      (p) => (p.componentes[0]!.alternativas[0]!.acrescimo = '0'),
+    ],
+    [
+      'a alternativa recriada com outro acréscimo',
+      'combo',
+      (p) => {
+        const c = p.componentes[0]!;
+        p.componentes = [
+          { ...c, id: null, alternativas: [{ produtoId: suco, acrescimo: '0', ativo: true }] },
+        ] as CorpoProduto['componentes'];
+      },
+    ],
+  ];
+
+  it.each(casos)('sem "Produtos: Alterar preço": %s é 403', async (_nome, alvo, mexer) => {
+    const r = await putCom(alvo === 'produto' ? id : combo, mexer);
+    expect(r.status, JSON.stringify(r.body)).toBe(403);
+    expect(r.body.mensagem).toBe('Alterar preço no ERP exige "Produtos: Alterar preço".');
+  });
+
+  it('as recusas não gravaram nada', async () => {
+    expect(
+      await gravado(
+        `select string_agg(codigo || '=' || coalesce(preco::text, '-') || 'x' || fator::text, ',' order by codigo) as c
+           from produtos_codigos_barras where produto_id = $1 and excluido_em is null`,
+        [id],
+      ),
+    ).toEqual({ c: 'TRAVA-FD=54.0000x12.000,TRAVA-UN=-x1.000' });
+    expect(
+      await gravado(
+        `select preco_venda::text as p, acrescimo_gelada::text as g from produtos_lojas
+          where produto_id = $1 and excluido_em is null`,
+        [id],
+      ),
+    ).toEqual({ p: '5.5000', g: '1.0000' });
+    expect(
+      await gravado(
+        `select qtd_minima_atacado::text as q, grupo_preco_quantidade_id as g, solicita_preco_pdv::text as s
+           from produtos where id = $1`,
+        [id],
+      ),
+    ).toEqual({ q: '12.000', g: null, s: 'false' });
+    expect(
+      await gravado(
+        `select string_agg(a.acrescimo::text, ',') as a from produtos_componentes_alternativas a
+           join produtos_componentes c on c.id = a.componente_id
+          where c.produto_id = $1 and a.excluido_em is null and c.excluido_em is null`,
+        [combo],
+      ),
+    ).toEqual({ a: '2.0000' });
+  });
+
+  it('o que não é preço, repetir o gravado e tirar um código da venda continuam com 200', async () => {
+    const mesmo = await putCom(id, () => undefined);
+    expect(mesmo.status, JSON.stringify(mesmo.body)).toBe(200);
+    const outro = await putCom(id, (p) => (p.localizacao = 'GONDOLA 3'));
+    expect(outro.status, JSON.stringify(outro.body)).toBe(200);
+    const semPreco = await putCom(id, (p) =>
+      p.codigosBarras.push({ codigo: 'TRAVA-UN2', tipo: 'interno', principal: false }),
+    );
+    expect(semPreco.status, JSON.stringify(semPreco.body)).toBe(200);
+    const foraDaVenda = await putCom(id, (p) => (p.codigosBarras[1]!.usaVenda = false));
+    expect(foraDaVenda.status, JSON.stringify(foraDaVenda.body)).toBe(200);
+    const alternativaSemAcrescimo = await putCom(combo, (p) =>
+      p.componentes[0]!.alternativas.push({ produtoId: agua, acrescimo: '0', ativo: true }),
+    );
+    expect(alternativaSemAcrescimo.status, JSON.stringify(alternativaSemAcrescimo.body)).toBe(200);
+  });
+
+  it('a alternativa casa só entre as da própria posição: o id de outro combo não altera a de lá', async () => {
+    const [alheia] = await consultar<{ id: string }>(
+      emp.nomeBanco,
+      `select a.id from produtos_componentes_alternativas a join produtos_componentes c on c.id = a.componente_id
+        where c.produto_id = $1 and a.excluido_em is null`,
+      [outroCombo],
+    );
+    const r = await putCom(combo, (p) =>
+      p.componentes[0]!.alternativas.push({ id: alheia!.id, produtoId: cha, acrescimo: '0', ativo: true }),
+    );
+    // O id alheio vira uma alternativa nova desta posição (sem acréscimo: não é mudança de preço).
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(
+      r.body.componentes[0].alternativas.map((a: { produtoId: string; acrescimo: string }) => [
+        a.produtoId,
+        a.acrescimo,
+      ]),
+    ).toContainEqual([cha, '0.0000']);
+    expect(
+      await gravado(
+        `select produto_id, acrescimo::text as acrescimo, excluido_em from produtos_componentes_alternativas
+          where id = $1`,
+        [alheia!.id],
+      ),
+    ).toEqual({ produto_id: suco, acrescimo: '3.0000', excluido_em: null });
+  });
+
+  it('a alternativa tirada num salvamento não volta noutro sem "Produtos: Alterar preço"', async () => {
+    const tirar = await putCom(combo, (p) => {
+      p.componentes[0]!.alternativas = p.componentes[0]!.alternativas.filter((a) => a.produtoId !== suco);
+    });
+    expect(tirar.status, JSON.stringify(tirar.body)).toBe(200);
+    // A última exclusão dela tinha acréscimo (2,00): de graça ou com o acréscimo, só com a permissão.
+    for (const acrescimo of ['0', '2']) {
+      const volta = await putCom(combo, (p) =>
+        p.componentes[0]!.alternativas.push({ produtoId: suco, acrescimo, ativo: true }),
+      );
+      expect(volta.status, JSON.stringify(volta.body)).toBe(403);
+    }
+    const volta = await putCom(
+      combo,
+      (p) => p.componentes[0]!.alternativas.push({ produtoId: suco, acrescimo: '2', ativo: true }),
+      admin,
+    );
+    expect(volta.status, JSON.stringify(volta.body)).toBe(200);
+  });
+
+  it('com "Produtos: Alterar preço" o preço do código e o acréscimo gelado mudam', async () => {
+    const mexer = (p: CorpoProduto) => {
+      // O fardo pelo código (o caso anterior o tirou da venda): volta à venda, para a trava avaliar o preço dele.
+      const fardo = p.codigosBarras.find((c) => c.codigo === 'TRAVA-FD')!;
+      fardo.usaVenda = true;
+      fardo.preco = '50';
+      p.lojas[0]!.acrescimoGelada = '1,50';
+    };
+    // A mesma mudança sem a permissão é recusada.
+    const sem = await putCom(id, mexer);
+    expect(sem.status, JSON.stringify(sem.body)).toBe(403);
+    const r = await putCom(id, mexer, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.codigosBarras.find((c: { codigo: string }) => c.codigo === 'TRAVA-FD')).toMatchObject({
+      preco: '50.0000',
+      usaVenda: true,
+    });
+    expect(r.body.lojas[0].acrescimoGelada).toBe('1.5000');
+  });
+
+  it('a embalagem excluída num salvamento não volta sem preço noutro', async () => {
+    const tirar = await putCom(id, (p) => {
+      p.codigosBarras = p.codigosBarras.filter((c) => c.codigo !== 'TRAVA-FD');
+    });
+    expect(tirar.status, JSON.stringify(tirar.body)).toBe(200);
+    // Sem o preço próprio, o caixa cobraria 12 × o preço do produto: a última exclusão do código tinha preço.
+    const volta = await putCom(id, (p) =>
+      p.codigosBarras.push({ codigo: 'TRAVA-FD', tipo: 'interno', fator: '12', preco: null }),
+    );
+    expect(volta.status, JSON.stringify(volta.body)).toBe(403);
+    expect(
+      await gravado(
+        `select count(*)::text as n from produtos_codigos_barras
+          where produto_id = $1 and codigo = 'TRAVA-FD' and excluido_em is null`,
+        [id],
+      ),
+    ).toEqual({ n: '0' });
+  });
+
+  it('a linha da loja inativa que o formulário não manda não é mudança de preço; a da loja ativa é', async () => {
+    const outraLoja = await criarLoja(emp.nomeBanco, 2, 'Loja Bairro');
+    await criarUsuario(emp.nomeBanco, {
+      login: 'estoquista_duas',
+      perfil: 'estoquista',
+      lojas: [lojaId, outraLoja],
+    });
+    const estoquistaDuas = await amb.entrar(emp.codigo, 'estoquista_duas', SENHA_TESTE);
+    const produto = async (nome: string) => {
+      const r = await criar({
+        nome,
+        precoVenda: '5',
+        lojas: [
+          { lojaId, precoVenda: null },
+          { lojaId: outraLoja, precoVenda: '6' },
+        ],
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.id as string;
+    };
+    const paraInativar = await produto('GUARANA LT 350ML TRAVA LOJA INATIVA');
+    const paraExcluir = await produto('GUARANA LT 350ML TRAVA LOJA EXCLUIDA');
+    // O formulário lista só as lojas ativas: a linha da outra loja não vai no corpo; só a localização muda.
+    const semOutra = (q: CorpoProduto) => {
+      q.lojas = q.lojas.filter((l) => l.lojaId !== outraLoja);
+      q.localizacao = 'DEPOSITO';
+    };
+    // Loja ativa: tirar a linha com preço é mudar o preço dela (ela passaria ao preço geral).
+    for (const produtoId of [paraInativar, paraExcluir]) {
+      const ativa = await putCom(produtoId, semOutra, estoquistaDuas);
+      expect(ativa.status, JSON.stringify(ativa.body)).toBe(403);
+    }
+    // Loja inativa, e loja excluída: a mesma gravação passa.
+    await consultar(emp.nomeBanco, 'update lojas set ativa = false where id = $1', [outraLoja]);
+    const inativa = await putCom(paraInativar, semOutra, estoquistaDuas);
+    expect(inativa.status, JSON.stringify(inativa.body)).toBe(200);
+    await consultar(emp.nomeBanco, 'update lojas set ativa = true, excluido_em = now() where id = $1', [
+      outraLoja,
+    ]);
+    const excluida = await putCom(paraExcluir, semOutra, estoquistaDuas);
+    expect(excluida.status, JSON.stringify(excluida.body)).toBe(200);
+  });
+});
+
 describe('restrições de horário de venda (ERP 8.9)', () => {
   it('cria por idade mínima atravessando a meia-noite; exige alvo; loja imutável', async () => {
     const r = await amb

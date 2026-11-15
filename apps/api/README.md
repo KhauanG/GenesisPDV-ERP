@@ -746,7 +746,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 68. **Permissões de custo e preço**: sem `produtos.ver_custo` custo, custo médio e markup voltam `null` (listagem,
     detalhe, busca, saldos), o custo enviado é ignorado e ordenar por custo é 403. Com `geral.altera_preco_produto_erp
     = false`, alterar preço do produto, da loja, das faixas ou o preço adicional dos complementos (F2-B51, decisão
-    194) exige `produtos.alterar_preco` (403); na criação o preço é livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
+    194) exige `produtos.alterar_preco` (403); a lista completa do que é preço está na decisão 208. Na criação o preço
+    é livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
 69. **Troca de tipo com movimento** (ERP 8.2.1): só entre Simples, Matéria-prima e Serviço, e Serviço só sem saldo.
     **Exclusão** (ERP 8.2 "Regras"): bloqueada com saldo ≠ 0 ou se o produto é padrão/alternativa ativa de combo ou
     insumo de ficha técnica de produto não excluído; exclui logicamente as filhas junto.
@@ -6607,6 +6608,73 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `registro_id` de sessão); a linha de login do Master com a loja 1 preenchida e o login negado de um login
        inexistente não aparecem para o restrito, e o Master vê as duas. As consultas do teste passam um período
        explícito (`de` = ontem, calculado antes de gravar), para não depender do "hoje" do relógio.
+
+208. **Trava "Altera Preço do Produto no ERP": todo campo que decide o preço cobrado, numa lista só** (PR-15, SEG-B08;
+     ERP 8.2.1, 8.2.2, 8.2.3, 8.2.10, 8.2.16, 8.2.17 e 9.1; PDV 10.4 e 11.3; decisões 68 e 194;
+     `src/produtos/trava-preco.ts`, `src/produtos/produtos.controller.ts`, `src/produtos/gravacao.ts`).
+     - **A lista** (`trava-preco.ts`, função pura `mudancasDePreco`, chamada por `garantirAlterarPreco` dentro do
+       `atualizarProduto`, que lê também as opções excluídas logicamente do produto): com `geral.altera_preco_produto_erp = false`, quem não tem `produtos.alterar_preco` recebe
+       403 `SEM_PERMISSAO` ("Alterar preço no ERP exige …") quando o corpo muda qualquer um destes, e grava normalmente
+       quando só repete o gravado:
+       - do produto (`CAMPOS_PRECO_PRODUTO`): venda, atacado e a quantidade mínima dele, promocional e a vigência
+         (início e fim, comparados no minuto, como o formulário mostra), parcelado, menu digital, iFood, o grupo de
+         preço por quantidade (o mix dá o preço das faixas dele) e o preço digitado no caixa ("Solicita preço PDV" e
+         "Genérico");
+       - do código de barras (regra própria, escrita em `mudancasDePreco`; o caixa cobra `preço ÷ fator` ao bipar o
+         código à venda com preço, o menor candidato vence, e o preço do produto × o fator no código sem preço): no
+         código gravado com preço, o preço (inclusive no principal, e o preço retirado), o fator (à venda) e o código,
+         à venda ou não (o preço do código fora da venda é o que vale quando ele volta); e o código que **entra** na
+         venda (novo, recriado sem o id, com outro número, ou que volta a ser usado na venda) pela regra da opção que
+         entra, abaixo, com a chave = o número do código e o valor = o preço e o fator. Tirar o código ou o "usa na
+         venda" tira o código da venda e não conta; o fator e o número do código sem preço só mudam a embalagem;
+       - da loja (`CAMPOS_PRECO_LOJA`): o preço próprio e o acréscimo da versão gelada, na linha enviada (nova ou
+         casada) e na linha com preço de loja visível e ativa que sai do corpo (a gravação a exclui e a loja passa ao
+         preço geral; as lojas inativas ficam fora, porque o formulário só lista as ativas);
+       - as faixas de preço por quantidade visíveis (como antes);
+       - o preço adicional do complemento e o acréscimo da alternativa do combo: na opção casada pelo id, o valor
+         gravado (ativa ou inativa) e, com valor, a chave dela (o produto e a variação, ou a descrição livre); e a
+         opção que **entra** na venda (nova, recriada sem o id, com outra chave ou reativada) pela regra abaixo, com o
+         valor 0 = sem preço. Inativar ou tirar a opção não conta.
+     - **A opção que entra na venda** (código de barras, complemento, alternativa do combo; classe `OpcoesDaVenda`)
+       só passa (a) com o valor de uma opção da **mesma chave que sai da venda no mesmo salvamento** (excluir e
+       recriar não troca o preço; só o valor da que sai vale, não o da mesma opção noutro grupo ou noutra posição),
+       ou (b) sem nada igual saindo, **sem preço e quando a chave não tem preço em lugar nenhum**: nem na opção que
+       fica à venda (o mesmo complemento de graça num grupo novo, ao lado do de 4,00, é o cliente escolhendo o de
+       graça), nem na inativa ou fora da venda, nem na **última excluída** dela (lida do banco, a mais nova por
+       `excluido_em`, inclusive a do grupo ou da posição excluídos). Assim a opção que tem ou já teve preço só entra
+       com a permissão, inclusive de graça e em qualquer número de salvamentos (tirar num e recriar noutro, inativar
+       num e reativar noutro); a reativação da opção com preço também conta. O que fica mais estrito que antes: quem
+       não tem a permissão não recria nem reativa, nem com o mesmo valor, a opção que teve preço (salvo trocando-a no
+       mesmo salvamento), e não acrescenta com preço a mesma opção noutro grupo; quem tem a permissão grava como
+       sempre.
+     - **Vale em todo caminho que grava pelo `atualizarProduto`**: o formulário (PUT), a importação de planilha com
+       atualização, o cadastro em massa (Atualização) e a correção de NCM pelo relatório. O recebimento e a NF-e de
+       entrada já respeitavam a trava pelo `podeAlterarPrecoNaEntrada` (F2-B15 e F2-B21). Os grupos de
+       preço por quantidade (faixas e membros, ERP 8.10) têm permissão própria (`grupos_preco.editar`, que o
+       Estoquista não tem) e ficam fora da chave, como sempre. Na criação o preço continua livre (decisão 68).
+     - **A alternativa do combo casa só entre as gravadas da própria posição** (`gravarFilhas`), como os códigos, as
+       lojas e as faixas: o id de uma alternativa de outra posição ou de outro produto vira uma alternativa nova desta
+       posição, e a de lá não é alterada (antes a gravação atualizava a linha pelo id sozinho).
+     - Sem migração, sem contrato novo e sem mudança no PDV (o caixa recebe o que a nuvem grava, sem protocolo novo).
+       Testes: `src/produtos/trava-preco.spec.ts` (cada campo da lista apontado, e os campos de preço do contrato
+       — `criarProdutoSchema` e `produtoLojaSchema`, pelo nome — todos na lista: o campo novo que ficou fora derruba o
+       teste; repetir o gravado com outra escrita do número, a data no minuto e o id em maiúsculas não conta; o que sai
+       da venda e o fator e o número do código sem preço não contam; o código excluído e recriado com o mesmo número
+       sem preço, com outro fator ou outro preço conta, e com o mesmo preço e fator não; o código sem preço que fica
+       com o número do fardo retirado conta; o que volta para a venda conta; a opção recriada com outro valor conta e
+       com o da que sai não; a mesma opção noutro grupo ou posição não dá o preço; a reativação com preço conta; a
+       opção excluída noutro salvamento só volta sem preço se a última exclusão dela não tinha preço),
+       `test/integracao/produtos.test.ts` (com o perfil Estoquista e a chave desligada, um caso por campo — preço do
+       código principal, preço, preço retirado e fator da embalagem, a embalagem excluída e recriada sem preço, o
+       código sem preço com o número da embalagem retirada, código novo com preço, acréscimo gelado, linha da loja
+       retirada, quantidade mínima do atacado, fim da promoção, grupo de preço, "Solicita preço PDV", acréscimo da
+       alternativa e a alternativa recriada — com 403 e nada gravado; o que não é preço, repetir o gravado, o código
+       novo sem preço, tirar o código da venda e a alternativa nova sem acréscimo com 200; a alternativa e a embalagem
+       tiradas num salvamento e recriadas noutro → 403; a mesma mudança do preço do código e do acréscimo gelado é 403
+       sem `produtos.alterar_preco` e grava com ela; a linha da loja com preço que o formulário não manda é 403 com a
+       loja ativa e 200 com ela inativa ou excluída; o id de uma alternativa de outro combo não altera a de lá) e
+       `test/integracao/produto-complementos.test.ts` (o mesmo complemento de graça num grupo novo → 403; o grupo
+       apagado num salvamento e o complemento recriado de graça noutro → 403).
 
 ### Operação – tarefas em segundo plano (API)
 

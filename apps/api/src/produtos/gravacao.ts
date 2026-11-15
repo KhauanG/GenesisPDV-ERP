@@ -669,10 +669,15 @@ export async function gravarFilhas(
           ),
         )
     : [];
+  // A alternativa casa pelo id só entre as gravadas daquela posição (como os códigos, as lojas e as faixas): o id de
+  // uma alternativa de outra posição ou de outro produto vira uma alternativa nova desta posição, e a gravada de lá
+  // não é tocada (ela tem a versão, a auditoria e a trava de preço do produto dela).
+  const altsGravadas = new Set(alts.map((a) => `${a.componenteId}:${a.id}`));
   const altsDesejadas = new Set(
     d.componentes
       .filter((c) => c.id && manterComp.has(c.id))
-      .flatMap((c) => c.alternativas.filter((a) => a.id).map((a) => `${c.id}:${a.id}`)),
+      .flatMap((c) => c.alternativas.filter((a) => a.id).map((a) => `${c.id}:${a.id}`))
+      .filter((chave) => altsGravadas.has(chave)),
   );
   const removerAlts = alts.filter((a) => !altsDesejadas.has(`${a.componenteId}:${a.id}`)).map((a) => a.id);
   if (removerAlts.length)
@@ -707,7 +712,12 @@ export async function gravarFilhas(
         await tx
           .update(produtosComponentesAlternativas)
           .set(valoresAlt)
-          .where(eq(produtosComponentesAlternativas.id, altId));
+          .where(
+            and(
+              eq(produtosComponentesAlternativas.id, altId),
+              eq(produtosComponentesAlternativas.componenteId, compId),
+            ),
+          );
       } else {
         await tx
           .insert(produtosComponentesAlternativas)

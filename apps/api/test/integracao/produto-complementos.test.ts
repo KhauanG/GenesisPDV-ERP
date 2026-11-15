@@ -475,6 +475,16 @@ describe('complementos no cadastro do produto (F2-B51)', () => {
           g[0]!.complementos.push({ descricao: 'Farofa', precoAdicional: '1,00' } as never),
         );
         expect(novoComPreco.status).toBe(403);
+        // O mesmo complemento (o mesmo produto) recriado num grupo novo, de graça, troca o preço dele (decisão 208).
+        const recriado = await mudar((g) =>
+          g.push({
+            nome: 'Porção extra',
+            minimo: 0,
+            maximo: 1,
+            complementos: [{ produtoId: g[0]!.complementos[0]!.produtoId, precoAdicional: '0' }],
+          } as never),
+        );
+        expect(recriado.status, JSON.stringify(recriado.body)).toBe(403);
         // O complemento novo sem preço não é alteração de preço.
         const novoSemPreco = await mudar((g) => g[0]!.complementos.push({ descricao: 'Farofa' } as never));
         expect(novoSemPreco.status, JSON.stringify(novoSemPreco.body)).toBe(200);
@@ -487,6 +497,43 @@ describe('complementos no cadastro do produto (F2-B51)', () => {
           [null, '4.0000'],
           ['Farofa', '0.0000'],
         ]);
+        // Em dois salvamentos: apagar o grupo (o complemento é excluído com ele) passa; recriar o complemento num grupo
+        // novo, de graça, não: a última exclusão dele tinha preço (decisão 208).
+        const c = await criar({
+          nome: 'PORÇÃO DE CALABRESA',
+          tipo: 'com_complementos',
+          gruposComplementos: [
+            { nome: 'Extras', maximo: 2, complementos: [{ descricao: 'Bacon', precoAdicional: '3' }] },
+          ],
+        });
+        expect(c.status, JSON.stringify(c.body)).toBe(201);
+        const calabresa = c.body.id as string;
+        const semGrupo = await alterar(calabresa, { gruposComplementos: [] }, estoquista);
+        expect(semGrupo.status, JSON.stringify(semGrupo.body)).toBe(200);
+        const recriar = (precoAdicional: string) =>
+          alterar(
+            calabresa,
+            {
+              gruposComplementos: [
+                { nome: 'Adicionais', maximo: 1, complementos: [{ descricao: 'bacon', precoAdicional }] },
+              ],
+            },
+            estoquista,
+          );
+        const deGraca = await recriar('0');
+        expect(deGraca.status, JSON.stringify(deGraca.body)).toBe(403);
+        expect((await detalhe(calabresa)).gruposComplementos).toEqual([]);
+        // Quem tem a permissão recria (com o preço que quiser).
+        const comPermissao = await alterar(
+          calabresa,
+          {
+            gruposComplementos: [
+              { nome: 'Adicionais', maximo: 1, complementos: [{ descricao: 'Bacon', precoAdicional: '0' }] },
+            ],
+          },
+          admin,
+        );
+        expect(comPermissao.status, JSON.stringify(comPermissao.body)).toBe(200);
       } finally {
         await consultar(
           emp.nomeBanco,

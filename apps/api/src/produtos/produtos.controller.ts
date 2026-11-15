@@ -118,6 +118,7 @@ import {
   vincularImagensProduto,
   type ProdutoAntes,
 } from './gravacao.js';
+import { mudancasDePreco } from './trava-preco.js';
 import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Produtos › Cadastro de produtos';
@@ -1001,7 +1002,12 @@ function garantirCriarInversa(sessao: SessaoErp, d: CriarProduto): void {
 
 /**
  * Configurações › Geral › "Altera Preço do Produto no ERP" = Não (`geral.altera_preco_produto_erp`): mudar preço
- * exige `produtos.alterar_preco` (ERP 8.2.1).
+ * exige `produtos.alterar_preco` (ERP 8.2.1 e 9.1; decisões 68 e 208). O que é preço está num arquivo só
+ * (`trava-preco.ts`): os preços do produto e as condições deles, o grupo de preço, o preço digitado no caixa, o preço e
+ * o fator dos códigos de barras, o preço e o acréscimo gelado de cada loja (inclusive a linha retirada), as faixas, o
+ * preço adicional dos complementos e o acréscimo das alternativas do combo, também pela opção excluída e recriada.
+ * Vale para todo caminho que grava pelo `atualizarProduto` (formulário, importação, cadastro em massa, correção de
+ * NCM).
  */
 async function garantirAlterarPreco(
   tx: DbEmpresa,
@@ -1011,39 +1017,43 @@ async function garantirAlterarPreco(
 ): Promise<void> {
   if (sessao.permissoes.has('produtos.alterar_preco')) return;
   if ((await lerConfiguracao<boolean>(tx, 'geral.altera_preco_produto_erp')) !== false) return;
-  const n = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
-  const a = precosDe({ ...antes, precoCusto: undefined });
-  const b = precosDe({ ...d, precoCusto: undefined });
-  const mudouProduto = (Object.keys(b) as (keyof typeof b)[]).some((k) => n(a[k]) !== n(b[k]));
-  const lojasAntes = new Map(antes.lojas.map((l) => [l.lojaId, n(l.precoVenda)]));
-  const mudouLoja = d.lojas.some((l) => (lojasAntes.get(l.lojaId) ?? null) !== n(l.precoVenda));
-  const chaveFaixa = (f: {
-    lojaId: string | null;
-    quantidadeInicial: string;
-    quantidadeFinal: string | null;
-    preco: string;
-  }) => `${f.lojaId}:${n(f.quantidadeInicial)}:${n(f.quantidadeFinal)}:${n(f.preco)}`;
-  // Só as faixas que o usuário vê entram na comparação (as de outras lojas não vêm e são preservadas).
-  const faixaVisivel = (f: { lojaId: string | null }) =>
-    f.lojaId === null || sessao.lojas === null || sessao.lojas.includes(f.lojaId);
-  const mudouFaixa =
-    antes.precosQuantidade.filter(faixaVisivel).map(chaveFaixa).sort().join('|') !==
-    d.precosQuantidade.map(chaveFaixa).sort().join('|');
-  // O preço adicional dos complementos (F2-B51) é preço cobrado do cliente na venda: muda quando o complemento casado
-  // (o mesmo casamento de `gravarComplementos`: o grupo pelo id entre os do produto, o complemento pelo id entre os do
-  // grupo) vem com outro preço, ou quando o complemento novo vem com preço. Repetir o preço de agora não conta; a lista
-  // ausente mantém os gravados (planilha, cadastro em massa, ERP antigo).
-  const minusculo = (v: string | null) => v?.toLowerCase() ?? null;
-  const mudouComplemento = (d.gruposComplementos ?? []).some((g) => {
-    const grupo = antes.gruposComplementos.find((x) => x.id === minusculo(g.id));
-    return g.complementos.some((c) => {
-      const a = grupo?.complementos.find((x) => x.id === minusculo(c.id));
-      return a ? n(a.precoAdicional) !== n(c.precoAdicional) : n(c.precoAdicional)! > 0;
-    });
+  const ativas = await tx
+    .select({ id: lojas.id })
+    .from(lojas)
+    .where(and(eq(lojas.ativa, true), isNull(lojas.excluidoEm)));
+  const lojasAtivas = new Set(ativas.map((l) => l.id));
+  // As opções excluídas logicamente deste produto, da mais nova para a mais antiga: a que volta (recriada noutro
+  // salvamento) só volta sem preço quando a última dela não tinha preço (decisão 208).
+  const { rows: codigosBarras } = await tx.execute<{ codigo: string; preco: string | null }>(sql`
+    select codigo, preco::text as preco from produtos_codigos_barras
+     where produto_id = ${antes.id} and variacao_id is null and excluido_em is not null
+     order by excluido_em desc, id`);
+  const { rows: complementos } = await tx.execute<{
+    produtoId: string | null;
+    descricao: string | null;
+    precoAdicional: string;
+  }>(sql`
+    select c.produto_id as "produtoId", c.descricao, c.preco_adicional::text as "precoAdicional"
+      from produtos_complementos c
+      join produtos_grupos_complementos g on g.id = c.grupo_id
+     where g.produto_id = ${antes.id} and (c.excluido_em is not null or g.excluido_em is not null)
+     order by greatest(c.excluido_em, g.excluido_em) desc, c.id`);
+  const { rows: alternativas } = await tx.execute<{
+    produtoId: string;
+    variacaoId: string | null;
+    acrescimo: string;
+  }>(sql`
+    select a.produto_id as "produtoId", a.variacao_id as "variacaoId", a.acrescimo::text as acrescimo
+      from produtos_componentes_alternativas a
+      join produtos_componentes pc on pc.id = a.componente_id
+     where pc.produto_id = ${antes.id} and pc.tipo = 'kit' and (a.excluido_em is not null or pc.excluido_em is not null)
+     order by greatest(a.excluido_em, pc.excluido_em) desc, a.id`);
+  const mudou = mudancasDePreco(antes, d, {
+    lojaVisivel: (lojaId) => sessao.lojas === null || sessao.lojas.includes(lojaId),
+    lojaAtiva: (lojaId) => lojasAtivas.has(lojaId),
+    excluidas: { codigosBarras, complementos, alternativas },
   });
-  if (mudouProduto || mudouLoja || mudouFaixa || mudouComplemento) {
-    throw ErroApi.semPermissao('Alterar preço no ERP exige "Produtos: Alterar preço".');
-  }
+  if (mudou.length) throw ErroApi.semPermissao('Alterar preço no ERP exige "Produtos: Alterar preço".');
 }
 
 /**
