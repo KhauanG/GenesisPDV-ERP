@@ -36,6 +36,7 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQ
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
+import { invalidarRedefinicoesPendentes, mudouVinculoRecuperacao } from '../auth/redefinicao-senha.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { ErroApi } from '../comum/erros.js';
 import {
@@ -422,6 +423,8 @@ export class UsuariosController {
           .where(and(eq(usuarios.id, usuarioId), eq(usuarios.versao, versao)))
           .returning();
         if (!depois) await this.conflito(tx, antes);
+        // Outro e-mail, inativo, totem ou demissão: o link de "esqueci minha senha" pendente deixa de valer (decisão 206).
+        if (mudouVinculoRecuperacao(antes, depois!)) await invalidarRedefinicoesPendentes(tx, usuarioId);
         if (!dados.master) await this.gravarLojas(tx, sessao, usuarioId, lojasAntes, lojasFinais);
         // Vínculo `usuarios.pessoa_id` = motivo `funcionario` da pessoa (MD 3.5.4; D19).
         const pessoasVinculadas = [antes.pessoaId, depois!.pessoaId].filter((p): p is string => !!p);
@@ -483,6 +486,7 @@ export class UsuariosController {
           .update(usuarios)
           .set({ excluidoEm: new Date(), atualizadoPorId: sessao.usuarioId })
           .where(eq(usuarios.id, usuarioId));
+        await invalidarRedefinicoesPendentes(tx, usuarioId);
         // Sem o usuário, a pessoa vinculada pode deixar de ser relevante como funcionário (MD 3.5.4).
         if (antes.pessoaId) await recalcularRelevancia(tx, [antes.pessoaId]);
         await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
@@ -635,11 +639,14 @@ export class UsuariosController {
           .set({
             senhaHash: hash,
             senhaProvisoria: true,
+            // Conta como troca de senha: o link de "esqueci minha senha" criado antes não vale mais (decisão 206).
+            senhaAlteradaEm: sql`now()`,
             tentativasFalhas: 0,
             bloqueadoAte: null,
             atualizadoPorId: sessao.usuarioId,
           })
           .where(eq(usuarios.id, usuarioId));
+        await invalidarRedefinicoesPendentes(tx, usuarioId);
         await tx
           .update(sessoesUsuario)
           .set({ encerradaEm: new Date(), motivoEncerramento: 'encerrada_admin' })

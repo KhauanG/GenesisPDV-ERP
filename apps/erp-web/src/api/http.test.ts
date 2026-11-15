@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { simularApi } from '../teste/utilidades';
 import { criarCliente, ErroRequisicao, nomeDoArquivo } from './http';
 
-const novoCliente = () => criarCliente({ base: '/api', caminhoRefresh: '/auth/refresh', nomeTrava: 't' });
+const novoCliente = () =>
+  criarCliente({
+    base: '/api',
+    caminhoRefresh: '/auth/refresh',
+    caminhoLogout: '/auth/logout',
+    nomeTrava: 't',
+    chaveSaidaPendente: 't:saida-pendente',
+  });
 const futuro = () => new Date(Date.now() + 15 * 60_000).toISOString();
 
 afterEach(() => vi.unstubAllGlobals());

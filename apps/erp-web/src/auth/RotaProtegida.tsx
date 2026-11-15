@@ -19,7 +19,10 @@ export function RotaProtegida() {
   const local = useLocation();
   if (estado.status === 'carregando') return <Carregando />;
   if (estado.status === 'anonimo') {
-    const semVoltar = (local.pathname === '/' && !local.search) || estado.motivo === 'saiu';
+    const semVoltar =
+      (local.pathname === '/' && !local.search) ||
+      estado.motivo === 'saiu' ||
+      estado.motivo === 'saida_pendente';
     const voltar = semVoltar ? '' : `?voltar=${encodeURIComponent(local.pathname + local.search)}`;
     return <Navigate to={`/login${voltar}`} replace state={{ motivo: estado.motivo }} />;
   }

@@ -18,6 +18,7 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router';
 import { ErroRequisicao } from '../api/http';
+import { AvisoSaidaPendente } from '../auth/AvisoSaidaPendente';
 import { Carregando } from '../auth/RotaProtegida';
 import { useSessao } from '../auth/sessao';
 import { gravarLocal, lerLocal } from '../util/armazenamento';
@@ -38,7 +39,7 @@ export function rotaVoltarSegura(voltar: string | null): string {
 /** Tela de login (ERP 4.1): código da empresa + usuário + senha; o código fica lembrado neste navegador. */
 export function Login() {
   useDocumentTitle('Entrar · GenesisPDV');
-  const { estado, entrar } = useSessao();
+  const { estado, entrar, concluirSaida } = useSessao();
   const [params] = useSearchParams();
   const local = useLocation();
   const voltar = rotaVoltarSegura(params.get('voltar'));
@@ -51,7 +52,9 @@ export function Login() {
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [esqueci, setEsqueci] = useState(false);
+  const [tentandoSair, setTentandoSair] = useState(false);
   const motivo = (local.state as { motivo?: string } | null)?.motivo;
+  const saidaPendente = estado.status === 'anonimo' && estado.motivo === 'saida_pendente';
 
   if (estado.status === 'carregando') return <Carregando />;
   if (estado.status === 'autenticado' && !enviando) {
@@ -102,6 +105,16 @@ export function Login() {
         <Paper p="xl" shadow="sm">
           <form onSubmit={enviar} noValidate>
             <Stack gap="md">
+              {saidaPendente && (
+                <AvisoSaidaPendente
+                  tentando={tentandoSair}
+                  tentar={async () => {
+                    setTentandoSair(true);
+                    await concluirSaida();
+                    setTentandoSair(false);
+                  }}
+                />
+              )}
               {motivo === 'expirada' && !erro && (
                 <Alert color="yellow" icon={<IconInfoCircle size={18} />}>
                   Sua sessão expirou. Entre novamente.

@@ -6507,6 +6507,62 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `caixaAceitaTerminal`) e as suítes de sempre
        (`sync.test.ts`, `terminais.test.ts`, `estrutura.test.ts`, `token.test.ts`, `recuperar.test.ts`).
 
+206. **Link de redefinição de senha preso à credencial e ao e-mail; o logout encerra a família da sessão** (PR-15,
+     SEG-B06; ERP 4.2, 4.3, 4.4 e 11.2; MD 3.3.6; decisões 16 e 204; `src/auth/redefinicao-senha.ts`,
+     `src/auth/auth.service.ts`, `src/usuarios/usuarios.controller.ts`, `src/plataforma/admin-auth.service.ts`,
+     `src/database/seed/seed-empresa.ts`; README do ERP › decisão 82).
+     - **Toda troca de senha e toda mudança do vínculo de recuperação invalidam os links pendentes**
+       (`invalidarRedefinicoesPendentes`): na mesma transação, com a linha de `usuarios` travada, os
+       `redefinicoes_senha` do usuário ainda sem uso ficam com `usado_em` e as `mensagens_enviadas`
+       `redefinicao_senha` ainda `pendente` viram `cancelada`. Vale na troca da própria senha (`/auth/trocar-senha`),
+       na senha provisória gerada pelo administrador (`/usuarios/:id/redefinir-senha`), no próprio resgate (os links
+       irmãos), no "tentar novamente" do provisionamento que gera outra senha provisória do administrador, na edição do
+       usuário que muda e-mail, ativo, totem ou demissão (`mudouVinculoRecuperacao`; editar só o telefone, por exemplo,
+       mantém o link) e na exclusão do usuário.
+     - **A senha provisória do administrador conta como troca de senha**: grava `senha_alterada_em` (como a troca e o
+       resgate). Os três caminhos gravam `now()` do banco, a mesma base do `criado_em` dos links.
+     - **O resgate recusa o link criado antes da última troca de senha** mesmo que ele não tenha sido marcado (gravação
+       concorrente, rotina antiga): a comparação `criado_em > senha_alterada_em` é feita no `update` de uso único, no
+       banco (precisão do `timestamptz`), depois de travar o usuário; antes do argon2 a mesma conferência em memória
+       recusa o caso óbvio. O resgate também exige o usuário que pode recuperar a senha (`podeRecuperarSenha`: ativo,
+       não excluído, não totem, não demitido; as mesmas regras do pedido) e responde o mesmo 422 "Link inválido ou
+       expirado" nos casos novos.
+     - **O envio relê o usuário** (trabalhador da fila `mensagem`): com o destino da mensagem diferente do e-mail atual,
+       o usuário que não pode mais recuperar a senha ou o pedido feito antes da última troca de senha, a mensagem vira
+       `cancelada` e nenhum link é gerado (a nova tentativa do pg-boss depois de uma troca de e-mail não manda nada ao
+       endereço antigo). Se a mensagem já teve tentativa, os links pendentes do usuário também deixam de valer: o SMTP
+       pode ter entregado o link ao endereço anterior e respondido com erro, e o resgate não confere o e-mail. Essa
+       releitura é defesa própria, para a mudança que não passa pela invalidação (gravação concorrente, rotina antiga,
+       importação). **Vale só o link mais novo**: cada envio invalida os links anteriores ainda pendentes do
+       usuário (a nova tentativa e o pedido repetido depois da janela de 2 min); o e-mail anterior passa a dar "Link
+       inválido ou expirado. Peça outro." A mensagem cancelada durante o envio continua `cancelada` (o `enviada` só
+       vale sobre `pendente`).
+     - **Ordem das travas**, a mesma em todos os caminhos: `usuarios` → `mensagens_enviadas` → `redefinicoes_senha` (o
+       trabalhador trava o usuário antes da mensagem; o resgate, antes do link). Sem impasse entre a troca de senha, a
+       edição do usuário, o resgate e o envio.
+     - **O logout encerra a família da sessão**, no ERP e na plataforma: a linha do cookie apresentado é lida aberta ou
+       já rotacionada, com `for update` (a mesma trava do refresh), e todas as sessões abertas da mesma `familia_id`
+       são encerradas com `logout`. O logout que chega durante a rotação do mesmo cookie espera por ela e encerra a
+       sucessora; o logout com o cookie de antes de uma rotação (outra aba, renovação agendada) também. Sem família
+       aberta, nada a auditar (como antes). O ERP passa a só mostrar a saída com o 2xx do logout e a serializar o
+       logout com a renovação (README do ERP › decisão 82).
+     - Sem migração (as colunas já existiam), sem contrato novo e sem mudança no PDV (a senha do ERP e os links não
+       descem ao caixa; `senha_alterada_em` já desce no espelho de `usuarios` e o PDV não a usa). Testes:
+       `test/integracao/redefinicao-senha.test.ts` (o link de controle vale uma vez; troca de e-mail pelo
+       administrador, senha provisória gerada pelo administrador — com `senha_alterada_em` —, troca da própria senha,
+       inativação, exclusão e o "tentar novamente" do provisionamento invalidam o link (422 e nenhum pendente); editar
+       outro campo mantém o link; o envio do pedido mais novo invalida o anterior; o resgate invalida o irmão gravado
+       fora do envio; o link anterior à `senha_alterada_em` gravada direto no banco é recusado; o usuário inativado
+       direto no banco não resgata; a nova tentativa do envio depois da troca de e-mail não manda nada, cancela a
+       mensagem e não deixa link; a nova tentativa do envio depois do e-mail trocado, do usuário inativado ou da
+       `senha_alterada_em` gravada direto no banco (sem a invalidação), com a primeira tentativa entregue e respondida
+       com erro, é cancelada pelo próprio envio, não manda nada e o link entregue passa a dar 422; a troca de senha
+       gravada enquanto o resgate espera a linha do usuário (travada por outra conexão, depois do argon2) é recusada
+       pela comparação no `update` de uso único; a mensagem cancelada durante o envio continua `cancelada`; a nova
+       tentativa sem mudança deixa só o link novo, que vale; o pedido anterior a uma senha provisória não gera link), `auth.test.ts` (logout com o cookie de antes da rotação encerra a sucessora;
+       o logout que chega durante a rotação, com a linha travada por outra conexão, espera e encerra a sucessora) e
+       `plataforma.test.ts` (o logout com o cookie de antes da rotação, na plataforma).
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;

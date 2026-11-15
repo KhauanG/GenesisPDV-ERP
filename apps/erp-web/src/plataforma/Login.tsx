@@ -17,6 +17,7 @@ import { IconAlertTriangle, IconShieldCheck } from '@tabler/icons-react';
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router';
 import { ErroRequisicao } from '../api/http';
+import { AvisoSaidaPendente } from '../auth/AvisoSaidaPendente';
 import { Carregando } from '../auth/RotaProtegida';
 import { errosDoZod } from '../util/erros';
 import { useSessaoPlataforma } from './sessao';
@@ -24,7 +25,8 @@ import { useSessaoPlataforma } from './sessao';
 /** Login do painel da plataforma (ERP 19.1): e-mail, senha e o código do autenticador (TOTP, obrigatório). */
 export function LoginPlataforma() {
   useDocumentTitle('Plataforma · Entrar');
-  const { estado, entrar } = useSessaoPlataforma();
+  const { estado, entrar, concluirSaida } = useSessaoPlataforma();
+  const [tentandoSair, setTentandoSair] = useState(false);
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [codigoTotp, setCodigoTotp] = useState('');
@@ -70,6 +72,16 @@ export function LoginPlataforma() {
         <Paper p="xl" shadow="sm">
           <form onSubmit={enviar} noValidate>
             <Stack gap="md">
+              {estado.status === 'anonimo' && estado.saidaPendente && (
+                <AvisoSaidaPendente
+                  tentando={tentandoSair}
+                  tentar={async () => {
+                    setTentandoSair(true);
+                    await concluirSaida();
+                    setTentandoSair(false);
+                  }}
+                />
+              )}
               {erro && (
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} role="alert">
                   {erro}

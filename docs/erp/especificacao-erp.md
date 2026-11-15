@@ -533,11 +533,27 @@ só é aceita no PDV online, validada pela API, quando `pdv.login_aceita_senha_e
 - Se o usuário tem e-mail cadastrado: envia link de redefinição de uso único (expira em 1 h, `redefinicoes_senha.expira_em`, modelo 3.3.6) para o e-mail.
 - Se não tem: mostra "Peça a um administrador da sua empresa para redefinir sua senha." (Usuários › Redefinir senha).
 - A resposta é sempre a mesma ("Se os dados estiverem corretos, você receberá um e-mail"), para não revelar usuários.
+- O link fica preso à senha e ao e-mail de quando foi pedido (README da API › decisão 206): a troca da própria senha,
+  a senha provisória gerada pelo administrador (que conta como troca de senha), o uso de outro link e a edição do
+  usuário que muda e-mail, ativo, totem ou demissão (ou a exclusão) invalidam os links pendentes; o link criado antes
+  da última troca de senha não vale; o envio relê o usuário e não manda o link a um e-mail que não é mais o dele; vale
+  só o link mais novo de cada usuário. Em todos esses casos: "Link de redefinição inválido ou expirado. Peça outro."
 
 ### 4.4 Sair
 
 Menu **SAIR** (`/sair`): encerra a sessão (`sessoes_usuario.encerrada_em = now()`, `motivo_encerramento = 'logout'`),
 limpa o estado local, auditoria `logout`, volta para `/login` com o código da empresa preenchido.
+
+- O logout encerra a **família** da sessão (a sessão do cookie e as sucessoras das renovações), inclusive quando cruza
+  com uma renovação em andamento (README da API › decisão 206); o ERP espera a renovação desta aba e chama o logout na
+  mesma trava entre abas do refresh.
+- A saída só vale com a confirmação (2xx) do servidor (README do ERP › decisão 82). Sem ela (sem conexão, erro), o
+  navegador fica fechado mesmo assim — o token sai da memória e um marcador de "saída pendente" impede a renovação
+  pelo cookie em qualquer aba e na próxima abertura —, o login mostra "Saída não concluída" com **Tentar sair de novo**
+  e o ERP tenta de novo sozinho (ao abrir, a cada 30 s e quando a conexão volta). Entrar de novo também tenta o logout
+  antes. A nova tentativa só chama o servidor enquanto o marcador existe: se outra aba já concluiu a saída ou entrou
+  de novo, esta só deixa o aviso (nunca encerra a sessão aberta na outra aba). O painel da plataforma segue a mesma
+  regra.
 
 **Entidades**: `genesis_control.empresas`; `usuarios`, `sessoes_usuario` (modelo 3.3.6: `refresh_token_hash`,
 `familia_id`, `expira_em`, `ultimo_uso_em`, `ip`, `user_agent`, `encerrada_em`, `motivo_encerramento` `logout`/

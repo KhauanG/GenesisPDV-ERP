@@ -1499,6 +1499,40 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     - **A execução real** (importação, carga do Nuvem3, contagens, NF-e reais, transferência, conferência) é do dono,
       pelas telas do ERP, no checklist `docs/implantacao/checklist-fechamento-fase2.md`.
 
+82. **"Sair" confirmado pelo servidor e serializado com a renovação** (PR-15, SEG-B06; ERP 4.4; README da API ›
+    decisão 206; `src/api/http.ts`, `src/auth/sessao.tsx`, `src/plataforma/sessao.tsx`,
+    `src/auth/AvisoSaidaPendente.tsx`).
+    - **A saída só vale com o 2xx do logout.** `encerrarSessao()` (no cliente HTTP) grava antes um marcador sem
+      segredo no `localStorage` (`genesis:erp-saida-pendente`; na plataforma `genesis:plataforma-saida-pendente`) e só
+      o apaga com o 2xx. O cookie de refresh é `httpOnly` e só a resposta do servidor o limpa: um logout que não chega
+      (sem conexão) ou falha (500) não encerra a sessão, e o ERP não trata isso como saída.
+    - **Com o marcador, nada renova pelo cookie**: `renovar()` devolve `null` sem chamar o servidor, em qualquer aba, e
+      a resposta de uma renovação que chega depois do "Sair" é descartada (o token não volta à memória). Ao abrir, o
+      ERP (e o painel) com o marcador tenta o logout **antes** de qualquer renovação e fica no login se ele falhar.
+    - **Falhou: o navegador fica fechado e avisa.** O token sai da memória, o cache é limpo, as outras abas saem
+      também e o login mostra "Saída não concluída" com **Tentar sair de novo**; o logout é tentado de novo sozinho a
+      cada 30 s (`INTERVALO_NOVA_SAIDA_MS`) e quando a conexão volta (`online`). Entrar de novo com o marcador tenta o
+      logout antes; o login bem-sucedido apaga o marcador (o cookie novo substitui o anterior).
+    - **A nova tentativa nunca derruba a sessão de outra aba.** Ela usa `repetirSaida()`, não o `encerrarSessao()` do
+      "Sair": não grava o marcador e confere, dentro da trava entre abas e logo antes do fetch, se ele ainda existe.
+      Sem ele (outra aba concluiu a saída ou entrou de novo), não chama o servidor (sairia com o cookie novo, que as
+      abas compartilham) e a aba só passa a "saiu". O login (`abrirSessao()`) faz o POST e apaga o marcador dentro da
+      mesma trava, então a nova tentativa de outra aba não cruza com ele. O evento `storage` da chave do marcador tira
+      o aviso das outras abas na hora (`aoConcluirSaidaEmOutraAba`). Vale também para o painel da plataforma.
+    - **Logout serializado com a renovação**: `encerrarSessao()` espera a renovação em andamento desta aba e chama o
+      logout dentro da mesma trava entre abas do refresh (Web Locks `genesis-erp-refresh` / `genesis-plataforma-refresh`),
+      então sai com o cookie atual. A API, por sua vez, encerra a família inteira da sessão (decisão 206 dela), o que
+      cobre também o logout que cruza com a renovação de uma aba com uma versão anterior do ERP.
+    - Testes: `src/auth/saida.test.tsx` (logout que falha por rede e por 500 → aviso, nada de renovação na próxima
+      abertura, "Tentar sair de novo" conclui e a abertura seguinte só tenta renovar; o controle com 204 sem aviso;
+      entrar de novo com a saída pendente chama o logout antes do login e libera a renovação; o logout espera a
+      renovação em andamento e não reinstala o token; com o marcador a renovação não chama o servidor; a nova tentativa
+      automática a cada `INTERVALO_NOVA_SAIDA_MS` e no evento `online`; o "Sair" manda `pendente` às outras abas e a
+      mensagem recebida leva ao login com ou sem o aviso; duas abas: o login de uma apaga o marcador e o tique da outra
+      não chama o logout nem regrava o marcador; o evento `storage` tira o aviso sem chamar o servidor; `repetirSaida()`
+      confere o marcador dentro da trava e o login segura a trava até apagá-lo; os dois casos de falha, a nova
+      tentativa automática e as duas abas no painel da plataforma) e os de sempre (`Login.test.tsx`, `Plataforma.test.tsx`, `http.test.ts`).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

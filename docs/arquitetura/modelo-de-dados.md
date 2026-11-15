@@ -1552,7 +1552,9 @@ permissões da API (cache de acesso).
 Retenção: 1 ano.
 
 `redefinicoes_senha` — `id`, `criado_em`, `usuario_id uuid not null`, `token_hash varchar(64) not null` (único),
-`expira_em timestamptz not null` (1 h), `usado_em timestamptz null`, `ip inet null`.
+`expira_em timestamptz not null` (1 h), `usado_em timestamptz null`, `ip inet null`. `usado_em` também marca o link
+invalidado sem uso: a troca de senha, a mudança de e-mail/ativo/totem/demissão, a exclusão do usuário e um envio mais
+novo invalidam os pendentes; o resgate exige `criado_em > usuarios.senha_alterada_em` (README da API › decisão 206).
 
 ---
 
