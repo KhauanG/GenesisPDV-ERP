@@ -764,7 +764,8 @@ Precedência usada nas divergências entre documentos: ADR > MD (modelo de dados
     versão da nuvem que substitui a linha grava `0` (MD 4.2: a linha criada no caixa passa a ser a da nuvem); o
     `RepositorioEspelhos` (carga de demonstração e testes) segue a mesma regra. **Purga de pessoa** (MD 3.5.4):
     relevância excluída sem outra ativa e sem venda em andamento/evento pendente da pessoa → a pessoa e as filhas saem
-    do espelho; se só sobrou `funcionario`, saem telefones e endereços (D19).
+    do espelho; se só sobrou `funcionario`, saem telefones e endereços (D19). A purga adiada é reavaliada a cada ciclo
+    e só o trabalho em curso a segura (decisão 91).
 38. **Carga inicial** (SYNC 6.9; PDV 5.3 passo 5; `Pull/CargaInicial.cs`, `CargaInicialViewModel`). Fluxos na ordem
     da 6.1, `limite = 2000` e `teto` = `cursor_teto` da 1ª página; fluxo concluído quando `tem_mais = false` e
     `novo_cursor ≥ cursor_teto` (o `operacao` vazio termina na 1ª página), com `carga_inicial_concluida = 1` no commit
@@ -3965,3 +3966,41 @@ reimpresso continua o original, com o número do caixa.
     migração EF, sem `Esquema.g.cs` novo e sem mudança de protocolo** (`versoes_schema` e a `versao_schema_local` não
     mudam): o 0.12.0 instalado continua sincronizando com a API do PR-15, e o 0.13.0 funciona com a API anterior. A ordem
     de sempre na implantação: a API antes do PDV (SYNC 17.2).
+
+91. **A purga da pessoa que deixou de ser relevante é reavaliada a cada ciclo** (PR-15 de segurança, SEG-B13; MD 3.5.4;
+    decisão 37). A relevância excluída desce uma vez só (o cursor passa dela, e nada mais da pessoa desce
+    depois): se naquela hora o trabalho local em curso segurava a pessoa, a purga ficava para nunca. Agora a purga é por
+    estado: na última página do pull de `pessoas` de cada ciclo, o `AplicadorPull` confere de novo toda pessoa do
+    espelho que já teve relevância na loja (alguma linha excluída) e não tem nenhuma viva, e purga a que não está mais
+    presa — a pessoa, as filhas e o `senha_hash` saem do SQLite.
+    - **O que segura:** só o que ainda está em curso — venda da pessoa não finalizada nem cancelada (em andamento, em
+      pagamento, suspensa, pedido pendente) e evento dela ou de venda dela ainda a subir (`pendente`, `enviando`,
+      `erro_temporario`). O evento recusado (`rejeitado`, em quarentena com a decisão no ERP) não segura mais: a nuvem
+      guarda a cópia dele e decide por ela, e a quarentena podia durar para sempre. Terminada a venda ou confirmado o
+      evento, o ciclo seguinte purga.
+    - **O que fica:** a pessoa sem nenhuma linha de relevância (o cadastro do caixa cuja relevância ainda não desceu) e
+      a que tem relevância viva; a relevância excluída fica gravada (é o rastro da saída). A pessoa purgada que volta a
+      ser relevante desce de novo pelo toque da nuvem (a linha nova e a pessoa com versão maior).
+    - **Custo:** uma consulta por ciclo (não por página), pelo índice de `pessoa_id`; a página do meio de uma carga com
+      várias páginas só trata as exclusões que trouxe, como antes. O log da espera repetida fica em debug.
+    - Sem migração EF, `Esquema.g.cs` nem protocolo; a API não muda (o modo perdido já anula a senha de cliente de toda
+      pessoa que já foi relevante para a loja, README da API › decisão 211). Entra no 0.13.0 (decisão 90).
+    - Teste: `AplicadorPullTests.Purga_adiada_por_trabalho_local_e_refeita_nos_ciclos_seguintes_quando_ele_termina`.
+
+92. **A restauração de backup não devolve o que só avança** (PR-15 de segurança, SEG-B13; SYNC 3.8 e 22.1; PDV 32.5).
+    O backup é uma foto antiga do `pdv.db`; o `RestauracaoBackup` já trazia do banco em uso o token atual e o pendente.
+    Agora traz também o que nunca volta:
+    - **`identidade_terminal.status`:** fica o mais restritivo entre o do arquivo e o do banco em uso, na ordem
+      `ativo → desativando → revogado` (`StatusIdentidade.Ordem`, a mesma do `AvancarStatusAsync`). O backup tirado
+      antes da ordem de desativação do ERP não devolve o caixa a `ativo`: a reserva do número de venda e a abertura do
+      caixa (que conferem o status na própria transação) continuam recusadas, também offline, até o handshake. Vale na
+      restauração pela Central e na automática depois do banco corrompido (o status vem da leitura direta da linha da
+      identidade, como o token).
+    - **`estado_conexao.maior_hora_vista`:** fica a maior das duas (relógio de alta-água, PDV 30.5: nunca diminui), e o
+      tempo offline e a hora corrigida não recuam com o arquivo mais antigo. Backup de schema sem a coluna fica como
+      está.
+    - O resto do arquivo é o do backup, como antes (sequências com o salto do modo restaurado, eventos, cursor). Sem
+      migração EF, `Esquema.g.cs` nem protocolo. Entra no 0.13.0 (decisão 90).
+    - Testes: `BackupLocalTests.Restaurar_backup_de_antes_da_ordem_do_erp_mantem_o_status_e_o_caixa_nao_vende_nem_abre`
+      (desativando e revogado, banco em uso legível e corrompido) e
+      `Restaurar_com_o_terminal_ativo_fica_ativo_e_a_maior_hora_vista_mais_nova_vale`.

@@ -4,6 +4,7 @@ using System.Text.Json;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Data;
 using GenesisPDV.Data.Convencoes;
+using GenesisPDV.Data.Entidades;
 using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Protocolo;
 using Microsoft.Data.Sqlite;
@@ -31,9 +32,10 @@ public sealed record ResultadoPagina(int Recebidas, int Gravadas, int Ignoradas,
 /// <item>Decimal chega em texto e é gravado como INTEGER na escala da coluna (<see cref="ConversorLinha"/>).</item>
 /// <item><c>criado_localmente</c> é só local: o valor que vier na linha é ignorado, e a versão da nuvem que substitui a
 /// linha grava <c>0</c> (MD 4.2: a linha criada no caixa passa a ser a da nuvem).</item>
-/// <item>Relevância de pessoa excluída (MD 3.5.4): sem outra relevância ativa nem venda/evento local pendente, a pessoa e
+/// <item>Relevância de pessoa excluída (MD 3.5.4): sem outra relevância ativa nem venda/evento local em curso, a pessoa e
 /// as filhas saem do espelho (exceção à regra 6.4.4); quando só sobra <c>funcionario</c>, saem telefones e endereços
-/// (D19).</item>
+/// (D19). A purga adiada pelo trabalho em curso é reavaliada a cada ciclo, na última página do fluxo <c>pessoas</c>
+/// (<see cref="PessoasSemRelevanciaAsync"/>): a relevância excluída desce uma vez só.</item>
 /// <item>Índice da pesquisa F2 (F2-B36, <see cref="IndiceBuscaProdutos"/>): o texto dos produtos gravados e dos produtos
 /// das marcas e categorias gravadas é recalculado na mesma transação, sob um <c>SAVEPOINT</c> (a falha desfaz só o índice
 /// e marca a reconstrução, que o próprio pull tenta de novo a cada <see cref="IntervaloReconstrucaoIndice"/>).</item>
@@ -45,6 +47,10 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
 {
     private const string ColunaVersao = "versao";
     private const string ColunaCriadoLocalmente = "criado_localmente";
+
+    /// <summary>Situações do evento que ainda vai subir e seguram a purga da pessoa (MD 3.5.4); constantes, nunca da rede.</summary>
+    private static readonly string EmCurso = string.Join(", ",
+        new[] { StatusEventoSaida.Pendente, StatusEventoSaida.Enviando, StatusEventoSaida.ErroTemporario }.Select(s => $"'{s}'"));
 
     /// <summary>Filhas que descem pela relevância da pessoa (fluxo <c>pessoas</c>, MD 6.2).</summary>
     private static readonly string[] FilhasPessoa =
@@ -211,6 +217,19 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
                 purgadas += await PurgarPessoaAsync(conexao, tx, pessoaId, ct) ? 1 : 0;
             }
 
+            // A purga é por estado, não só pela chegada da exclusão (MD 3.5.4): o cursor já passou da relevância excluída
+            // da pessoa que o trabalho em curso segurou, e nada mais dela desce. Uma vez por ciclo, na última página.
+            if (pagina.Fluxo == FluxosSync.Pessoas && !pagina.TemMais)
+            {
+                foreach (var pessoaId in await PessoasSemRelevanciaAsync(conexao, tx, ct))
+                {
+                    if (!relevanciasExcluidas.Contains(pessoaId))
+                    {
+                        purgadas += await PurgarPessoaAsync(conexao, tx, pessoaId, ct, reavaliacao: true) ? 1 : 0;
+                    }
+                }
+            }
+
             // Sob um SAVEPOINT: a falha do índice (FTS5 corrompida) desfaz só ele e marca a reconstrução; a página e o
             // cursor seguem, e a pesquisa passa à busca em memória até a reconstrução.
             if (await IndiceBuscaProdutos.AtualizarAsync(conexao, tx, indice["produtos"], indice["marcas"], indice["categorias"], relogio.Agora, ct) is { } falha)
@@ -342,11 +361,38 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
     }
 
     /// <summary>
-    /// Pessoa cuja relevância foi excluída (MD 3.5.4): sem outra relevância ativa (o espelho só tem as da loja e as de
-    /// todas) nem venda em andamento ou evento local pendente, sai do espelho com as filhas; se só sobrou a de
-    /// funcionário, saem telefones e endereços (D19). Devolve se a pessoa foi purgada.
+    /// Pessoas do espelho que já tiveram relevância na loja (alguma linha excluída) e não têm nenhuma viva: as que a
+    /// purga ainda não tirou. A pessoa sem nenhuma linha (o cadastro do caixa cuja relevância ainda não desceu) fica de
+    /// fora. Pelo índice de <c>pessoa_id</c>; depois da purga a pessoa sai e deixa de contar.
     /// </summary>
-    private async Task<bool> PurgarPessoaAsync(SqliteConnection conexao, SqliteTransaction tx, string pessoaId, CancellationToken ct)
+    private static async Task<List<string>> PessoasSemRelevanciaAsync(SqliteConnection conexao, SqliteTransaction tx, CancellationToken ct)
+    {
+        var ids = new List<string>();
+        await using var cmd = conexao.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            select p.id from pessoas p
+             where exists (select 1 from pessoas_relevancia_loja r where r.pessoa_id = p.id and r.excluido_em is not null)
+               and not exists (select 1 from pessoas_relevancia_loja r where r.pessoa_id = p.id and r.excluido_em is null)
+            """;
+        await using var leitor = await cmd.ExecuteReaderAsync(ct);
+        while (await leitor.ReadAsync(ct))
+        {
+            ids.Add(Guid.Parse(leitor.GetString(0)).ToString("D"));
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// Pessoa cuja relevância foi excluída (MD 3.5.4): sem outra relevância ativa (o espelho só tem as da loja e as de
+    /// todas) nem trabalho local em curso, sai do espelho com as filhas; se só sobrou a de funcionário, saem telefones e
+    /// endereços (D19). Em curso = venda não finalizada nem cancelada da pessoa, ou evento dela ou de venda dela ainda a
+    /// subir (pendente, enviando, erro temporário); o recusado em quarentena não segura (a nuvem guarda a cópia e decide
+    /// no ERP). <paramref name="reavaliacao"/>: a pessoa segurada antes, conferida de novo no ciclo (o log da espera fica
+    /// em debug, para não repetir a cada ciclo). Devolve se a pessoa foi purgada.
+    /// </summary>
+    private async Task<bool> PurgarPessoaAsync(SqliteConnection conexao, SqliteTransaction tx, string pessoaId, CancellationToken ct, bool reavaliacao = false)
     {
         var motivos = new List<string>();
         await using (var cmd = Comando(conexao, tx, "select motivo from pessoas_relevancia_loja where pessoa_id = $p and excluido_em is null", pessoaId))
@@ -372,15 +418,23 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
             return false;
         }
 
-        await using (var pendente = Comando(conexao, tx, """
+        await using (var pendente = Comando(conexao, tx, $"""
             select exists (select 1 from vendas where cliente_id = $p and status not in ('finalizada', 'cancelada'))
-                or exists (select 1 from eventos_saida e where e.status <> 'confirmado'
+                or exists (select 1 from eventos_saida e where e.status in ({EmCurso})
                            and (e.agregado_id = $p or e.agregado_id in (select v.id from vendas v where v.cliente_id = $p)))
             """, pessoaId))
         {
             if (Convert.ToInt64(await pendente.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture) == 1)
             {
-                log.LogInformation("Pessoa {Pessoa} deixou de ser relevante mas tem venda ou evento local pendente: fica no espelho", pessoaId);
+                if (reavaliacao)
+                {
+                    log.LogDebug("Pessoa {Pessoa} sem relevância segue no espelho: venda ou evento local ainda em curso", pessoaId);
+                }
+                else
+                {
+                    log.LogInformation("Pessoa {Pessoa} deixou de ser relevante mas tem venda ou evento local em curso: fica no espelho até ele terminar", pessoaId);
+                }
+
                 return false;
             }
         }

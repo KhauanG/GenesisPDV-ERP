@@ -246,6 +246,140 @@ public sealed class AplicadorPullTests
         Assert.Equal(2L, amb.Contar("pessoas_relevancia_loja"));
     }
 
+    /// <summary>
+    /// MD 3.5.4: a purga adiada por trabalho local ainda em curso é reavaliada a cada ciclo do pull de <c>pessoas</c> (na
+    /// última página dele), para toda pessoa do espelho que já teve relevância na loja e não tem mais nenhuma viva — não
+    /// só quando a relevância excluída desce, o que acontece uma vez só (o cursor passa dela). Segura a pessoa só o que
+    /// ainda está em curso: venda não finalizada nem cancelada e evento pendente, enviando ou com erro temporário. O
+    /// evento recusado (em quarentena, com a decisão no ERP) não a segura: a nuvem tem a cópia dele. A pessoa que nunca
+    /// teve relevância (o cadastro do caixa cuja relevância não desceu) e a que tem relevância viva ficam.
+    /// </summary>
+    [Fact]
+    public async Task Purga_adiada_por_trabalho_local_e_refeita_nos_ciclos_seguintes_quando_ele_termina()
+    {
+        using var amb = await AmbienteSync.CriarAsync();
+        var comEvento = Pessoa;
+        var comVenda = "01a18770-0000-7000-8000-000000000002";
+        var semRelevancia = "01a18770-0000-7000-8000-000000000003";
+        var relevante = "01a18770-0000-7000-8000-000000000004";
+        var rel = new Dictionary<string, string>
+        {
+            [comEvento] = "01a18771-0000-7000-8000-000000000001",
+            [comVenda] = "01a18771-0000-7000-8000-000000000002",
+            [relevante] = "01a18771-0000-7000-8000-000000000004",
+        };
+        JsonObject Relevancia(string pessoa, string? excluido = null) => new()
+        {
+            ["id"] = rel[pessoa],
+            ["pessoa_id"] = pessoa,
+            ["loja_id"] = null,
+            ["motivo"] = "manual",
+            ["ultima_ocorrencia_em"] = "2026-10-31T12:00:00.000Z",
+            ["excluido_em"] = excluido,
+        };
+        JsonObject PessoaLinha(string id, string nome) => new()
+        {
+            ["id"] = id,
+            ["nome"] = nome,
+            ["tipo"] = "PF",
+            ["senha_hash"] = "$argon2id$v=19$m=19456,t=2,p=1$ZmljdGljaW8$ZmljdGljaW9oYXNo",
+        };
+        await amb.Aplicador.AplicarAsync(Pagina("pessoas", 10,
+            ("pessoas_relevancia_loja", 1, Relevancia(comEvento)),
+            ("pessoas_relevancia_loja", 2, Relevancia(comVenda)),
+            ("pessoas_relevancia_loja", 3, Relevancia(relevante)),
+            ("pessoas", 4, PessoaLinha(comEvento, "CLIENTE COM EVENTO")),
+            ("pessoas", 5, PessoaLinha(comVenda, "CLIENTE COM VENDA")),
+            ("pessoas", 6, PessoaLinha(semRelevancia, "CLIENTE SEM RELEVANCIA")),
+            ("pessoas", 7, PessoaLinha(relevante, "CLIENTE RELEVANTE")),
+            ("pessoas_categorias", 8, new JsonObject { ["id"] = Guid.CreateVersion7().ToString("D"), ["pessoa_id"] = comEvento, ["categoria"] = "cliente" })), ct: Ct);
+
+        var evento = new EventoSaida
+        {
+            Id = Guid.CreateVersion7(),
+            SequenciaTerminal = 1,
+            Tipo = "pessoa.criada_no_caixa",
+            AgregadoTipo = "pessoa",
+            AgregadoId = Guid.Parse(comEvento),
+            OcorridoEm = DateTimeOffset.UtcNow,
+            CriadoEm = DateTimeOffset.UtcNow,
+            PayloadSha256 = new string('0', 64),
+        };
+        var venda = new VendaRegistro
+        {
+            Id = Guid.CreateVersion7(),
+            Numero = 101,
+            NumeroExibicao = "2-101",
+            LojaId = Guid.CreateVersion7(),
+            CaixaId = Guid.CreateVersion7(),
+            NumeroCaixa = 2,
+            OperadorId = Guid.CreateVersion7(),
+            ClienteId = Guid.Parse(comVenda),
+            Status = "suspensa",
+            CriadoEm = DateTimeOffset.UtcNow,
+            AtualizadoEm = DateTimeOffset.UtcNow,
+        };
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            db.EventosSaida.Add(evento);
+            db.Vendas.Add(venda);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // A relevância das duas sai com o trabalho local em curso: ficam no espelho (a exclusão desce uma vez só).
+        var r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 20,
+            ("pessoas_relevancia_loja", 11, Relevancia(comEvento, "2026-10-31T13:00:00.000Z")),
+            ("pessoas_relevancia_loja", 12, Relevancia(comVenda, "2026-10-31T13:00:00.000Z"))), ct: Ct);
+        Assert.Equal(0, r.PessoasPurgadas);
+        Assert.Equal(4L, amb.Contar("pessoas"));
+
+        // Ciclo seguinte sem nada novo: o evento ainda tenta subir (erro temporário) e a venda continua suspensa.
+        amb.Escalar($"update eventos_saida set status = 'erro_temporario' where id = '{evento.Id:D}'");
+        r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 20), ct: Ct);
+        Assert.Equal(0, r.PessoasPurgadas);
+        Assert.Equal(4L, amb.Contar("pessoas"));
+
+        // O evento é confirmado e a venda é cancelada, com o evento dela recusado pela nuvem: o ciclo seguinte purga as
+        // duas, mesmo sem a relevância excluída descer de novo.
+        amb.Escalar($"update eventos_saida set status = 'confirmado' where id = '{evento.Id:D}'");
+        amb.Escalar($"update vendas set status = 'cancelada', cancelada_em = '2026-10-31T14:00:00.000Z', motivo_cancelamento = 'Desistência' where id = '{venda.Id:D}'");
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            db.EventosSaida.Add(new EventoSaida
+            {
+                Id = Guid.CreateVersion7(),
+                SequenciaTerminal = 2,
+                Tipo = "venda.cancelada",
+                AgregadoTipo = "venda",
+                AgregadoId = venda.Id,
+                OcorridoEm = DateTimeOffset.UtcNow,
+                CriadoEm = DateTimeOffset.UtcNow,
+                PayloadSha256 = new string('0', 64),
+                Status = StatusEventoSaida.Rejeitado,
+            });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // A página do meio (com mais páginas a seguir) não reavalia: a reavaliação é uma por ciclo.
+        r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 20) with { TemMais = true }, ct: Ct);
+        Assert.Equal(0, r.PessoasPurgadas);
+        r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 20), ct: Ct);
+        Assert.Equal(2, r.PessoasPurgadas);
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            Assert.Equal(
+                new[] { relevante, semRelevancia }.Order(StringComparer.Ordinal),
+                (await db.Pessoas.Select(p => p.Id).ToListAsync(Ct)).Select(id => id.ToString("D")).Order(StringComparer.Ordinal));
+        }
+
+        Assert.Equal(0L, amb.Contar("pessoas_categorias"));
+        Assert.Equal(0L, amb.Escalar($"select count(*) from pessoas where senha_hash is not null and id in ('{comEvento}', '{comVenda}')"));
+        // A relevância excluída fica (é o rastro da saída); a pessoa já purgada não conta mais nos ciclos seguintes.
+        Assert.Equal(3L, amb.Contar("pessoas_relevancia_loja"));
+        r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 20), ct: Ct);
+        Assert.Equal(0, r.PessoasPurgadas);
+    }
+
     private const string Fiado = "01a18780-0000-7000-8000-000000000001";
     private const string Dinheiro = "01a18780-0000-7000-8000-000000000002";
 

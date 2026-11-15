@@ -152,7 +152,8 @@ export interface ExpiradasRelevancia {
  * empresa ?? 12) e as `crediario` cuja pessoa ficou sem limite próprio e sem saldo em aberto (a rede de segurança do
  * recálculo na transação do fato, que na Fase 4 é a baixa da parcela). A exclusão ganha versão (`fn_versao`) e desce
  * como tombstone no fluxo `pessoas`: o PDV purga a pessoa do espelho se ela não tiver outra linha ativa na loja nem
- * evento local pendente (`AplicadorPull`). Sem toque e sem auditoria (projeção, como `recalcularRelevancia`). A
+ * venda ou evento local em curso, e a purga adiada é conferida de novo a cada ciclo do pull (`AplicadorPull`): nada
+ * mais da pessoa desce depois da exclusão. Sem toque e sem auditoria (projeção, como `recalcularRelevancia`). A
  * transação precisa da trava de versão (`travaVersao`, MD 1.5). `skip locked`: a linha que uma venda está tocando
  * agora fica para o lote seguinte (ou para amanhã), sem esperar.
  */

@@ -4214,7 +4214,10 @@ no PIX, a liberação do gerente), p50 0,59 s e p95 1,6 s; outbox vazio 0,5 s de
   mantido (do banco corrompido, pela leitura direta da linha de `identidade_terminal`; se nem ela sai, fica o do
   backup: rotacionado depois dele, vale como anterior por 7 dias, com o alerta `TOKEN_ANTERIOR_REUTILIZADO`, e depois
   pede nova ativação); `restaurado_em`, a restauração pendente e a auditoria `restaurar`
-  ficam no arquivo restaurado; o app reabre e o handshake aplica a 22.1 (reidratação, salto) antes de liberar as
+  ficam no arquivo restaurado. O que só avança também vem do banco em uso (PR-15, SEG-B13; README do PDV › decisão
+  92): o `identidade_terminal.status` fica o mais restritivo dos dois (`ativo → desativando → revogado`; o backup de
+  antes da ordem de desativação do ERP não devolve o caixa a `ativo`, nem offline: a reserva de número e a abertura do
+  caixa continuam recusadas, SYNC 3.8) e a `estado_conexao.maior_hora_vista` fica a maior (30.5); o app reabre e o handshake aplica a 22.1 (reidratação, salto) antes de liberar as
   vendas. Offline, a primeira venda salta +1000 (modo restaurado).
 - **Recuperar dados de terminal antigo** (sincronizacao.md 22.3; máquina perdida ou morta, reinstalação sem o banco):
   ação explícita no PDV **novo**, já ativado como substituto — `Ctrl+Alt+C` › "Recuperar dados de terminal antigo"

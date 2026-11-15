@@ -4660,6 +4660,11 @@ sequenceDiagram
   backup de saída — na restauração automática depois de um `integrity_check` falho.
 - **Token**: a restauração mantém o token do banco em uso (o do backup pode já ter sido rotacionado; usá-lo de novo
   seria o "token anterior reutilizado" da 3.7).
+- **O que só avança** (PR-15, SEG-B13; README do PDV › decisão 92): o `identidade_terminal.status` restaurado é o mais
+  restritivo entre o do arquivo e o do banco em uso (`ativo → desativando → revogado`, 3.8), também na restauração
+  automática (pela leitura direta da linha da identidade): o backup de antes da ordem de desativação não volta o caixa
+  a `ativo`, e a reserva de número de venda e a abertura do caixa continuam recusadas offline. A
+  `estado_conexao.maior_hora_vista` fica a maior das duas (PDV 30.5).
 - **Fora da 1C**: `PERDA_PROVAVEL` e a aba "Perdas prováveis" (22.4), a NFC-e, a custódia da chave de backup e a
   importação de terminal antigo (22.3), o "modo restaurado" com supervisor para o +500 da NFC-e.
 

@@ -1798,7 +1798,11 @@ linha `compra` ao aplicar a venda e a pessoa desce. Offline, cliente fora do esp
 - Tarefa diária exclui logicamente as linhas `compra`/`delivery` com `ultima_ocorrencia_em` anterior a
   `pdv.pessoas_meses_relevancia` meses e as linhas `crediario` sem limite nem saldo. O PDV, ao receber a linha excluída,
   **purga do espelho local** a pessoa e as filhas se ela não tiver outra linha ativa para a loja nem venda/evento local
-  pendente (exceção à regra 6.4.4, que é a forma de a pessoa sair do PC).
+  em curso (exceção à regra 6.4.4, que é a forma de a pessoa sair do PC). Em curso = venda não finalizada nem cancelada
+  e evento ainda a subir (`pendente`, `enviando`, `erro_temporario`); o recusado em quarentena não segura. A purga
+  adiada é por estado (PR-15, SEG-B13; README do PDV › decisão 91): a cada ciclo do pull de `pessoas` o PDV confere de
+  novo toda pessoa do espelho que já teve relevância na loja e não tem nenhuma viva, porque a linha excluída desce uma
+  vez só.
 - Fase 1C (C14, README da API › decisão 139): a tarefa diária roda às 04:17 de Brasília em cada empresa ativa ou
   suspensa; o prazo é o `pdv.pessoas_meses_relevancia` da loja da linha (ou o da empresa, ou 12 meses); o
   `crediario` expira quando a pessoa fica sem `limite_compras` próprio e sem saldo em aberto. Em lotes de 500, cada um
