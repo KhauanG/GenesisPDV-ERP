@@ -109,6 +109,25 @@ export type RecuperarQuery = z.infer<typeof recuperarQuerySchema>;
 
 const dependencia = z.object({ agregado_tipo: z.string().min(1).max(30), agregado_id: uuid });
 
+/**
+ * Até quantos níveis de objeto/lista o payload de um evento aninha (SYNC 7.3). O maior payload do PDV tem uns 5 (a
+ * venda › itens › componentes); o teto deixa folga e garante que o JCS do hash (8.1) e a gravação em `jsonb`, que
+ * percorrem o payload recursivamente, terminem.
+ */
+export const PROFUNDIDADE_MAXIMA_PAYLOAD = 32;
+
+/** O valor aninha no máximo `limite` níveis de objeto/lista (percurso sem recursão: o próprio teste não estoura). */
+export function profundidadeAte(valor: unknown, limite: number): boolean {
+  const pilha: Array<[unknown, number]> = [[valor, 1]];
+  while (pilha.length) {
+    const [v, nivel] = pilha.pop()!;
+    if (v === null || typeof v !== 'object') continue;
+    if (nivel > limite) return false;
+    for (const filho of Array.isArray(v) ? v : Object.values(v)) pilha.push([filho, nivel + 1]);
+  }
+  return true;
+}
+
 /** Envelope de cada evento do push (SYNC 7.3). */
 export const eventoSchema = z.object({
   evento_id: uuid,
@@ -137,7 +156,9 @@ export const eventoSchema = z.object({
     versao_app: z.string().max(20).optional(),
     versao_schema_local: z.number().int().optional(),
   }),
-  payload: z.record(z.string(), z.unknown()),
+  payload: z.record(z.string(), z.unknown()).refine((p) => profundidadeAte(p, PROFUNDIDADE_MAXIMA_PAYLOAD), {
+    message: `aninhamento acima de ${PROFUNDIDADE_MAXIMA_PAYLOAD} níveis`,
+  }),
   payload_sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 export type EnvelopeEvento = z.infer<typeof eventoSchema>;

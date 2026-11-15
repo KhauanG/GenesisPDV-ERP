@@ -6737,6 +6737,87 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        confirmação anterior executando → 422 e nenhuma tarefa nova; duas importações pendentes do usuário → 422;
        paradas na fila há mais de 5 min, não contam; o envio à fila falha depois do commit → 500 e a tarefa fica na
        fila; a nova confirmação devolve a mesma tarefa, sem criar outra, e ela conclui).
+210. **Estoque: o documento só lança em estoque vivo e ativo; quantidades e saldos com teto** (PR-15, SEG-B09; ERP 13.2;
+     SYNC 7.3, 11.2 e 15.1; decisões 148, 151 e 165; `src/estoques/acertos.ts`, `src/estoques/movimentos.ts`,
+     `src/entradas/entrada.ts`, `src/sync/erros.ts`, `src/sync/push.ts`, `packages/shared/src/sync/eventos.ts` e
+     `contratos.ts`).
+     - **Estoque do documento.** O rascunho confere o estoque ao ser gravado, e inativar (saldo zero) ou excluir (sem
+       movimentos) o estoque não olha os rascunhos que apontam para ele. `exigirEstoqueAtivo` confere de novo, na
+       transação de quem lança: no início de `efetivarAcerto` (vale para todo acerto: a tela, o "Ajustar" do produto e
+       do relatório, o "Definir" da importação de planilha — a parte que achar o estoque inativado falha e a mensagem
+       da tarefa diz quais partes já entraram —, o cadastro em massa e a perda da transferência), no estorno do acerto
+       e no estorno da entrada (recebimento e NF-e). Estoque inativo → 422 `REGRA_NEGOCIO` em `campos.estoqueId`
+       ("reative o estoque antes de efetivar/estornar"); excluído → 422 ("não dá mais para …"). A movimentação do
+       recebimento e da NF-e já conferia (`exigirDestinoAtivoEntrada`), e o envio da transferência também
+       (`exigirEstoquesAtivosNoEnvio`); o recebimento da transferência não precisa: o estoque com transferência em
+       trânsito ou com divergência não se inativa, e o usado em transferência não se exclui. A `fn_trava_versao` que
+       abre as duas transações serializa o lançamento com o PUT e o DELETE do estoque, então não há corrida entre a
+       conferência e a inativação. O rascunho num estoque excluído fica como está (só pode ser excluído), e a exclusão
+       do estoque continua não olhando os rascunhos. A venda do caixa não passa por aqui: o estoque do contexto
+       inativo ou excluído já baixa no estoque da loja (SYNC 10.2).
+     - **Quantidades do contrato do PDV.** A quantidade de estoque de uma linha do PDV vai até 9.999.999,999
+       (`QUANTIDADE_MAXIMA_LINHA_PDV`, 7 casas inteiras): o item da venda (o caixa limita a 9.999,999 já com o fator da
+       embalagem; o casco cobrado é o cheio × a quantidade de cascos do produto, até 999, e fica abaixo do teto) e a
+       devolução avulsa de cascos (o caixa limita a 9.999). Acima, `PAYLOAD_INVALIDO` naquele evento (o lote segue).
+       O PDV 0.12.0 produz abaixo desse teto e não muda. A baixa de insumo da ficha (`componentes_estoque`) ficou com
+       o tamanho da coluna (`numeric(15,3)`): o PDV a calcula como `Arred3(item × ficha × (1 + perda))` sem teto
+       próprio, e o cadastro aceita a ficha até 999.999.999.999 e a perda até 100%, então nenhum teto menor sai do que
+       o caixa produz (uma ficha de 50.000 ml × 2.500 unidades = 125.000.000 é venda legítima, e um teto no contrato
+       a mandaria para `PAYLOAD_INVALIDO`, que o Reprocessar não conserta porque o payload não muda). Quem segura o
+       tamanho dela é o motor (`LIMITE_ESTOQUE`, que tem conserto). As quantidades que não lançam estoque (a do
+       combo, a de referência do preço, a do complemento) também ficaram com o tamanho da coluna.
+     - **Limites do motor.** O saldo de cada linha (`saldos_estoque`) e de cada lote (`saldos_lote`) fica até
+       `LIMITE_SALDO_ESTOQUE` = 99.999.999.999,999 em módulo — uma casa inteira abaixo do `numeric(15,3)`, para que o
+       "Definir" de qualquer linha (a diferença até o contado) e os movimentos seguintes ainda caibam nas colunas —, e o
+       custo do movimento (`custo_unitario` e `custo_medio_posterior` em `numeric(15,4)`, `custo_total` em
+       `numeric(15,2)`) cabe na coluna. `calcularMovimento` confere cada movimento e `lancarDocumento` o lote, antes de
+       qualquer gravação, e o que passaria disso lança `ErroLimiteEstoque` (um `ErroApi` `REGRA_NEGOCIO`, com o
+       estoque, o produto, a variação, o tipo e o lote nos `detalhes`, em camelCase como nas outras rotas do ERP): no
+       ERP, 422 com a mensagem ("fora do limite do sistema: confira as quantidades"); no push, `traduzirErroBanco` o
+       traduz para `LIMITE_ESTOQUE` (código novo da SYNC 11.2, permanente), com a linha em `resultado.detalhes` nos
+       nomes do protocolo (`estoque_id`, `produto_id`, `variacao_id`, `tipo_estoque_id`, `lote_id`; SYNC 2.3): o
+       evento fica `erro` na primeira tentativa, o lote segue e os outros terminais também, cada evento que passaria
+       do limite rejeitado por si. O lançamento que **aproxima** de zero uma linha que já estava acima do limite (dado
+       de antes desta regra) passa: é o caminho do conserto pelo "Definir", e depois o **Reprocessar** (ou o lote por
+       código) da fila de decisão aplica as vendas. A isenção é só do saldo: o custo do movimento tem de caber na
+       coluna de qualquer jeito (não há como gravá-lo). Por isso o "Definir" de uma linha enorme com custo médio alto
+       (a diferença × o custo passa de `numeric(15,2)`, ex.: −9,9e10 a R$ 200 = 1,98e13) é recusado — já no rascunho,
+       onde o valor do item (`total_custo`/`total_venda`, também `numeric(15,2)`) passa a ser conferido em
+       `gravarItensRascunho` com 422 no item ("um saldo muito grande se acerta em partes", no lugar do 22003
+       genérico), e no motor se a linha mudou depois do rascunho — e a linha se acerta em partes: Entradas ou Saídas
+       de acerto menores, cada uma com o custo dentro da coluna (não pede `produtos.ver_custo`: valem ao custo médio),
+       e o "Definir" do resto. A tolerância ao negativo
+       (SYNC 15.1) continua: a regra é de tamanho, não de sinal. O replay do razão (`recalcular.ts`) usa a conta pura do
+       shared, sem esta conferência: refaz o que está gravado.
+     - **Erros do banco e do JCS no push.** A classe 22 do PostgreSQL (o valor que não cabe na coluna: 22003, 22001,
+       22P02, 22008…) que escapa do handler vira `PAYLOAD_INVALIDO` daquele evento (antes, falha não classificada: duas
+       tentativas parando o lote e depois `ERRO_INTERNO`); nas tabelas do protocolo continua falha não classificada.
+       O hash do payload (`hashDoPayload`) devolve `null` quando o JCS não serializa o valor (um número que o JSON lê
+       como `Infinity`): o evento é rejeitado como o de hash divergente, com `hash_recalculado` nulo, e o lote segue
+       (antes, a exceção derrubava o lote inteiro com 500). O envelope recusa o payload com mais de 32 níveis de
+       objeto/lista (`PROFUNDIDADE_MAXIMA_PAYLOAD`, conferido sem recursão; o maior do PDV tem uns 5): o JCS e a
+       gravação em `jsonb` percorrem o payload recursivamente, e o aninhamento fundo os estourava (500); agora é o 400
+       `REQUISICAO_INVALIDA` do envelope fora do contrato.
+     - Sem migração e sem mudança no PDV; o protocolo ganha só o código `LIMITE_ESTOQUE`, que o PDV 0.12.0 trata como
+       qualquer rejeição (fica na quarentena dos eventos rejeitados). Testes: `test/integracao/estoque.test.ts` (o
+       rascunho do gerente que continua com o estoque inativado → 422 sem saldo nem movimento, e efetiva depois de
+       reativado; estoque excluído → 422 sem movimento; o estorno de acerto num estoque inativado → 422 até reativar),
+       `test/integracao/recebimento-movimentar.test.ts` (o estorno do recebimento num depósito inativado depois de
+       zerado → 422 antes de lançar), `test/integracao/venda-eventos.test.ts` (o item de 999.999.999.999,999 →
+       `PAYLOAD_INVALIDO` e a venda seguinte do lote entra, a de 9.999,999 entra; no ERP a Saída que passaria do limite
+       → 422; com a linha perto do limite, a venda de dois terminais que passaria dele → `LIMITE_ESTOQUE` com
+       `tentativas` 1 e os detalhes em snake_case, e a seguinte do lote entra, a que cabe entra, e o "Definir" conserta;
+       a linha em −9,9e10 com custo de R$ 200: o "Definir" para 0 → 422 no item sem gravar, a Entrada parcial e o
+       "Definir" do resto zeram; a venda de produto com estoque e custo de R$ 99.999.999.999 × 1.000 → `LIMITE_ESTOQUE`
+       do custo; o custo de referência do serviço que não cabe em `numeric(15,2)` → `PAYLOAD_INVALIDO` sem
+       `ERRO_INTERNO`; o `1e400` no payload → só aquele evento rejeitado; cem mil níveis → 400),
+       `src/estoques/movimentos.spec.ts` (no banco falso: o custo total acima de `numeric(15,2)` na entrada e na saída
+       ao custo médio → `ErroLimiteEstoque` sem gravar, logo abaixo passa; o lote perto do limite com a linha perto de
+       zero → recusa com o `loteId`; a linha e o lote já acima do limite: o que aproxima de zero passa, mesmo ainda
+       acima, o que afasta é recusado), `src/sync/erros.spec.ts` (a classe 22, o `ErroLimiteEstoque` com os detalhes em
+       snake_case e o `hashDoPayload`), `packages/shared/src/sync/eventos.spec.ts` (os tetos das quantidades; a baixa
+       de insumo de 125.000.000 passa e só a acima da coluna é recusada) e `contratos.spec.ts` (a profundidade do
+       payload).
 
 ### Operação – tarefas em segundo plano (API)
 

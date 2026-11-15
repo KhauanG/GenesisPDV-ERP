@@ -16,6 +16,8 @@ import {
   MAXIMO_IDS_EVENTOS_STATUS,
   MAXIMO_SEQUENCIAS_LACUNA,
   payloadAuditoriaRegistrosSchema,
+  PROFUNDIDADE_MAXIMA_PAYLOAD,
+  profundidadeAte,
   pushSchema,
   recuperarQuerySchema,
   renovarTokenSchema,
@@ -166,6 +168,31 @@ describe('fixtures do protocolo de sincronização', () => {
       expect(ev.terminal_id).toBe(lote.terminal_id);
       expect(createHash('sha256').update(jcs(ev.payload), 'utf8').digest('hex')).toBe(ev.payload_sha256);
     }
+  });
+
+  it('push: o payload aninha até 32 níveis; acima, o envelope é recusado sem percorrer o payload recursivamente', () => {
+    const bruto = pushSchema.parse(ler('push.auditoria.requisicao.json')).eventos[0] as Record<
+      string,
+      unknown
+    >;
+    /** Payload com `n` níveis de objeto/lista (o próprio payload é o primeiro). */
+    const aninhado = (n: number) => {
+      let v: unknown = { fim: true };
+      for (let i = 1; i < n - 1; i++) v = [v];
+      return { registros: v };
+    };
+    expect(profundidadeAte(aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD), PROFUNDIDADE_MAXIMA_PAYLOAD)).toBe(true);
+    expect(profundidadeAte(aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD + 1), PROFUNDIDADE_MAXIMA_PAYLOAD)).toBe(
+      false,
+    );
+    expect(profundidadeAte({ a: 1, b: 'x', c: null }, 1)).toBe(true);
+    expect(eventoSchema.safeParse({ ...bruto, payload: aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD) }).success).toBe(
+      true,
+    );
+    const fundo = eventoSchema.safeParse({ ...bruto, payload: aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD + 1) });
+    expect(fundo.error?.issues.map((i) => i.path.join('.'))).toEqual(['payload']);
+    // Cem mil níveis: a conferência termina (sem recursão) e recusa.
+    expect(eventoSchema.safeParse({ ...bruto, payload: aninhado(100_000) }).success).toBe(false);
   });
 
   it('pull: a página traz um tombstone (excluido_em preenchido) e decimais em texto', () => {

@@ -1176,8 +1176,8 @@ stateDiagram-v2
 | `relogio_regrediu` | booleano | 12.3 | `true` quando o `ocorrido_em` calculado ficou mais de 2 min antes do `ocorrido_em` do evento anterior e o PDV **não** aplicou a monotonicidade (omitido = `false`) |
 | `usuario_id` | UUID | operador | Quem executou (o supervisor que liberou fica no payload: `autorizado_por_id`) |
 | `contexto` | objeto | estado local | `{loja_id, caixa_id, numero_caixa, estoque_id, sessao_caixa_id, versao_app, versao_schema_local}` — `estoque_id` é o `lojas.estoque_id` vigente no PDV no momento do fato (usado para baixar estoque, 10.2) |
-| `payload` | objeto | `eventos_saida.payload` | Documento completo (seção 9) |
-| `payload_sha256` | hex 64 | `eventos_saida.payload_sha256` | SHA-256 do JCS de `payload` |
+| `payload` | objeto | `eventos_saida.payload` | Documento completo (seção 9). Aninha no máximo 32 níveis de objeto/lista (`PROFUNDIDADE_MAXIMA_PAYLOAD`; o maior do PDV tem uns 5): acima disso o envelope é inválido (400 `REQUISICAO_INVALIDA`, como qualquer envelope fora do contrato), conferido sem recursão antes do JCS e da gravação em `jsonb` |
+| `payload_sha256` | hex 64 | `eventos_saida.payload_sha256` | SHA-256 do JCS de `payload`. O payload que o JCS não serializa (um número que o JSON lê como `Infinity`) não tem hash: o evento é rejeitado com `PAYLOAD_INVALIDO` (`resultado.detalhes.hash_recalculado` nulo) e o lote segue |
 
 Gravados pela nuvem em `eventos_recebidos`: `criado_em` (= **recebido_em**), `loja_id` (do token), `status`,
 `tentativas`, `versao_nuvem`, `versao_nuvem_fim`, `resultado`, `aplicado_em`, `resolucao_entregue_em`, além das
@@ -3437,6 +3437,7 @@ regra acima entra com o vendedor (Fase 3). O financeiro desta seção é da Fase
 | `AGREGADO_DIVERGENTE` | permanente | O agregado já existe com conteúdo diferente (ex.: fechamento diferente para a mesma sessão) | Comparar os dois documentos; **Descartar** o errado |
 | `EVENTO_DIVERGENTE` | permanente | Mesmo `evento_id`, `payload_sha256` diferente | Suporte (corrupção) |
 | `NUMERO_VENDA_DUPLICADO` | permanente | `uq_vendas_numero` com outra venda (13.1) | Ação **Aplicar com novo número**: a nuvem grava a venda com `numero` = próximo livre da **faixa de renumeração** do caixa (a partir de 9.000.001, T27 da 1C: o próximo logo acima do último usado é a próxima venda do terminal ativo e colidiria de novo) e guarda o original em `auditoria`/`observacao` e no `resultado` |
+| `LIMITE_ESTOQUE` | permanente | O lançamento do evento deixaria o saldo de uma linha (ou de um lote) acima de 99.999.999.999,999 em módulo, ou o custo do movimento acima da coluna (README da API › decisão 210). O lançamento que aproxima de zero uma linha já acima do limite passa (a isenção é só do saldo: o custo tem de caber) | Conferir a linha (`resultado.detalhes`: `estoque_id`, `produto_id`, `variacao_id`, `tipo_estoque_id` e, no lote, `lote_id`), corrigir no ERP pelo "Definir" (a linha enorme com custo alto, cuja diferença × o custo não cabe, em partes: Entradas ou Saídas de acerto menores antes do "Definir") e **Reprocessar** |
 | `NUMERO_FISCAL_DUPLICADO` | permanente | Mesmo número/série/ambiente com outra chave | Contador + suporte (risco fiscal) |
 | `CHAVE_INVALIDA`, `XML_DIVERGENTE` | permanente | Chave/XML não conferem | Suporte |
 | `FAIXA_COM_NUMERO_AUTORIZADO` | permanente | Inutilização de número autorizado | Contador |
@@ -3462,6 +3463,7 @@ inteira (CPF, nome, telefone…), e `resultado` continua na linha depois que o `
 | `23505` em outra unicidade (chave primária ou chave de negócio da camada 2 de 8.4) | `AGREGADO_DIVERGENTE`. O mesmo conteúdo já gravado não chega aqui: o handler confere antes e responde `ja_existia` |
 | `23503` (chave estrangeira) | `REFERENCIA_INEXISTENTE`. O `cliente_id` passa por `pessoas_aliases` antes |
 | `23514` (CHECK, inclusive partição de `auditoria` inexistente para a data) | `PAYLOAD_INVALIDO` |
+| Classe `22` (valor que não cabe na coluna: `22003` numérico acima da precisão, `22001` texto longo, `22P02`, `22008`…) | `PAYLOAD_INVALIDO`: a rejeição daquele evento, sem as duas tentativas que param o lote |
 | `40P01`, `40001` | `CONCORRENCIA_BANCO` (transitório) |
 | Classe `08`, `57P01`–`57P03`; sem SQLSTATE, a conexão perdida no driver (`ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EPIPE`, "Connection terminated") | `BANCO_INDISPONIVEL` (transitório) |
 | Restrição de `eventos_recebidos` ou `entidades_evento`, ou qualquer outro erro | Exceção não classificada (8.3): corrida ou bug do próprio push |
@@ -3855,6 +3857,18 @@ sequenceDiagram
   vale com `pdv.bloqueio_estoque_offline = true` (padrão desligado, PDV 29.1).
 - Documentos do ERP (acerto de saída, transferência) não podem deixar saldo negativo, salvo
   `estoque.permite_negativo_erp` (ERP 13.1.1) — a assimetria é proposital: o ERP pode esperar, o caixa não.
+- **Limites do sistema** (README da API › decisão 210): a tolerância é ao negativo, não a qualquer tamanho. A
+  quantidade de estoque de uma linha do PDV no contrato vai até 9.999.999,999 (item da venda e devolução de cascos;
+  o caixa limita o item a 9.999,999 e a devolução a 9.999); acima, `PAYLOAD_INVALIDO`. A baixa de insumo da ficha
+  (`componentes_estoque`) fica com o tamanho da coluna: o PDV a calcula sem teto (o item × a ficha, que o cadastro
+  aceita até 999.999.999.999, × 1 + a perda), e quem a segura é o motor. O motor de estoque mantém cada linha de
+  saldo e de lote até 99.999.999.999,999 em módulo (uma casa abaixo do `numeric(15,3)`, para o "Definir" e os
+  movimentos seguintes ainda caberem) e o custo do movimento dentro das colunas: o lançamento que passaria disso, de
+  qualquer terminal ou do ERP, é recusado antes de gravar (no push, `LIMITE_ESTOQUE` só naquele evento, 11.2; no ERP,
+  422), e o que aproxima de zero uma linha já acima passa (só o saldo: o custo tem de caber, e a linha enorme com
+  custo alto se acerta em partes antes do "Definir"). O PDV 0.12.0 não muda: as linhas que ele produz ficam abaixo
+  do teto do contrato, a baixa de insumo não tem teto menor que a coluna, e ele trata o código como qualquer
+  rejeição.
 - **Lote da venda** (Fase 2, F2-B6; roadmap D48; README da API › decisão 151): o PDV-1 não informa o lote, e a nuvem
   divide a saída do item de produto com lote de saldo positivo no estoque da loja em um movimento por lote, em FEFO,
   com a sobra sem lote (`estoque.lote_baixa_sem_informar`, padrão `fefo`); o `saldos_lote` atualizado desce no fluxo

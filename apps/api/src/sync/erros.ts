@@ -1,4 +1,5 @@
 import { erroDoDriver } from '../database/erro-postgres.js';
+import { ErroLimiteEstoque } from '../estoques/movimentos.js';
 
 /** Códigos HTTP do protocolo de sincronização (SYNC 2.5). */
 export const CODIGOS_SYNC = {
@@ -141,6 +142,11 @@ function colunasDaChave(detail: string | undefined): string[] | null {
  *   handler confere antes e responde sem efeito (`ja_existia`);
  * - 23503 (FK) → `REFERENCIA_INEXISTENTE`;
  * - 23514 (CHECK, inclusive partição inexistente) → `PAYLOAD_INVALIDO`;
+ * - classe 22 (dado fora do que a coluna aceita: 22003 valor numérico acima da precisão, 22001 texto longo demais,
+ *   22P02 texto que não é do tipo, 22008 data fora da faixa…) → `PAYLOAD_INVALIDO`: o valor do evento não cabe;
+ * - `ErroLimiteEstoque` do motor de estoque (o saldo ou o custo passaria do limite, README da API › decisão 210) →
+ *   `LIMITE_ESTOQUE`, a rejeição só daquele evento, com a linha em `resultado.detalhes` (`estoque_id`, `produto_id`,
+ *   `variacao_id`, `tipo_estoque_id` e, no lote, `lote_id`);
  * - 40P01/40001 (deadlock e serialização esgotados) → transitório `CONCORRENCIA_BANCO`, e classe 08, 57P01–57P03 e
  *   a conexão perdida no driver (ECONNRESET, ECONNREFUSED, ETIMEDOUT, EPIPE, "Connection terminated"…) → transitório
  *   `BANCO_INDISPONIVEL`: o lote para, nada é gravado e não conta para o `ERRO_INTERNO` (o evento não tem culpa).
@@ -150,6 +156,17 @@ function colunasDaChave(detail: string | undefined): string[] | null {
  */
 export function traduzirErroBanco(e: unknown): ErroRegraEvento | ErroTransitorioEvento | null {
   if (e instanceof ErroRegraEvento || e instanceof ErroTransitorioEvento) return e;
+  if (e instanceof ErroLimiteEstoque) {
+    // Nos detalhes do protocolo, os nomes em snake_case (SYNC 2.3); o camelCase fica na resposta 422 do ERP.
+    const c = e.chave;
+    return new ErroRegraEvento('LIMITE_ESTOQUE', e.message, {
+      estoque_id: c.estoqueId,
+      produto_id: c.produtoId,
+      variacao_id: c.variacaoId,
+      tipo_estoque_id: c.tipoEstoqueId,
+      ...(c.loteId ? { lote_id: c.loteId } : {}),
+    });
+  }
   const { code, constraint, table, detail, message } = erroDoDriver(e);
   if (code === '40P01' || code === '40001') {
     return new ErroTransitorioEvento('CONCORRENCIA_BANCO', 'Conflito de concorrência no banco; reenvie.');
@@ -187,6 +204,12 @@ export function traduzirErroBanco(e: unknown): ErroRegraEvento | ErroTransitorio
         detalhes,
       );
     default:
+      if (code.startsWith('22'))
+        return new ErroRegraEvento(
+          'PAYLOAD_INVALIDO',
+          `Valor fora do que o banco aceita (SQLSTATE ${code}).`,
+          detalhes,
+        );
       return null;
   }
 }

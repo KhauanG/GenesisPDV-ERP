@@ -1256,6 +1256,42 @@ describe('movimentar o recebimento (F2-B15; ERP 13.3)', () => {
     expect(m.body.mensagem).toMatch(/ao menos um item/);
   });
 
+  it('estorno num estoque inativado depois de zerado é recusado antes de lançar (README da API › decisão 210)', async () => {
+    const p = await produto('Água mineral 500ml do depósito');
+    const d = await amb
+      .http()
+      .post('/api/estoques')
+      .set(bearer())
+      .send({ nome: 'Depósito de bebidas fechado', tipo: 'deposito' });
+    expect(d.status, JSON.stringify(d.body)).toBe(201);
+    const deposito = d.body.id as string;
+    const r = await rascunho([{ produtoId: p, quantidade: '3', precoCompra: '2' }], { estoqueId: deposito });
+    expect((await movimentar(r.id, { atualizarPrecoCusto: false })).status).toBe(200);
+    // A mercadoria sai toda (saldo zero) e o estoque é inativado.
+    await efetivarAcerto({
+      estoqueId: deposito,
+      tipoAjuste: 'saida',
+      dataContagem: agora(),
+      itens: [{ produtoId: p, quantidade: '3' }],
+    });
+    const atual = await amb.http().get(`/api/estoques/${deposito}`).set(bearer());
+    const inativar = await amb
+      .http()
+      .put(`/api/estoques/${deposito}`)
+      .set(bearer())
+      .send({ nome: atual.body.nome, tipo: 'deposito', ativo: false, versao: atual.body.versao });
+    expect(inativar.status, JSON.stringify(inativar.body)).toBe(200);
+    const recusa = await estornar(r.id, 'Nota devolvida ao fornecedor');
+    expect(recusa.status, JSON.stringify(recusa.body)).toBe(422);
+    expect(recusa.body.campos).toEqual({
+      estoqueId: [
+        'O estoque "Depósito de bebidas fechado" está inativo: reative o estoque antes de estornar',
+      ],
+    });
+    expect(await movimentos(r.id)).toHaveLength(1);
+    expect((await amb.http().get(`/api/recebimentos/${r.id}`).set(bearer())).body.status).toBe('movimentado');
+  });
+
   it('o razão refaz as projeções idênticas (db:recalcular-saldos)', async () => {
     const { movimentos: n } = await conferirRazaoDoBanco(emp.nomeBanco);
     expect(n).toBeGreaterThan(0);

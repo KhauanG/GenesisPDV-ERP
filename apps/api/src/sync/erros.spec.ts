@@ -1,6 +1,8 @@
 import { DrizzleQueryError } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import { ErroLimiteEstoque } from '../estoques/movimentos.js';
 import { ErroRegraEvento, ErroTransitorioEvento, traduzirErroBanco } from './erros.js';
+import { hashDoPayload } from './push.js';
 
 /** Erro no formato do `pg` (`DatabaseError`): SQLSTATE em `code`, restrição e tabela quando houver. */
 const pg = (code: string, extra: Record<string, unknown> = {}) =>
@@ -132,6 +134,44 @@ describe('traduzirErroBanco (SYNC 11.2, T14)', () => {
     expect(traduzirErroBanco(pg('42P01', { message: 'Connection terminated' }))).toBeNull();
     expect(traduzirErroBanco(new TypeError('x'))).toBeNull();
     expect(traduzirErroBanco(undefined)).toBeNull();
+  });
+
+  it('classe 22 (valor que não cabe na coluna) → PAYLOAD_INVALIDO, também por trás do Drizzle (decisão 210)', () => {
+    for (const code of ['22003', '22001', '22P02', '22008']) {
+      expect(traduzirErroBanco(pg(code, { table: 'vendas' }))).toMatchObject({
+        codigo: 'PAYLOAD_INVALIDO',
+        detalhes: { sqlstate: code, tabela: 'vendas' },
+      });
+    }
+    expect(traduzirErroBanco(drizzle(pg('22003', { message: 'numeric field overflow' })))).toBeInstanceOf(
+      ErroRegraEvento,
+    );
+    // Nas tabelas do protocolo continua falha não classificada (é do push, não do evento).
+    expect(traduzirErroBanco(pg('22003', { table: 'eventos_recebidos' }))).toBeNull();
+  });
+
+  it('o limite do motor de estoque vira LIMITE_ESTOQUE, só daquele evento, com a linha nos detalhes', () => {
+    const chave = { estoqueId: 'e', produtoId: 'p', variacaoId: null, tipoEstoqueId: 't' };
+    const r = traduzirErroBanco(new ErroLimiteEstoque('fora do limite', chave));
+    expect(r).toBeInstanceOf(ErroRegraEvento);
+    // Os detalhes do protocolo em snake_case (SYNC 2.3), como nos outros códigos.
+    expect(r).toMatchObject({ codigo: 'LIMITE_ESTOQUE', message: 'fora do limite' });
+    expect((r as ErroRegraEvento).detalhes).toEqual({
+      estoque_id: 'e',
+      produto_id: 'p',
+      variacao_id: null,
+      tipo_estoque_id: 't',
+    });
+    const doLote = traduzirErroBanco(new ErroLimiteEstoque('lote', { ...chave, loteId: 'l' }));
+    expect((doLote as ErroRegraEvento).detalhes).toMatchObject({ lote_id: 'l', produto_id: 'p' });
+  });
+
+  it('hash do payload: o que o JCS não serializa (Infinity, aninhamento fundo) dá null, sem exceção', () => {
+    expect(hashDoPayload({ a: 1 })).toMatch(/^[0-9a-f]{64}$/);
+    expect(hashDoPayload(JSON.parse('{"a":1e400}'))).toBeNull();
+    let fundo: unknown = 1;
+    for (let i = 0; i < 200_000; i++) fundo = [fundo];
+    expect(hashDoPayload({ fundo })).toBeNull();
   });
 
   it('erro já classificado passa como está', () => {

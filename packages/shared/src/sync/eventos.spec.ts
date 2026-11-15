@@ -22,6 +22,7 @@ import {
   payloadVendaCanceladaFinalizadaSchema,
   payloadVendaCanceladaSchema,
   payloadVendaFinalizadaSchema,
+  QUANTIDADE_MAXIMA_LINHA_PDV,
   type TipoEventoContratado,
 } from './eventos.js';
 import { chavesDescartadas, lerFixtureSync, pastaFixturesSync as pasta } from './fixtures.teste.js';
@@ -370,5 +371,44 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
     ]);
     const tipo = com('alerta.cadastro.payload.json', (p) => (p.tipo_alerta = 'preco_zerado'));
     expect(payloadAlertaCadastroSchema.safeParse(tipo).success).toBe(false);
+  });
+
+  it('quantidades de estoque do PDV com teto acima do que o caixa produz (README da API › decisão 210)', () => {
+    const item = (q: string) =>
+      problemas(
+        payloadVendaFinalizadaSchema,
+        com('venda.finalizada.payload.json', (p) => (p.itens_venda[0].quantidade = q)),
+      );
+    // O maior item do caixa (9.999,999) e o maior casco cobrado (9.999,999 cheios × 999 cascos) passam.
+    expect(item('9999.999')).toEqual([]);
+    expect(item(String(Math.ceil(9999.999 * 999)) + '.000')).toEqual([]);
+    expect(item(QUANTIDADE_MAXIMA_LINHA_PDV)).toEqual([]);
+    expect(item('10000000.000')).toEqual(['itens_venda.0.quantidade: decimal com 3 casas, sem sinal']);
+    expect(item('999999999999.999')).toHaveLength(1);
+    const componente = (q: string) =>
+      problemas(
+        payloadVendaFinalizadaSchema,
+        com('venda.finalizada.formas.payload.json', (p) => {
+          const comFicha = p.itens_venda.find(
+            (i: { componentes_estoque: unknown[] }) => i.componentes_estoque.length,
+          );
+          comFicha.componentes_estoque[0].quantidade = q;
+        }),
+      );
+    // A baixa de insumo não tem teto menor que a coluna: o PDV a calcula sem limite (item 9.999,999 × a ficha, que o
+    // cadastro aceita até 999.999.999.999, × 2 na perda de 100%). Ficha de 50.000 ml × 2.500 unidades = 125.000.000
+    // passa no contrato (quem segura é o LIMITE_ESTOQUE do motor); só o que não cabe na coluna é recusado.
+    expect(componente(String(50_000 * 2_500) + '.000')).toEqual([]);
+    expect(componente('999999999999.999')).toEqual([]);
+    expect(componente('1000000000000.000')).toHaveLength(1);
+    const casco = (q: string) =>
+      problemas(
+        payloadVasilhameMovimentadoSchema,
+        com('vasilhame.movimentado.payload.json', (p) => (p.movimentos_vasilhame.quantidade = q)),
+      );
+    expect(casco('9999.000')).toEqual([]);
+    expect(casco('10000000.000')).toEqual([
+      'movimentos_vasilhame.quantidade: decimal com 3 casas, sem sinal',
+    ]);
   });
 });

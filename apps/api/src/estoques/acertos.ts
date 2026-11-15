@@ -43,6 +43,7 @@ import { compensacoesDoAcerto } from './compensacoes-acerto.js';
 import {
   lancarDocumento,
   lancarMovimento,
+  MAXIMO_CUSTO_TOTAL_ESTOQUE,
   ordenarChaves,
   saldoDoLote,
   somaMovimentosPosteriores,
@@ -121,6 +122,37 @@ export async function exigirTipoEstoqueAtivo(
     acao === 'efetivar'
       ? `O tipo de estoque ${nome} está inativo: troque o tipo do rascunho ou reative o tipo antes de efetivar`
       : `O tipo de estoque ${nome} está inativo: reative o tipo antes de estornar`,
+    'REGRA_NEGOCIO',
+  );
+}
+
+/**
+ * O estoque do documento continua vivo e ativo na efetivação e no estorno (ERP 13.6; README da API › decisão 210): o
+ * rascunho só confere o estoque ao ser gravado (`conferirCabecalhoAcerto`), e inativar (saldo zero) ou excluir (sem
+ * movimentos) o estoque não olha os rascunhos que apontam para ele. Sem isto, o rascunho antigo lançava saldo num
+ * estoque que o administrador fechou, ou movimento num estoque excluído (que some das listagens). Vale para todo
+ * acerto efetivado (tela, "Ajustar", importação, cadastro em massa, perda da transferência), para o estorno do acerto
+ * e para o estorno da entrada (recebimento e NF-e). A `fn_trava_versao` da transação serializa com o PUT e o DELETE do
+ * estoque, como no tipo de estoque.
+ */
+export async function exigirEstoqueAtivo(
+  tx: DbEmpresa,
+  estoqueId: string,
+  acao: 'efetivar' | 'estornar',
+): Promise<void> {
+  const { rows } = await tx.execute<{ nome: string; ativo: boolean; excluido: boolean }>(sql`
+    select nome, ativo, excluido_em is not null as excluido from estoques where id = ${estoqueId}`);
+  const e = rows[0];
+  if (e && !e.excluido && e.ativo) return;
+  if (!e || e.excluido)
+    throw erroCampo(
+      'estoqueId',
+      `O estoque do documento foi excluído: não dá mais para ${acao}`,
+      'REGRA_NEGOCIO',
+    );
+  throw erroCampo(
+    'estoqueId',
+    `O estoque "${e.nome}" está inativo: reative o estoque antes de ${acao}`,
     'REGRA_NEGOCIO',
   );
 }
@@ -289,7 +321,8 @@ export async function gravarItensRascunho(
   let sequencia = seq[0]?.n ?? 0;
   let totalVenda = dec(0);
   let totalCusto = dec(0);
-  for (const it of itens) {
+  const foraDoLimite: Record<string, string[]> = {};
+  for (const [i, it] of itens.entries()) {
     const p = produtos.get(it.produtoId)!;
     const s = saldos.get(`${it.produtoId}:${it.variacaoId ?? ''}`) ?? { quantidade: '0', custoMedio: '0' };
     const custoMedio = dec(s.custoMedio).gt(0) ? s.custoMedio : p.preco_custo;
@@ -301,6 +334,15 @@ export async function gravarItensRascunho(
         : it.quantidade;
     const tv = decTexto(dec(base).times(p.preco_venda), 2);
     const tc = decTexto(dec(base).times(dec(custo)), 2);
+    // O valor do item (a quantidade, ou a diferença do "Definir", × o preço ou o custo) tem de caber em
+    // `numeric(15,2)`, como o custo do movimento no motor (README da API › decisão 210): o "Definir" de uma linha
+    // enorme com custo alto não cabe, e a mensagem diz o caminho (acertar em partes) no lugar do 22003 genérico.
+    if (dec(tv).abs().gt(MAXIMO_CUSTO_TOTAL_ESTOQUE) || dec(tc).abs().gt(MAXIMO_CUSTO_TOTAL_ESTOQUE)) {
+      foraDoLimite[`itens.${i}.quantidade`] = [
+        'O valor do item passa do limite do sistema (R$ 9.999.999.999.999,99): um saldo muito grande se acerta em partes, com Entradas ou Saídas de acerto menores',
+      ];
+      continue;
+    }
     totalVenda = totalVenda.plus(tv);
     totalCusto = totalCusto.plus(tc);
     const valores = {
@@ -325,6 +367,8 @@ export async function gravarItensRascunho(
                 ${tv}::numeric, ${tc}::numeric)`);
     }
   }
+  if (Object.keys(foraDoLimite).length)
+    throw new ErroApi('VALIDACAO', 'Verifique os itens destacados.', { campos: foraDoLimite });
   await tx.execute(sql`
     update acertos_estoque
        set qtd_itens = ${itens.length}, total_venda = ${totalVenda.toFixed(2)}::numeric,
@@ -649,6 +693,7 @@ export async function efetivarAcerto(
 ): Promise<ResultadoEfetivacao> {
   // Início do documento (regra de data): a folga é medida contra ele, e um acerto grande não estoura no fim do laço.
   const inicio = new Date();
+  await exigirEstoqueAtivo(tx, acerto.estoqueId, 'efetivar');
   const { rows: itens } = await tx.execute<{
     id: string;
     sequencia: number;

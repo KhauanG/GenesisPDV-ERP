@@ -3012,9 +3012,18 @@ Listagem: filtro **Nome**; colunas **Nome**, **Loja vinculada**, **Tipo**, **Ati
 | `tipo` | Tipo | enum `loja`/`deposito`/`outro` | S | `deposito` = CD |
 | Loja vinculada | exibição | — | — | a loja que aponta para este estoque (10.3.1), se houver |
 | `endereco` | Endereço | texto | N | |
-| `ativo` | Ativo | booleano | S | inativar exige saldo zero em todos os produtos e nenhuma transferência em trânsito |
+| `ativo` | Ativo | booleano | S | inativar exige saldo zero em todos os produtos e nenhuma transferência em trânsito; no estoque inativo (ou excluído) nenhum documento lança: o acerto em rascunho não se efetiva nem o efetivado se estorna, e o recebimento e a NF-e não se movimentam nem se estornam (422 no estoque, "reative o estoque antes de …"; README da API › decisão 210) |
 
 Seed na criação da empresa: nenhum (criado junto da primeira loja). Exclusão bloqueada com movimentos.
+
+**Limites do sistema** (README da API › decisão 210): o saldo de cada produto num estoque (e de cada lote) vai até
+99.999.999.999,999 para mais ou para menos, e o custo de cada movimento cabe no tamanho do campo. O documento do ERP
+que passaria disso é recusado (422, "fora do limite do sistema: confira as quantidades") sem gravar nada; a venda do
+caixa que passaria disso fica na fila de decisão com o erro `LIMITE_ESTOQUE` (o "Definir" corrige a linha e o
+**Reprocessar** aplica a venda). O valor de cada item do acerto (a quantidade, ou a diferença do "Definir", × o custo
+ou o preço) também cabe no campo (até R$ 9.999.999.999.999,99): o "Definir" de uma linha enorme com custo alto é
+recusado no item ("um saldo muito grande se acerta em partes"), e a linha se acerta com Entradas ou Saídas de acerto
+menores antes do "Definir".
 
 ### 13.3 Recebimento manual de produtos
 
