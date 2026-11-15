@@ -15,6 +15,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
+import { daEmpresaOuLojaViva, garantirSemLojaOculta } from '../autorizacao/lojas.js';
 import {
   conflitoVersao,
   contem,
@@ -224,6 +225,23 @@ export class GruposPrecoController {
     await this.s.tenancy.cx().transacao(
       async (tx) => {
         await travar(tx, id);
+        // As faixas saem com o grupo: com faixa viva de loja fora das permitidas, só quem tem acesso a ela exclui
+        // (decisão 207; a mesma regra do modo "por produto" na gravação, decisão 88).
+        const vivas = await tx
+          .select({ lojaId: gruposPrecoQuantidadeFaixas.lojaId })
+          .from(gruposPrecoQuantidadeFaixas)
+          .where(
+            and(
+              eq(gruposPrecoQuantidadeFaixas.grupoId, id),
+              isNull(gruposPrecoQuantidadeFaixas.excluidoEm),
+              daEmpresaOuLojaViva(gruposPrecoQuantidadeFaixas.lojaId),
+            ),
+          );
+        garantirSemLojaOculta(
+          sessao,
+          vivas.map((f) => f.lojaId),
+          'O grupo tem faixas de lojas fora das suas lojas permitidas: só quem tem acesso a elas pode excluí-lo.',
+        );
         const antes = (await detalhe(tx, id, false))!;
         const agora = new Date();
         const desvinculados = await tx

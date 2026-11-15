@@ -1,7 +1,9 @@
 /**
  * Revisão de segurança da Fase 1 (README › Decisões 85–92): escalada pela retirada do "negar", estoques e dados de
  * usuários de outras lojas, faixas de preço de outras lojas no produto e no mix, auditoria redigida pela visão do
- * leitor e limite de hashes argon2 por usuário.
+ * leitor e limite de hashes argon2 por usuário. Escopo de loja dentro da empresa (decisão 207): a auditoria de usuário,
+ * login e sessão segue a visibilidade do usuário, os dados de compra só dão o preço de loja permitida e excluir o mix
+ * ou o produto com linha de loja oculta é recusado.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -344,5 +346,289 @@ describe('produto e mix com usuário de 1 loja × produto de 2 lojas (decisões 
       .get(`/api/auditoria?entidade=usuarios&registro_id=${r.body.usuario.id}`)
       .set(bearer(admin));
     expect(JSON.stringify(doAdmin.body.itens)).toContain('"salario"');
+  });
+
+  it('dados de compra: o preço da loja só de loja permitida (recebimento e NF-e)', async () => {
+    for (const rota of ['recebimentos', 'notas-entrada']) {
+      const url = (loja: string) => `/api/${rota}/dados-produtos?produtoIds=${produtoId}&lojaId=${loja}`;
+      const daLoja1 = await amb.http().get(url(loja1)).set(bearer(restrito));
+      expect(daLoja1.status, JSON.stringify(daLoja1.body)).toBe(200);
+      expect(Number(daLoja1.body.produtos[0].precoVendaLoja)).toBe(3.39);
+      const daLoja2 = await amb.http().get(url(loja2)).set(bearer(restrito));
+      expect(daLoja2.status).toBe(200);
+      expect(daLoja2.body.produtos).toHaveLength(1);
+      expect(daLoja2.body.produtos[0].precoVendaLoja).toBeNull();
+      const peloAdmin = await amb.http().get(url(loja2)).set(bearer(admin));
+      expect(Number(peloAdmin.body.produtos[0].precoVendaLoja)).toBe(3.29);
+    }
+  });
+
+  it('excluir o mix com faixa de loja oculta → 403 e nada muda; sem ela, exclui', async () => {
+    const criar = (nome: string, faixas: unknown[]) =>
+      amb
+        .http()
+        .post('/api/grupos-preco-quantidade')
+        .set(bearer(admin))
+        .send({ nome, modoPreco: 'grupo', faixas, produtos: [] });
+    const comLoja2 = await criar('MIX COM LOJA 2', [
+      { lojaId: null, quantidadeInicial: '12', quantidadeFinal: null, preco: '2,99' },
+      { lojaId: loja2, quantidadeInicial: '24', quantidadeFinal: null, preco: '2,79' },
+    ]);
+    expect(comLoja2.status, JSON.stringify(comLoja2.body)).toBe(201);
+    const negado = await amb
+      .http()
+      .delete(`/api/grupos-preco-quantidade/${comLoja2.body.id}`)
+      .set(bearer(restrito));
+    expect(negado.status).toBe(403);
+    expect(negado.body.codigo).toBe('SEM_PERMISSAO');
+    const [vivo] = await consultar<{ grupo: boolean; faixas: number }>(
+      emp.nomeBanco,
+      `select (select excluido_em is null from grupos_preco_quantidade where id = $1) as grupo,
+              (select count(*)::int from grupos_preco_quantidade_faixas
+                where grupo_id = $1 and excluido_em is null) as faixas`,
+      [comLoja2.body.id],
+    );
+    expect(vivo).toEqual({ grupo: true, faixas: 2 });
+    const semLoja2 = await criar('MIX LOJA 1', [
+      { lojaId: null, quantidadeInicial: '12', quantidadeFinal: null, preco: '2,99' },
+      { lojaId: loja1, quantidadeInicial: '24', quantidadeFinal: null, preco: '2,79' },
+    ]);
+    expect(semLoja2.status, JSON.stringify(semLoja2.body)).toBe(201);
+    const ok = await amb
+      .http()
+      .delete(`/api/grupos-preco-quantidade/${semLoja2.body.id}`)
+      .set(bearer(restrito));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(204);
+    // Quem tem a loja 2 exclui o primeiro.
+    expect(
+      (await amb.http().delete(`/api/grupos-preco-quantidade/${comLoja2.body.id}`).set(bearer(admin))).status,
+    ).toBe(204);
+  });
+
+  it('excluir o produto com preço ou faixa de loja oculta → 403; só com as lojas permitidas, exclui', async () => {
+    const criar = (nome: string, extra: Record<string, unknown>) =>
+      amb
+        .http()
+        .post('/api/produtos')
+        .set(bearer(admin))
+        .send({ nome, unidadeId: un, precoVenda: '5', ...extra });
+    const comPreco = await criar('PROD PRECO LOJA 2', { lojas: [{ lojaId: loja2, precoVenda: '4,90' }] });
+    const comFaixa = await criar('PROD FAIXA LOJA 2', {
+      precosQuantidade: [{ lojaId: loja2, quantidadeInicial: '6', quantidadeFinal: null, preco: '4,50' }],
+    });
+    const daLoja1 = await criar('PROD SO LOJA 1', {
+      lojas: [{ lojaId: loja1, precoVenda: '4,80' }],
+      precosQuantidade: [{ lojaId: null, quantidadeInicial: '6', quantidadeFinal: null, preco: '4,50' }],
+    });
+    for (const r of [comPreco, comFaixa, daLoja1]) expect(r.status, JSON.stringify(r.body)).toBe(201);
+    for (const r of [comPreco, comFaixa]) {
+      const negado = await amb.http().delete(`/api/produtos/${r.body.id}`).set(bearer(restrito));
+      expect(negado.status).toBe(403);
+      const [p] = await consultar<{ vivo: boolean }>(
+        emp.nomeBanco,
+        'select excluido_em is null as vivo from produtos where id = $1',
+        [r.body.id],
+      );
+      expect(p!.vivo).toBe(true);
+    }
+    const ok = await amb.http().delete(`/api/produtos/${daLoja1.body.id}`).set(bearer(restrito));
+    expect(ok.status, JSON.stringify(ok.body)).toBe(204);
+    expect((await amb.http().delete(`/api/produtos/${comPreco.body.id}`).set(bearer(admin))).status).toBe(
+      204,
+    );
+  });
+
+  it('linha de loja excluída não é loja oculta: o restrito exclui o produto e o mix', async () => {
+    // A exclusão da loja não apaga o preço, o estoque mínimo nem as faixas dela (ficam vivos no banco).
+    const loja3 = await criarLoja(emp.nomeBanco, 3, 'Loja 3');
+    const produto = await amb
+      .http()
+      .post('/api/produtos')
+      .set(bearer(admin))
+      .send({
+        nome: 'PROD LOJA 3 FECHADA',
+        unidadeId: un,
+        precoVenda: '5',
+        lojas: [
+          { lojaId: loja1, precoVenda: '4,80' },
+          { lojaId: loja3, precoVenda: '4,70', estoqueMinimo: '5' },
+        ],
+        precosQuantidade: [{ lojaId: loja3, quantidadeInicial: '6', quantidadeFinal: null, preco: '4,40' }],
+      });
+    expect(produto.status, JSON.stringify(produto.body)).toBe(201);
+    const mix = await amb
+      .http()
+      .post('/api/grupos-preco-quantidade')
+      .set(bearer(admin))
+      .send({
+        nome: 'MIX LOJA 3 FECHADA',
+        modoPreco: 'grupo',
+        faixas: [{ lojaId: loja3, quantidadeInicial: '12', quantidadeFinal: null, preco: '2,79' }],
+        produtos: [],
+      });
+    expect(mix.status, JSON.stringify(mix.body)).toBe(201);
+    // Com a loja 3 viva, ela é oculta para o restrito.
+    expect((await amb.http().delete(`/api/produtos/${produto.body.id}`).set(bearer(restrito))).status).toBe(
+      403,
+    );
+    const fechou = await amb.http().delete(`/api/lojas/${loja3}`).set(bearer(admin));
+    expect(fechou.status, JSON.stringify(fechou.body)).toBe(204);
+    const [vivas] = await consultar<{ precos: number; faixas: number; mix: number }>(
+      emp.nomeBanco,
+      `select (select count(*)::int from produtos_lojas where loja_id = $1 and excluido_em is null) as precos,
+              (select count(*)::int from produtos_precos_quantidade where loja_id = $1 and excluido_em is null) as faixas,
+              (select count(*)::int from grupos_preco_quantidade_faixas where loja_id = $1 and excluido_em is null) as mix`,
+      [loja3],
+    );
+    expect(vivas).toEqual({ precos: 1, faixas: 1, mix: 1 });
+    const okProduto = await amb.http().delete(`/api/produtos/${produto.body.id}`).set(bearer(restrito));
+    expect(okProduto.status, JSON.stringify(okProduto.body)).toBe(204);
+    const okMix = await amb
+      .http()
+      .delete(`/api/grupos-preco-quantidade/${mix.body.id}`)
+      .set(bearer(restrito));
+    expect(okMix.status, JSON.stringify(okMix.body)).toBe(204);
+  });
+});
+
+describe('auditoria de usuário, login e sessão com lojas restritas (decisões 92 e 207)', () => {
+  let leitor: { id: string; token: string };
+  let master2: { id: string; token: string };
+  let daLoja1: string;
+  let daLoja2: string;
+  let outroMaster: string;
+  // Período explícito (ontem, calculado antes de gravar): sem `de` nem `registro_id` a rota abre em "hoje" no fuso de
+  // São Paulo, e uma execução que passasse da meia-noite entre a gravação e a consulta perderia as linhas.
+  let de: string;
+  const auditoria = (token: string, query: string) =>
+    amb.http().get(`/api/auditoria?tamanho=50&de=${de}&${query}`).set(bearer(token));
+
+  beforeAll(async () => {
+    de = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    // O "Administrador" padrão (auditoria.ver e usuarios.ver) só na loja 1.
+    leitor = await usuarioCom('admloja1', 'administrador', [loja1]);
+    // Um segundo Master grava os cadastros (o limite de hashes do teste é por usuário).
+    await criarUsuario(emp.nomeBanco, { login: 'master2', master: true });
+    master2 = {
+      id: (
+        await consultar<{ id: string }>(emp.nomeBanco, "select id from usuarios where login = 'master2'")
+      )[0]!.id,
+      token: await amb.entrar(emp.codigo, 'master2', SENHA_TESTE),
+    };
+    const [vendedor] = await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "select id from perfis where chave_sistema = 'vendedor'",
+    );
+    const perfilId = vendedor!.id;
+    const criar = async (corpo: Record<string, unknown>) => {
+      const r = await amb.http().post('/api/usuarios').set(bearer(master2.token)).send(corpo);
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return r.body.usuario.id as string;
+    };
+    daLoja2 = await criar({
+      nome: 'Ciclano Teste',
+      login: 'ciclanoteste',
+      perfilId,
+      cpf: '11144477735',
+      telefone: '11911112222',
+      observacoes: 'obs-da-loja-2',
+      lojas: [loja2],
+    });
+    outroMaster = await criar({
+      nome: 'Master Teste',
+      login: 'masterteste',
+      master: true,
+      observacoes: 'obs-master',
+    });
+    daLoja1 = await criar({
+      nome: 'Beltrano Teste',
+      login: 'beltranoteste',
+      perfilId,
+      observacoes: 'obs-da-loja-1',
+      lojas: [loja1],
+    });
+    // A linha de sessão encerrada (reuso do refresh) do Master, gravada pelo sistema.
+    await consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, usuario_id, entidade, registro_id, acao, descricao)
+       values (gen_random_uuid(), now(), 'sistema', $1, 'sessoes_usuario', gen_random_uuid(), 'logout', 'Sessões encerradas')`,
+      [master2.id],
+    );
+    // As sessões encerradas do próprio leitor e do usuário da loja 1: o `registro_id` é a sessão, o usuário é o dono.
+    for (const [dono, descricao] of [
+      [leitor.id, 'sessao-do-leitor'],
+      [daLoja1, 'sessao-da-loja-1'],
+    ] as const) {
+      await consultar(
+        emp.nomeBanco,
+        `insert into auditoria (id, ocorrido_em, origem, usuario_id, entidade, registro_id, acao, descricao)
+         values (gen_random_uuid(), now(), 'sistema', $1, 'sessoes_usuario', gen_random_uuid(), 'logout', $2)`,
+        [dono, descricao],
+      );
+    }
+    // Uma linha de login do Master com a loja 1 preenchida e o login negado de um login inexistente (sem usuário).
+    await consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, usuario_id, loja_id, entidade, registro_id, acao, descricao)
+       values (gen_random_uuid(), now(), 'erp', $1, $2, 'login', $1, 'login', 'login-master-na-loja-1'),
+              (gen_random_uuid(), now(), 'erp', null, null, 'login', null, 'login_negado', 'login-inexistente')`,
+      [master2.id, loja1],
+    );
+  });
+
+  it('o cadastro de usuário só de outra loja ou Master não aparece; o da própria loja e o próprio, sim', async () => {
+    for (const alvo of [daLoja2, outroMaster]) {
+      const r = await auditoria(leitor.token, `entidade=usuarios&registro_id=${alvo}`);
+      expect(r.status).toBe(200);
+      expect(r.body.itens).toEqual([]);
+      expect(r.body.total).toBe(0);
+      const doMaster = await auditoria(master2.token, `entidade=usuarios&registro_id=${alvo}`);
+      expect(doMaster.body.itens.length).toBeGreaterThan(0);
+    }
+    const daMesmaLoja = await auditoria(leitor.token, `entidade=usuarios&registro_id=${daLoja1}`);
+    expect(daMesmaLoja.body.itens.length).toBeGreaterThan(0);
+    expect(JSON.stringify(daMesmaLoja.body.itens)).toContain('obs-da-loja-1');
+    const proprio = await auditoria(leitor.token, `entidade=login&registro_id=${leitor.id}`);
+    expect(proprio.body.itens.length).toBeGreaterThan(0);
+  });
+
+  it('login e sessão do Master não aparecem; o filtro de quem fez traz só o que é visível', async () => {
+    const login = await auditoria(leitor.token, `entidade=login&usuario_id=${master2.id}`);
+    expect(login.status).toBe(200);
+    expect(login.body.itens).toEqual([]);
+    const sessao = await auditoria(leitor.token, `entidade=sessoes_usuario&usuario_id=${master2.id}`);
+    expect(sessao.body.itens).toEqual([]);
+    const tudo = await auditoria(leitor.token, `usuario_id=${master2.id}`);
+    expect(tudo.status).toBe(200);
+    const texto = JSON.stringify(tudo.body.itens);
+    expect(texto).not.toContain('obs-da-loja-2');
+    expect(texto).not.toContain('obs-master');
+    expect(texto).not.toContain('11144477735');
+    // Só a linha do usuário da loja 1 (que o Master criou) sobra.
+    expect((tudo.body.itens as Array<{ registroId: string }>).map((i) => i.registroId)).toEqual([daLoja1]);
+    const doMaster = await auditoria(master2.token, `usuario_id=${master2.id}`);
+    const entidades = new Set((doMaster.body.itens as Array<{ entidade: string }>).map((i) => i.entidade));
+    expect([...entidades].sort()).toEqual(['login', 'sessoes_usuario', 'usuarios']);
+  });
+
+  it('a sessão vale pelo dono dela: a do próprio e a do usuário da loja aparecem', async () => {
+    for (const [dono, descricao] of [
+      [leitor.id, 'sessao-do-leitor'],
+      [daLoja1, 'sessao-da-loja-1'],
+    ] as const) {
+      const r = await auditoria(leitor.token, `entidade=sessoes_usuario&usuario_id=${dono}`);
+      expect(r.status).toBe(200);
+      expect((r.body.itens as Array<{ descricao: string }>).map((i) => i.descricao)).toEqual([descricao]);
+    }
+  });
+
+  it('login de usuário não visível com loja na linha e login de login inexistente: só quem vê todas as lojas', async () => {
+    const descricoes = async (token: string) => {
+      const r = await auditoria(token, 'entidade=login&texto=login-');
+      expect(r.status).toBe(200);
+      return (r.body.itens as Array<{ descricao: string }>).map((i) => i.descricao).sort();
+    };
+    expect(await descricoes(leitor.token)).toEqual([]);
+    expect(await descricoes(master2.token)).toEqual(['login-inexistente', 'login-master-na-loja-1']);
   });
 });

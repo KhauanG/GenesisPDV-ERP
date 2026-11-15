@@ -1,6 +1,6 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import { limiteDeslocamento, ORIGENS_AUDITORIA, paginacaoQuerySchema, type Pagina } from '@genesis/shared';
-import { and, count, desc, eq, gte, ilike, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, ilike, isNull, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
@@ -10,6 +10,7 @@ import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { auditoria } from '../database/empresa/auditoria.js';
 import type { Servicos } from '../servicos.js';
+import { usuarioVisivel } from '../usuarios/usuarios.controller.js';
 import { redigirParaVisao } from './mascarar.js';
 
 /** Fuso usado para "hoje" e para datas sem hora nos filtros (o da maioria das lojas; ERP 1.5). */
@@ -38,6 +39,25 @@ function limite(valor: string, fimDoDia: boolean): SQL {
   return sql`${valor}::timestamptz`;
 }
 
+/**
+ * Entidades cujas linhas descrevem um usuário (o cadastro, o login e as sessões do ERP): para quem tem lojas
+ * restritas, valem as regras da decisão 92 — a linha só aparece se o usuário dela é visível (`usuarioVisivel`), com
+ * ou sem loja na linha. O usuário da linha é o `registro_id` (o id do usuário em `usuarios` e `login`) ou, na falta
+ * dele, quem fez a ação; em `sessoes_usuario` o `registro_id` é a sessão, e o usuário é o dono dela (`usuario_id`).
+ */
+export const ENTIDADES_AUDITORIA_DE_USUARIO = ['usuarios', 'login', 'sessoes_usuario'] as const;
+
+/** Condição da decisão 92 nas linhas de usuário (`undefined` = sem restrição). */
+export function usuarioDaLinhaVisivel(sessao: SessaoErp): SQL | undefined {
+  if (sessao.lojas === null) return undefined;
+  const usuarioDaLinha = sql`(case when ${auditoria.entidade} = 'sessoes_usuario' then ${auditoria.usuarioId}
+    else coalesce(${auditoria.registroId}, ${auditoria.usuarioId}) end)`;
+  return or(
+    notInArray(auditoria.entidade, [...ENTIDADES_AUDITORIA_DE_USUARIO]),
+    usuarioVisivel(sessao, usuarioDaLinha),
+  );
+}
+
 /** Histórico de um registro / tela de auditoria (ERP 1.8, 17.3). */
 @Controller('auditoria')
 export class AuditoriaController {
@@ -52,7 +72,8 @@ export class AuditoriaController {
     const q = validar(filtroSchema, query);
     const { limite: lim, deslocamento } = limiteDeslocamento(q);
     if (q.loja_id) garantirLoja(sessao, q.loja_id);
-    // ERP 2.1: linhas de loja só das lojas permitidas; linhas sem loja (cadastros globais, login) são de todos.
+    // ERP 2.1: linhas de loja só das lojas permitidas; linhas sem loja (cadastros globais) são de todos, menos as de
+    // usuário, login e sessão, que seguem a visibilidade do usuário (decisão 92; `usuarioDaLinhaVisivel`).
     const lojas = filtroLojas(sessao, auditoria.lojaId);
     // Sem período nem registro, a tela abre em "hoje" (ERP 17.3) e a consulta só toca a partição do mês.
     const de = q.de
@@ -63,6 +84,7 @@ export class AuditoriaController {
     const texto = q.texto?.replace(/[\\%_]/g, (c) => `\\${c}`);
     const onde = and(
       lojas ? or(isNull(auditoria.lojaId), lojas) : undefined,
+      usuarioDaLinhaVisivel(sessao),
       de ? gte(auditoria.ocorridoEm, de) : undefined,
       q.ate ? lt(auditoria.ocorridoEm, limite(q.ate, true)) : undefined,
       q.usuario_id ? eq(auditoria.usuarioId, q.usuario_id) : undefined,

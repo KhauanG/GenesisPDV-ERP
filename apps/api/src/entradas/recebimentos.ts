@@ -627,8 +627,8 @@ export async function estornarRecebimento(
  * preenche o fator), se o produto pede lote ou já tem lote cadastrado (a grade mostra Lote e Validade), o saldo e o
  * custo médio no estoque × tipo de destino (a base `custo_medio` do markup) e as duas chaves que decidem a base do
  * markup (D49), e o preço de venda próprio da loja destinatária (o "preço atual" da proposta e da pergunta
- * geral/loja/não). O custo médio só com `produtos.ver_custo`; o saldo só de estoque visível (fora dele, `null`). Produto
- * inexistente ou excluído não volta (a tela já o tem pela busca).
+ * geral/loja/não). O custo médio só com `produtos.ver_custo`; o saldo só de estoque visível e o preço da loja só de loja
+ * permitida (fora deles, `null`). Produto inexistente ou excluído não volta (a tela já o tem pela busca).
  */
 export async function dadosCompraProdutos(
   db: DbEmpresa,
@@ -636,6 +636,8 @@ export async function dadosCompraProdutos(
   sessao: SessaoErp,
 ): Promise<DadosCompraProdutos> {
   const ids = lista(q.produtoIds);
+  // O preço próprio só de loja permitida (decisões 88 e 207): fora delas, nulo, como o saldo do estoque não visível.
+  const lojaId = q.lojaId && lojaPermitida(sessao, q.lojaId) ? q.lojaId : null;
   const visivel = q.estoqueId ? estoqueVisivel(sessao, sql`e.id`) : undefined;
   const { rows: est } = q.estoqueId
     ? await db.execute<{ id: string }>(sql`
@@ -653,7 +655,7 @@ export async function dadosCompraProdutos(
                       and (pl.estoque_id is null or pl.estoque_id = ${estoqueId}::uuid)) as tem_lotes,
            s.quantidade::text as saldo, s.custo_medio::text as custo_medio,
            (select pl.preco_venda::text from produtos_lojas pl
-             where pl.produto_id = p.id and pl.loja_id = ${q.lojaId ?? null}::uuid and pl.excluido_em is null
+             where pl.produto_id = p.id and pl.loja_id = ${lojaId}::uuid and pl.excluido_em is null
              limit 1) as preco_loja
       from produtos p
       left join saldos_estoque s on s.produto_id = p.id and s.variacao_id is null

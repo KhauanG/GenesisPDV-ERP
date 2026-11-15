@@ -1319,7 +1319,7 @@ Regras:
 |---|---|
 | EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório (16.3.1) e filtro "EAN duplicado" sempre disponíveis |
 | Alteração de preço | Grava auditoria com antes/depois e alimenta o histórico de preços (`produtos_historico_precos`: produto, loja, tipo de preço, valor anterior, novo, usuário, data) **(Novo)** |
-| Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV |
+| Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV. Quem tem lojas restritas não exclui o produto que tem preço, estoque mínimo ou faixa de uma loja fora das permitidas (403; a de loja excluída não conta; inativar continua possível — README da API › decisão 207) |
 | Sincronização | Segue o **modelo 6.2** (fluxo `catalogo`): descem **todos** os produtos, ativos e inativos (o PDV filtra `ativo` e `produtos_lojas.ativo_na_loja`), com as filhas (`produtos_codigos_barras`, variações, componentes, complementos, lotes…), `produtos_lojas` e `produtos_precos_quantidade` da loja do terminal, sem custo, markup, `descricao_longa`, preços de menu digital/iFood e dimensões; foto como `foto_url`. O saldo vai no fluxo `estoque` (`saldos_estoque` do estoque vinculado, tipos vendáveis) |
 | Cadastro mínimo | Para vender no PDV: nome, unidade, preço de venda > 0; para loja com NFC-e: + NCM válido, CFOP, situação ICMS/PIS/COFINS e origem |
 
@@ -1658,7 +1658,10 @@ Produzido; unidade não fracionável e igual à dos demais membros; um produto p
 produto que já está em outro grupo pede confirmação e o move). Botão **Simular**: quantidades de exemplo por produto →
 preço de cada linha pela regra do PDV 11.3 (mesmo código de `packages/shared`).
 
-Regras: alterações auditadas; excluir o grupo desvincula os produtos na mesma transação; descem ao PDV no fluxo
+Regras: alterações auditadas; excluir o grupo desvincula os produtos na mesma transação (com faixa de uma loja fora
+das lojas permitidas de quem exclui, a exclusão é recusada, como a troca para o modo `produto`; faixa de loja excluída
+não conta; README da API ›
+decisões 88 e 207); descem ao PDV no fluxo
 `catalogo` (grupos: todos; faixas: loja nula ou do terminal — modelo 6.2). **Entidades**: `grupos_preco_quantidade`,
 `grupos_preco_quantidade_faixas`, `produtos`. **API**: `/api/grupos-preco-quantidade`.
 
@@ -4673,6 +4676,12 @@ escolhida.
 | Exportar | Excel |
 
 O botão **Histórico** de cada formulário abre a mesma visão filtrada pelo registro (incluindo as sub-coleções).
+
+**Quem tem lojas restritas** vê as linhas das lojas permitidas e as sem loja (cadastros da empresa), redigidas pelo
+que o cadastro esconderia (salário, custo, linhas de outras lojas). As linhas de **usuário, login e sessão do ERP**
+(`usuarios`, `login`, `sessoes_usuario`) seguem a visibilidade do usuário (11.1): só aparecem se o usuário da linha é
+visível para quem consulta (com alguma loja em comum, sem loja nenhuma e não Master, ou o próprio). O Master e os
+usuários só de outras lojas ficam de fora, inclusive o login e a sessão deles (README da API › decisão 207).
 
 ---
 

@@ -64,7 +64,7 @@ import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comu
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
-import { lojaPermitida } from '../autorizacao/lojas.js';
+import { daEmpresaOuLojaViva, garantirSemLojaOculta, lojaPermitida } from '../autorizacao/lojas.js';
 import {
   lojas,
   marcas,
@@ -689,6 +689,34 @@ export class ProdutosController {
           .where(and(eq(produtos.id, id), isNull(produtos.excluidoEm)))
           .for('update');
         if (!linha) throw ErroApi.naoEncontrado('Produto não encontrado.');
+        // Os dados de loja (preço, estoque mínimo, faixas) saem com o produto: com linha viva de loja fora das
+        // permitidas, só quem tem acesso a ela exclui (decisão 207; a gravação as preserva, decisão 88).
+        // As linhas de loja excluída não contam (`daEmpresaOuLojaViva`).
+        const daLoja = await tx
+          .select({ lojaId: produtosLojas.lojaId })
+          .from(produtosLojas)
+          .where(
+            and(
+              eq(produtosLojas.produtoId, id),
+              isNull(produtosLojas.excluidoEm),
+              daEmpresaOuLojaViva(produtosLojas.lojaId),
+            ),
+          );
+        const faixas = await tx
+          .select({ lojaId: produtosPrecosQuantidade.lojaId })
+          .from(produtosPrecosQuantidade)
+          .where(
+            and(
+              eq(produtosPrecosQuantidade.produtoId, id),
+              isNull(produtosPrecosQuantidade.excluidoEm),
+              daEmpresaOuLojaViva(produtosPrecosQuantidade.lojaId),
+            ),
+          );
+        garantirSemLojaOculta(
+          sessao,
+          [...daLoja, ...faixas].map((l) => l.lojaId),
+          'O produto tem preço, estoque mínimo ou faixa de lojas fora das suas lojas permitidas: só quem tem acesso a elas pode excluí-lo.',
+        );
         if (await saldoNaoZero(tx, id)) {
           throw new ErroApi(
             'REGRA_NEGOCIO',

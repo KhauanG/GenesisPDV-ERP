@@ -433,7 +433,7 @@ Divergências e lacunas encontradas nos documentos (precedência ADR > MD > SYNC
     na 0003); o catálogo único é `ACOES_AUDITORIA` em `@genesis/shared` (MD 3.1.7 + ERP 17.1 + `segredo_entregue`,
     `token_anterior_reutilizado` do MD 1.10/2.4) e a API recusa ação fora dele — inclusive as que chegam do PDV em
     `auditoria.registros`. `GET /api/auditoria`: linhas com `loja_id` só das lojas permitidas (as sem loja, para todos
-    com `auditoria.ver`); filtros de período (padrão: hoje, no fuso `America/Sao_Paulo`, para a consulta tocar só a
+    com `auditoria.ver`, menos as de usuário, login e sessão, que seguem a decisão 92 — decisão 207); filtros de período (padrão: hoje, no fuso `America/Sao_Paulo`, para a consulta tocar só a
     partição do mês — o histórico de um registro, com `registro_id`, não tem período padrão), usuário, entidade, ação,
     origem, loja e texto. Partições de 3 meses atrás a 12 meses à frente na
     migração; `db:particoes`/pós-migração mantêm 12 à frente; não há partição "default" (linha fora da faixa falha
@@ -869,7 +869,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
 88. **Linhas de outras lojas no produto e no mix** (ERP 8.2.9, 8.2.10, 8.10). O detalhe (`GET /produtos/:id`,
     `GET /grupos-preco-quantidade/:id` e o resumo da listagem) **não mostra** `produtos_lojas` nem faixas de lojas fora
     das permitidas; a gravação as **preserva** (só remove o que é da loja permitida ou sem loja) e enviá-las dá 403.
-    Mudar o grupo para o modo "por produto" (que apaga todas as faixas) com faixa oculta → 403. A regra de alterar
+    Mudar o grupo para o modo "por produto" (que apaga todas as faixas) com faixa oculta → 403; excluir o grupo ou o
+    produto com linha de loja oculta também (decisão 207). A regra de alterar
     preço compara só as faixas visíveis. Testes: "o detalhe esconde a loja 2…" e "mix: faixa da loja 2…".
 89. **Estoques permitidos** (ERP 2.1 "Estoques permitidos"). `usuarios_estoques` segue a regra das lojas
     (`resolverLojas`): o editor só concede/retira estoques que enxerga (`estoqueVisivel`; estoque fora dos estoques
@@ -896,7 +897,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
 92. **Usuários são dados da loja** (LGPD; ERP 11.1). Para quem tem lojas restritas, `GET /usuarios`, `/exportar`,
     `GET /usuarios/:id` e `/:id/permissoes` mostram só os usuários com alguma loja em comum, os sem loja (não Master) e
     o próprio; Master e usuários só de outras lojas ficam ocultos (404 no detalhe). As gravações já exigiam o alvo
-    subordinado. Teste: "restrito à loja 1 não lista…".
+    subordinado. Teste: "restrito à loja 1 não lista…". A auditoria de usuário, login e sessão segue a mesma regra
+    (decisão 207).
 93. **Limites de recurso do processo** (o processo é de todas as empresas). Semáforo global para o argon2
     (`ARGON2_CONCORRENCIA`, 4: o PIN usa 64 MiB) e para a leitura de planilha (`PLANILHA_CONCORRENCIA`, 2); limite por
     usuário e por minuto nas rotas que geram hash fora do login (`PUT /usuarios/:id/pin`, senha do cliente em
@@ -6562,6 +6564,49 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        tentativa sem mudança deixa só o link novo, que vale; o pedido anterior a uma senha provisória não gera link), `auth.test.ts` (logout com o cookie de antes da rotação encerra a sucessora;
        o logout que chega durante a rotação, com a linha travada por outra conexão, espera e encerra a sucessora) e
        `plataforma.test.ts` (o logout com o cookie de antes da rotação, na plataforma).
+
+207. **Escopo de loja dentro da empresa: auditoria de usuário, preço da loja nos dados de compra e exclusões com linha
+     de loja oculta** (PR-15, SEG-B07; ERP 2.1, 8.2, 8.10, 11.1 e 17.3; decisões 15, 87, 88 e 92;
+     `src/auditoria/auditoria.controller.ts`, `src/entradas/recebimentos.ts`, `src/produtos/grupos-preco.controller.ts`,
+     `src/produtos/produtos.controller.ts`, `src/autorizacao/lojas.ts`).
+     - **Auditoria de usuário, login e sessão segue a decisão 92**: para quem tem lojas restritas, as linhas de
+       `usuarios`, `login` e `sessoes_usuario` (`ENTIDADES_AUDITORIA_DE_USUARIO`) só saem de `GET /api/auditoria` se o
+       usuário da linha é visível (`usuarioVisivel`: alguma loja em comum, sem loja e não Master, ou o próprio), com ou
+       sem `loja_id` na linha. O usuário da linha é o `registro_id` (em `usuarios` e `login` é o id do usuário) ou, sem
+       ele, quem fez a ação (a exportação da lista de usuários); em `sessoes_usuario` o `registro_id` é a sessão e vale o
+       dono dela (`usuario_id`). O login negado de um login inexistente (sem usuário nenhum) fica só para quem vê todas
+       as lojas. A visibilidade é a de hoje (as lojas atuais do usuário, como na lista de usuários): o histórico de quem
+       passou a ter uma loja em comum aparece inteiro. As outras linhas sem loja continuam para todos com `auditoria.ver` (decisão 15), com a redação pela
+       visão do leitor (`redigirParaVisao`); a condição vale na página e no total. Quem vê todas as lojas não muda.
+     - **Dados de compra só com o preço de loja permitida**: `dadosCompraProdutos` (`GET /recebimentos/dados-produtos` e
+       `/notas-entrada/dados-produtos`) usa a `lojaId` pedida só se ela está entre as lojas permitidas
+       (`lojaPermitida`); fora delas, `precoVendaLoja` sai `null`, como o saldo de estoque não visível. A tela só oferece
+       as lojas permitidas, então o uso normal não muda.
+     - **Excluir o registro da empresa que leva linhas de uma loja exige acesso a todas elas**
+       (`garantirSemLojaOculta`): `DELETE /grupos-preco-quantidade/:id` com faixa viva de loja fora das permitidas → 403
+       antes de desvincular ou excluir qualquer coisa (a mesma regra da troca para o modo "por produto", decisão 88), e
+       `DELETE /produtos/:id` com linha viva de `produtos_lojas` (preço, estoque mínimo, ST retido, ativo na loja) ou faixa
+       de `produtos_precos_quantidade` de loja fora das permitidas → 403 (a gravação já as preservava; inativar o
+       produto continua possível). Linhas sem loja seguem a decisão 87 (da empresa). As linhas de **loja excluída** não
+       contam (`daEmpresaOuLojaViva`): a exclusão da loja não apaga os preços, o estoque mínimo nem as faixas dela, e
+       `sessao.lojas` nunca traz loja excluída, então a loja apagada seria para sempre uma "loja oculta" que nenhum
+       restrito tem (e que nem o detalhe mostraria). Conferidas também as outras rotas
+       que recebem uma loja (`lojaId`/`loja`) ou excluem um pai com filhos por loja: formas de pagamento, restrições de
+       horário, configurações, terminais e caixas, prontidão, envio de arquivos, histórico de preços, importação,
+       exportação, cadastro em massa, sugestão de reposição, listagens de recebimentos e NF-e (filtro sobre o que já é
+       visível) já conferiam; nenhuma outra precisou de mudança.
+     - Sem migração, sem contrato novo e sem mudança no PDV (nada disso desce ao caixa nem muda o protocolo). Testes
+       (`test/integracao/revisao-acesso.test.ts`): o administrador restrito à loja 1 não vê pela auditoria o cadastro do
+       usuário só da loja 2 nem o do Master (página e total vazios), nem o login e a sessão do Master, e o filtro por
+       quem fez traz só a linha do usuário da loja 1 (o Master vê tudo); vê o próprio login e o usuário da própria loja;
+       os dados de compra pelas duas rotas dão o preço da loja 1 e `null` para a loja 2 (o Master vê o da loja 2);
+       excluir o mix com faixa da loja 2 → 403, com o grupo e as faixas intactos, e sem ela → 204; excluir o produto com
+       preço ou faixa da loja 2 → 403 e o produto intacto, e o só com a loja 1 e faixa geral → 204; com preço, estoque
+       mínimo e faixas de uma loja 3 que depois é excluída (as linhas continuam vivas), o restrito exclui o produto e o
+       mix (204). Na auditoria, a sessão vale pelo dono dela (a do próprio leitor e a do usuário da loja 1 aparecem, com
+       `registro_id` de sessão); a linha de login do Master com a loja 1 preenchida e o login negado de um login
+       inexistente não aparecem para o restrito, e o Master vê as duas. As consultas do teste passam um período
+       explícito (`de` = ontem, calculado antes de gravar), para não depender do "hoje" do relógio.
 
 ### Operação – tarefas em segundo plano (API)
 
