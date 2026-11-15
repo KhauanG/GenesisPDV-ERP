@@ -600,7 +600,10 @@ Limite de 5 tentativas erradas por IP em 10 minutos (bloqueio de 30 min).
 | `sucesso` | `boolean` | não | — | |
 | `motivo_falha` | `varchar(40)` | sim | — | `codigo_invalido`, `expirado`, `empresa_inativa`, `limite_plano`, `ip_bloqueado` |
 
-- `ix_tentativas_ativacao_ip_criado_em (ip, criado_em)`. Retenção: 30 dias.
+- `ix_tentativas_ativacao_ip_criado_em (ip, criado_em)` (bloqueio por IP), `ix_tentativas_ativacao_codigo_empresa_criado_em
+  (codigo_empresa, criado_em)` (bloqueio do código da empresa) e `ix_tentativas_ativacao_criado_em (criado_em)` (limite
+  global, manutenção e purga). Retenção: 30 dias (a manutenção dos terminais apaga as mais antigas). O IP já bloqueado
+  grava no máximo uma linha `ip_bloqueado` por janela de 30 min (README da API › decisão 213).
 
 ### 2.7 `versoes_app_pdv`
 

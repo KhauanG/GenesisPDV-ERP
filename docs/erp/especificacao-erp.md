@@ -428,6 +428,11 @@ alguma permissão que cria tarefa (exportar relatório, importar produtos/client
 faixa do PDV). A tela que pediu a tarefa (Importação, upload de NF-e, exportação do relatório) acompanha a dela até
 terminar, com o mesmo componente de andamento.
 
+Toda tarefa confere de novo, ao rodar, o acesso de quem a pediu (o do momento, não o do pedido): o usuário desativado
+ou excluído, ou que perdeu a permissão ou a loja exigida pela ação, faz a tarefa terminar `falhou` com o motivo, sem
+gravar nada com o acesso antigo (importações, NF-e em lote, exportação e, desde o PR-15, o "Reprocessar todos com o
+código" e a continuação da lacuna recuperada do PDV; README da API › decisão 213).
+
 ### 3.7 Impressão
 
 Na Fase 2 (padrão do plano, sem o motor de PDF na API), a folha de contagem (13.5), o espelho do recebimento (13.3),

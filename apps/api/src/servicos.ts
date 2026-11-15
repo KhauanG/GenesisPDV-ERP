@@ -204,7 +204,7 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     trabalhoPorEmpresas(FILAS.manutencaoTerminais, () => manutencaoTerminais.executar()),
   );
   fila.agendar(FILAS.manutencaoTerminais, CRON_MANUTENCAO_TERMINAIS);
-  const filaDecisao = new FilaDecisao(tenancy, auditoria, tarefas);
+  const filaDecisao = new FilaDecisao(tenancy, auditoria, tarefas, permissoes);
   const expiracaoRelevancia = new ExpiracaoRelevancia(controle, resolvedor, tenancy);
   fila.registrar(
     FILAS.expiracaoRelevancia,

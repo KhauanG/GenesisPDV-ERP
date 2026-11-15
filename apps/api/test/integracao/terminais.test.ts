@@ -20,6 +20,7 @@ import {
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  conectar,
   consultar,
   criarAmbiente,
   criarLoja,
@@ -506,6 +507,61 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
 });
 
 describe('manutenção periódica (pg-boss schedule)', () => {
+  it('apaga as tentativas de ativação com mais de 30 dias e mantém as recentes', async () => {
+    const ips = ['10.7.7.1', '10.7.7.2', '10.7.7.3'];
+    await consultar(
+      amb.bancoControle,
+      `insert into tentativas_ativacao (ip, codigo_empresa, sucesso, motivo_falha, criado_em) values
+         ($1, 100001, false, 'codigo_invalido', now() - interval '31 days'),
+         ($2, 100001, true, null, now() - interval '45 days'),
+         ($3, 100001, false, 'codigo_invalido', now() - interval '29 days')`,
+      ips,
+    );
+    const m = await amb.servicos.manutencaoTerminais.executar();
+    expect(m.tentativasAtivacaoPurgadas).toBeGreaterThanOrEqual(2);
+    const restantes = await consultar<{ ip: string }>(
+      amb.bancoControle,
+      'select host(ip) as ip from tentativas_ativacao where host(ip) = any($1) order by ip',
+      [ips],
+    );
+    expect(restantes).toEqual([{ ip: '10.7.7.3' }]);
+    expect(
+      await consultar(
+        amb.bancoControle,
+        "select 1 from tentativas_ativacao where criado_em < now() - interval '30 days'",
+      ),
+    ).toEqual([]);
+  });
+
+  it('as consultas de bloqueio, do limite global e da purga têm índice pela janela de tempo', async () => {
+    const c = await conectar(amb.bancoControle);
+    try {
+      await c.query('begin');
+      // Tabela pequena no teste: sem varredura sequencial, o plano mostra qual índice serve cada consulta.
+      await c.query('set local enable_seqscan = off');
+      const plano = async (consulta: string) =>
+        (await c.query<{ 'QUERY PLAN': string }>(`explain ${consulta}`)).rows
+          .map((r) => r['QUERY PLAN'])
+          .join('\n');
+      expect(
+        await plano(`select count(*) from tentativas_ativacao t
+          where t.codigo_empresa = 100001 and not t.sucesso and t.criado_em > now() - interval '1 hour'`),
+      ).toMatch(/ix_tentativas_ativacao_codigo_empresa_criado_em/);
+      expect(
+        await plano(`select count(*) from tentativas_ativacao
+          where sucesso = false and criado_em > now() - interval '10 minutes'`),
+      ).toMatch(/ix_tentativas_ativacao_criado_em/);
+      expect(
+        await plano(
+          `select id from tentativas_ativacao where criado_em < now() - interval '30 days' limit 10`,
+        ),
+      ).toMatch(/ix_tentativas_ativacao_criado_em/);
+    } finally {
+      await c.query('rollback');
+      await c.end();
+    }
+  });
+
   it('código vencido → expirado; provisionando esquecido com a etapa feita → ativo; empresa alcança o controle', async () => {
     const { ativacaoId } = await gerarCodigo(loja1, caixas.l1c5!);
     await consultar(

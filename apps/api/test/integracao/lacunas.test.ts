@@ -536,6 +536,123 @@ describe('Lacuna recuperada (SYNC 8.6)', () => {
     expect((await pushOk(p, [ab])).resultados.map((x) => x.status)).toEqual(['duplicado']);
   });
 
+  it('quem liberou a recuperação e perdeu o acesso antes da tarefa: a continuação falha e os eventos ficam no ERP', async () => {
+    const p = await novoPonto();
+    const fiscal = await criarUsuario(emp.nomeBanco, {
+      login: `fiscal_continuacao_${p.terminal.slice(-6)}`,
+      perfil: 'supervisor_caixa',
+      lojas: [loja],
+    });
+    await consultar(
+      emp.nomeBanco,
+      'insert into usuarios_permissoes (usuario_id, permissao, efeito) values ($1, $2, $3)',
+      [fiscal, 'pdv.config.fiscal', 'conceder'],
+    );
+    const ab = abertura(p, 1);
+    const ev = evento(p, 'venda.finalizada', venda(p, 1), 2);
+    expect((await pushOk(p, [ev])).resultados.map((x) => x.status)).toEqual(['fora_de_ordem']);
+    expect((await pushOk(p, [], declarar(1, 1))).proxima).toBe(2);
+    expect((await pushOk(p, [ev])).resultados).toMatchObject([{ erro: { codigo: 'SESSAO_INEXISTENTE' } }]);
+
+    // A tarefa da continuação nasce no push, mas só roda quando o teste manda (o `agendar` fica parado aqui).
+    const tarefas = amb.servicos.tarefas;
+    const agendar = tarefas.agendar.bind(tarefas);
+    tarefas.agendar = async () => undefined;
+    try {
+      const com = await pushOk(p, [ab], { recuperar_lacuna: { de: 1, ate: 1, autorizado_por_id: fiscal } });
+      expect(com.resultados.map((x) => x.status)).toEqual(['aplicado']);
+    } finally {
+      tarefas.agendar = agendar;
+    }
+    const [tarefa] = await consultar<{ id: string }>(
+      emp.nomeBanco,
+      `select id from tarefas where tipo = 'reprocessar_apos_lacuna' and parametros ->> 'terminalId' = $1`,
+      [p.terminal],
+    );
+    await consultar(emp.nomeBanco, 'update usuarios set ativo = false where id = $1', [fiscal]);
+    await tarefas.executar(emp.empresaId, tarefa!.id);
+    const [fim] = await consultar<{ status: string; erro: string | null }>(
+      emp.nomeBanco,
+      'select status, erro from tarefas where id = $1',
+      [tarefa!.id],
+    );
+    expect(fim).toMatchObject({ status: 'falhou' });
+    expect(fim!.erro).toContain('não é um usuário ativo');
+    expect((await linhasDoTerminal(p))[1]).toMatchObject({
+      status: 'erro',
+      erro_codigo: 'SESSAO_INEXISTENTE',
+    });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select 1 from auditoria where acao = 'evento_reprocessado' and evento_id = $1`,
+        [ev.evento_id],
+      ),
+    ).toEqual([]);
+  });
+
+  it('o retido que chega depois de a tarefa da continuação nascer, preso à venda em erro da lacuna, também é aplicado', async () => {
+    const p = await novoPonto();
+    const ab = abertura(p, 1);
+    const ev = evento(p, 'venda.finalizada', venda(p, 1), 2);
+    expect((await pushOk(p, [ev])).resultados.map((x) => x.status)).toEqual(['fora_de_ordem']);
+    expect((await pushOk(p, [], declarar(1, 1))).proxima).toBe(2);
+    expect((await pushOk(p, [ev])).resultados).toMatchObject([{ erro: { codigo: 'SESSAO_INEXISTENTE' } }]);
+
+    // A tarefa nasce no push da recuperação e espera na fila (o `agendar` fica parado aqui); nesse meio tempo o
+    // push seguinte do caixa traz um evento que depende da venda ainda em erro, e ele fica retido.
+    const tarefas = amb.servicos.tarefas;
+    const agendar = tarefas.agendar.bind(tarefas);
+    tarefas.agendar = async () => undefined;
+    try {
+      const com = await pushOk(p, [ab], { recuperar_lacuna: { de: 1, ate: 1, autorizado_por_id: admin } });
+      expect(com.resultados.map((x) => x.status)).toEqual(['aplicado']);
+    } finally {
+      tarefas.agendar = agendar;
+    }
+    const [tarefa] = await consultar<{ id: string; criado_em: Date }>(
+      emp.nomeBanco,
+      `select id, criado_em from tarefas where tipo = 'reprocessar_apos_lacuna' and parametros ->> 'terminalId' = $1`,
+      [p.terminal],
+    );
+    const dependente = {
+      ...evento(
+        p,
+        'terminal.configuracao_alterada',
+        {
+          alteracoes: [{ chave: 'impressora.modelo', valor_anterior: 'A', valor_novo: 'B' }],
+          configuracao_completa: { 'impressora.modelo': 'B' },
+        },
+        3,
+      ),
+      dependencias: [{ agregado_tipo: ev.agregado_tipo, agregado_id: ev.agregado_id }],
+    };
+    expect((await pushOk(p, [dependente])).resultados).toMatchObject([
+      { status: 'retido', erro: { codigo: 'DEPENDENCIA_PENDENTE' } },
+    ]);
+    expect((await linhasDoTerminal(p))[2]!.criado_em.getTime()).toBeGreaterThan(tarefa!.criado_em.getTime());
+
+    await tarefas.executar(emp.empresaId, tarefa!.id);
+    const [fim] = await consultar<{ status: string; erro: string | null; resultado: Payload }>(
+      emp.nomeBanco,
+      'select status, erro, resultado from tarefas where id = $1',
+      [tarefa!.id],
+    );
+    expect(fim!.status, fim!.erro ?? '').toBe('concluida');
+    expect(fim!.resultado).toMatchObject({ total: 2, aplicados: 2 });
+    expect((await linhasDoTerminal(p)).map((l) => [l.sequencia_terminal, l.status])).toEqual([
+      ['1', 'aplicado'],
+      ['2', 'aplicado'],
+      ['3', 'aplicado'],
+    ]);
+    const [t] = await consultar<{ configuracao_local: Payload }>(
+      emp.nomeBanco,
+      'select configuracao_local from terminais where id = $1',
+      [p.terminal],
+    );
+    expect(t!.configuracao_local).toMatchObject({ 'impressora.modelo': 'B' });
+  });
+
   it('recuperação parcial, recuperado com erro e reprocessamento em ordem só do que a lacuna explica', async () => {
     const p = await novoPonto();
     // Perdidas: a abertura (1) e uma venda de outra sessão (2). Chegam 3 e 4 (vendas da sessão perdida, que vão a

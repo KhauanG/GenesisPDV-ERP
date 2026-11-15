@@ -6949,6 +6949,66 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        o cadastro passou para outra loja também; a linha "de terminal" na auditoria não conta), `test/integracao/cancelamento-vasilhame-eventos.test.ts`
        (a devolução de cascos com o estoque de outra loja), `packages/shared/src/sync/contratos.spec.ts` e
        `eventos.spec.ts` (os limites no contrato) e, no ERP, `Terminais.test.tsx` (decisão 84 do ERP).
+213. **Tarefas da fila de eventos conferem o acesso do momento; tentativas de ativação com índices e retenção**
+     (PR-15, SEG-B16; SYNC 3.1, 3.3, 8.6 e 11.4; ERP 3.6; MD 2.6; `src/terminais/fila-decisao.ts`,
+     `src/sync/ativacao.ts`, `src/terminais/manutencao.ts`, `src/database/controle/schema.ts`, migração do controle
+     `0006_indices_tentativas_ativacao`).
+     - **"Reprocessar todos com este código" (`reprocessar_eventos`).** O executor faz o que os outros executores de
+       tarefa já faziam (importação, NF-e em lote, exportação; `sessaoDaTarefa`): refaz a sessão de quem pediu com o
+       acesso do momento e exige que ele continue ativo e não excluído, com `terminais.gerenciar` e com a loja atual do
+       terminal (`lojaPermitida`). Faltando algo, a tarefa termina `falhou` com a mensagem ("Usuário inativo ou
+       excluído.", "O usuário não tem mais a permissão de gerenciar terminais.", "O usuário não tem mais acesso à loja
+       deste terminal.") antes de tocar em qualquer evento: os eventos continuam em `erro`, para outra pessoa decidir.
+       A auditoria de cada evento reaplicado usa o usuário da sessão refeita. O lote vale para os `erro` do código
+       recebidos até a criação da tarefa, pela hora gravada da chegada (`eventos_recebidos.criado_em` até o
+       `criado_em` da própria linha da tarefa, comparado no banco, sem o arredondamento do `Date`): o evento que o push
+       trouxe depois do pedido fica para outro pedido. Não é exatamente o conjunto contado no pedido, e o texto não
+       promete isso: o evento que já tinha chegado e só caiu no código depois da contagem também entra (um retido
+       reaplicado junto do bloqueador, um Reprocessar individual que mudou o código, o placeholder da lacuna trocado —
+       a linha guarda a hora do começo do push — ou a transação de um push que começou antes do pedido e terminou
+       depois da contagem). A `quantidade` da auditoria do pedido é a contagem daquele momento, e o `total` do
+       resultado da tarefa é o que ela de fato percorreu. O impacto é só de escopo: cada evento passa pela
+       `precondicao` (`comCodigo`) sob a trava, com o acesso de quem pediu conferido na execução. Os retidos que
+       dependiam de um evento do lote seguem com ele, como no Reprocessar da tela (sem isso ficariam retidos à espera
+       de quem já foi aplicado). Guardar a lista de ids no pedido foi descartado (não tem limite de tamanho), e o
+       `max(sequencia_terminal)` contado também: não fecharia o caso do evento antigo que muda de código depois.
+     - **Variante: a continuação da lacuna recuperada (`reprocessar_apos_lacuna`).** A tarefa nasce no push, em nome de
+       quem liberou a recuperação no caixa; o executor agora repete a conferência do push (`conferirLiberacaoLacuna`:
+       ativo, `pdv.config.fiscal` e a loja do terminal) com o acesso do momento e, faltando algo, falha sem aplicar
+       nada (os eventos ficam na fila de decisão do ERP, onde quem tem `terminais.gerenciar` decide). A seleção dos
+       eventos continua valendo para o momento da execução, **sem** o limite pela hora da tarefa do lote do ERP: a
+       continuação reaplica eventos do próprio PDV, não uma escolha humana, e reaplica um a um (`reaplicar`, que não
+       solta dependentes). Com o limite, o retido que chega depois de a tarefa nascer e depende de um `erro` da lacuna
+       (o fechamento da mesma sessão no push seguinte, o cancelamento da venda ainda em `SESSAO_INEXISTENTE`) ficaria
+       de fora; o bloqueador seria aplicado e o retido ficaria preso sem alerta (o retido não abre `EVENTO_COM_ERRO`).
+       Incluir esses retidos não alarga o que a liberação autoriza: `causadoPorLacuna` reconfere sob a trava, e o
+       retido cujo bloqueador ainda está pendente volta a ficar retido. As demais tarefas diferidas (importação de
+       planilha, NF-e em lote e exportação de relatório) já reautorizavam e não mudaram.
+     - **`tentativas_ativacao`.** Dois índices novos, conforme o plano das consultas reais: `(codigo_empresa,
+       criado_em)` para o bloqueio do código da empresa (`verificarBloqueios`, `estadoBloqueio`) e `(criado_em)` para as
+       janelas sem IP nem código (o limite global de 10 min, as empresas com falhas que a manutenção olha) e para a
+       purga; o de `(ip, criado_em)` continua servindo o bloqueio por IP. Índice comum em `criado_em`, não parcial em
+       `not sucesso`: um só serve também a purga, que apaga sucessos e falhas, e as linhas de sucesso são poucas. A
+       manutenção dos terminais (a cada 5 min) apaga as linhas com mais de 30 dias (`RETENCAO_TENTATIVAS_DIAS`, a
+       retenção que o MD 2.6 já previa; nenhuma janela de bloqueio ou alerta passa de 7 dias), em comandos de até 5.000
+       linhas e até 20 por execução (`purgarTentativas`; o resumo da manutenção conta em
+       `tentativasAtivacaoPurgadas`). O pedido de um IP já bloqueado continua recebendo `429 IP_BLOQUEADO`, mas grava
+       no máximo uma linha `ip_bloqueado` por IP na janela de 30 min (o registro de que o IP foi barrado; as repetições
+       só faziam a tabela crescer). Essa linha não conta nos limites por IP e por código (que só somam os
+       `MOTIVOS_FORCA_BRUTA`), mas conta como uma falha no limite global da plataforma (mais de 500 falhas em 10 min,
+       que soma toda falha). Efeito registrado: antes, cada repetição de um IP já bloqueado somava no global, e um só
+       IP insistindo ligava o atraso de 3 s para as falhas de todas as empresas; agora soma uma por IP e janela. É o
+       desejado: o IP já barrado não chega a testar código nenhum, e o global continua pegando o volume espalhado por
+       muitos IPs (cada IP bloqueado soma a sua linha, mais as falhas de código errado que deram o bloqueio).
+     - Migração só do controle (dois `CREATE INDEX`); nada no banco da empresa nem no protocolo; o PDV 0.12.0 não muda.
+       Testes: `test/integracao/fila-decisao.test.ts` (quem pediu o lote e ficou desativado, sem `terminais.gerenciar`
+       ou sem a loja antes da execução → `falhou`, eventos em `erro` e sem auditoria de reprocessamento; com o acesso
+       mantido, o evento que chegou depois do pedido fica de fora e a auditoria é do usuário da sessão),
+       `test/integracao/lacunas.test.ts` (quem liberou a recuperação e foi desativado antes da tarefa → `falhou`, a
+       venda continua em `erro`; o retido que chegou num push depois de a tarefa nascer, preso à venda em `erro` da
+       lacuna, é aplicado pela tarefa logo depois dela), `test/integracao/sync.test.ts` (o IP bloqueado repetindo grava um só `ip_bloqueado`) e
+       `test/integracao/terminais.test.ts` (a manutenção apaga o que passou de 30 dias e mantém o resto; o plano das
+       consultas usa os índices novos).
 
 ### Operação – tarefas em segundo plano (API)
 

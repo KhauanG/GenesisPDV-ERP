@@ -61,6 +61,11 @@ export const REPETICAO_MIN = 15;
 const MOTIVOS_FORCA_BRUTA = ['codigo_invalido', 'expirado', 'empresa_inativa'] as const;
 /** SYNC 3.1: falhas de "código errado" em 1 h que bloqueiam o código da empresa. */
 export const LIMITE_FALHAS_CODIGO_EMPRESA = 20;
+/** Retenção de `tentativas_ativacao` (MD 2.6): bem acima das janelas de bloqueio (1 h) e da manutenção (7 dias). */
+export const RETENCAO_TENTATIVAS_DIAS = 30;
+/** Linhas apagadas por comando na purga (transação curta) e lotes por execução da manutenção. */
+export const LOTE_PURGA_TENTATIVAS = 5000;
+const MAXIMO_LOTES_PURGA = 20;
 
 export const INTERVALOS_PADRAO = { heartbeat_s: 30, pull_s: 30, pull_com_sse_s: 300, push_pendente_s: 15 };
 
@@ -910,9 +915,19 @@ export class AtivacaoTerminais {
       [ip, codigoEmpresa, [...MOTIVOS_FORCA_BRUTA], LIMITE_FALHAS_CODIGO_EMPRESA],
     );
     if (rows[0]?.ip) {
-      await this.controle.db
-        .insert(tentativasAtivacao)
-        .values({ ip, codigoEmpresa, sucesso: false, motivoFalha: 'ip_bloqueado' });
+      // Uma linha `ip_bloqueado` por IP e janela do bloqueio (30 min), para o registro de que o IP foi barrado: as
+      // repetições do IP já bloqueado não gravam mais nada (só fariam a tabela crescer). A linha não conta nos limites
+      // por IP e por código (só `MOTIVOS_FORCA_BRUTA`), mas conta como uma falha no global de `ativar` (SYNC 3.1, que
+      // soma toda falha): as repetições deixaram de somar nele — um só IP já barrado não impõe o atraso de 3 s a
+      // todas as empresas; muitos IPs bloqueados ao mesmo tempo continuam somando, um por IP.
+      await this.controle.pool.query(
+        `insert into tentativas_ativacao (ip, codigo_empresa, sucesso, motivo_falha)
+         select $1::inet, $2::int, false, 'ip_bloqueado'
+          where not exists (select 1 from tentativas_ativacao t
+                             where t.ip = $1::inet and t.motivo_falha = 'ip_bloqueado'
+                               and t.criado_em > now() - interval '30 minutes')`,
+        [ip, codigoEmpresa],
+      );
       throw new ErroSync(
         'IP_BLOQUEADO',
         'Muitas tentativas. Aguarde 30 minutos.',
@@ -1009,6 +1024,26 @@ export class AtivacaoTerminais {
       [[...MOTIVOS_FORCA_BRUTA], dias],
     );
     return new Map(rows.map((r) => [r.id, r.codigo]));
+  }
+
+  /**
+   * Manutenção: apaga as tentativas com mais de `RETENCAO_TENTATIVAS_DIAS` (MD 2.6), em lotes de
+   * `LOTE_PURGA_TENTATIVAS` pelo índice de `criado_em`, até `MAXIMO_LOTES_PURGA` lotes por execução (o resto fica para
+   * a próxima, 5 min depois). Nenhuma janela de bloqueio ou de alerta olha tão longe. Devolve quantas apagou.
+   */
+  async purgarTentativas(): Promise<number> {
+    let total = 0;
+    for (let i = 0; i < MAXIMO_LOTES_PURGA; i++) {
+      const { rowCount } = await this.controle.pool.query(
+        `delete from tentativas_ativacao where id in (
+           select id from tentativas_ativacao
+            where criado_em < now() - make_interval(days => $1) limit $2)`,
+        [RETENCAO_TENTATIVAS_DIAS, LOTE_PURGA_TENTATIVAS],
+      );
+      total += rowCount ?? 0;
+      if ((rowCount ?? 0) < LOTE_PURGA_TENTATIVAS) break;
+    }
+    return total;
   }
 
   /** Manutenção: códigos `pendente` vencidos passam a `expirado` (ERP 12.1). */

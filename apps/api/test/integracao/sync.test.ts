@@ -1270,4 +1270,28 @@ describe('força bruta na ativação (SYNC 3.1)', () => {
     const caso = casos.find((c) => c.corpo.erro.codigo === 'IP_BLOQUEADO')!;
     expect(r.headers['retry-after']).toBe(caso.cabecalhos!['Retry-After']);
   });
+
+  it('o IP já bloqueado continua recebendo 429, com um só registro do bloqueio na janela', async () => {
+    const [{ n }] = (await consultar<{ n: number }>(
+      amb.bancoControle,
+      `select count(*)::int as n from tentativas_ativacao
+        where not sucesso and motivo_falha = 'codigo_invalido' and criado_em > now() - interval '10 minutes'`,
+    )) as [{ n: number }];
+    for (let i = n; i < 5; i++) {
+      await amb.http().post('/sync/ativar').set(cabecalhos()).send(corpoAtivacao('ZZZZZZZZ').corpo);
+    }
+    const antes = await consultar(amb.bancoControle, 'select count(*)::int as n from tentativas_ativacao');
+    for (let i = 0; i < 4; i++) {
+      const r = await amb.http().post('/sync/ativar').set(cabecalhos()).send(corpoAtivacao('ZZZZZZZZ').corpo);
+      expect(r.status).toBe(429);
+      expect(r.body.erro.codigo).toBe('IP_BLOQUEADO');
+    }
+    const bloqueios = await consultar(
+      amb.bancoControle,
+      "select 1 from tentativas_ativacao where motivo_falha = 'ip_bloqueado'",
+    );
+    expect(bloqueios).toHaveLength(1);
+    const depois = await consultar(amb.bancoControle, 'select count(*)::int as n from tentativas_ativacao');
+    expect((depois[0] as { n: number }).n - (antes[0] as { n: number }).n).toBeLessThanOrEqual(1);
+  });
 });

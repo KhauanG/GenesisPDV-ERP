@@ -1215,6 +1215,121 @@ describe('Reprocessar todos com este código (SYNC 11.4)', () => {
       .body as TerminalDetalhe;
     expect(detalhe.historico.map((h) => h.titulo)).toContain('Reprocessamento de eventos');
   });
+
+  /**
+   * O pedido entra na fila sem ir ao trabalhador (o `agendar` fica parado neste trecho) e a tarefa roda quando o teste
+   * manda: assim dá para mudar o acesso de quem pediu, ou mandar eventos novos, entre o pedido e a execução.
+   */
+  async function pedirLoteSemExecutar(p: Ponto, tk: string, quantidade: number): Promise<string> {
+    const tarefas = amb.servicos.tarefas;
+    const agendar = tarefas.agendar.bind(tarefas);
+    tarefas.agendar = async () => undefined;
+    try {
+      const ag = await amb
+        .http()
+        .post('/api/eventos-recebidos/reprocessar-lote')
+        .set(bearer(tk))
+        .send({ terminalId: p.terminal, codigo: 'PAYLOAD_INVALIDO' });
+      expect(ag.status, JSON.stringify(ag.body)).toBe(202);
+      expect(ag.body.quantidade).toBe(quantidade);
+      return ag.body.tarefaId as string;
+    } finally {
+      tarefas.agendar = agendar;
+    }
+  }
+
+  async function executarTarefa(id: string) {
+    await amb.servicos.tarefas.executar(emp.empresaId, id);
+    const [t] = await consultar<{ status: string; erro: string | null; resultado: Payload | null }>(
+      emp.nomeBanco,
+      'select status, erro, resultado from tarefas where id = $1',
+      [id],
+    );
+    return t!;
+  }
+
+  /** Gerente não Master da loja, com `terminais.gerenciar` concedido. */
+  async function gerenteDaLoja(p: Ponto): Promise<{ id: string; token: string }> {
+    const login = `gerente_lote_${p.numero}`;
+    const id = await criarUsuario(emp.nomeBanco, { login, perfil: 'gerente', lojas: [loja] });
+    await consultar(
+      emp.nomeBanco,
+      `insert into usuarios_permissoes (usuario_id, permissao, efeito) values ($1, 'terminais.gerenciar', 'conceder')`,
+      [id],
+    );
+    return { id, token: await amb.entrar(emp.codigo, login, SENHA_TESTE) };
+  }
+
+  const reprocessadosEmLote = async (ids: string[]) =>
+    consultar(
+      emp.nomeBanco,
+      `select 1 from auditoria where acao = 'evento_reprocessado' and evento_id = any($1::uuid[])`,
+      [ids],
+    );
+
+  it.each([
+    {
+      caso: 'desativado',
+      revogar: (u: string) => [`update usuarios set ativo = false where id = '${u}'`],
+      erro: 'Usuário inativo ou excluído.',
+    },
+    {
+      caso: 'sem terminais.gerenciar',
+      revogar: (u: string) => [
+        `update usuarios_permissoes set efeito = 'negar' where usuario_id = '${u}' and permissao = 'terminais.gerenciar'`,
+      ],
+      erro: 'O usuário não tem mais a permissão de gerenciar terminais.',
+    },
+    {
+      caso: 'sem a loja do terminal',
+      revogar: (u: string) => [
+        `delete from usuarios_lojas where usuario_id = '${u}'`,
+        `update usuarios set permissoes_versao = permissoes_versao + 1 where id = '${u}'`,
+      ],
+      erro: 'O usuário não tem mais acesso à loja deste terminal.',
+    },
+  ])(
+    'quem pediu e ficou $caso antes da execução: a tarefa falha sem aplicar nada',
+    async ({ revogar, erro }) => {
+      const p = await novoPonto();
+      const vazio = { registros: [], logins: [] };
+      const e1 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+      const e2 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+      await pushOk(p, [e1, e2]);
+      const gerente = await gerenteDaLoja(p);
+      const tarefaId = await pedirLoteSemExecutar(p, gerente.token, 2);
+      for (const comando of revogar(gerente.id)) await consultar(emp.nomeBanco, comando);
+      expect(await executarTarefa(tarefaId)).toMatchObject({ status: 'falhou', erro, resultado: null });
+      expect((await linhaRecebida(e1.evento_id)).status).toBe('erro');
+      expect((await linhaRecebida(e2.evento_id)).status).toBe('erro');
+      expect(await reprocessadosEmLote([e1.evento_id, e2.evento_id])).toEqual([]);
+    },
+  );
+
+  it('com o acesso mantido, aplica só os eventos que já tinham chegado no pedido', async () => {
+    const p = await novoPonto();
+    const vazio = { registros: [], logins: [] };
+    const e1 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    const e2 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    await pushOk(p, [e1, e2]);
+    const gerente = await gerenteDaLoja(p);
+    const tarefaId = await pedirLoteSemExecutar(p, gerente.token, 2);
+    // Chega depois do pedido, com o mesmo código: fica para outra decisão.
+    const depois = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    await pushOk(p, [depois]);
+    const t = await executarTarefa(tarefaId);
+    expect(t.status, t.erro ?? '').toBe('concluida');
+    expect(t.resultado).toMatchObject({ total: 2, aplicados: 2, ignorados: 0 });
+    expect((await linhaRecebida(e1.evento_id)).status).toBe('aplicado');
+    expect((await linhaRecebida(e2.evento_id)).status).toBe('aplicado');
+    expect((await linhaRecebida(depois.evento_id)).status).toBe('erro');
+    const [aud] = await consultar<{ usuario_id: string }>(
+      emp.nomeBanco,
+      `select usuario_id from auditoria where acao = 'evento_reprocessado' and evento_id = $1`,
+      [e1.evento_id],
+    );
+    expect(aud?.usuario_id).toBe(gerente.id);
+  });
 });
 
 describe('GET /sync/eventos-status (SYNC 7.2, 21.1; T6)', () => {

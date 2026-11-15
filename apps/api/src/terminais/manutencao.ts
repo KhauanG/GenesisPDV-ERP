@@ -19,6 +19,8 @@
  *    terminal `ativo`/`desativando`: o fluxo `acesso` não leva a data ao caixa, só `ativo` já calculado
  *    (`sync/fluxos.ts`), e a linha precisa de versão nova para o `false` descer. Um toque por usuário: depois dele `atualizado_em` já é do dia da demissão.
  *
+ * 7. apaga as tentativas de ativação com mais de 30 dias (MD 2.6; `AtivacaoTerminais.purgarTentativas`).
+ *
  * Uma execução por vez (trava consultiva de sessão no controle); uma empresa com erro não impede as outras.
  */
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
@@ -66,6 +68,7 @@ export interface ResumoManutencao {
   alertasForcaBrutaResolvidos: number;
   alertasRelogioResolvidos: number;
   usuariosDemitidosTocados: number;
+  tentativasAtivacaoPurgadas: number;
   falhas: Array<{ empresaId: string; erro: string }>;
 }
 
@@ -91,6 +94,7 @@ export class ManutencaoTerminais {
       alertasForcaBrutaResolvidos: 0,
       alertasRelogioResolvidos: 0,
       usuariosDemitidosTocados: 0,
+      tentativasAtivacaoPurgadas: 0,
       falhas: [],
     };
     const trava = await this.controle.pool.connect();
@@ -251,6 +255,8 @@ export class ManutencaoTerminais {
         resumo.falhas.push({ empresaId, erro: (e as Error).message });
       }
     }
+
+    resumo.tentativasAtivacaoPurgadas = await this.ativacao.purgarTentativas();
   }
 
   /** Roda no banco da empresa; `null` quando ela não está acessível agora (excluída, em manutenção, migrando). */

@@ -1,0 +1,2 @@
+CREATE INDEX "ix_tentativas_ativacao_codigo_empresa_criado_em" ON "tentativas_ativacao" USING btree ("codigo_empresa","criado_em");--> statement-breakpoint
+CREATE INDEX "ix_tentativas_ativacao_criado_em" ON "tentativas_ativacao" USING btree ("criado_em");
