@@ -2334,7 +2334,7 @@ Posições de caixa da loja (`caixas`, modelo 3.2.7):
 | Nº inicial (para ativação) | Nº inicial | inteiro | N | editável só enquanto o caixa nunca teve terminal: grava `numeracoes.ultimo_numero = nº inicial − 1` da série/ambiente; depois, o PDV é o dono da sequência (sync 13.2) |
 | `tef_terminal` | Nº terminal TEF | texto | N | |
 | `pos_id_terminal` **(Novo)** | Nº lógico/serial do POS | texto(40) | N | maquininha POS usada neste caixa: padrão de `pagamentos_venda.id_terminal_pagamento` (`idTermPag` da NFC-e) |
-| `ativo` | Ativo | booleano | S | |
+| `ativo` | Ativo | booleano | S | inativar o caixa (ou excluí-lo, ou excluir a loja) cancela os códigos de ativação pendentes dele (12.3), com `auditoria` `cancelar` de cada um; caixa inativo não recebe código nem terminal |
 | Terminal atual | link para `/cadastros/pdvs/:id` (`caixas.terminal_id`) | — | — | |
 
 #### 10.3.11 Taxas de entrega (Novo) [FUT – módulo opcional de delivery, decisão D4]
@@ -2635,6 +2635,8 @@ Regras:
   descrição, `validade_horas`, `expira_em`, `substitui_terminal_id`, `criado_por_usuario_id`, `usado_em`,
   `terminal_id`). Uso único.
 - O código é exibido **uma vez** (botão copiar); depois aparece mascarado (`••••-••RD`) na lista de pendentes.
+- Só para caixa vivo e **ativo** (10.3.10): excluir ou inativar o caixa, ou excluir a loja, cancela os códigos
+  pendentes dele, e a ativação confere o caixa de novo no resgate (sync 3.3 item 5).
 - 5 tentativas erradas de ativação por IP em 10 min bloqueiam o IP por 30 min.
 
 Ativação (lado da API, para referência; contrato completo no sync 3.2–3.4):

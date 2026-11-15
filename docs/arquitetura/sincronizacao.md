@@ -231,7 +231,7 @@ escala com `zod` (`/^-?\d{1,13}\.\d{2}$/` para dinheiro etc.) e recusa número J
 | 409 | `TERMINAL_CLONADO` | `X-Genesis-Id-Hardware` diverge do registrado e há sinais de duas instâncias | Bloqueia vendas; suporte decide (20.5) | não |
 | 409 | `HARDWARE_ALTERADO` | `X-Genesis-Id-Hardware` diverge do registrado (sem sinais de clone) e a troca ainda não foi aprovada no ERP (20.5) | Bloqueia vendas; mantém o outbox; continua só heartbeat, `GET /sync/estado` e pull **sem segredos**; mostra "Hardware alterado — aguardando aprovação no ERP" | não (exige aprovação) |
 | 413 | `LOTE_GRANDE_DEMAIS` | Lote acima dos limites (19.2) | Divide o lote ao meio e reenvia | sim |
-| 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só repetição legítima tardia), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
+| 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só a repetição da mesma requisição: tardia ou com o token já usado), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
 | 422 | `LIBERACAO_INVALIDA` | `autorizado_por_id` de `declarar_lacuna`/`recuperar_lacuna` não é usuário ativo da empresa com `pdv.config.fiscal` e acesso à loja do terminal (8.6); nada do lote é processado | Mensagem na tela; outro supervisor libera | não |
 | 426 | `PROTOCOLO_NAO_SUPORTADO` | `X-Genesis-Protocolo` abaixo do mínimo da API | Força atualização do app; o push dos pendentes continua permitido enquanto o protocolo estiver na janela de suporte (17.2) | não |
 | 429 | `LIMITE_TAXA` | Limite por terminal/empresa (20.3) | Respeita `Retry-After` | sim |
@@ -257,7 +257,7 @@ Regras do ERP 12.3 e do modelo 2.5, consolidadas:
 | Uso | Único; `status`: `pendente` → `usado` / `expirado` / `cancelado` |
 | Limite do plano | `terminais_pdv` provisionando + ativos + desativando + `ativacoes_pdv` pendentes ≤ `coalesce(empresas.limite_terminais, planos.limite_terminais)`; validado ao gerar e ao ativar |
 | Substituição | Caixa com terminal ativo exige "Substituir terminal": grava `ativacoes_pdv.substitui_terminal_id`. Com ou sem substituição, a numeração do terminal novo é decidida contra o **último terminal que ocupou o caixa** (`caixas.terminal_anterior_id`, qualquer status — 13.3) |
-| Força bruta | Três limites, todos contados em `tentativas_ativacao`: (1) **por IP**: 5 falhas em 10 min → `IP_BLOQUEADO` por 30 min; (2) **por `codigo_empresa`** (contado pelo valor informado, exista ou não a empresa, para a resposta não revelar existência): 20 falhas em 1 h → `ATIVACAO_BLOQUEADA` para aquele código por 1 h, alerta `ATIVACAO_FORCA_BRUTA` no ERP da empresa (quando existe) e ação "Liberar ativações" (permissão `terminais.ativar`, auditada: grava `empresas.ativacoes_liberadas_em` e as falhas anteriores deixam de contar); (3) **global da plataforma**: mais de 500 falhas em 10 min somando todas as empresas → toda resposta de falha passa a ter atraso fixo de 3 s e a plataforma recebe alerta. A resposta de código errado é genérica: `CODIGO_INVALIDO` para todo código que não esteja `pendente`, exceto a repetição da mesma ativação (mesmo `requisicao_ativacao_id` e `id_hardware`, 3.4), que recebe `CODIGO_USADO` quando já fora da janela de repetição |
+| Força bruta | Três limites, todos contados em `tentativas_ativacao`: (1) **por IP**: 5 falhas em 10 min → `IP_BLOQUEADO` por 30 min; (2) **por `codigo_empresa`** (contado pelo valor informado, exista ou não a empresa, para a resposta não revelar existência): 20 falhas em 1 h → `ATIVACAO_BLOQUEADA` para aquele código por 1 h, alerta `ATIVACAO_FORCA_BRUTA` no ERP da empresa (quando existe) e ação "Liberar ativações" (permissão `terminais.ativar`, auditada: grava `empresas.ativacoes_liberadas_em` e as falhas anteriores deixam de contar); (3) **global da plataforma**: mais de 500 falhas em 10 min somando todas as empresas → toda resposta de falha passa a ter atraso fixo de 3 s e a plataforma recebe alerta. A resposta de código errado é genérica: `CODIGO_INVALIDO` para todo código que não esteja `pendente`, exceto a repetição da mesma ativação (mesmo `requisicao_ativacao_id`, `id_hardware` e chaves públicas, 3.4), que recebe `CODIGO_USADO` quando já fora da janela de repetição ou com o token entregue já usado |
 
 ### 3.2 `POST /sync/ativar`
 
@@ -339,12 +339,17 @@ Resposta `201`:
 |---|---|---|
 | 1 | IP não bloqueado; `codigo_empresa` informado sem bloqueio de ativação; atraso global aplicado se o limite da plataforma estourou (3.1) | 429 `IP_BLOQUEADO` / 429 `ATIVACAO_BLOQUEADA` |
 | 2 | `empresas.codigo` existe e `status = 'ativa'` | 422 `CODIGO_INVALIDO` (genérico, grava `motivo_falha = 'empresa_inativa'`) |
-| 3 | `ativacoes_pdv` com `codigo_hash` e `status = 'pendente'` existe (`select … for update`). Código `usado` cuja ativação tem o mesmo `requisicao_ativacao_id` e `id_hardware` → repetição (3.4) | 422 `CODIGO_INVALIDO` para todo código inexistente, `usado`, `cancelado` ou `expirado` por status (grava `motivo_falha` real em `tentativas_ativacao`); `CODIGO_USADO` só para a repetição legítima fora da janela de 15 min |
+| 3 | `ativacoes_pdv` com `codigo_hash` e `status = 'pendente'` existe (`select … for update`). Código `usado` cuja ativação tem o mesmo `requisicao_ativacao_id`, o mesmo `id_hardware` e as mesmas chaves públicas (do terminal e de backup) → repetição (3.4) | 422 `CODIGO_INVALIDO` para todo código inexistente, `usado`, `cancelado` ou `expirado` por status (grava `motivo_falha` real em `tentativas_ativacao`); `CODIGO_USADO` só para a repetição da mesma requisição fora da janela de 15 min ou depois que o token entregue já foi usado |
 | 4 | `expira_em > now()` | 422 `CODIGO_EXPIRADO` |
-| 5 | `pdv.usa_pdv` da empresa/loja e `lojas.ativa`, `lojas.usa_pdv`, `lojas.tipo = 'ponto_venda'` | 403 `PDV_DESABILITADO` / `LOJA_INATIVA` |
+| 5 | `pdv.usa_pdv` da empresa/loja e `lojas.ativa`, `lojas.usa_pdv`, `lojas.tipo = 'ponto_venda'`; o caixa do código continua da loja, não excluído, `ativo` e não é o caixa 0 (loja e caixa conferidos de novo na repetição, antes da troca do segredo, e sob a trava do caixa na etapa da empresa, 3.4) | 403 `PDV_DESABILITADO` / `LOJA_INATIVA` (o código continua `pendente`); caixa excluído ou inativo com o código ainda `pendente` → 422 `CODIGO_INVALIDO` (mensagem com a causa, `motivo_falha` nulo: quem chega aqui conhece o código). O código que o ERP já cancelou cai no item 3 |
 | 6 | Limite do plano (contando este) | 422 `LIMITE_PLANO` |
 | 7 | Caixa sem terminal `provisionando`/`ativo`, ou ativação com `substitui_terminal_id` igual ao terminal ativo do caixa | 422 `CAIXA_OCUPADO` |
 | 8 | `versao_app` ≥ versão mínima publicada para a plataforma | 426 `PROTOCOLO_NAO_SUPORTADO` (com link do instalador) |
+
+Excluir ou inativar o caixa no ERP (ou excluir a loja) cancela os códigos pendentes dele (`ativacoes_pdv.status =
+'cancelado'`, com `auditoria` `cancelar` de cada um); o código também não é gerado para caixa inativo. Inativar a loja
+não cancela: o resgate responde `LOJA_INATIVA` e o código volta a valer quando a loja é reativada. O código que estava
+`usado` por uma ativação em andamento quando o caixa saiu fica `cancelado` na compensação (3.4).
 
 Toda tentativa grava `tentativas_ativacao` (sucesso ou `motivo_falha`, com `codigo_empresa` informado e IP), que alimenta os três
 limites de 3.1. `CODIGO_EXPIRADO` (status `pendente` com `expira_em` vencido) continua específico: um código vencido é
@@ -369,7 +374,7 @@ sequenceDiagram
   A->>C: COMMIT
   A->>E: BEGIN<br/>INSERT terminais (mesmo id) ON CONFLICT (id) DO NOTHING<br/>UPDATE caixas SET terminal_anterior_id = terminal_id, terminal_id = novo<br/>  WHERE id = caixa AND terminal_id IS DISTINCT FROM novo<br/>ajusta numeracoes (13.3) só se ainda não ajustadas para este terminal<br/>auditoria 'terminal_ativado' (chave de idempotência = terminal_id), COMMIT
   alt falha controlada no banco da empresa
-    A->>C: compensação: terminais_pdv.status 'revogado' (motivo 'falha_ativacao'),<br/>se substituição: antigo volta a 'ativo' (sem carência nem substituido_por) se ainda apontar para o novo,<br/>ativacoes_pdv volta a 'pendente' (se não expirou)
+    A->>C: compensação: terminais_pdv.status 'revogado' (motivo 'falha_ativacao'),<br/>se substituição: antigo volta a 'ativo' (sem carência nem substituido_por) se ainda apontar para o novo,<br/>ativacoes_pdv volta a 'pendente' (se não expirou),<br/>ou 'cancelado' se o caixa foi excluído/inativado (ou a loja excluída)
     A-->>P: 503 MANUTENCAO (tentar de novo)
   else sucesso
     A->>C: UPDATE terminais_pdv SET status 'ativo' WHERE id = novo AND status = 'provisionando', COMMIT
@@ -390,14 +395,27 @@ sequenceDiagram
 | Reconciliador | Tarefa periódica (`tarefas` da plataforma, a cada 5 min) procura `terminais_pdv.status = 'provisionando'` com `ativado_em` há mais de 20 min (a janela de repetição de 15 min mais a margem da etapa da empresa; as duas medidas pelo relógio do banco): tenta a etapa da empresa (idempotente) e, com sucesso, passa a `ativo`; com falha permanente (empresa cancelada, caixa ocupado por outro terminal), compensa como acima. O PDV que não recebeu a resposta repete a ativação e recebe o resultado (`201`) ou `CODIGO_INVALIDO` (compensado e código vencido) |
 
 **Resposta perdida ou API caída** (rede caiu ou processo morreu depois do primeiro commit): o assistente repete com o
-mesmo `requisicao_ativacao_id`. A API encontra `ativacoes_pdv` `usado` cujo `terminal_id` tem o mesmo `id_hardware` e
-foi ativado há menos de 15 min com esse `requisicao_ativacao_id` (guardado em `auditoria.depois` da ativação) e:
+mesmo `requisicao_ativacao_id` **e as mesmas chaves públicas** (o PDV guarda o par de chaves da tentativa em memória e
+o reusa em toda repetição). A repetição só recupera a resposta para a mesma requisição da mesma máquina: a API encontra
+`ativacoes_pdv` `usado` cujo `terminal_id` tem o mesmo `id_hardware`, foi ativado há menos de 15 min com esse
+`requisicao_ativacao_id` (guardado em `auditoria_plataforma.depois` de `terminal_ativacao_iniciada`, junto do resumo
+SHA-256 de `chave_backup_publica`) e tem a mesma `chave_publica_terminal` (algoritmo e bytes de
+`terminais_pdv.chave_publica_terminal`) e a mesma `chave_backup_publica`; e o token já entregue **ainda não foi usado**
+(`token_atual_usado_em` nulo e sem renovação). Então:
 
 - terminal `provisionando` → **reexecuta a etapa da empresa** (idempotente), passa a `ativo`, gera novo segredo
   (substitui `token_hash`) e devolve a resposta completa;
 - terminal `ativo` → gera **novo segredo** (substitui `token_hash`) e devolve a mesma resposta com o token novo.
 
-Fora dessas condições → `CODIGO_USADO` (repetição legítima tardia) ou `CODIGO_INVALIDO` (3.3).
+A troca do segredo é condicional (o mesmo `token_hash` lido, ainda sem uso) e grava `auditoria_plataforma`
+`terminal_ativacao_repetida` (emissão anterior e nova, `requisicao_ativacao_id`, `id_hardware`, IP) na mesma transação:
+toda reemissão fica registrada. Ids iguais com outra chave → `CODIGO_INVALIDO` (3.3); a mesma requisição fora da janela
+ou com o token entregue já usado → `CODIGO_USADO` (a resposta não se perdeu: para outra máquina ou nova instalação,
+"Substituir terminal" no ERP). A repetição confere loja e caixa (3.3 item 5) **antes** da troca do segredo: a recusa
+não troca o token entregue, não grava reemissão e não compensa (se a etapa da empresa já tinha commitado, a
+manutenção conclui o `provisionando`; senão, compensa). A etapa da empresa reconhece a etapa já gravada
+(`terminal_ativado`) antes de conferir o ciclo de vida: a ativação que já aconteceu no banco da empresa nunca é
+compensada no controle por uma inativação posterior.
 
 ### 3.5 Estado local criado na ativação
 

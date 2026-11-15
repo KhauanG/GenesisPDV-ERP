@@ -95,7 +95,14 @@ export class AtivacaoTerminais {
     const caixa = await this.tenancy.executarNaEmpresa(this.resolvedor.contexto(empresa), () =>
       this.tenancy.cx().consulta(async (db) => {
         const [c] = await db
-          .select({ id: caixas.id, numero: caixas.numero, lojaId: caixas.lojaId, loja: lojas })
+          .select({
+            id: caixas.id,
+            numero: caixas.numero,
+            lojaId: caixas.lojaId,
+            ativo: caixas.ativo,
+            sistema: caixas.sistema,
+            loja: lojas,
+          })
           .from(caixas)
           .innerJoin(lojas, eq(lojas.id, caixas.lojaId))
           .where(and(eq(caixas.id, entrada.caixaId), isNull(caixas.excluidoEm), isNull(lojas.excluidoEm)));
@@ -104,7 +111,14 @@ export class AtivacaoTerminais {
     );
     if (!caixa || caixa.lojaId !== entrada.lojaId)
       throw ErroApi.naoEncontrado('Caixa não encontrado nesta loja.');
-    if (caixa.numero < 1) throw new ErroApi('REGRA_NEGOCIO', 'O caixa 0 (sistema) não aceita terminal.');
+    if (caixa.numero < 1 || caixa.sistema)
+      throw new ErroApi('REGRA_NEGOCIO', 'O caixa 0 (sistema) não aceita terminal.');
+    if (!caixa.ativo) {
+      throw new ErroApi(
+        'REGRA_NEGOCIO',
+        'Caixa inativo: ative o caixa no cadastro da loja antes de gerar o código.',
+      );
+    }
     if (caixa.loja.tipo !== 'ponto_venda' || !caixa.loja.ativa || !caixa.loja.usaPdv) {
       throw new ErroApi('REGRA_NEGOCIO', 'A loja precisa ser ponto de venda ativa e com "Usa PDV".');
     }
@@ -216,11 +230,13 @@ export class AtivacaoTerminais {
       );
     }
 
-    // 5: loja e PDV habilitados (leitura no banco da empresa, antes do primeiro commit).
+    // 5: loja e PDV habilitados e o caixa do código ainda vivo e ativo (leitura no banco da empresa, antes do
+    // primeiro commit). O caixa é conferido de novo sob a trava na etapa da empresa (`caixaAceitaTerminal`).
     const contexto = this.resolvedor.contexto(empresa);
     const loja = await this.tenancy.executarNaEmpresa(contexto, () =>
       this.tenancy.cx().consulta(async (db) => {
         const [l] = await db.select().from(lojas).where(eq(lojas.id, ativacao.lojaId));
+        const [c] = await db.select().from(caixas).where(eq(caixas.id, ativacao.caixaId));
         const desligado = await db
           .select({ id: configuracoes.id })
           .from(configuracoes)
@@ -232,15 +248,17 @@ export class AtivacaoTerminais {
               sql`(${configuracoes.escopo} = 'empresa' or ${configuracoes.lojaId} = ${ativacao.lojaId})`,
             ),
           );
-        return l ? { ...l, pdvDesligado: desligado.length > 0 } : null;
+        return l
+          ? { ...l, pdvDesligado: desligado.length > 0, caixaAceita: caixaAceitaTerminal(c, l.id) }
+          : null;
       }),
     );
-    if (!loja || loja.excluidoEm || !loja.ativa || loja.tipo !== 'ponto_venda') {
-      return falhar(new ErroSync('LOJA_INATIVA', 'Loja inativa ou sem PDV.'), null);
-    }
+    if (!lojaAceitaTerminal(loja)) return falhar(lojaInativa(), null);
     if (!loja.usaPdv || loja.pdvDesligado) {
       return falhar(new ErroSync('PDV_DESABILITADO', 'O PDV está desabilitado para esta loja.'), null);
     }
+    // Quem chega aqui conhece o código: não conta como tentativa errada (motivo nulo, como `LOJA_INATIVA`).
+    if (!loja.caixaAceita) return falhar(caixaIndisponivel(), null);
     // 8: versão mínima do app para a plataforma e o canal da empresa.
     await this.garantirVersaoMinima(empresa.id, entrada.maquina.plataforma, entrada.maquina.versao_app);
 
@@ -329,6 +347,8 @@ export class AtivacaoTerminais {
             requisicao_ativacao_id: entrada.requisicao_ativacao_id,
             id_hardware: entrada.maquina.id_hardware,
             caixa_id: a.caixaId,
+            // Resumo da chave pública de backup desta requisição: a repetição (SYNC 3.4) só vale com a mesma chave.
+            chave_backup_publica_sha256: sha256Hex(chaveBackupPublica),
           },
           ip,
         });
@@ -343,7 +363,15 @@ export class AtivacaoTerminais {
     return this.concluir(empresa, terminalId, segredo, chaveBackup, chaveBackupPublica, entrada, meta);
   }
 
-  /** Repetição da mesma ativação (resposta perdida, SYNC 3.4): mesmo `requisicao_ativacao_id` e `id_hardware`. */
+  /**
+   * Repetição da mesma ativação (resposta perdida, SYNC 3.4). Só recupera a resposta para a **mesma** requisição da
+   * mesma máquina: mesmo `requisicao_ativacao_id` e `id_hardware` e as mesmas chaves públicas (a do terminal, gravada
+   * no 1º commit, e a de backup, pelo resumo gravado na auditoria da plataforma) — o PDV repete com o mesmo par de
+   * chaves da tentativa. Depois que o token entregue já autenticou uma chamada (`token_atual_usado_em`) ou foi
+   * renovado, a resposta não se perdeu: a repetição é recusada (`CODIGO_USADO`). Loja e caixa são conferidos antes
+   * da troca do segredo (como no passo 5): a recusa não mexe no token entregue nem no terminal. Cada token reemitido
+   * fica na auditoria da plataforma (`terminal_ativacao_repetida`).
+   */
   private async repetir(
     ativacao: typeof ativacoesPdv.$inferSelect,
     entrada: Ativar,
@@ -352,6 +380,7 @@ export class AtivacaoTerminais {
     falhar: (erro: ErroSync, motivo: Motivo) => Promise<never>,
   ): Promise<RespostaAtivacao> {
     const invalido = new ErroSync('CODIGO_INVALIDO', 'Código de ativação inválido.');
+    const usado = new ErroSync('CODIGO_USADO', 'Este código já foi usado para ativar este terminal.');
     if (!ativacao.terminalId) return falhar(invalido, 'codigo_invalido');
     const [linha] = await this.controle.db
       .select({
@@ -370,36 +399,78 @@ export class AtivacaoTerminais {
           eq(auditoriaPlataforma.acao, 'terminal_ativacao_iniciada'),
         ),
       );
-    const depois = (inicio?.depois ?? {}) as { requisicao_ativacao_id?: string; id_hardware?: string };
+    const depois = (inicio?.depois ?? {}) as {
+      requisicao_ativacao_id?: string;
+      id_hardware?: string;
+      chave_backup_publica_sha256?: string;
+    };
+    const chaveBackupPublica = Buffer.from(entrada.chave_backup_publica, 'base64');
     const mesma =
       !!t &&
       depois.requisicao_ativacao_id === entrada.requisicao_ativacao_id &&
       depois.id_hardware === entrada.maquina.id_hardware &&
-      t.idHardware === entrada.maquina.id_hardware;
+      t.idHardware === entrada.maquina.id_hardware &&
+      t.chavePublicaAlgoritmo === entrada.chave_publica_terminal.algoritmo &&
+      Buffer.from(entrada.chave_publica_terminal.chave, 'base64').equals(t.chavePublicaTerminal) &&
+      // Sem o resumo (ativação iniciada antes dele existir) não há como conferir: recusa; o `provisionando` é
+      // compensado pela manutenção e o código volta a valer para a mesma tentativa do PDV.
+      typeof depois.chave_backup_publica_sha256 === 'string' &&
+      depois.chave_backup_publica_sha256 === sha256Hex(chaveBackupPublica);
     if (!mesma || !t || (t.status !== 'provisionando' && t.status !== 'ativo'))
       return falhar(invalido, 'codigo_invalido');
-    if (linha.vencida) {
-      return falhar(
-        new ErroSync('CODIGO_USADO', 'Este código já foi usado para ativar este terminal.'),
-        'codigo_invalido',
-      );
-    }
-    // Segredo novo: o anterior pode ter se perdido com a resposta.
+    if (linha.vencida || t.tokenAtualUsadoEm || t.tokenHashAnterior) return falhar(usado, 'codigo_invalido');
+    // Loja e caixa conferidos antes da troca do segredo: a recusa não deixa no terminal um hash que ninguém recebeu
+    // nem uma reemissão auditada que não foi entregue, e não compensa nada (a etapa da empresa pode já ter
+    // commitado; o `provisionando` fica para a manutenção, que conclui ou compensa conforme o banco da empresa).
+    // Motivo nulo: quem chega aqui tem os ids e as chaves da requisição.
+    const ciclo = await this.tenancy.executarNaEmpresa(this.resolvedor.contexto(empresa), () =>
+      this.tenancy.cx().consulta(async (db) => {
+        const [l] = await db.select().from(lojas).where(eq(lojas.id, t.lojaId));
+        const [c] = await db.select().from(caixas).where(eq(caixas.id, t.caixaId));
+        return { lojaAceita: lojaAceitaTerminal(l), caixaAceita: !!l && caixaAceitaTerminal(c, l.id) };
+      }),
+    );
+    if (!ciclo.lojaAceita) return falhar(lojaInativa(), null);
+    if (!ciclo.caixaAceita) return falhar(caixaIndisponivel(), null);
+    // Segredo novo: o anterior pode ter se perdido com a resposta. A troca é condicional ao token que acabou de ser
+    // lido e ainda sem uso: uma chamada autenticada (ou uma renovação) entre a leitura e a troca vence.
     const segredo = gerarSegredo();
     const chaveBackup = this.cifra.decifrar(t.chaveBackupCifrada!, AAD_CHAVE_BACKUP);
-    await this.controle.db
-      .update(terminaisPdv)
-      .set({ tokenHash: sha256Hex(segredo), tokenEmitidoEm: new Date(), tokenAtualUsadoEm: null })
-      .where(eq(terminaisPdv.id, t.id));
-    return this.concluir(
-      empresa,
-      t.id,
-      segredo,
-      chaveBackup,
-      Buffer.from(entrada.chave_backup_publica, 'base64'),
-      entrada,
-      meta,
-    );
+    const emitidoEm = new Date();
+    const trocou = await this.controle.transacao(async (tx) => {
+      const r = await tx
+        .update(terminaisPdv)
+        .set({ tokenHash: sha256Hex(segredo), tokenEmitidoEm: emitidoEm, tokenAtualUsadoEm: null })
+        .where(
+          and(
+            eq(terminaisPdv.id, t.id),
+            eq(terminaisPdv.tokenHash, t.tokenHash),
+            isNull(terminaisPdv.tokenAtualUsadoEm),
+            isNull(terminaisPdv.tokenHashAnterior),
+            inArray(terminaisPdv.status, ['provisionando', 'ativo']),
+          ),
+        )
+        .returning({ id: terminaisPdv.id });
+      if (!r.length) return false;
+      // Sem "token" nos nomes das chaves: o mascaramento da auditoria esconderia os valores (ERP 17.2).
+      await registrarAuditoriaPlataforma(tx, {
+        empresaId: empresa.id,
+        acao: 'terminal_ativacao_repetida',
+        entidade: 'terminais_pdv',
+        registroId: t.id,
+        antes: { emitido_em: t.tokenEmitidoEm.toISOString(), status: t.status },
+        depois: {
+          emitido_em: emitidoEm.toISOString(),
+          requisicao_ativacao_id: entrada.requisicao_ativacao_id,
+          id_hardware: entrada.maquina.id_hardware,
+          requisicao_id: meta.requisicaoId,
+        },
+        ip: meta.ip,
+      });
+      return true;
+    });
+    if (!trocou) return falhar(usado, 'codigo_invalido');
+    return this.concluir(empresa, t.id, segredo, chaveBackup, chaveBackupPublica, entrada, meta);
   }
 
   /** Etapa da empresa (idempotente) + 3º commit; falha controlada compensa e responde 503. */
@@ -422,7 +493,8 @@ export class AtivacaoTerminais {
     try {
       etapa = await this.etapaEmpresa(empresa, t, entrada, meta);
     } catch (e) {
-      // Se a própria compensação falhar (ex.: o banco da empresa fora do ar), a manutenção a refaz depois.
+      // Se a própria compensação falhar (ex.: o banco da empresa fora do ar), a manutenção a refaz depois. O caixa
+      // excluído ou inativado (a recusa da etapa) deixa o código `cancelado`: quem decide é a compensação.
       await this.compensar(terminalId).catch(() => false);
       if (e instanceof ErroSync) throw e;
       throw ErroSync.manutencao();
@@ -472,11 +544,41 @@ export class AtivacaoTerminais {
 
   /**
    * Compensação da ativação que não concluiu (SYNC 3.4): o `provisionando` vira `revogado` (`falha_ativacao`), a
-   * substituição é desfeita e o código volta a `pendente` se ainda não venceu. Usada na falha da etapa da empresa e
-   * pela manutenção periódica (provisionando esquecido). Devolve `false` se o terminal já não estava
+   * substituição é desfeita e o código volta a `pendente` se ainda não venceu — ou fica `cancelado` se o caixa já não
+   * aceita terminal (excluído, inativado, ou a loja excluída: ERP 10.3.10 e 12.3). Usada na falha da etapa da empresa
+   * e pela manutenção periódica (provisionando esquecido). Devolve `false` se o terminal já não estava
    * `provisionando` (ativação concluída: nada a desfazer).
+   *
+   * O caixa é lido com `for share` no banco da empresa e a transação do controle commita antes de soltá-lo: a edição e
+   * a exclusão do caixa (que travam a linha e cancelam os códigos `pendente` no controle) ou vêm antes, e a leitura vê
+   * o caixa inativo, ou vêm depois, e já acham o código `pendente`. Sem a empresa (excluída), volta a `pendente`.
    */
   async compensar(terminalId: string): Promise<boolean> {
+    const [t] = await this.controle.db
+      .select({
+        empresaId: terminaisPdv.empresaId,
+        lojaId: terminaisPdv.lojaId,
+        caixaId: terminaisPdv.caixaId,
+      })
+      .from(terminaisPdv)
+      .where(and(eq(terminaisPdv.id, terminalId), eq(terminaisPdv.status, 'provisionando')));
+    if (!t) return false;
+    const empresa = await this.resolvedor.porId(t.empresaId);
+    if (!empresa || empresa.excluida) return this.compensarNoControle(terminalId, false);
+    return this.tenancy.executarNaEmpresa(this.resolvedor.contexto(empresa), () =>
+      this.tenancy.cx().transacao(async (db) => {
+        const [caixa] = await db.select().from(caixas).where(eq(caixas.id, t.caixaId)).for('share');
+        const [loja] = await db
+          .select({ excluidoEm: lojas.excluidoEm })
+          .from(lojas)
+          .where(eq(lojas.id, t.lojaId));
+        const cancelar = !loja || loja.excluidoEm !== null || !caixaAceitaTerminal(caixa, t.lojaId);
+        return this.compensarNoControle(terminalId, cancelar);
+      }),
+    );
+  }
+
+  private async compensarNoControle(terminalId: string, cancelarCodigo: boolean): Promise<boolean> {
     return this.controle.transacao(async (tx) => {
       const revogados = await tx
         .update(terminaisPdv)
@@ -487,7 +589,8 @@ export class AtivacaoTerminais {
           ativacaoId: terminaisPdv.ativacaoId,
           empresaId: terminaisPdv.empresaId,
         });
-      // Já `ativo` (repetição de uma ativação concluída): não há o que desfazer.
+      // Já `ativo` (repetição de uma ativação concluída, ou a etapa concluiu entre a leitura e aqui): não há o que
+      // desfazer.
       if (!revogados.length) return false;
       // Substituição desfeita: o antigo volta a `ativo` (no banco da empresa ele nunca saiu, a etapa fez rollback);
       // senão o próximo heartbeat lhe entrega `revogar` e o caixa fica sem terminal. Só se ainda apontar para este
@@ -509,7 +612,13 @@ export class AtivacaoTerminais {
         );
       await tx
         .update(ativacoesPdv)
-        .set({ status: 'pendente', usadoEm: null, usadoIp: null, terminalId: null })
+        .set({
+          status: cancelarCodigo ? 'cancelado' : 'pendente',
+          usadoEm: null,
+          usadoIp: null,
+          terminalId: null,
+          ...(cancelarCodigo ? { canceladoEm: new Date() } : {}),
+        })
         .where(and(eq(ativacoesPdv.id, revogados[0]!.ativacaoId), gt(ativacoesPdv.expiraEm, sql`now()`)));
       return true;
     });
@@ -571,6 +680,19 @@ export class AtivacaoTerminais {
           const [loja] = await tx.select().from(lojas).where(eq(lojas.id, t.lojaId));
           const [caixa] = await tx.select().from(caixas).where(eq(caixas.id, t.caixaId)).for('update');
           if (!loja || !caixa) throw new ErroSync('CAIXA_OCUPADO', 'Caixa não encontrado.');
+          // Etapa já gravada (a repetição, ou a API caiu antes do 3º commit): a ativação já aconteceu neste banco, e
+          // a resposta sai da decisão gravada, sem a conferência abaixo — recusar aqui levaria `concluir` a
+          // compensar no controle uma substituição que a empresa já aplicou.
+          const [ja] = await tx
+            .select({ depois: auditoria.depois })
+            .from(auditoria)
+            .where(and(eq(auditoria.acao, 'terminal_ativado'), eq(auditoria.registroId, t.id)))
+            .limit(1);
+          // Ciclo de vida relido sob a trava do caixa (a exclusão e a edição do caixa travam a mesma linha): loja
+          // excluída ou inativada → `LOJA_INATIVA`, como no passo 5 (a compensação devolve o código a `pendente`);
+          // caixa excluído ou inativado → `CODIGO_INVALIDO` com a causa (a compensação deixa o código `cancelado`).
+          if (!ja && !lojaAceitaTerminal(loja)) throw lojaInativa();
+          if (!ja && !caixaAceitaTerminal(caixa, loja.id)) throw caixaIndisponivel();
           for (const a of anteriores) {
             if (a.status === 'revogado') {
               // A revogação cuja etapa da empresa não rodou (ex.: falhou depois do controle) é completada aqui por
@@ -615,11 +737,6 @@ export class AtivacaoTerminais {
               versaoSchemaLocal: entrada.maquina.versao_schema_local,
             })
             .onConflictDoNothing({ target: terminais.id });
-          const [ja] = await tx
-            .select({ depois: auditoria.depois })
-            .from(auditoria)
-            .where(and(eq(auditoria.acao, 'terminal_ativado'), eq(auditoria.registroId, t.id)))
-            .limit(1);
           if (ja) {
             const caixaAtual = (await tx.select().from(caixas).where(eq(caixas.id, t.caixaId)))[0]!;
             return {
@@ -934,4 +1051,47 @@ export class AtivacaoTerminais {
       );
     }
   }
+}
+
+/**
+ * Regra de ciclo de vida do caixa que recebe terminal (a mesma de `caixasParaAtivacao` e de `gerarCodigo`): da loja
+ * do código, não excluído, ativo e não é o caixa 0 do sistema.
+ */
+export function caixaAceitaTerminal(
+  caixa:
+    Pick<typeof caixas.$inferSelect, 'lojaId' | 'excluidoEm' | 'ativo' | 'sistema' | 'numero'> | undefined,
+  lojaId: string,
+): boolean {
+  return (
+    !!caixa &&
+    caixa.lojaId === lojaId &&
+    caixa.excluidoEm === null &&
+    caixa.ativo &&
+    !caixa.sistema &&
+    caixa.numero >= 1
+  );
+}
+
+/** Loja que recebe terminal (passo 5 da SYNC 3.3): viva, ativa e ponto de venda. */
+function lojaAceitaTerminal<L extends Pick<typeof lojas.$inferSelect, 'excluidoEm' | 'ativa' | 'tipo'>>(
+  loja: L | null | undefined,
+): loja is L {
+  return !!loja && loja.excluidoEm === null && loja.ativa && loja.tipo === 'ponto_venda';
+}
+
+/** Loja excluída ou inativada (SYNC 3.3 item 5): 403 sem cancelar o código (reativar a loja o faz valer de novo). */
+function lojaInativa(): ErroSync {
+  return new ErroSync('LOJA_INATIVA', 'Loja inativa ou sem PDV.');
+}
+
+/**
+ * Código de caixa excluído ou inativado: o mesmo `CODIGO_INVALIDO` do código cancelado (o PDV instalado já mostra
+ * "gere outro no ERP"), com a causa na mensagem. Quando a recusa vem da etapa da empresa, a compensação deixa o código
+ * `cancelado` (`compensar` confere o caixa).
+ */
+function caixaIndisponivel(): ErroSync {
+  return new ErroSync(
+    'CODIGO_INVALIDO',
+    'Código de ativação sem efeito: o caixa foi excluído ou inativado no ERP. Gere outro código.',
+  );
 }

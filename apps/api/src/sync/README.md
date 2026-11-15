@@ -73,10 +73,17 @@ requisicao_id } }` (SYNC 2.4, `erros.ts`). Cabeçalhos `X-Genesis-*` obrigatóri
   reprocessar, aplicar com novo número, descartar e o lote por código, todos em transação de evento com
   `travarTerminal` primeiro; README da API › decisão 135).
 - **`tentativas_ativacao`**: o CHECK do MD 2.6 só tem os motivos de código errado/plano/IP; falhas que provam
-  conhecimento do código (`CAIXA_OCUPADO`, `LOJA_INATIVA`, `PDV_DESABILITADO`) ficam com `motivo_falha` nulo e não
-  contam para o bloqueio por força bruta. A 20ª falha do código da empresa em 1 h gera o alerta `ATIVACAO_FORCA_BRUTA`
+  conhecimento do código (`CAIXA_OCUPADO`, `LOJA_INATIVA`, `PDV_DESABILITADO` e o `CODIGO_INVALIDO` do código ainda
+  `pendente` cujo caixa já não aceita terminal — mudança direta no banco ou corrida com a exclusão; README da API ›
+  decisão 205) ficam com `motivo_falha` nulo e não contam para o bloqueio por força bruta. O código que o ERP já
+  cancelou ao excluir ou inativar o caixa responde o `CODIGO_INVALIDO` genérico e conta como os outros cancelados
+  (SYNC 3.3 item 3). A 20ª falha do código da empresa em 1 h gera o alerta `ATIVACAO_FORCA_BRUTA`
   no ERP; "Liberar ativações" grava `empresas.ativacoes_liberadas_em` e as falhas anteriores deixam de contar (README
   da API › decisão 112).
+- **Repetição da ativação** (SYNC 3.4; README da API › decisão 205): só com os mesmos ids e as mesmas chaves públicas
+  da requisição, enquanto o token entregue não foi usado nem renovado e com loja e caixa ainda aceitando terminal
+  (conferidos antes da troca do segredo); cada reemissão grava `terminal_ativacao_repetida` na auditoria da
+  plataforma. A compensação confere o caixa: excluído ou inativado, o código fica `cancelado` em vez de `pendente`.
 - **Substituição** (README da API › decisão 106): o antigo vai para `desativando` (carência de 7 dias) no controle
   antes do insert do novo e, na etapa da empresa, também em `terminais` antes do insert, senão o
   `uq_terminais_caixa_ativo` recusa o novo. Gerar código de substituição exige `terminais.revogar`. Com eventos em

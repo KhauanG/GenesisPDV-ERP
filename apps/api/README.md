@@ -6429,6 +6429,84 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        429 com `Retry-After: 5`, e a terceira da empresa com limite 2 também; a de outra empresa segue; tudo baixa
        200 quando as vagas abrem, e a admissão volta).
 
+205. **Ativação do terminal: a repetição presa às chaves da requisição e o caixa conferido no resgate** (PR-15,
+     SEG-B05; SYNC 3.3 e 3.4; ERP 10.3.10 e 12.3; decisões 106 e 112; `src/sync/ativacao.ts`,
+     `src/terminais/codigos-pendentes.ts`, `src/lojas/caixas.controller.ts`, `src/lojas/lojas.controller.ts`).
+     - **A repetição só recupera a resposta para a mesma requisição da mesma máquina.** Além do
+       `requisicao_ativacao_id` e do `id_hardware` (que aparecem na auditoria e no detalhe do terminal, então não
+       provam nada sozinhos), a repetição exige a mesma `chave_publica_terminal` (algoritmo e bytes gravados no 1º
+       commit em `terminais_pdv`) e a mesma `chave_backup_publica`, pelo resumo SHA-256 que o 1º commit passou a
+       gravar em `auditoria_plataforma.depois` de `terminal_ativacao_iniciada` (`chave_backup_publica_sha256`; sem
+       coluna nova nem migração: os ids da repetição já eram lidos dali). O PDV repete com o mesmo par de chaves da
+       tentativa (`ServicoAtivacao`, em memória até o 201 conferido), então a repetição legítima depois de uma queda de
+       rede continua igual. Ids iguais com outra chave → `CODIGO_INVALIDO` genérico (conta como código errado).
+     - **Depois do uso, não há repetição.** Com o token entregue já usado numa chamada (`token_atual_usado_em`) ou
+       renovado (`token_hash_anterior`), a resposta evidentemente não se perdeu: `CODIGO_USADO`, como fora da janela
+       de 15 min (o PDV já mostra "gere outro código no ERP"). Trocar a máquina de um caixa ocupado continua sendo
+       "Substituir terminal", que exige `terminais.revogar` (decisão 106).
+     - **Toda reemissão fica auditada e é condicional.** A troca do segredo é um `update` preso ao `token_hash` lido,
+       ainda sem uso e sem renovação, com `status` `provisionando`/`ativo`; na mesma transação grava
+       `auditoria_plataforma` `terminal_ativacao_repetida` (emissão anterior e nova, status, `requisicao_ativacao_id`,
+       `id_hardware`, `X-Requisicao-Id` e IP; sem "token" nos nomes das chaves, como na renovação). Uma chamada
+       autenticada entre a leitura e a troca vence: `CODIGO_USADO`.
+     - **Ativação em andamento na troca de versão**: a ativação iniciada antes desta versão não tem o resumo da chave
+       de backup, e a repetição dela (só nos 15 min seguintes à implantação) é recusada. O `provisionando` é
+       compensado pela manutenção (decisão 113) e o código volta a `pendente`, então a próxima tentativa do mesmo PDV
+       ativa normalmente; a que já tinha ficado `ativo` sem o PDV receber a resposta pede "Substituir terminal" no ERP.
+     - **O caixa precisa continuar vivo e ativo no resgate** (`caixaAceitaTerminal`, a mesma regra de
+       `caixasParaAtivacao`: da loja do código, não excluído, `ativo`, não é o caixa 0). O passo 5 da ativação lê o
+       caixa junto da loja, antes do 1º commit; a etapa da empresa relê caixa e loja sob a trava do caixa (`for update`,
+       a mesma linha que a exclusão e a edição do caixa travam). Loja e caixa têm respostas separadas, iguais às do
+       passo 5: loja excluída, inativa ou que deixou de ser ponto de venda → 403 `LOJA_INATIVA` (a compensação devolve
+       o código a `pendente`: inativar a loja não cancela códigos, e reativá-la os faz valer de novo); caixa excluído
+       ou inativo → `CODIGO_INVALIDO` com a causa na mensagem. O motivo nulo e a mensagem com a causa valem para o
+       código que ainda está `pendente` quando o caixa já não aceita terminal (mudança direta no banco, ou a corrida
+       com a exclusão/inativação); quem chega lá conhece o código, e a falha não alimenta o bloqueio (decisão 112). O
+       código que o ERP já cancelou responde o `CODIGO_INVALIDO` genérico e conta como os outros cancelados (SYNC 3.3
+       item 3). O PDV 0.12.0 já mostra "gere outro no ERP", sem código novo no protocolo.
+     - **A compensação confere o caixa** (`compensar`, usada por `concluir` e pela manutenção do `provisionando`
+       esquecido): com o caixa excluído ou inativado (ou a loja excluída), o código que ela devolveria a `pendente`
+       fica `cancelado`. Cobre também a ativação em andamento quando o ERP inativou o caixa (o código estava `usado` e
+       o cancelamento do ERP não o alcançou) e a queda da API entre os commits. O caixa é lido com `for share` e a
+       transação do controle commita antes de soltá-lo, então a edição do caixa ou vem antes (a leitura já o vê
+       inativo) ou depois (e acha o código `pendente` para cancelar). Sem a empresa (excluída), volta a `pendente`
+       como antes; com o banco da empresa fora do ar, a compensação falha inteira e a manutenção a refaz.
+     - **Na repetição, a conferência vem antes da troca do segredo, e a etapa gravada vem antes da conferência.**
+       `repetir` relê loja e caixa no banco da empresa depois de conferir ids, chaves e uso do token e antes do
+       `update` condicional: a recusa (`LOJA_INATIVA` ou o `CODIGO_INVALIDO` do caixa, motivo nulo) não deixa no
+       terminal um hash que ninguém recebeu, não grava `terminal_ativacao_repetida` e não compensa — o token entregue
+       continua valendo, e um `provisionando` fica para a manutenção, que conclui se a etapa da empresa já está
+       gravada. Na etapa da empresa, a auditoria `terminal_ativado` do terminal é lida antes da conferência do ciclo
+       de vida: a etapa já commitada devolve a decisão gravada (idempotente, como antes deste bloco), e uma
+       inativação posterior nunca leva `concluir` a compensar no controle uma substituição que a empresa já aplicou.
+     - **Excluir ou inativar o caixa, ou excluir a loja, cancela os códigos pendentes** (`cancelarCodigosPendentes`):
+       `ativacoes_pdv` `pendente` do caixa (ou de todos os caixas da loja) vira `cancelado` com quem cancelou, e cada um
+       grava `auditoria` `cancelar` (`ativacoes_pdv`) na transação do caixa. O `update` no controle roda dentro da
+       transação da empresa, com o caixa travado: se ela não commitar, o código fica cancelado mesmo assim (basta gerar
+       outro). A transação da empresa é repetida no deadlock e no erro de serialização, e na repetição o `update` não
+       acha mais nada `pendente`: os códigos que a requisição já cancelou ficam guardados por requisição e alvo
+       (`WeakMap` presa ao objeto da requisição, sem coluna nova), e a tentativa que commita audita todos.
+       `gerarCodigo` também recusa caixa inativo (422 `REGRA_NEGOCIO`), como já recusava o excluído e o caixa 0.
+     - Sem migração, sem contrato novo e sem mudança no PDV. Testes: `test/integracao/ativacao-repeticao.test.ts`
+       (repetição legítima com o mesmo id e as mesmas chaves → 201, token novo que funciona, o anterior 401, a chave de
+       backup abre com a da tentativa e uma linha `terminal_ativacao_repetida`; outra chave do terminal ou outra chave
+       de backup → 422 `CODIGO_INVALIDO` e o token entregue continua valendo; depois de um `GET /sync/estado` com o
+       token → 422 `CODIGO_USADO`, token intacto, sem reemissão auditada; depois da renovação do token (uso zerado,
+       `token_hash_anterior` preenchido) → 422 `CODIGO_USADO` e o token renovado vale; excluir e inativar o caixa pelo
+       ERP cancelam o código pendente, com a auditoria, e o resgate é 422 sem terminal no caixa; código novo para
+       caixa inativo → 422; código ainda `pendente` de caixa excluído ou inativado direto no banco → 422 com
+       `motivo_falha` nulo, sem terminal nem `caixas.terminal_id`; a repetição depois de inativar o caixa → 422 sem
+       reemissão, terminal `ativo` e o token entregue 200; etapa da empresa gravada com o controle ainda
+       `provisionando` e o caixa inativado → a repetição é 422 sem compensar (terminal `provisionando`, código
+       `usado`) e a manutenção conclui; a mesma etapa rodada de novo depois de inativar o caixa devolve a decisão
+       gravada (201); caixa inativado entre o passo 5 e a etapa → 422, terminal `revogado` (`falha_ativacao`) e código
+       `cancelado`; loja inativada no mesmo ponto → 403 `LOJA_INATIVA`, código `pendente`, e o código ativa depois de
+       reativar a loja; `provisionando` esquecido (etapa e compensação caíram) com o caixa inativado pelo ERP → a
+       manutenção compensa e o código fica `cancelado`; a transação da empresa repetida por deadlock depois do
+       cancelamento → uma auditoria `cancelar`; excluir a loja cancela os códigos dos caixas dela; a regra
+       `caixaAceitaTerminal`) e as suítes de sempre
+       (`sync.test.ts`, `terminais.test.ts`, `estrutura.test.ts`, `token.test.ts`, `recuperar.test.ts`).
+
 ### Operação – tarefas em segundo plano (API)
 
 150. **Tarefa interrompida: "último sinal", retentativa e varredura** (incidente de 04/11/2026; ERP 3.6; MD 3.1.8;
