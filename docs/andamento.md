@@ -60,6 +60,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
 | PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 13/11/2026 (junto com o PR-11 e o PR-14) |
 | PR-14 tributação gravada e fechamento | B52–B53 | concluído (#11, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 13/11/2026 (junto com o PR-11 e o PR-13) |
+| PR-15 segurança (D64/D69) | SEG-B01..B16 | concluído na branch `claude/blissful-cray-cvroui` (15/11/2026; revisão por bloco com 3 lentes; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **aguarda a liberação do dono para o merge**, depois a implantação da API e do ERP e o PDV **0.13.0** nos caixas |
 
 ### PR-6 — blocos
 
@@ -152,6 +153,11 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 
 ## Próximo passo
 
+0. **PR-15 segurança (D64/D69), 15/11/2026:** os 16 blocos SEG-B01..B16 prontos na branch, cada um com a revisão de
+   3 lentes e todos os checks, e a revisão de segurança do PR inteiro (D63) sem achado médio ou alto. **Dono:** liberar
+   o merge; depois, **logo**, a Implantação da API e do ERP (migração **0006** do banco de controle) e o release do PDV
+   **0.13.0** com a Implantação `publicar_pdv`, para atualizar os caixas. O PDV 0.12.0 instalado continua sincronizando
+   com a API nova.
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
    abastece** para quem monta as cargas: a sugestão de reposição exige o destino permitido (D62 (2)).
 2. **PR-7 e PR-8 em produção (10/11/2026):** Implantação de `4edc0d6` (migração **0026**), release `pdv-v0.11.0` e a
@@ -234,9 +240,13 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 
 ## Pendências e lembretes
 
-- **Auditoria completa de segurança no fim da Fase 2 (D64):** antes de levar o sistema a todas as lojas, rodar o
-  plugin oficial `claude-security` (o dono instala pelo catálogo) e, como segunda opinião, a skill
-  `cloudflare/security-audit-skill`. Lembrar o dono ao fechar o último PR da Fase 2.
+- **Auditoria completa de segurança no fim da Fase 2 (D64): feita** (13 a 15/11/2026) com a skill
+  `cloudflare/security-audit-skill` ("Use o da cloudflare"), com as pontas abertas verificadas (D69 2A). O relatório
+  fica **fora do repositório** (público, D60). As correções estão no PR-15 (D69 1A). **Depois do merge, para o dono:**
+  implantar a API e o ERP logo (Implantação manual) e atualizar os caixas para o PDV 0.13.0; as checagens só de
+  observar que a auditoria pediu ao dono (configurações do GitHub, contas do Windows nos caixas, pasta secundária de
+  backup e a rede da VPS) foram passadas na conversa, não aqui. A auditoria ficou sem o crítico final de cobertura
+  limpa (fora da D69): se o dono quiser uma execução completa, é o próximo passo dela.
 - **Revisão de segurança do PR inteiro (D63):** a partir do PR-9, antes de abrir cada PR, a skill `security-review`.
 - **Proteger o SSH da VPS** (dono; `infra/producao/README.md` › Proteger o SSH da VPS): só chave, firewall da
   Hostinger e fail2ban. A chave antiga do GitHub Actions já foi revogada em 06/11/2026 (sobrou só a nova).
