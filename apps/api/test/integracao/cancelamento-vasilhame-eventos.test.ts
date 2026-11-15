@@ -1756,6 +1756,42 @@ describe('vasilhame.movimentado (SYNC 9.26)', () => {
       `estoque_contexto_invalido:${p.terminal}:${sumido}`,
     );
     expect(alerta!.dados).toEqual({ estoque_contexto_id: sumido, estoque_usado_id: estoqueLoja });
+
+    // O estoque de outra loja (ativo e vivo) também não vale para este caixa: a entrada fica no estoque da loja dele.
+    const vizinha = await criarLoja(emp.nomeBanco, 3, 'Loja 3 - Vizinha');
+    const [{ estoque_id: daVizinha }] = (await consultar<{ estoque_id: string }>(
+      emp.nomeBanco,
+      'select estoque_id from lojas where id = $1',
+      [vizinha],
+    )) as [{ estoque_id: string }];
+    const f = devolucao(p, casco, '4.000');
+    const [rv] = await pushOk(p, [
+      evento(p, 'vasilhame.movimentado', f, {
+        contexto: {
+          loja_id: p.loja,
+          caixa_id: p.caixa,
+          numero_caixa: p.numero,
+          versao_app: '1.0.0',
+          estoque_id: daVizinha,
+        },
+      }),
+    ]);
+    expect(rv, JSON.stringify(rv)).toMatchObject({
+      status: 'aplicado',
+      resultado: { movimentos: 1, alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] },
+    });
+    expect(await saldo(casco, tipoVazio)).toBe(7);
+    const [{ n: naVizinha }] = (await consultar<{ n: number }>(
+      emp.nomeBanco,
+      'select count(*)::int as n from movimentos_estoque where estoque_id = $1',
+      [daVizinha],
+    )) as [{ n: number }];
+    expect(naVizinha).toBe(0);
+    const [alertaVizinha] = await alertasAbertos(
+      'ESTOQUE_CONTEXTO_INVALIDO',
+      `estoque_contexto_invalido:${p.terminal}:${daVizinha}`,
+    );
+    expect(alertaVizinha!.dados).toEqual({ estoque_contexto_id: daVizinha, estoque_usado_id: estoqueLoja });
   });
 
   it('produto que não é casco (tipo diferente de vasilhame) → PAYLOAD_INVALIDO, na devolução e no bloco vasilhames da venda', async () => {

@@ -711,7 +711,9 @@ async function aplicarEmAndamento(
   }
   // Sem estoque, custo nem financeiro (SYNC 9.9 B, 10.1): o documento como veio, para o relatório de canceladas.
   await gravarLinhasVenda(tx, linhas);
-  await avancarNumeracao(ctx, original.vendas.numero);
+  // Como no `venda.finalizada`: o número acima da margem do caixa, renumerado, não entra em `numeracoes` (decisão 212).
+  if (!renumeracao || renumeracao.original.avancaNumeracao)
+    await avancarNumeracao(ctx, original.vendas.numero);
   const caixa = String(terminal.numeroCaixa).padStart(2, '0');
   await registrarAuditoriaPdv(ctx, {
     entidade: 'vendas',

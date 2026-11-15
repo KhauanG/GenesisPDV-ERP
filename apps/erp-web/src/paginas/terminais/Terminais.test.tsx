@@ -1374,6 +1374,68 @@ describe('<DetalheTerminal> (ERP 12.4)', () => {
       codigo: 'NUMERO_VENDA_DUPLICADO',
     });
   });
+
+  it('a venda fora da sequência do caixa também aceita Aplicar com novo número, e o diálogo diz o que acontece', async () => {
+    const u = userEvent.setup();
+    const foraDaSequencia: EventoComErro = {
+      ...RETIDO,
+      status: 'erro',
+      erroCodigo: 'NUMERO_VENDA_IMPLAUSIVEL',
+      erro: 'Número L01-C02-999999999999 muito acima da numeração do caixa (último conhecido: 12).',
+      aguardando: [],
+    };
+    const { chamadas } = renderizarDetalhe(
+      DETALHE({ eventosComErro: 1 }),
+      PERMISSOES,
+      [
+        ({ url }) =>
+          url.pathname === `/api/terminais/${T1}/eventos-erro`
+            ? { corpo: listagem([foraDaSequencia], [{ codigo: 'NUMERO_VENDA_IMPLAUSIVEL', quantidade: 1 }]) }
+            : undefined,
+        ({ url, metodo }) =>
+          metodo === 'POST' &&
+          url.pathname === `/api/eventos-recebidos/${foraDaSequencia.id}/aplicar-novo-numero`
+            ? {
+                corpo: {
+                  eventoId: foraDaSequencia.eventoId,
+                  sequencia: 2,
+                  tipo: 'venda.finalizada',
+                  status: 'aplicado',
+                  erroCodigo: null,
+                  erro: null,
+                  dependentes: [],
+                  numero: { original: 'L01-C02-999999999999', novo: 'L01-C02-9000001' },
+                } satisfies ResultadoReprocessamento,
+              }
+            : undefined,
+      ],
+      '?aba=eventos',
+    );
+    await u.click(await screen.findByRole('button', { name: 'Ações do evento 2' }));
+    await u.click(await screen.findByRole('menuitem', { name: 'Aplicar com novo número' }));
+    const dialogo = await screen.findByRole('dialog', { name: 'Aplicar com novo número o evento nº 2' });
+    expect(within(dialogo).getByText(/muito acima da numeração do caixa/)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/sem avançar a numeração dele/)).toBeInTheDocument();
+    expect(
+      within(dialogo).getByText(/As próximas vendas deste terminal também caem aqui/),
+    ).toBeInTheDocument();
+    expect(within(dialogo).getByText(/"Substituir terminal"/)).toBeInTheDocument();
+    await u.click(within(dialogo).getByRole('button', { name: 'Aplicar com novo número' }));
+    expect(
+      await screen.findByText(
+        'Evento nº 2 aplicado como L01-C02-9000001 (número do caixa L01-C02-999999999999).',
+      ),
+    ).toBeInTheDocument();
+    expect(chamadas.some((c) => c.url.pathname.endsWith('/aplicar-novo-numero'))).toBe(true);
+
+    // O lote avisa que reprocessar não resolve este código.
+    await u.click(screen.getByRole('button', { name: 'Reprocessar todos com o código' }));
+    await u.click(await screen.findByRole('menuitem', { name: 'NUMERO_VENDA_IMPLAUSIVEL (1)' }));
+    const doLote = await screen.findByRole('dialog', {
+      name: 'Reprocessar todos com NUMERO_VENDA_IMPLAUSIVEL',
+    });
+    expect(within(doLote).getByText(/Reprocessar não resolve este código/)).toBeInTheDocument();
+  });
 });
 
 describe('mensagemReprocessamento', () => {

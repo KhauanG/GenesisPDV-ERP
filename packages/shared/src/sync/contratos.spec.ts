@@ -17,6 +17,8 @@ import {
   eventoSchema,
   FLUXOS,
   heartbeatSchema,
+  NUMERO_VENDA_MAXIMO,
+  VALE_NUMERO_MAXIMO,
   LIMITE_RECUPERAR_MAXIMO,
   MAXIMO_IDS_EVENTOS_STATUS,
   MAXIMO_SEQUENCIAS_LACUNA,
@@ -149,6 +151,23 @@ describe('fixtures do protocolo de sincronização', () => {
     expect(resposta.resultados.map((r) => [r.evento_id, r.sequencia])).toEqual(
       achados.map((e) => [e.evento_id, e.sequencia]),
     );
+  });
+
+  it('heartbeat: o contador de venda vai até o que cabe no número exibido; o de vale, até os 7 dígitos do código', () => {
+    const hb = ler('heartbeat.requisicao.json') as Record<string, unknown>;
+    for (const [campo, maximo] of [
+      ['venda_ultimo_numero', NUMERO_VENDA_MAXIMO],
+      ['vale_ultimo_numero', VALE_NUMERO_MAXIMO],
+    ] as const) {
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: maximo }).success).toBe(true);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: maximo + 1 }).success).toBe(false);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: -1 }).success).toBe(false);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: null }).success).toBe(true);
+    }
+    expect(heartbeatSchema.safeParse({ ...hb, vale_ultimo_numero: 10_000_000 }).success).toBe(false);
+    expect(`L99-C99-${NUMERO_VENDA_MAXIMO}`).toHaveLength(20);
+    // `VC` + loja 2 + caixa 2 + sequencial 7 + DV (SYNC 13.4; `ck_vales_codigo ^VC[0-9]{12}$`).
+    expect(`VC9999${VALE_NUMERO_MAXIMO}0`).toMatch(/^VC[0-9]{12}$/);
   });
 
   it('chave com nome errado numa requisição é apontada (o zod só a descartaria)', () => {

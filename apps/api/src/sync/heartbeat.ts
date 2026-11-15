@@ -12,7 +12,7 @@
  * mesma transação da telemetria.
  */
 import { MAX_COMANDOS_HEARTBEAT, STATUS_EVENTO_NUVEM } from '@genesis/shared';
-import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql, type AnyColumn } from 'drizzle-orm';
 import type { AuditoriaService } from '../auditoria/auditoria.service.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import { empresas, terminaisPdv, versoesAppPdv } from '../database/controle/schema.js';
@@ -36,6 +36,7 @@ import type {
   StatusEventoNuvemItem,
 } from './contratos.js';
 import { versoesSchemaAceitas } from './eventos.js';
+import { dentroDaMargem } from './numeracao.js';
 import { alertarDesvioRelogio, resolverAlertaDesvioRelogio } from './relogio.js';
 import { fecharSessoesDoTerminal, sessaoAbertaDoTerminal } from './sessoes-caixa.js';
 import { situacaoNaNuvem } from './situacao-evento.js';
@@ -43,6 +44,12 @@ import { PROTOCOLO_ATUAL, PROTOCOLO_MINIMO, type TerminalAutenticado } from './t
 import { compararVersoes } from './versoes-app.js';
 
 const RENOVAR_TOKEN_DIAS = 30;
+
+/** `greatest` do contador gravado com o informado; sem valor no heartbeat, a coluna fica como está. */
+const maiorContador = (coluna: AnyColumn, informado: number | null | undefined) =>
+  informado === null || informado === undefined
+    ? undefined
+    : sql<number>`greatest(coalesce(${coluna}, 0), ${informado}::bigint)`;
 
 /**
  * Item de `eventos_resolvidos` (heartbeat) e de `eventos-status` (SYNC 21.1): a situação comum (`situacaoNaNuvem`,
@@ -218,8 +225,10 @@ export class HeartbeatSync {
           ? Math.max(...hb.nfce_ultimo_numero.map((n) => n.numero))
           : undefined,
         ultimaSequenciaGerada: hb.ultima_sequencia_gerada ?? undefined,
-        vendaUltimoNumero: hb.venda_ultimo_numero ?? undefined,
-        valeUltimoNumero: hb.vale_ultimo_numero ?? undefined,
+        // O maior já informado (README da API › decisão 212): um heartbeat menor (backup antigo restaurado, ordem de
+        // chegada) não baixa o contador que a ativação seguinte do caixa considera (SYNC 13.3).
+        vendaUltimoNumero: maiorContador(terminais.vendaUltimoNumero, hb.venda_ultimo_numero),
+        valeUltimoNumero: maiorContador(terminais.valeUltimoNumero, hb.vale_ultimo_numero),
         inutilizacoesPendentes: hb.inutilizacoes_pendentes,
         discoLivreMb: hb.disco_livre_mb ?? undefined,
         tamanhoBancoMb: hb.tamanho_banco_mb ?? undefined,
@@ -395,6 +404,15 @@ export class HeartbeatSync {
     });
     const { t, loja, ultimo, contagem, nums, sessao } = dados;
     const n = (tipo: string) => nums.find((x) => x.tipo === tipo)?.ultimoNumero ?? 0;
+    // O maior entre o que a nuvem conhece e o que o terminal informou no heartbeat, este só até o conhecido + a margem
+    // (decisão 212, como na ativação): o contador guardado com `greatest` não baixa, e um heartbeat anômalo acima dela
+    // levaria a restauração do PDV a saltar para fora da sequência do caixa de vez.
+    const comInformado = (tipo: 'venda' | 'vale', informado: number | null | undefined) => {
+      const conhecido = n(tipo);
+      return informado && informado > conhecido && dentroDaMargem(informado, conhecido)
+        ? informado
+        : conhecido;
+    };
     const ultimaRecebida = ultimo?.sequencia ?? 0;
     return {
       terminal: {
@@ -418,13 +436,13 @@ export class HeartbeatSync {
         ultimo_evento_id: ultimo?.eventoId ?? null,
         ultima_recebida_em: ultimo?.criadoEm.toISOString() ?? null,
       },
-      // O maior entre o que a nuvem recebeu e o que o terminal informou no último heartbeat (SYNC 5).
+      // O maior entre o que a nuvem recebeu e o que o terminal informou no heartbeat, dentro da margem (SYNC 5).
       numeracoes: {
-        venda: { ultimo_numero: Math.max(n('venda'), t?.vendaUltimoNumero ?? 0) },
+        venda: { ultimo_numero: comInformado('venda', t?.vendaUltimoNumero) },
         nfce: nums
           .filter((x) => x.tipo === 'nfce' && x.serie !== null && x.ambiente !== null)
           .map((x) => ({ serie: x.serie!, ambiente: x.ambiente!, ultimo_numero: x.ultimoNumero })),
-        vale: { ultimo_numero: Math.max(n('vale'), t?.valeUltimoNumero ?? 0) },
+        vale: { ultimo_numero: comInformado('vale', t?.valeUltimoNumero) },
       },
       informado_pelo_terminal: {
         ultimo_heartbeat_em: t?.ultimoContatoEm?.toISOString() ?? null,

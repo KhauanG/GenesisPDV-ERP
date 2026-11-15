@@ -167,6 +167,7 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (criar usuário, redefinir a senha de outro, PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisões 93 e 204) |
 | `IMPORTACOES_PENDENTES_POR_USUARIO` | 2 | Importações de planilha (produtos e clientes juntas) na fila ou executando por usuário (a parada na fila há mais de 5 min não conta); a mesma planilha não vira outra tarefa enquanto a anterior dela está pendente (a que está na fila é agendada de novo); 422 `REGRA_NEGOCIO` acima, sem criar a tarefa (decisão 209) |
+| `NUMERACAO_MARGEM_CAIXA` | 100000 | Quanto acima do último número de venda (ou de vale) conhecido do caixa (`numeracoes`) o número de uma venda do PDV e o contador de venda e vale informado pelo terminal ainda valem: a venda acima vai a `erro` `NUMERO_VENDA_IMPLAUSIVEL`, o contador acima fica fora da base da ativação e do `GET /sync/estado` (decisão 212) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
 | `GENESIS_VERSAO` / `BACKUP_ESTADO_CHAVE` | `desenvolvimento` / `backups/estado.json` | Versão no painel (a imagem define com o commit) e o estado do último backup no bucket (gravado pelo `genesis-backup`) |
@@ -6868,6 +6869,86 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `packages/shared/src/sync/contratos.spec.ts` (as ações reservadas estão no catálogo e fora da fixture do que o
        PDV grava) e, no PDV, `DescritorAuditoriaTests.Nenhuma_acao_gravada_e_reservada_ao_servidor` (só teste, sem
        subir a versão).
+212. **Numeração e estoque do caixa: o que o terminal afirma só vale dentro do que a nuvem conhece** (PR-15,
+     SEG-B15; SYNC 10.2, 11.2, 13.1, 13.3 e 21.1; ERP 12.5; `src/sync/numeracao.ts`, `src/sync/ativacao.ts`,
+     `src/sync/heartbeat.ts`, `src/sync/handlers/vendas.ts`, `src/sync/handlers/cancelamento.ts`,
+     `packages/shared/src/sync/contratos.ts`, `eventos.ts` e `terminais.ts`).
+     - **Limite do número.** `NUMERO_VENDA_MAXIMO` (shared) = 999.999.999.999: os 12 dígitos que cabem no número
+       exibido de 20 caracteres (`L01-C01-` + 12; a loja vai de 1 a 99). Vale para `vendas.numero` dos eventos de venda
+       (finalizada e cancelada; acima, `PAYLOAD_INVALIDO` só daquele evento) e para `venda_ultimo_numero` do
+       heartbeat. O de vale tem limite próprio, `VALE_NUMERO_MAXIMO` = 9.999.999: os 7 dígitos que o código do vale
+       guarda do sequencial (`VC` + loja 2 + caixa 2 + sequencial 7 + DV, `ck_vales_codigo`; SYNC 13.4), acima dos quais
+       nenhum vale válido existe. Os dois contadores do heartbeat vão de 0 ao limite; fora, 400
+       `REQUISICAO_INVALIDA`. O PDV 0.12.0 conta de 1 em 1 a partir da base da ativação e nunca chega perto disso.
+     - **Margem do caixa** (`NUMERACAO_MARGEM_CAIXA`, padrão 100.000; `margemNumeracaoCaixa`, `dentroDaMargem`). O
+       "conhecido" é o último número da numeração viva do caixa em `numeracoes` (cada venda e venda cancelada em
+       andamento aplicada o avança, com `greatest`, e cada ativação grava a base com o salto). A margem cobre o que o
+       caixa vende sem conseguir enviar — offline, lacuna, os saltos de +1000 da restauração do backup — com folga de
+       anos. É um valor técnico (sem efeito na operação normal da loja), configurável no ambiente.
+     - **Venda acima da margem.** A conferência do documento de venda (`conferirDocumentoVenda`, também a da venda
+       cancelada em andamento) recusa o número acima de `conhecido + margem` com o código novo
+       `NUMERO_VENDA_IMPLAUSIVEL` (`resultado.detalhes`: `numero`, `ultimo_numero_conhecido`, `margem`), sem gravar
+       nada e sem mexer em `numeracoes`: o evento vai à fila de decisão como o `NUMERO_VENDA_DUPLICADO`. O PDV trata o
+       código como qualquer rejeição (o `codigo` do resultado é texto livre para ele). "Aplicar com novo número"
+       (`aceitaNovoNumero` no shared) passa a valer também para ele: a venda vai para a faixa de renumeração, a
+       observação diz "número fora da sequência do caixa" e o número do PDV **não** entra em `numeracoes`
+       (`Renumeracao.original.avancaNumeracao`), na venda e na cancelada em andamento. Reprocessar (um ou o lote) dá
+       sempre o mesmo erro: a numeração do caixa não avança com o número alto, e o problema não se resolve sozinho. As
+       vendas seguintes do mesmo terminal também caem no código, porque o PDV continua contando a partir do número
+       alto. O caminho é aplicar com novo número as que estão na fila e **substituir o terminal** para normalizar o
+       caixa: a ativação descarta o contador acima da margem (abaixo) e o PDV recomeça da base da nuvem. O ERP diz
+       isso no diálogo da ação e no do lote (decisão 84 do ERP).
+     - **Renumeração exata.** `renumerarVenda` conta o próximo número da faixa em `bigint`; se ele passar do limite do
+       número ou o número exibido passar de 20 caracteres, recusa com o código próprio `RENUMERACAO_SEM_NUMERO`
+       (`CODIGO_RENUMERACAO_SEM_NUMERO` no shared; `resultado.detalhes` com o próximo número e o limite ou a exibição),
+       sem gravar nada (antes, acima de 2^53 dois números vizinhos viravam o mesmo `Number` e a gravação colidia; e a
+       exibição era cortada em 20). Código próprio para o `aceitaNovoNumero` não oferecer de novo a ação, que falharia
+       sempre, e para o diálogo não falar de número acima da numeração do caixa; "Reprocessar" refaz a conferência
+       original.
+     - **Contadores do heartbeat.** `terminais.venda_ultimo_numero` e `vale_ultimo_numero` guardam o maior já informado
+       (`greatest`): um heartbeat menor (backup antigo restaurado, ordem de chegada) não baixa o contador. Na ativação
+       (`decidirNumeracao`), o que o terminal anterior informou — heartbeat ou desativação confirmada — só entra na
+       base de venda e de vale até `conhecido + margem`; acima, fica de fora (a base é o conhecido, mais o salto de
+       segurança quando cabe) e vai para a auditoria `terminal_ativado` em `contadores_descartados` (`{ venda, vale }`,
+       o maior descartado de cada tipo). O `GET /sync/estado` devolve ao próprio terminal o maior entre `numeracoes` e o
+       que ele mesmo informou, este também só dentro de `conhecido + margem`: como o `greatest` não deixa o contador
+       baixar, um heartbeat anômalo acima da margem (sequência local corrompida, bug, token mal usado) levaria a
+       restauração do PDV (`RegraRestauracao`) a saltar a sequência para fora da do caixa de vez, e toda venda seguinte
+       cairia em `NUMERO_VENDA_IMPLAUSIVEL`.
+     - **Estoque do contexto preso à loja** (`escolherEstoque`, usado pela venda e pela devolução avulsa de cascos).
+       `contexto.estoque_id` só é aceito quando está ativo e vivo e é o `lojas.estoque_id` atual da loja do terminal ou
+       um estoque que a loja já teve e que hoje não é o estoque de outra loja viva; fora disso (o de outra loja, mesmo
+       um que esta já teve e o cadastro passou para outra; um depósito; um que a loja nunca usou), o movimento
+       vai para o estoque atual da loja com o `ESTOQUE_CONTEXTO_INVALIDO` de sempre (mensagem: "excluído ou
+       desativado, ou não é nem foi o estoque desta loja"). O histórico vem da auditoria, sem tabela nova: a troca do
+       estoque da loja só acontece pelo cadastro da loja no ERP (`POST`/`PUT /api/lojas`), que grava a linha inteira em
+       `antes`/`depois` (`estoqueId`); a consulta olha as linhas `criar`/`editar` de `lojas` daquela loja sem
+       `evento_id` (a do lote de auditoria de um terminal sempre traz o dele, como na decisão 211), pelo índice
+       `ix_auditoria_entidade_registro_id`, e só roda quando o contexto não é o estoque atual (depois de uma troca). O
+       cadastro só recusa o estoque vinculado agora a outra loja (`garantirEstoqueLivre`), então o estoque trocado fica
+       livre e pode ir para outra loja: a consulta também confere que ele não é hoje o `lojas.estoque_id` de outra loja
+       viva, senão o terminal desta movimentaria o saldo daquela sem alerta. A venda feita offline antes da troca e
+       enviada depois dela baixa, nesse caso, no estoque atual da loja, com o alerta, como a regra pede. A
+       auditoria é só de inserção e fica 5 anos. Derivar dos movimentos foi descartado: as linhas que o PDV já gravou
+       com outro estoque também contariam. Variantes conferidas: o único outro uso do `contexto.estoque_id` é a
+       devolução avulsa de cascos (mesma função); o cancelamento estorna nos estoques dos movimentos da venda.
+     - **Fora do bloco.** A ação auditada no ERP para baixar a numeração de venda de um caixa (quando nenhuma venda
+       está acima do valor novo) ficou como pendência: com os limites acima nenhum número novo passa da margem, e o
+       caixa cuja numeração já estivesse alta continua com o caminho de excluir e recriar o caixa. A numeração NFC-e
+       (fiscal) fica para a fase fiscal.
+     - Sem migração. Protocolo: só os códigos novos `NUMERO_VENDA_IMPLAUSIVEL` e `RENUMERACAO_SEM_NUMERO` (o PDV
+       0.12.0 não muda: mostra a rejeição como as outras). Testes: `test/integracao/sync.test.ts` (o heartbeat fora do
+       limite é 400, inclusive o vale com 8 dígitos; o menor não baixa o contador; o `GET /sync/estado` ignora o
+       contador acima da margem; o contador acima da margem fica de fora da base da ativação, com a auditoria, e o de
+       dentro vale), `test/integracao/fila-decisao.test.ts` (acima da margem → fila, numeração intacta, reprocessar
+       repete, aplicar com novo número grava na faixa sem avançar; no limite entra; a forma B também, e aplicada com
+       novo número grava a cancelada na faixa sem avançar; o número acima do limite é `PAYLOAD_INVALIDO`; a
+       renumeração sem número que caiba ou com a exibição longa demais recusa com `RENUMERACAO_SEM_NUMERO` sem gravar e
+       sem oferecer a ação de novo), `test/integracao/venda-eventos.test.ts` (estoque atual e o que a loja já teve
+       valem; o de outra loja, o depósito, o inativo e o excluído caem no da loja com o alerta; o que a loja já teve e
+       o cadastro passou para outra loja também; a linha "de terminal" na auditoria não conta), `test/integracao/cancelamento-vasilhame-eventos.test.ts`
+       (a devolução de cascos com o estoque de outra loja), `packages/shared/src/sync/contratos.spec.ts` e
+       `eventos.spec.ts` (os limites no contrato) e, no ERP, `Terminais.test.tsx` (decisão 84 do ERP).
 
 ### Operação – tarefas em segundo plano (API)
 

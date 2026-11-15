@@ -2736,13 +2736,13 @@ JSON somente leitura). Ações (permissão `terminais.gerenciar`, todas auditada
 |---|---|
 | **Reprocessar** | reaplica o payload gravado com o código atual (depois de corrigir o cadastro ou publicar correção); sucesso reprocessa os retidos dependentes em ordem |
 | **Reprocessar todos com este código** | o mesmo, em lote (ex.: depois de publicar um upcaster) |
-| **Aplicar com novo número** | só para `NUMERO_VENDA_DUPLICADO` (sync 13.1) |
+| **Aplicar com novo número** | só para `NUMERO_VENDA_DUPLICADO` e `NUMERO_VENDA_IMPLAUSIVEL` (sync 13.1; no segundo, o número muito acima da numeração do caixa, a venda vai para a faixa de renumeração sem avançar a numeração; README da API › decisão 212). No `NUMERO_VENDA_IMPLAUSIVEL`, as vendas seguintes do mesmo terminal também caem no código (o PDV continua contando a partir do número alto) e reprocessar não resolve: aplica-se o novo número às que estão na fila e, para normalizar o caixa, **Substituir terminal** (12.4; a ativação descarta o contador acima da margem e o PDV recomeça da base da nuvem). O diálogo e o do "Reprocessar todos com o código" dizem isso. A recusa da renumeração (`RENUMERACAO_SEM_NUMERO`, sem número que caiba) não oferece a ação de novo |
 | **Descartar** | justificativa ≥ 15 caracteres e, para `venda.*`/`caixa.*`/`nfce.*`, confirmação digitando o número exibido da venda; grava `descartado_em/por/justificativa` e gera alerta crítico `EVENTO_DESCARTADO` no Dashboard (venda nunca é descartada sem alerta) |
 
 O resultado volta ao PDV no heartbeat seguinte (`eventos_resolvidos`).
 
 Fase 1C (C8), na tela: a lista é paginada (50 por página) e filtra por situação e código; cada linha tem o menu
-**Ações** (Reprocessar, Aplicar com novo número só no `NUMERO_VENDA_DUPLICADO`, Descartar, Ver payload), e o botão
+**Ações** (Reprocessar, Aplicar com novo número só no `NUMERO_VENDA_DUPLICADO` e no `NUMERO_VENDA_IMPLAUSIVEL`, Descartar, Ver payload), e o botão
 **Reprocessar todos com o código** lista os códigos de erro do terminal com a quantidade e cria uma tarefa (ícone
 Tarefas, 3.6). Reprocessar e Aplicar com novo número pedem confirmação e mostram o desfecho do evento e dos
 dependentes reaplicados em seguida ("Evento nº 1 aplicado. 3 de 3 evento(s) que dependiam dele aplicados"). O

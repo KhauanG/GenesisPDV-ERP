@@ -507,6 +507,17 @@ export const JUSTIFICATIVA_DESCARTE_MAX = 500;
 
 /** `erro_codigo` que aceita "Aplicar com novo número" (SYNC 11.2, 13.1). */
 export const CODIGO_NUMERO_VENDA_DUPLICADO = 'NUMERO_VENDA_DUPLICADO';
+/**
+ * O número da venda está acima da margem da numeração do caixa (SYNC 11.2; README da API › decisão 212): também aceita
+ * "Aplicar com novo número", que grava na faixa de renumeração sem avançar a numeração do caixa.
+ */
+export const CODIGO_NUMERO_VENDA_IMPLAUSIVEL = 'NUMERO_VENDA_IMPLAUSIVEL';
+/**
+ * "Aplicar com novo número" recusado (SYNC 11.2; README da API › decisão 212): a faixa de renumeração do caixa não tem
+ * número que caiba no limite da venda, ou o número exibido renumerado passaria de 20 caracteres. Não aceita a ação de
+ * novo (ela falharia sempre); "Reprocessar" refaz a conferência original.
+ */
+export const CODIGO_RENUMERACAO_SEM_NUMERO = 'RENUMERACAO_SEM_NUMERO';
 
 /**
  * Tipos críticos da fila (SYNC 11.3, 11.4): o `EVENTO_COM_ERRO` deles é `critico` (os outros, `aviso`) e o descarte
@@ -516,9 +527,16 @@ export function eventoCritico(tipo: string): boolean {
   return /^(venda|caixa|nfce)\./.test(tipo);
 }
 
-/** "Aplicar com novo número" (SYNC 11.4): só o `erro` `NUMERO_VENDA_DUPLICADO` de um documento de venda. */
+/**
+ * "Aplicar com novo número" (SYNC 11.4): só o `erro` `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` de um
+ * documento de venda.
+ */
 export function aceitaNovoNumero(e: { status: string; erroCodigo: string | null; tipo: string }): boolean {
-  return e.status === 'erro' && e.erroCodigo === CODIGO_NUMERO_VENDA_DUPLICADO && e.tipo.startsWith('venda.');
+  return (
+    e.status === 'erro' &&
+    (e.erroCodigo === CODIGO_NUMERO_VENDA_DUPLICADO || e.erroCodigo === CODIGO_NUMERO_VENDA_IMPLAUSIVEL) &&
+    e.tipo.startsWith('venda.')
+  );
 }
 
 const codigoErroEvento = z

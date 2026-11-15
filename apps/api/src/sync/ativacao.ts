@@ -45,6 +45,7 @@ import {
 import { ALFABETO_ATIVACAO, type Ativar, type RespostaAtivacao } from './contratos.js';
 import { ErroSync } from './erros.js';
 import { FLUXOS } from './fluxos.js';
+import { dentroDaMargem, margemNumeracaoCaixa } from './numeracao.js';
 import { fecharSessoesDoTerminal } from './sessoes-caixa.js';
 import { compararVersoes } from './versoes-app.js';
 
@@ -66,6 +67,9 @@ export const INTERVALOS_PADRAO = { heartbeat_s: 30, pull_s: 30, pull_com_sse_s: 
 type Motivo = (typeof MOTIVOS_FORCA_BRUTA)[number] | 'limite_plano' | 'ip_bloqueado' | null;
 
 export type NumeracoesAtivacao = RespostaAtivacao['numeracoes'];
+
+/** O maior contador do terminal anterior que ficou de fora da base da ativação (acima da margem, decisão 212). */
+type ContadoresDescartados = Partial<Record<'venda' | 'vale', number>>;
 
 export function hashCodigoAtivacao(codigoEmpresa: number, codigo: string): string {
   return sha256Hex(`${codigoEmpresa}:${codigo.replace(/[\s-]/g, '').toUpperCase()}`);
@@ -782,6 +786,7 @@ export class AtivacaoTerminais {
                 numeracoes: decisao.numeracoes,
                 salto: decisao.salto,
                 motivo: decisao.motivo,
+                ...(decisao.descartados ? { contadores_descartados: decisao.descartados } : {}),
               },
             },
           );
@@ -804,7 +809,12 @@ export class AtivacaoTerminais {
     caixa: typeof caixas.$inferSelect,
     anteriorId: string | null,
     novoId: string,
-  ): Promise<{ numeracoes: NumeracoesAtivacao; salto: boolean; motivo: string }> {
+  ): Promise<{
+    numeracoes: NumeracoesAtivacao;
+    salto: boolean;
+    motivo: string;
+    descartados?: ContadoresDescartados;
+  }> {
     const linhas = await tx
       .select()
       .from(numeracoes)
@@ -814,10 +824,27 @@ export class AtivacaoTerminais {
     let vale = ultimo('vale');
     let salto = false;
     let motivo = 'caixa sem terminal anterior';
+    const descartados: ContadoresDescartados = {};
     if (anteriorId && anteriorId !== novoId) {
       const [ant] = await tx.select().from(terminais).where(eq(terminais.id, anteriorId));
-      venda = Math.max(venda, ant?.desativacaoVendaUltimoNumero ?? 0, ant?.vendaUltimoNumero ?? 0);
-      vale = Math.max(vale, ant?.desativacaoValeUltimoNumero ?? 0, ant?.valeUltimoNumero ?? 0);
+      // O que o terminal anterior informou (heartbeat, desativação confirmada) só vale até o conhecido + a margem
+      // (decisão 212): acima dela fica de fora, registrado na auditoria, e a base é o que a nuvem conhece.
+      const margem = margemNumeracaoCaixa();
+      const informado = (
+        tipo: 'venda' | 'vale',
+        conhecido: number,
+        ...valores: (number | null | undefined)[]
+      ) => {
+        let maior = conhecido;
+        for (const v of valores) {
+          if (v === null || v === undefined || v <= maior) continue;
+          if (dentroDaMargem(v, conhecido, margem)) maior = v;
+          else descartados[tipo] = Math.max(descartados[tipo] ?? 0, v);
+        }
+        return maior;
+      };
+      venda = informado('venda', venda, ant?.desativacaoVendaUltimoNumero, ant?.vendaUltimoNumero);
+      vale = informado('vale', vale, ant?.desativacaoValeUltimoNumero, ant?.valeUltimoNumero);
       if (ant?.desativacaoConfirmadaEm) {
         motivo = 'terminal anterior confirmou a desativação';
       } else {
@@ -860,6 +887,7 @@ export class AtivacaoTerminais {
       },
       salto,
       motivo,
+      ...(Object.keys(descartados).length ? { descartados } : {}),
     };
   }
 

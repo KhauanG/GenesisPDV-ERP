@@ -14,6 +14,7 @@ import {
   CONTRATOS_EVENTOS,
   jcs,
   MAXIMO_IDS_EVENTOS_STATUS,
+  NUMERO_VENDA_MAXIMO,
   respostaEventosStatusSchema,
   respostaHeartbeatSchema,
   respostaPushSchema,
@@ -27,6 +28,7 @@ import {
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { INICIO_FAIXA_RENUMERACAO } from '../../src/sync/handlers/vendas.js';
+import { MARGEM_NUMERACAO_CAIXA_PADRAO } from '../../src/sync/numeracao.js';
 import {
   conectar,
   consultar,
@@ -869,7 +871,7 @@ describe('Aplicar com novo número (SYNC 11.2, 13.1)', () => {
     });
   });
 
-  it('só para NUMERO_VENDA_DUPLICADO', async () => {
+  it('só para NUMERO_VENDA_DUPLICADO e NUMERO_VENDA_IMPLAUSIVEL', async () => {
     const p = await novoPonto();
     const ab = abertura(p, { hashErrado: true });
     await pushOk(p, [ab]);
@@ -877,6 +879,147 @@ describe('Aplicar com novo número (SYNC 11.2, 13.1)', () => {
     const r = await acao(linha.id, 'aplicar-novo-numero');
     expect(r.status).toBe(422);
     expect((await linhaRecebida(ab.evento_id)).tentativas).toBe(1);
+  });
+});
+
+describe('número da venda fora da sequência do caixa (SYNC 11.2, 13.1; README da API › decisão 212)', () => {
+  const numeracaoDoCaixa = async (p: Ponto) =>
+    (
+      await consultar<{ ultimo_numero: string }>(
+        emp.nomeBanco,
+        "select ultimo_numero::text from numeracoes where caixa_id = $1 and tipo = 'venda' and excluido_em is null",
+        [p.caixa],
+      )
+    )[0]?.ultimo_numero;
+
+  it('acima da margem vai à fila sem mexer na numeração; "Aplicar com novo número" grava na faixa e não a avança', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    expect((await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 1 }))]))[0]!.status).toBe(
+      'aplicado',
+    );
+    const alta = venda(p, { numero: NUMERO_VENDA_MAXIMO });
+    const evAlta = evento(p, 'venda.finalizada', alta);
+    const [r] = await pushOk(p, [evAlta]);
+    expect(r).toMatchObject({ status: 'rejeitado', erro: { codigo: 'NUMERO_VENDA_IMPLAUSIVEL' } });
+    expect(await numeracaoDoCaixa(p)).toBe('1');
+    expect(
+      await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [alta.vendas.id]),
+    ).toHaveLength(0);
+    expect(await linhaRecebida(evAlta.evento_id)).toMatchObject({
+      status: 'erro',
+      erro_codigo: 'NUMERO_VENDA_IMPLAUSIVEL',
+    });
+
+    // Reprocessar dá o mesmo; "Aplicar com novo número" grava na faixa da renumeração e a numeração fica em 1.
+    expect((await acao((await linhaDaFila(p, evAlta.evento_id)).id, 'reprocessar')).body).toMatchObject({
+      status: 'erro',
+      erroCodigo: 'NUMERO_VENDA_IMPLAUSIVEL',
+    });
+    const novo = await acao((await linhaDaFila(p, evAlta.evento_id)).id, 'aplicar-novo-numero');
+    expect(novo.status, JSON.stringify(novo.body)).toBe(200);
+    expect(novo.body).toMatchObject({ status: 'aplicado' });
+    const [gravada] = await consultar<{ numero: string; observacao: string }>(
+      emp.nomeBanco,
+      'select numero::text, observacao from vendas where id = $1',
+      [alta.vendas.id],
+    );
+    expect(gravada!.numero).toBe(String(INICIO_FAIXA_RENUMERACAO + 1));
+    expect(gravada!.observacao).toContain('fora da sequência do caixa');
+    expect(await numeracaoDoCaixa(p)).toBe('1');
+    // No limite da margem a venda entra e a numeração avança, como sempre.
+    const limite = 1 + MARGEM_NUMERACAO_CAIXA_PADRAO;
+    expect((await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: limite }))]))[0]).toMatchObject(
+      {
+        status: 'aplicado',
+      },
+    );
+    expect(await numeracaoDoCaixa(p)).toBe(String(limite));
+  });
+
+  it('a venda cancelada em andamento (forma B) também; o número acima do que cabe na exibição é PAYLOAD_INVALIDO', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    const b = venda(p, { numero: MARGEM_NUMERACAO_CAIXA_PADRAO + 1 });
+    const emAndamento = {
+      ...b,
+      vendas: {
+        ...b.vendas,
+        status: 'cancelada',
+        finalizada_em: null,
+        cancelada_em: agora(),
+        cancelada_por_id: operador,
+        motivo_cancelamento: 'Cliente desistiu antes de pagar',
+        cancelamento_origem: 'pdv',
+      },
+    };
+    const gigante = venda(p, { numero: NUMERO_VENDA_MAXIMO + 1 });
+    gigante.vendas.numero_exibicao = 'L01-C01-X';
+    const evB = evento(p, 'venda.cancelada', emAndamento);
+    const [rb, rg] = await pushOk(p, [evB, evento(p, 'venda.finalizada', gigante)]);
+    expect(rb).toMatchObject({ status: 'rejeitado', erro: { codigo: 'NUMERO_VENDA_IMPLAUSIVEL' } });
+    expect(rg).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    expect(await numeracaoDoCaixa(p)).toBe('0');
+    // "Aplicar com novo número" grava a cancelada na faixa e o número do PDV não entra na numeração do caixa.
+    const novo = await acao((await linhaDaFila(p, evB.evento_id)).id, 'aplicar-novo-numero');
+    expect(novo.status, JSON.stringify(novo.body)).toBe(200);
+    expect(novo.body).toMatchObject({ status: 'aplicado' });
+    const [gravada] = await consultar<{ status: string; numero: string; observacao: string }>(
+      emp.nomeBanco,
+      'select status, numero::text, observacao from vendas where id = $1',
+      [b.vendas.id],
+    );
+    expect(gravada).toMatchObject({ status: 'cancelada', numero: String(INICIO_FAIXA_RENUMERACAO + 1) });
+    expect(gravada!.observacao).toContain('fora da sequência do caixa');
+    expect(await numeracaoDoCaixa(p)).toBe('0');
+  });
+
+  it('a renumeração é exata: sem número livre que caiba na exibição, recusa sem gravar nada', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    const v1 = venda(p, { numero: 4 });
+    await pushOk(p, [evento(p, 'venda.finalizada', v1)]);
+    // Uma venda já gravada no fim do espaço do caixa (acima do que o contrato aceita hoje, de antes do limite).
+    await consultar(
+      emp.nomeBanco,
+      `set session_replication_role = replica;
+       update vendas set numero = 9007199254740991 where id = '${v1.vendas.id}';
+       set session_replication_role = origin;`,
+    );
+    const v2 = venda(p, { numero: 2 });
+    await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 2 }))]);
+    const ev2 = evento(p, 'venda.finalizada', v2);
+    expect((await pushOk(p, [ev2]))[0]).toMatchObject({ erro: { codigo: 'NUMERO_VENDA_DUPLICADO' } });
+    const r = await acao((await linhaDaFila(p, ev2.evento_id)).id, 'aplicar-novo-numero');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'erro', erroCodigo: 'RENUMERACAO_SEM_NUMERO' });
+    expect(await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [v2.vendas.id])).toHaveLength(
+      0,
+    );
+    // O código próprio não oferece a ação de novo (ela falharia sempre).
+    const deNovo = await acao((await linhaDaFila(p, ev2.evento_id)).id, 'aplicar-novo-numero');
+    expect(deNovo.status).toBe(422);
+  });
+
+  it('a renumeração cujo número exibido passaria de 20 caracteres recusa sem gravar nada', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 2 }))]);
+    // 18 caracteres, aceitos pelo contrato; com os 7 dígitos da faixa (9000001) ficaria com 24.
+    const longa = venda(p, { numero: 2 });
+    longa.vendas.numero_exibicao = 'LOJA-CENTRO-CX02-2';
+    const ev = evento(p, 'venda.finalizada', longa);
+    expect((await pushOk(p, [ev]))[0]).toMatchObject({ erro: { codigo: 'NUMERO_VENDA_DUPLICADO' } });
+    const r = await acao((await linhaDaFila(p, ev.evento_id)).id, 'aplicar-novo-numero');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'erro', erroCodigo: 'RENUMERACAO_SEM_NUMERO' });
+    expect(await linhaRecebida(ev.evento_id)).toMatchObject({
+      status: 'erro',
+      erro_codigo: 'RENUMERACAO_SEM_NUMERO',
+    });
+    expect(
+      await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [longa.vendas.id]),
+    ).toHaveLength(0);
   });
 });
 

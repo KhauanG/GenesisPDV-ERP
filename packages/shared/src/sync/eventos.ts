@@ -21,6 +21,7 @@
  */
 import { z } from 'zod';
 import { TIPOS_FORMA_PAGAMENTO } from '../formas-pagamento.js';
+import { NUMERO_VENDA_MAXIMO } from './contratos.js';
 
 const uuid = z.uuid();
 const anulavel = <T extends z.ZodType>(s: T) => s.nullable().optional();
@@ -471,7 +472,8 @@ export type PayloadCaixaFechado = z.infer<typeof payloadCaixaFechadoSchema>;
 const cabecalhoVenda = <S extends z.ZodType>(status: S) =>
   z.object({
     id: uuid,
-    numero: z.number().int().min(1),
+    // Até o que cabe no número exibido (README da API › decisão 212); a nuvem ainda confere a margem do caixa.
+    numero: z.number().int().min(1).max(NUMERO_VENDA_MAXIMO),
     numero_exibicao: textoPreenchido(20),
     loja_id: uuid,
     caixa_id: uuid,

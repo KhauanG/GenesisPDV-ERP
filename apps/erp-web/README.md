@@ -1541,6 +1541,16 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     constante só (`AVISO_PIN_PERDIDO`, `AVISO_SENHA_CLIENTE_PERDIDO`), e a notificação continua com o número de PINs e
     senhas anulados. Teste: `Terminais.test.tsx` (o diálogo do terminal ativo e o do já revogado mostram os dois
     avisos; o ativo pede o caixa e manda o modo `perdido`).
+84. **Fila de decisão: "Aplicar com novo número" também na venda fora da sequência do caixa** (PR-15, SEG-B15; ERP
+    12.5; README da API › decisão 212; `src/paginas/terminais/FilaDecisao.tsx`). A venda com o código
+    `NUMERO_VENDA_IMPLAUSIVEL` (número muito acima da numeração do caixa) ganha a ação pelo `aceitaNovoNumero` do
+    shared, e o diálogo diz o que acontece: a venda vai para a faixa de renumeração sem avançar a numeração do caixa,
+    com o número original na observação e na auditoria, e que as próximas vendas do mesmo terminal também caem ali
+    (o PDV continua contando a partir do número alto): para normalizar o caixa, "Substituir terminal". O diálogo de
+    "Reprocessar todos com o código" avisa, nesse código, que reprocessar não resolve. O duplicado continua com o
+    texto de antes. A recusa da própria renumeração (`RENUMERACAO_SEM_NUMERO`) não oferece a ação de novo. Teste:
+    `Terminais.test.tsx` (o menu oferece a ação, o diálogo explica, o do lote avisa e o resultado mostra os dois
+    números).
 
 ## O que ainda não foi feito (Fase 0)
 

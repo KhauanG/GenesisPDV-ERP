@@ -4,6 +4,7 @@ import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { jcs } from '../jcs.js';
+import { NUMERO_VENDA_MAXIMO } from './contratos.js';
 import {
   ACOES_LIBERACAO_VENDA,
   CONTRATOS_EVENTOS,
@@ -410,5 +411,23 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
     expect(casco('10000000.000')).toEqual([
       'movimentos_vasilhame.quantidade: decimal com 3 casas, sem sinal',
     ]);
+  });
+
+  it('número da venda: até o que cabe no número exibido, nas vendas finalizada e cancelada (README da API › decisão 212)', () => {
+    const numero = (n: number, fixture: string, schema: z.ZodType) =>
+      problemas(
+        schema,
+        com(fixture, (p) => {
+          p.vendas.numero = n;
+          p.vendas.numero_exibicao = 'L01-C01-X';
+        }),
+      );
+    for (const [fixture, schema] of [
+      ['venda.finalizada.payload.json', payloadVendaFinalizadaSchema],
+      ['venda.cancelada.em_andamento.payload.json', payloadVendaCanceladaSchema],
+    ] as const) {
+      expect(numero(NUMERO_VENDA_MAXIMO, fixture, schema)).toEqual([]);
+      expect(numero(NUMERO_VENDA_MAXIMO + 1, fixture, schema)).toHaveLength(1);
+    }
   });
 });

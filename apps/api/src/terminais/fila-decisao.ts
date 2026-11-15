@@ -230,7 +230,8 @@ const jaResolvido = (status: string | undefined) =>
 /**
  * O evento continua pendente, mas não na situação em que a ação foi decidida (outra pessoa agiu entre a leitura e a
  * trava): nada muda, 409. Ex.: o retido da cadeia que foi a `erro` `DEPENDENCIA_DESCARTADA` (8.5 pede decisão
- * humana) ou a venda que deixou de ser `NUMERO_VENDA_DUPLICADO` antes do "Aplicar com novo número".
+ * humana) ou a venda que deixou de ser `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` antes do "Aplicar com
+ * novo número".
  */
 const situacaoMudou = (l: LinhaEvento) =>
   new ErroApi(
@@ -242,7 +243,8 @@ const situacaoMudou = (l: LinhaEvento) =>
 type Precondicao = (l: LinhaEvento) => boolean;
 
 const retido: Precondicao = (l) => l.status === 'retido';
-const duplicado: Precondicao = (l) =>
+/** "Aplicar com novo número": `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` (`aceitaNovoNumero`). */
+const aceitaNumeroNovo: Precondicao = (l) =>
   aceitaNovoNumero({ status: l.status, erroCodigo: l.erroCodigo, tipo: l.tipo });
 const comCodigo =
   (codigo: string): Precondicao =>
@@ -409,7 +411,10 @@ export class FilaDecisao {
     return this.reprocessarComDependentes(l.eventoId, origem, {});
   }
 
-  /** Aplicar com novo número (SYNC 11.2, 13.1): só o `erro` `NUMERO_VENDA_DUPLICADO` de um documento de venda. */
+  /**
+   * Aplicar com novo número (SYNC 11.2, 13.1): só o `erro` `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` de um
+   * documento de venda (o segundo grava na faixa sem avançar a numeração do caixa, decisão 212).
+   */
   async aplicarNovoNumero(
     sessao: SessaoErp,
     id: string,
@@ -419,10 +424,13 @@ export class FilaDecisao {
     if (!aceitaNovoNumero({ status: l.status, erroCodigo: l.erroCodigo, tipo: l.tipo })) {
       throw new ErroApi(
         'REGRA_NEGOCIO',
-        '"Aplicar com novo número" só vale para a venda com erro NUMERO_VENDA_DUPLICADO.',
+        '"Aplicar com novo número" só vale para a venda com erro NUMERO_VENDA_DUPLICADO ou NUMERO_VENDA_IMPLAUSIVEL.',
       );
     }
-    return this.reprocessarComDependentes(l.eventoId, origem, { novoNumero: true, precondicao: duplicado });
+    return this.reprocessarComDependentes(l.eventoId, origem, {
+      novoNumero: true,
+      precondicao: aceitaNumeroNovo,
+    });
   }
 
   /**

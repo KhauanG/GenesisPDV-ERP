@@ -908,10 +908,10 @@ describe('estoque da venda (SYNC 10.2, 15.1, 15.3, 15.5)', () => {
     expect(await saldo(prod)).toBe(15);
   });
 
-  it('estoque do contexto: válido baixa nele; inativo ou excluído baixa no da loja com ESTOQUE_CONTEXTO_INVALIDO', async () => {
+  it('estoque do contexto: o atual ou um que a loja já usou baixa nele; de outro local (mesmo o que a loja já teve e hoje é de outra), inativo ou excluído baixa no da loja com ESTOQUE_CONTEXTO_INVALIDO', async () => {
     const p = await novoPonto();
     const prod = await criarProduto({ nome: 'CERV CONTEXTO C6B' });
-    const [{ id: outro }] = (await consultar<{ id: string }>(
+    const [{ id: anterior }] = (await consultar<{ id: string }>(
       emp.nomeBanco,
       "insert into estoques (nome) values ('Estoque balcão C6B') returning id",
     )) as [{ id: string }];
@@ -923,35 +923,96 @@ describe('estoque da venda (SYNC 10.2, 15.1, 15.3, 15.5)', () => {
       emp.nomeBanco,
       "insert into estoques (nome, excluido_em) values ('Estoque excluído C6B', now()) returning id",
     )) as [{ id: string }];
+    const [{ id: deposito }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome, tipo) values ('Depósito C6B', 'deposito') returning id",
+    )) as [{ id: string }];
+    const outraLoja = await criarLoja(emp.nomeBanco, 3, 'Loja 3 - Contexto');
+    const [{ estoque_id: daOutraLoja }] = (await consultar<{ estoque_id: string }>(
+      emp.nomeBanco,
+      'select estoque_id from lojas where id = $1',
+      [outraLoja],
+    )) as [{ estoque_id: string }];
+    const [{ id: transferido }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome) values ('Estoque transferido C6B') returning id",
+    )) as [{ id: string }];
+    // A loja usou o `anterior` e o `transferido` e voltou ao dela, pelo cadastro da loja no ERP (a troca fica na
+    // auditoria, SYNC 10.2); o cadastro, que só recusa o estoque vinculado agora a outra loja, passou o `transferido`
+    // para a loja 4.
+    const vincular = async (estoqueId: string, lojaId = loja) => {
+      const atual = await amb.http().get(`/api/lojas/${lojaId}`).set(bearer());
+      expect(atual.status, JSON.stringify(atual.body)).toBe(200);
+      const r = await amb
+        .http()
+        .put(`/api/lojas/${lojaId}`)
+        .set(bearer())
+        .send({ ...atual.body, estoqueId });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    };
+    await vincular(anterior);
+    await vincular(transferido);
+    await vincular(estoqueLoja);
+    await vincular(transferido, await criarLoja(emp.nomeBanco, 4, 'Loja 4 - Transferida'));
+    // Uma linha "de terminal" na auditoria da loja (com `evento_id`) não conta como vínculo.
+    await consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, entidade, registro_id, acao, antes, depois, evento_id)
+       values ($1, now(), 'pdv', 'lojas', $2, 'editar', $3, $3, $4)`,
+      [uuidv7(), loja, JSON.stringify({ estoqueId: deposito }), uuidv7()],
+    );
+    for (const estoque of [anterior, daOutraLoja, deposito, transferido]) {
+      await entrada([[prod, '10', '2']], estoque);
+    }
     await entrada([[prod, '10', '2']]);
-    await entrada([[prod, '10', '2']], outro);
     const contexto = (estoque: string) => ({
       contexto: { loja_id: loja, caixa_id: p.caixa, numero_caixa: p.numero, estoque_id: estoque },
     });
-    const [ok, fallback, semEstoque] = await pushOk(p, [
-      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(outro)),
+    const resultados = await pushOk(p, [
+      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(anterior)),
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(estoqueLoja),
+      ),
       evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '2.000' }]), contexto(velho)),
       evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '3.000' }]), contexto(excluido)),
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(daOutraLoja),
+      ),
+      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(deposito)),
+      // O que a loja já teve e hoje é o estoque de outra loja: é daquela, e a baixa não pode cair nele.
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(transferido),
+      ),
     ]);
-    expect(ok).toMatchObject({ status: 'aplicado' });
-    expect(ok!.resultado).not.toHaveProperty('alertas');
-    expect(fallback).toMatchObject({
-      status: 'aplicado',
-      resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] },
-    });
-    expect(semEstoque).toMatchObject({
-      status: 'aplicado',
-      resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] },
-    });
-    expect(await saldo(prod, tipoPadrao, outro)).toBe(9);
-    expect(await saldo(prod)).toBe(5);
-    for (const estoque of [velho, excluido]) {
-      expect(
-        await alertasAbertos(
-          'ESTOQUE_CONTEXTO_INVALIDO',
-          `estoque_contexto_invalido:${p.terminal}:${estoque}`,
-        ),
-      ).toHaveLength(1);
+    const [noAnterior, noAtual, ...fallback] = resultados;
+    for (const ok of [noAnterior, noAtual]) {
+      expect(ok).toMatchObject({ status: 'aplicado' });
+      expect(ok!.resultado).not.toHaveProperty('alertas');
+    }
+    for (const r of fallback) {
+      expect(r).toMatchObject({ status: 'aplicado', resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] } });
+    }
+    expect(await saldo(prod, tipoPadrao, anterior)).toBe(9);
+    // O da loja: 10 − 1 (o atual) − 2 − 3 − 1 − 1 − 1 (os de fora, lançados nele).
+    expect(await saldo(prod)).toBe(1);
+    expect(await saldo(prod, tipoPadrao, daOutraLoja)).toBe(10);
+    expect(await saldo(prod, tipoPadrao, deposito)).toBe(10);
+    expect(await saldo(prod, tipoPadrao, transferido)).toBe(10);
+    for (const estoque of [velho, excluido, daOutraLoja, deposito, transferido]) {
+      const [alerta] = await alertasAbertos(
+        'ESTOQUE_CONTEXTO_INVALIDO',
+        `estoque_contexto_invalido:${p.terminal}:${estoque}`,
+      );
+      expect(alerta?.dados).toEqual({ estoque_contexto_id: estoque, estoque_usado_id: estoqueLoja });
     }
   });
 });

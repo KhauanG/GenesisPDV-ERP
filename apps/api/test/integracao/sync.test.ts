@@ -10,11 +10,14 @@ import { readFileSync } from 'node:fs';
 import {
   envelopeErroSyncSchema,
   jcs,
+  NUMERO_VENDA_MAXIMO,
   respostaAtivacaoSchema,
   respostaEstadoSchema,
   respostaHeartbeatSchema,
   respostaPullSchema,
   respostaPushSchema,
+  SALTO_SEGURANCA_NUMERACAO,
+  VALE_NUMERO_MAXIMO,
   type Ativar,
 } from '@genesis/shared';
 import { uuidv7 } from 'uuidv7';
@@ -1011,6 +1014,92 @@ describe('substituição de terminal (SYNC 3.4, 13.3; ERP 12)', () => {
     const estadoAntigo = await amb.http().get('/sync/estado').set(cabecalhos(antigo.body.token));
     expect(estadoAntigo.status).toBe(200);
     expect(respostaEstadoSchema.parse(estadoAntigo.body).terminal.status).toBe('desativando');
+  });
+
+  it('o contador informado pelo terminal anterior só vale até o que a nuvem conhece mais a margem; o heartbeat guarda o maior', async () => {
+    const [{ id: caixa }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      'insert into caixas (loja_id, numero, descricao) values ($1, 20, $2) returning id',
+      [loja1, 'Caixa 20'],
+    )) as [{ id: string }];
+    const antigo = await amb
+      .http()
+      .post('/sync/ativar')
+      .set(cabecalhos())
+      .send(corpoAtivacao(await gerarCodigo(caixa, loja1)).corpo);
+    expect(antigo.status).toBe(201);
+    const antigoId = antigo.body.terminal_id as string;
+    const heartbeat = (corpo: Record<string, unknown>) =>
+      amb.http().post('/sync/heartbeat').set(cabecalhos(antigo.body.token)).send(corpo);
+    // O contador de venda vai de 0 ao maior número que cabe no número exibido da venda (`L01-C01-` + 12 dígitos); o
+    // de vale, aos 7 dígitos do sequencial no código do vale (SYNC 13.4).
+    for (const [campo, fora] of [
+      ['venda_ultimo_numero', -1],
+      ['venda_ultimo_numero', NUMERO_VENDA_MAXIMO + 1],
+      ['vale_ultimo_numero', -1],
+      ['vale_ultimo_numero', VALE_NUMERO_MAXIMO + 1],
+    ] as const) {
+      const r = await heartbeat({ [campo]: fora });
+      expect(r.status, `${campo}=${fora} ${JSON.stringify(r.body)}`).toBe(400);
+    }
+    // A telemetria guarda o maior contador informado (o heartbeat seguinte, menor, não o baixa).
+    expect((await heartbeat({ venda_ultimo_numero: 999_999_998_999, vale_ultimo_numero: 5 })).status).toBe(
+      200,
+    );
+    expect((await heartbeat({ venda_ultimo_numero: 12, vale_ultimo_numero: 2 })).status).toBe(200);
+    const [tel] = await consultar(
+      emp.nomeBanco,
+      'select venda_ultimo_numero::text as venda, vale_ultimo_numero::text as vale from terminais where id = $1',
+      [antigoId],
+    );
+    expect(tel).toEqual({ venda: '999999998999', vale: '5' });
+    // O próprio terminal também só recebe no estado o informado dentro da margem (decisão 212): o de venda, fora dela,
+    // não o leva a saltar a sequência na restauração do backup; o de vale vale.
+    const estado = await amb.http().get('/sync/estado').set(cabecalhos(antigo.body.token));
+    expect(estado.status).toBe(200);
+    expect(respostaEstadoSchema.parse(estado.body).numeracoes).toMatchObject({
+      venda: { ultimo_numero: 0 },
+      vale: { ultimo_numero: 5 },
+    });
+
+    const pedido = await amb
+      .http()
+      .post('/api/terminais/ativacoes')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ lojaId: loja1, caixaId: caixa, validadeHoras: 1, substituiTerminalId: antigoId });
+    expect(pedido.status).toBe(201);
+    const novo = await amb
+      .http()
+      .post('/sync/ativar')
+      .set(cabecalhos())
+      .send(corpoAtivacao(pedido.body.codigo).corpo);
+    expect(novo.status, JSON.stringify(novo.body)).toBe(201);
+    // A nuvem não conhece venda nenhuma do caixa: o contador de venda, acima da margem, fica de fora (só o salto);
+    // o de vale, dentro dela, continua valendo.
+    expect(respostaAtivacaoSchema.parse(novo.body).numeracoes).toMatchObject({
+      venda: { ultimo_numero: SALTO_SEGURANCA_NUMERACAO },
+      vale: { ultimo_numero: 5 + SALTO_SEGURANCA_NUMERACAO },
+    });
+    const nums = await consultar(
+      emp.nomeBanco,
+      "select tipo, ultimo_numero::text as n from numeracoes where caixa_id = $1 and tipo in ('venda', 'vale') order by tipo",
+      [caixa],
+    );
+    expect(nums).toEqual([
+      { tipo: 'vale', n: String(5 + SALTO_SEGURANCA_NUMERACAO) },
+      { tipo: 'venda', n: String(SALTO_SEGURANCA_NUMERACAO) },
+    ]);
+    const [aud] = await consultar<{ depois: Record<string, unknown> }>(
+      emp.nomeBanco,
+      "select depois from auditoria where acao = 'terminal_ativado' and registro_id = $1",
+      [novo.body.terminal_id],
+    );
+    expect(aud!.depois).toMatchObject({
+      terminal_anterior_id: antigoId,
+      salto: true,
+      contadores_descartados: { venda: 999_999_998_999 },
+    });
+    expect(aud!.depois.contadores_descartados).not.toHaveProperty('vale');
   });
 
   it('falha na etapa da empresa desfaz a substituição: o antigo volta a ativo e a nova tentativa aponta para o novo', async () => {

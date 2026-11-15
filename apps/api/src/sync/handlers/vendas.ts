@@ -6,8 +6,9 @@
  * crédito) é da Fase 4; a comissão não existe no balcão (O24 do dono, `vendedor_id` nulo).
  *
  * Regras do estoque (SYNC 10.2, com as decisões da 1C, README da API › decisão 133):
- * - estoque = `contexto.estoque_id` do envelope se ainda for válido; senão `lojas.estoque_id` atual, com o alerta
- *   `ESTOQUE_CONTEXTO_INVALIDO` quando o contexto trazia um estoque que deixou de valer. Tipo = o `padrao` (Disponível);
+ * - estoque = `contexto.estoque_id` do envelope se ainda for válido e da loja do terminal (o atual ou um que ela já
+ *   teve, decisão 212); senão `lojas.estoque_id` atual, com o alerta `ESTOQUE_CONTEXTO_INVALIDO` quando o contexto
+ *   trazia um estoque que não vale. Tipo = o `padrao` (Disponível);
  * - baixa o item não cancelado cujo produto, **pelo valor atual da nuvem**, controla estoque e não é `kit`,
  *   `produzido` nem `servico` (o combo chega desmembrado em componentes, que são itens; o produzido não tem saldo
  *   próprio, D17). O item com `componentes_estoque` (ficha técnica, aceitando o legado `origem = 'kit'`) baixa a lista
@@ -37,8 +38,11 @@
  * `NUMERO_VENDA_DUPLICADO` (13.1; o 23505 de `uq_vendas_numero` é a segunda barreira, `traduzirErroBanco`).
  */
 import {
+  CODIGO_NUMERO_VENDA_IMPLAUSIVEL,
+  CODIGO_RENUMERACAO_SEM_NUMERO,
   dec,
   decTexto,
+  NUMERO_VENDA_MAXIMO,
   payloadVendaFinalizadaSchema,
   type Dec,
   type PayloadVendaCanceladaEmAndamento,
@@ -69,6 +73,7 @@ import {
 import type { DbEmpresa } from '../../tenancy/tenancy.js';
 import { tocarPessoas } from '../toque.js';
 import { ErroRegraEvento } from '../erros.js';
+import { dentroDaMargem, margemNumeracaoCaixa, ultimoNumeroConhecido } from '../numeracao.js';
 import { ALERTA_CADASTRO_PRODUTO, abrirAlertaCadastro } from './alertas.js';
 import {
   agregadoDivergente,
@@ -81,7 +86,7 @@ import {
   type DependenciaEvento,
 } from './comum.js';
 
-/** SYNC 10.2: o estoque do contexto do envelope deixou de valer; a venda baixou do estoque atual da loja. */
+/** SYNC 10.2: o estoque do contexto do envelope não vale (ou não é da loja); a venda baixou do estoque atual da loja. */
 export const ALERTA_ESTOQUE_CONTEXTO_INVALIDO = 'ESTOQUE_CONTEXTO_INVALIDO';
 /** SYNC 15.1: linha de saldo negativa depois da venda (um alerta aberto por estoque, produto e variação). */
 export const ALERTA_ESTOQUE_NEGATIVO = 'ESTOQUE_NEGATIVO';
@@ -252,7 +257,7 @@ export interface DocumentoConferido {
 
 interface VendaPreparada extends DocumentoConferido {
   cadastros: CadastrosEstoque;
-  /** Estoque da baixa (SYNC 10.2) e o do contexto que deixou de valer (alerta), em minúsculas. */
+  /** Estoque da baixa (SYNC 10.2) e o do contexto que não vale (alerta), em minúsculas. */
   estoqueId: string;
   estoqueContextoInvalido: string | null;
   /** O cliente existe e não está excluído (relevância `compra` só para quem desce). */
@@ -410,6 +415,18 @@ export async function conferirDocumentoVenda(
       },
     );
   }
+  // Decisão 212: o número só move a numeração do caixa dentro da margem acima do último conhecido. Acima dela, a venda
+  // espera a decisão na fila ("Aplicar com novo número" grava na faixa da renumeração sem avançar a numeração).
+  if (!ctx.novoNumero) {
+    const conhecido = await ultimoNumeroConhecido(tx, terminal.caixaId, 'venda');
+    if (!dentroDaMargem(v.numero, conhecido)) {
+      throw new ErroRegraEvento(
+        CODIGO_NUMERO_VENDA_IMPLAUSIVEL,
+        `Número ${v.numero_exibicao} muito acima da numeração do caixa (último conhecido: ${conhecido}).`,
+        { numero: v.numero, ultimo_numero_conhecido: conhecido, margem: margemNumeracaoCaixa() },
+      );
+    }
+  }
   const pessoas = await resolverAliases(tx, pessoasDaVenda(p));
   return {
     pessoas,
@@ -454,10 +471,13 @@ export function conferirCascos(
   }
 }
 
-/** O estoque do documento do caixa (SYNC 10.2): o do contexto, se ainda válido, senão o atual da loja. */
+/**
+ * O estoque do documento do caixa (SYNC 10.2): o do contexto, se ainda válido e da loja do terminal, senão o atual da
+ * loja.
+ */
 export interface EstoqueEscolhido {
   estoqueId: string;
-  /** O do contexto que deixou de valer (alerta `ESTOQUE_CONTEXTO_INVALIDO`), ou nulo. */
+  /** O do contexto que não vale (alerta `ESTOQUE_CONTEXTO_INVALIDO`), ou nulo. */
   estoqueContextoInvalido: string | null;
 }
 
@@ -465,17 +485,41 @@ export interface EstoqueEscolhido {
 export const estoqueDoContexto = (ctx: Pick<ContextoHandler, 'evento'>) =>
   ctx.evento.contexto.estoque_id ? minusculo(ctx.evento.contexto.estoque_id) : null;
 
-/** Escolhe o estoque com os cadastros já lidos (pedindo `estoqueDoContexto` em `estoqueIds`). */
+/**
+ * Escolhe o estoque com os cadastros já lidos (pedindo `estoqueDoContexto` em `estoqueIds`). O do contexto vale quando
+ * está ativo e vivo e é da loja do terminal (README da API › decisão 212): o `lojas.estoque_id` atual ou um que a
+ * loja já teve. A troca do estoque da loja só acontece pelo cadastro da loja no ERP, que grava o vínculo de antes e o
+ * de depois na auditoria (`criar`/`editar` de `lojas`, só de inserção e guardada por 5 anos); vale só a linha do
+ * servidor (sem `evento_id`; a do lote de auditoria de um terminal sempre traz o dele, como na decisão 211), e só
+ * enquanto ele não for hoje o estoque de outra loja viva. Fora disso — o estoque de outra loja (mesmo um que esta já
+ * teve), um depósito, um que a loja nunca usou —, o movimento vai para o estoque atual da loja com o alerta.
+ */
 export async function escolherEstoque(
   ctx: Pick<ContextoHandler, 'tx' | 'terminal' | 'evento'>,
   cadastros: Pick<CadastrosEstoque, 'estoquesValidos'>,
 ): Promise<EstoqueEscolhido> {
-  const { rows: lojas } = await ctx.tx.execute<{ estoque_id: string }>(sql`
-    select estoque_id from lojas where id = ${ctx.terminal.lojaId}`);
   const contexto = estoqueDoContexto(ctx);
-  const valido = contexto !== null && cadastros.estoquesValidos.has(contexto);
+  const { rows } = await ctx.tx.execute<{ estoque_id: string; da_loja: boolean }>(sql`
+    select l.estoque_id::text,
+           ${contexto}::uuid is not null and (
+             l.estoque_id = ${contexto}::uuid
+             or exists (
+               select 1 from auditoria a
+                where a.entidade = 'lojas' and a.registro_id = l.id and a.acao in ('criar', 'editar')
+                  and a.evento_id is null
+                  and ${contexto}::text in (a.antes ->> 'estoqueId', a.depois ->> 'estoqueId'))
+             -- O que a loja já teve e hoje é o estoque de outra loja viva é daquela loja (o cadastro libera o
+             -- estoque trocado para outra loja): não vale, e o movimento vai para o estoque atual com o alerta.
+             and not exists (
+               select 1 from lojas o
+                where o.estoque_id = ${contexto}::uuid and o.id <> l.id and o.excluido_em is null)
+           ) as da_loja
+      from lojas l
+     where l.id = ${ctx.terminal.lojaId}`);
+  const loja = rows[0]!;
+  const valido = contexto !== null && loja.da_loja && cadastros.estoquesValidos.has(contexto);
   return {
-    estoqueId: valido ? contexto : lojas[0]!.estoque_id,
+    estoqueId: valido ? contexto : loja.estoque_id,
     estoqueContextoInvalido: contexto !== null && !valido ? contexto : null,
   };
 }
@@ -851,7 +895,8 @@ export const INICIO_FAIXA_RENUMERACAO = 9_000_000;
 
 export interface Renumeracao<P extends DocumentoVendaCaixa> {
   payload: P;
-  original: { numero: number; exibicao: string };
+  /** `avancaNumeracao`: o número do PDV está dentro da margem do caixa e entra em `numeracoes` (decisão 212). */
+  original: { numero: number; exibicao: string; avancaNumeracao: boolean };
   novo: { numero: number; exibicao: string };
 }
 
@@ -862,7 +907,7 @@ export interface Renumeracao<P extends DocumentoVendaCaixa> {
  * número. O payload gravado em `eventos_recebidos` não muda (é o que o PDV mandou).
  */
 export async function renumerarVenda<P extends DocumentoVendaCaixa>(
-  { tx }: Pick<ContextoHandler, 'tx'>,
+  { tx, terminal }: Pick<ContextoHandler, 'tx' | 'terminal'>,
   p: P,
 ): Promise<Renumeracao<P>> {
   const v = p.vendas;
@@ -870,17 +915,40 @@ export async function renumerarVenda<P extends DocumentoVendaCaixa>(
     select (greatest(coalesce(max(numero), 0), ${INICIO_FAIXA_RENUMERACAO}::bigint) + 1)::text as n
       from vendas
      where loja_id = ${v.loja_id} and numero_caixa = ${v.numero_caixa} and numero > ${INICIO_FAIXA_RENUMERACAO}`);
-  const numero = Number(rows[0]!.n);
+  // Contado em `bigint` (decisão 212): o próximo número só vale se couber na exibição; acima, a recusa é explícita
+  // (com `Number` acima de 2^53 dois números vizinhos viram o mesmo e a gravação colidiria em silêncio).
+  const proximo = BigInt(rows[0]!.n);
   // `L01-C02-000123` → `L01-C02-9000001`: só a parte numérica do fim muda.
   const exibicao = /\d+$/.test(v.numero_exibicao)
-    ? v.numero_exibicao.replace(/\d+$/, String(numero).padStart(6, '0'))
-    : String(numero);
-  const nota = `Número original do caixa: ${v.numero_exibicao} (renumerada na nuvem, número já usado por outra venda).`;
+    ? v.numero_exibicao.replace(/\d+$/, proximo.toString().padStart(6, '0'))
+    : proximo.toString();
+  // Código próprio: com o `NUMERO_VENDA_*` a fila ofereceria de novo a ação, que falharia sempre.
+  if (proximo > BigInt(NUMERO_VENDA_MAXIMO)) {
+    throw new ErroRegraEvento(
+      CODIGO_RENUMERACAO_SEM_NUMERO,
+      'A faixa de renumeração do caixa não tem mais número que caiba no limite do número da venda.',
+      { proximo_numero: proximo.toString(), numero_maximo: NUMERO_VENDA_MAXIMO },
+    );
+  }
+  if (exibicao.length > 20) {
+    throw new ErroRegraEvento(
+      CODIGO_RENUMERACAO_SEM_NUMERO,
+      'O número exibido da venda renumerada passaria de 20 caracteres.',
+      { proximo_numero: proximo.toString(), numero_exibicao: exibicao },
+    );
+  }
+  const numero = Number(proximo);
+  const avancaNumeracao = dentroDaMargem(
+    v.numero,
+    await ultimoNumeroConhecido(tx, terminal.caixaId, 'venda'),
+  );
+  const motivo = avancaNumeracao ? 'número já usado por outra venda' : 'número fora da sequência do caixa';
+  const nota = `Número original do caixa: ${v.numero_exibicao} (renumerada na nuvem, ${motivo}).`;
   const observacao = [nota, v.observacao].filter(Boolean).join(' ').slice(0, 500);
   return {
-    payload: { ...p, vendas: { ...v, numero, numero_exibicao: exibicao.slice(0, 20), observacao } },
-    original: { numero: v.numero, exibicao: v.numero_exibicao },
-    novo: { numero, exibicao: exibicao.slice(0, 20) },
+    payload: { ...p, vendas: { ...v, numero, numero_exibicao: exibicao, observacao } },
+    original: { numero: v.numero, exibicao: v.numero_exibicao, avancaNumeracao },
+    novo: { numero, exibicao },
   };
 }
 
@@ -909,7 +977,8 @@ export async function avancarNumeracao({ tx, terminal }: ContextoHandler, numero
 
 /**
  * SYNC 10.2: o documento do caixa (venda, devolução de cascos) baixou ou deu entrada no estoque atual da loja porque
- * o do contexto deixou de valer. Um alerta aberto por terminal e estoque; devolve se ele é novo.
+ * o do contexto não vale (deixou de valer ou não é da loja). Um alerta aberto por terminal e estoque; devolve se ele é
+ * novo.
  */
 export async function alertarEstoqueContexto(
   { tx, terminal }: Pick<ContextoHandler, 'tx' | 'terminal'>,
@@ -921,10 +990,10 @@ export async function alertarEstoqueContexto(
   return gravarAlerta(tx, {
     tipo: ALERTA_ESTOQUE_CONTEXTO_INVALIDO,
     severidade: 'aviso',
-    titulo: `Caixa ${caixa} ${registro.documento} com um estoque que não vale mais`,
+    titulo: `Caixa ${caixa} ${registro.documento} com um estoque que não vale para a loja`,
     mensagem:
-      'O estoque informado pelo caixa foi excluído ou desativado; o movimento foi lançado no estoque atual da loja. ' +
-      'Confira o vínculo de estoque da loja e a sincronização do terminal.',
+      'O estoque informado pelo caixa foi excluído ou desativado, ou não é nem foi o estoque desta loja; o movimento ' +
+      'foi lançado no estoque atual da loja. Confira o vínculo de estoque da loja e a sincronização do terminal.',
     lojaId: terminal.lojaId,
     entidade: registro.entidade,
     registroId: registro.registroId,
@@ -960,8 +1029,10 @@ async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinaliza
   const custo = custos.total;
   const itens = linhas.itens.map((linha, n) => ({ ...linha, custoUnitario: custos.unitarios[n] ?? null }));
   await gravarLinhasVenda(tx, { ...linhas, venda: { ...linhas.venda, custoTotal: custo }, itens });
-  // O número que o PDV usou, mesmo na venda renumerada (a faixa da renumeração fica fora de `numeracoes`).
-  await avancarNumeracao(ctx, original.vendas.numero);
+  // O número que o PDV usou, mesmo na venda renumerada (a faixa da renumeração fica fora de `numeracoes`), salvo o
+  // que estava acima da margem do caixa (decisão 212).
+  if (!renumeracao || renumeracao.original.avancaNumeracao)
+    await avancarNumeracao(ctx, original.vendas.numero);
 
   const caixa = String(terminal.numeroCaixa).padStart(2, '0');
   const alertasGerados: string[] = [];
