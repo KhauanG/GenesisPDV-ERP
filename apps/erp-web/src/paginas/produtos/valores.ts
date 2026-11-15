@@ -502,6 +502,10 @@ export function paraValores(
   const semId = <T extends { id: string | null; chave: string }>(x: T): T =>
     duplicar ? { ...x, id: null, chave: novaChave() } : x;
   const nomesLoja = new Map(lojasSessao.map((l) => [l.id, l.nome]));
+  // Fornecedores já copiados (a cópia leva um vínculo por fornecedor): um conjunto, sem percorrer a lista a cada vínculo.
+  const fornecedoresCopiados = new Set<string>();
+  const primeiroDoFornecedor = (fornecedorId: string) =>
+    !fornecedoresCopiados.has(fornecedorId) && !!fornecedoresCopiados.add(fornecedorId);
   return {
     ...v,
     nome: p.nome,
@@ -607,7 +611,7 @@ export function paraValores(
     // Na cópia, sem o código, dois vínculos do mesmo fornecedor (CX 12 e CX 24) seriam o mesmo: fica o primeiro (o
     // principal vem antes).
     fornecedores: p.fornecedores
-      .filter((f, i, todos) => !duplicar || todos.findIndex((x) => x.fornecedorId === f.fornecedorId) === i)
+      .filter((f) => !duplicar || primeiroDoFornecedor(f.fornecedorId))
       .map((f) =>
         semId({
           chave: f.id,

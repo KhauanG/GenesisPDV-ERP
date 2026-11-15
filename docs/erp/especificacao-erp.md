@@ -1499,6 +1499,16 @@ na planilha (nome, CPF/CNPJ, código ou id digitado), nunca o nome do cadastro a
 cadastro; a ação "Atualizar" continua indicada. O 409 do CPF/CNPJ repetido (no formulário e na gravação da importação)
 diz só que o documento já está cadastrado, sem o código e o nome da outra pessoa.
 
+**Confirmação e custo da análise** (PR-15, README da API › decisão 209): a mesma planilha não vira outra tarefa
+enquanto a confirmação anterior dela está pendente: executando, a confirmação é recusada ("Esta planilha já está sendo
+importada…"); ainda na fila, a confirmação devolve a mesma tarefa, com as opções desta vez, e a agenda de novo (assim se
+recupera o envio à fila que falhou). Cada usuário tem até 2 importações (de produtos e de clientes juntas) na fila ou
+executando (`IMPORTACOES_PENDENTES_POR_USUARIO`; a parada na fila há mais de 5 min não conta); acima, a confirmação é
+recusada (422) sem criar a tarefa. A análise (a prévia e a
+tarefa) custa o mesmo por linha com qualquer quantidade de produtos no mesmo EAN ou de unidades cadastradas, e cede a
+vez às outras requisições do servidor a cada 2.000 linhas; o resultado (ações, produtos achados, erros e avisos) é o
+mesmo de antes.
+
 **Identificação do produto existente**, nesta ordem: `id` (UUID) → `codigo` (Id Produto; aceita a coluna `IdProduto`
 do Nuvem3) → `codigo_interno` → `ean` (pelo EAN só quando a linha não traz código interno ou o produto achado não tem
 um). Código inválido (não inteiro de 1 a 2.147.483.647) ou repetido na planilha é erro da linha; código de produto

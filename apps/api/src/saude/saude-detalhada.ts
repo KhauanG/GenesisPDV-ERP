@@ -23,6 +23,7 @@ import { performance } from 'node:perf_hooks';
 import { statusConexao } from '@genesis/shared';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Configuracao } from '../config/configuracao.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { memoriaDoProcesso, type MemoriaProcesso } from '../comum/processo.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import { empresas, terminaisPdv } from '../database/controle/schema.js';
@@ -213,7 +214,7 @@ export class SaudeDetalhada {
           ),
         );
       const porEmpresa = new Map<string, typeof doControle>();
-      for (const t of doControle) porEmpresa.set(t.empresaId, [...(porEmpresa.get(t.empresaId) ?? []), t]);
+      for (const t of doControle) agruparEm(porEmpresa, t.empresaId, t);
       // Empresas com terminal revogado há mais tempo também podem ter eventos parados na fila de decisão.
       const comFila = await this.controle.db
         .selectDistinct({ empresaId: terminaisPdv.empresaId })

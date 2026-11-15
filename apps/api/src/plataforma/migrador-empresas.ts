@@ -11,6 +11,7 @@ import type {
 } from '@genesis/shared';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type pg from 'pg';
+import { agruparEm } from '../comum/colecoes.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import {
   adminsPlataforma,
@@ -209,7 +210,7 @@ export class MigradorEmpresas {
 
     // Uma fila por servidor (MD 2.12: uma empresa por vez por servidor); até `lote` servidores em paralelo.
     const filas = new Map<string, EmpresaAlvo[]>();
-    for (const e of demaisAlvos) filas.set(e.servidorBancoId, [...(filas.get(e.servidorBancoId) ?? []), e]);
+    for (const e of demaisAlvos) agruparEm(filas, e.servidorBancoId, e);
     const pendentes = [...filas.values()];
     const trabalhar = async (): Promise<void> => {
       for (;;) {
@@ -281,7 +282,7 @@ export class MigradorEmpresas {
           )
       : [];
     const porEmpresa = new Map<string, typeof registros>();
-    for (const r of registros) porEmpresa.set(r.empresaId, [...(porEmpresa.get(r.empresaId) ?? []), r]);
+    for (const r of registros) agruparEm(porEmpresa, r.empresaId, r);
 
     const todas: EmpresaSituacaoMigracao[] = alvos.map((e) => {
       const regs = porEmpresa.get(e.id) ?? [];

@@ -21,14 +21,15 @@ import {
   LIMITE_ITENS_ACERTO,
   LIMITE_LINHAS_PREVIA,
 } from '@genesis/shared';
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import type { AuditoriaService, OrigemAcao } from '../auditoria/auditoria.service.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import type { PermissoesEfetivas } from '../autorizacao/permissoes-efetivas.js';
 import { ErroApi } from '../comum/erros.js';
 import { gerarArquivoPlanilha, nomeArquivoExportacao, type ColunaExportacao } from '../comum/exportacao.js';
-import { acertosEstoque, arquivos, marcas } from '../database/empresa/schema/index.js';
+import { limiteDoAmbiente } from '../comum/limites-processo.js';
+import { acertosEstoque, arquivos, marcas, tarefas } from '../database/empresa/schema/index.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
 import {
   efetivarAcerto,
@@ -43,12 +44,17 @@ import { atualizarPessoa, detalhe as detalhePessoa, inserirPessoa } from '../pes
 import { detalheProduto } from '../produtos/consultas.js';
 import type { CustoCombos } from '../produtos/custo-combo.js';
 import { atualizarProduto, entradaDoDetalhe, inserirProduto } from '../produtos/produtos.controller.js';
-import { sessaoDaTarefa, type ExecucaoTarefa, type TarefasSegundoPlano } from '../tarefas/tarefas.js';
+import {
+  MINUTOS_TAREFA_ATRASADA,
+  sessaoDaTarefa,
+  type ExecucaoTarefa,
+  type TarefasSegundoPlano,
+} from '../tarefas/tarefas.js';
 import type { DbEmpresa, Tenancy } from '../tenancy/tenancy.js';
-import { analisarClientes, carregarReferenciasClientes, type LinhaCliente } from './clientes.js';
+import { analisarClientesCedendo, carregarReferenciasClientes, type LinhaCliente } from './clientes.js';
 import { lerPlanilha, type Planilha } from './planilha.js';
 import {
-  analisarProdutos,
+  analisarProdutosCedendo,
   carregarReferencias,
   chaveNome,
   resolverComposicao,
@@ -283,7 +289,11 @@ export class Importacoes {
     };
   }
 
-  /** Confirma: cria a tarefa (na transação) e agenda depois do commit. */
+  /**
+   * Confirma: cria a tarefa (na transação) e agenda depois do commit. A confirmação desta planilha ainda `na_fila` é
+   * reaproveitada e agendada de novo (decisão 209): o agendamento que falhou depois do commit se recupera no próximo
+   * clique.
+   */
   async confirmar(
     sessao: SessaoErp,
     tipo: TipoImportacao,
@@ -309,6 +319,8 @@ export class Importacoes {
           ),
         );
       if (!a) throw ErroApi.naoEncontrado('Planilha não encontrada: envie o arquivo de novo.');
+      const naFila = await this.conferirPendentes(tx, sessao, tipo, arquivoId, opcoes);
+      if (naFila) return naFila;
       return this.d.tarefas.criar(tx, {
         tipo: TAREFA_IMPORTACAO[tipo],
         parametros: { arquivoId, opcoes },
@@ -318,6 +330,72 @@ export class Importacoes {
     });
     await this.d.tarefas.agendar(cx.contexto.empresaId, tarefaId);
     return { tarefaId };
+  }
+
+  /**
+   * Admissão da confirmação (decisão 209): a fila roda uma tarefa por vez para todas as empresas, e cada confirmação
+   * relê e reanalisa a planilha inteira. A mesma planilha não vira outra tarefa enquanto a confirmação anterior dela
+   * está pendente: `executando` → 422; `na_fila` → a mesma tarefa, com as opções desta confirmação, é devolvida para
+   * ser agendada de novo (o envio à fila pode ter falhado depois do commit, ou o job ter se esgotado antes de a
+   * começar; o job a mais que sobrar só acha a tarefa já começada e sai sem fazer nada). Cada usuário tem até
+   * `IMPORTACOES_PENDENTES_POR_USUARIO` (2) importações pendentes, de produtos e de clientes juntas; acima, 422 sem
+   * criar nada. A `na_fila` parada há mais de `MINUTOS_TAREFA_ATRASADA` (sem começar nem ser reagendada) não conta: o
+   * job dela pode ter se perdido, e nada a tira da fila (a varredura da decisão 150 só trata `executando`). A trava
+   * (por usuário, até o fim da transação) faz duas confirmações ao mesmo tempo contarem uma depois da outra.
+   */
+  private async conferirPendentes(
+    tx: DbEmpresa,
+    sessao: SessaoErp,
+    tipo: TipoImportacao,
+    arquivoId: string,
+    opcoes: OpcoesImportacao,
+  ): Promise<string | null> {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`genesis:importacao_confirmar:${sessao.usuarioId}`}, 0))`,
+    );
+    const pendentes = await tx
+      .select({
+        id: tarefas.id,
+        tipo: tarefas.tipo,
+        status: tarefas.status,
+        arquivoId: sql<string | null>`${tarefas.parametros}->>'arquivoId'`,
+        atrasada: sql<boolean>`${tarefas.atualizadoEm} < now() - make_interval(mins => ${MINUTOS_TAREFA_ATRASADA})`,
+      })
+      .from(tarefas)
+      .where(
+        and(
+          inArray(tarefas.tipo, Object.values(TAREFA_IMPORTACAO)),
+          eq(tarefas.usuarioId, sessao.usuarioId),
+          inArray(tarefas.status, ['na_fila', 'executando']),
+        ),
+      )
+      .orderBy(tarefas.criadoEm);
+    const daPlanilha = pendentes.filter((t) => t.arquivoId === arquivoId);
+    const naFila = daPlanilha.find((t) => t.status === 'na_fila' && t.tipo === TAREFA_IMPORTACAO[tipo]);
+    if (naFila && !daPlanilha.some((t) => t.status === 'executando')) {
+      // A condição `na_fila` vai no próprio update: o job que começou a tarefa no meio vence (e esta recebe o 422).
+      const [atualizada] = await tx
+        .update(tarefas)
+        .set({ parametros: { arquivoId, opcoes }, lojaId: opcoes.lojaId ?? null, atualizadoEm: sql`now()` })
+        .where(and(eq(tarefas.id, naFila.id), eq(tarefas.status, 'na_fila')))
+        .returning({ id: tarefas.id });
+      if (atualizada) return atualizada.id;
+    }
+    if (daPlanilha.length)
+      throw new ErroApi(
+        'REGRA_NEGOCIO',
+        'Esta planilha já está sendo importada. Acompanhe pelo ícone Tarefas; para importar de novo, espere terminar.',
+        { detalhes: { arquivoId } },
+      );
+    const contadas = pendentes.filter((t) => t.status === 'executando' || !t.atrasada).length;
+    const limite = limiteDoAmbiente('IMPORTACOES_PENDENTES_POR_USUARIO', 2);
+    if (contadas >= limite)
+      throw new ErroApi(
+        'REGRA_NEGOCIO',
+        `Você já tem ${limite} importação(ões) em andamento. Espere uma terminar (ícone Tarefas) e confirme de novo.`,
+        { detalhes: { pendentes: contadas, limite } },
+      );
+    return null;
   }
 
   /**
@@ -427,7 +505,7 @@ export class Importacoes {
     }
     const linhas: LinhaAnalisada[] =
       tipo === 'produtos'
-        ? analisarProdutos(
+        ? await analisarProdutosCedendo(
             planilha.linhas,
             mapa.indices,
             await carregarReferencias(
@@ -450,7 +528,7 @@ export class Importacoes {
                   (await lerConfiguracao<boolean>(db, 'estoque.permite_negativo_erp', destino.lojaId))),
             },
           )
-        : analisarClientes(
+        : await analisarClientesCedendo(
             planilha.linhas,
             mapa.indices,
             await carregarReferenciasClientes(db, planilha.linhas, mapa.indices),
@@ -844,9 +922,14 @@ export class Importacoes {
           sessao.master || (await lerConfiguracao<boolean>(db, 'estoque.permite_negativo_erp', lojaId)),
       };
     });
+    // Uma vez cada produto, a primeira linha dele (pelo conjunto: a planilha de 50 mil linhas custa o mesmo por linha).
+    const vistos = new Set<string>();
     const itens = comEstoque
-      .filter((g) => validos.has(g.id))
-      .filter((g, i, todos) => todos.findIndex((x) => x.id === g.id) === i)
+      .filter((g) => {
+        if (!validos.has(g.id) || vistos.has(g.id)) return false;
+        vistos.add(g.id);
+        return true;
+      })
       .map((g) => ({
         id: null,
         produtoId: g.id,

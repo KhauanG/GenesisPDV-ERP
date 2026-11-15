@@ -404,17 +404,29 @@ export function resolverUnidadePlanilha<T extends { sigla: string; descricao: st
   texto: string,
   unidades: readonly T[],
 ): T | null {
-  const chave = normalizarCabecalho(texto);
-  if (!chave) return null;
+  return indiceUnidadesPlanilha(unidades)(texto);
+}
+
+/**
+ * O `resolverUnidadePlanilha` com o índice das unidades montado uma vez: a análise da planilha resolve cada linha
+ * sem percorrer a lista de unidades de novo (o custo fica linear nas linhas e nas unidades).
+ */
+export function indiceUnidadesPlanilha<T extends { sigla: string; descricao: string }>(
+  unidades: readonly T[],
+): (texto: string) => T | null {
   const porSigla = new Map(unidades.map((u) => [normalizarCabecalho(u.sigla), u]));
   const porDescricao = new Map(unidades.map((u) => [normalizarCabecalho(u.descricao), u]));
-  const sinonimo = SINONIMOS_UNIDADE_PLANILHA[chave];
-  return (
-    porSigla.get(chave) ??
-    porDescricao.get(chave) ??
-    (sinonimo ? porSigla.get(normalizarCabecalho(sinonimo)) : undefined) ??
-    null
-  );
+  return (texto) => {
+    const chave = normalizarCabecalho(texto);
+    if (!chave) return null;
+    const sinonimo = SINONIMOS_UNIDADE_PLANILHA[chave];
+    return (
+      porSigla.get(chave) ??
+      porDescricao.get(chave) ??
+      (sinonimo ? porSigla.get(normalizarCabecalho(sinonimo)) : undefined) ??
+      null
+    );
+  };
 }
 
 /**

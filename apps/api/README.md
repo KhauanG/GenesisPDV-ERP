@@ -166,6 +166,7 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `IMAGENS_CONCORRENCIA` / `IMAGENS_LIMITE_PIXELS` | 1 / 36000000 | Imagens decodificadas ao mesmo tempo no processo (o sharp, uma thread do libvips cada) e o teto de pixels (largura × altura) aceito no envio, conferido pelo cabeçalho antes de decodificar (decisão 189) |
 | `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
 | `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (criar usuário, redefinir a senha de outro, PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisões 93 e 204) |
+| `IMPORTACOES_PENDENTES_POR_USUARIO` | 2 | Importações de planilha (produtos e clientes juntas) na fila ou executando por usuário (a parada na fila há mais de 5 min não conta); a mesma planilha não vira outra tarefa enquanto a anterior dela está pendente (a que está na fila é agendada de novo); 422 `REGRA_NEGOCIO` acima, sem criar a tarefa (decisão 209) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
 | `GENESIS_VERSAO` / `BACKUP_ESTADO_CHAVE` | `desenvolvimento` / `backups/estado.json` | Versão no painel (a imagem define com o commit) e o estado do último backup no bucket (gravado pelo `genesis-backup`) |
@@ -6675,6 +6676,67 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        loja ativa e 200 com ela inativa ou excluída; o id de uma alternativa de outro combo não altera a de lá) e
        `test/integracao/produto-complementos.test.ts` (o mesmo complemento de graça num grupo novo → 403; o grupo
        apagado num salvamento e o complemento recriado de graça noutro → 403).
+
+209. **Importação de planilha: análise linear no EAN repetido, laço cedido e confirmação com teto** (PR-15, SEG-B14;
+     ERP 8.6; decisões 93, 150 e 177; `src/comum/colecoes.ts`, `src/importacao/produtos.ts`,
+     `src/importacao/clientes.ts`, `src/importacao/importacao.ts`). O processo da API atende todas as empresas no mesmo
+     laço de eventos, e a fila de tarefas roda uma por vez: a análise de uma planilha de uma empresa não pode segurar
+     as requisições nem as tarefas das outras.
+     - **Custo linear por EAN.** O agrupamento das referências (`porEan`, `categoriasPorNome`) acrescenta na lista da
+       chave (`agruparEm`), sem copiar a lista acumulada a cada linha. A análise calcula o resumo de cada EAN uma vez
+       (`resumirEan`: quantas entradas, quantas sem código interno, a primeira, a primeira sem código interno, a
+       primeira de outro produto e o conjunto dos ids) e cada linha consulta o resumo em tempo constante, no lugar do
+       `filter`/`find`/`some` sobre todos os produtos do EAN. O resultado é o mesmo de antes: conta cada entrada da
+       lista (o mesmo produto pode vir duas vezes, no código do produto e no da variação), o produto achado pelo EAN é
+       o mesmo, e as mensagens ("EAN … está em N produtos", "já está no produto …", "Conferir código") também. A
+       consulta dos produtos do EAN continua sem `LIMIT`: custa o que a empresa tem cadastrado (linear), e a
+       conferência "o produto achado pelo código tem este EAN?" precisa da lista inteira.
+     - **Unidades.** A unidade da planilha é achada por um índice montado uma vez por análise
+       (`indiceUnidadesPlanilha` no shared; o `resolverUnidadePlanilha` usa o mesmo índice), e a sigla do "O que
+       muda" por um mapa id → sigla por lista de unidades, sem percorrer as unidades a cada linha.
+     - **O laço é cedido.** A análise de produtos e de clientes é um gerador que analisa uma linha quando pedida:
+       `analisarProdutos`/`analisarClientes` coletam tudo de uma vez (os testes e quem já tem as linhas na mão), e a
+       prévia e a tarefa usam `analisarProdutosCedendo`/`analisarClientesCedendo`, que devolvem a vez ao laço
+       (`setImmediate`) a cada `ITENS_POR_CESSAO` (2.000) linhas. A worker thread ficou de fora: o trabalho já é
+       linear, e o laço cedido basta para as outras requisições seguirem.
+     - **"Definir" da importação.** Cada produto entra uma vez no acerto, a primeira linha dele, por um conjunto (antes
+       um `findIndex` por linha).
+     - **Confirmação com teto** (`conferirPendentes`, na transação da confirmação, sob uma trava por usuário até o fim
+       dela): a mesma planilha (`parametros.arquivoId`) não vira outra tarefa enquanto a confirmação anterior dela está
+       pendente. `executando` → 422 "Esta planilha já está sendo importada…" (`detalhes.arquivoId`); terminada (ou
+       marcada interrompida pela decisão 150), a planilha pode ser confirmada de novo. `na_fila` → a confirmação
+       devolve a mesma tarefa, com as opções e a loja desta confirmação (o `update` leva `status = 'na_fila'`: se o
+       job a começou no meio, vale o 422), e a agenda de novo depois do commit. É o caminho de recuperação da tarefa
+       `na_fila` sem job, que nada mais tira da fila (a varredura da decisão 150 só trata `executando` e não existe
+       cancelamento): o envio à fila (`agendar`, no banco de controle) que falhou depois do commit (500 no ERP), ou o
+       job esgotado nas retentativas antes de começar a tarefa. O job a mais, quando o anterior existia, só acha a
+       tarefa já começada e sai sem fazer nada (`executar` começa só a `na_fila`; a fila `standard` não deduplica por
+       `singletonKey`). Cada usuário tem até `IMPORTACOES_PENDENTES_POR_USUARIO` (2) importações pendentes, de produtos
+       e de clientes juntas (422 "Você já tem 2 importação(ões) em andamento…", `detalhes.pendentes` e `limite`), como
+       o teto das exportações em tarefa (decisão 177); a `na_fila` parada há mais de `MINUTOS_TAREFA_ATRASADA` (5 min,
+       o mesmo atraso que a prontidão aponta; contado do `atualizado_em`, que o reagendamento renova) não conta, para
+       a tarefa sem job não prender o usuário. A prévia já tinha o limite por minuto (`IMPORTACAO_PREVIAS_POR_MINUTO`).
+       O teto das exportações (decisão 177) tem o mesmo ponto cego na `na_fila` sem job, sem a trava da mesma planilha
+       (lá basta pedir de novo); ficou como está.
+     - **O mesmo padrão no resto do código.** O agrupamento por cópia da lista acumulada foi trocado por `agruparEm`
+       nos vínculos de fornecedor movidos (NF-e e produto), nas permissões por perfil da prontidão, nas filas do
+       migrador, na reconciliação dos terminais, na saúde detalhada e, no ERP, no catálogo do editor de permissões
+       (um `push` local); a deduplicação por `findIndex(...) === i` saiu também da cópia dos vínculos de fornecedor no
+       "Duplicar" do produto no ERP (`paginas/produtos/valores.ts`, um conjunto dos fornecedores já copiados). Um teste
+       varre o código de produção da API, do shared e do ERP e recusa os dois padrões, linha a linha (a expressão da
+       deduplicação aceita o callback com parênteses, `findIndex((x) => …) === i`, e o próprio teste confere que ela
+       reconhece as formas reais).
+     - Sem migração, sem contrato novo e sem mudança no PDV. Testes: `src/importacao/analise-linear.spec.ts` (o
+       resultado de uma planilha com EAN em vários produtos, com e sem código interno, entrada repetida, produto
+       achado pelo código com e sem o EAN, igual ao de antes da mudança; o número de leituras das listas de produtos do
+       EAN e de unidades em duas escalas, 500 e 3.000, cresce como a escala; a análise cedendo deixa rodar outra tarefa
+       no meio e dá o mesmo resultado da direta, em produtos e em clientes), `src/comum/colecoes.spec.ts` (o
+       agrupamento, a coleta cedendo e a varredura do padrão), `packages/shared/src/importacao.spec.ts` (o índice de
+       unidades, com valores esperados: a sigla vence a descrição, que vence o sinônimo; sinônimo sem a sigla na
+       empresa e texto vazio → nada) e `test/integracao/importacao-dashboard.test.ts` (a mesma planilha com a
+       confirmação anterior executando → 422 e nenhuma tarefa nova; duas importações pendentes do usuário → 422;
+       paradas na fila há mais de 5 min, não contam; o envio à fila falha depois do commit → 500 e a tarefa fica na
+       fila; a nova confirmação devolve a mesma tarefa, sem criar outra, e ela conclui).
 
 ### Operação – tarefas em segundo plano (API)
 

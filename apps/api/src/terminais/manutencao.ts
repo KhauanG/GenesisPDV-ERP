@@ -23,6 +23,7 @@
  */
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { hojeNaEmpresa, inicioDoDiaNaEmpresa } from '../comum/fuso.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import { terminaisPdv } from '../database/controle/schema.js';
@@ -163,7 +164,7 @@ export class ManutencaoTerminais {
         ),
       );
     const porEmpresa = new Map<string, (typeof aReconciliar)[number][]>();
-    for (const t of aReconciliar) porEmpresa.set(t.empresaId, [...(porEmpresa.get(t.empresaId) ?? []), t]);
+    for (const t of aReconciliar) agruparEm(porEmpresa, t.empresaId, t);
     // Alerta da D20 pode estar aberto em qualquer empresa que já tirou terminal do caixa, por mais antigo que seja.
     const comTerminalFora = await this.controle.db
       .selectDistinct({ empresaId: terminaisPdv.empresaId })

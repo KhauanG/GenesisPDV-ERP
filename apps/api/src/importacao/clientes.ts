@@ -24,6 +24,7 @@ import {
   type OcorrenciaImportacao,
 } from '@genesis/shared';
 import { sql } from 'drizzle-orm';
+import { coletarCedendo } from '../comum/colecoes.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import type { Celula, LinhaPlanilha } from './planilha.js';
 import { chaveNome, formatarDinheiro } from './produtos.js';
@@ -211,15 +212,28 @@ async function carregarEstadosClientes(
 
 const shape = criarPessoaSchema.shape;
 
-export function analisarClientes(
+type ParametrosAnaliseClientes = Parameters<typeof linhasAnalisadasClientes>;
+
+/** Analisa as linhas (sem gravar), de uma vez. */
+export function analisarClientes(...parametros: ParametrosAnaliseClientes): LinhaCliente[] {
+  return [...linhasAnalisadasClientes(...parametros)];
+}
+
+/** A mesma análise, cedendo o laço de eventos a cada `ITENS_POR_CESSAO` linhas (a da prévia e da tarefa; decisão 209). */
+export function analisarClientesCedendo(...parametros: ParametrosAnaliseClientes): Promise<LinhaCliente[]> {
+  return coletarCedendo(linhasAnalisadasClientes(...parametros));
+}
+
+/** Analisa as linhas uma a uma, quando pedidas. */
+function* linhasAnalisadasClientes(
   linhas: readonly LinhaPlanilha[],
   indices: Record<string, number>,
   ref: ReferenciasClientes,
   pode: PermissoesAnaliseClientes = { editarCredito: true, verPessoas: true },
-): LinhaCliente[] {
+): Generator<LinhaCliente, void, undefined> {
   const tem = (chave: string) => indices[chave] !== undefined;
   const documentos = new Map<string, number>();
-  return linhas.map((l): LinhaCliente => {
+  const analisarLinha = (l: LinhaPlanilha): LinhaCliente => {
     const cel = (chave: string): Celula | undefined => (tem(chave) ? l.valores[indices[chave]!] : undefined);
     const erros: string[] = [];
     const avisos: OcorrenciaImportacao[] = [];
@@ -383,7 +397,8 @@ export function analisarClientes(
       }
     }
     return linha;
-  });
+  };
+  for (const l of linhas) yield analisarLinha(l);
 }
 
 const dataBr = (iso: string | null | undefined) => (iso ? iso.split('-').reverse().join('/') : null);

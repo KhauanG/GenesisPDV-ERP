@@ -53,6 +53,7 @@ import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, ordemDaQuery, ref } from '../comum/cadastro.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { ErroApi } from '../comum/erros.js';
 import {
   arquivoExportacao,
@@ -909,7 +910,7 @@ async function auditarVinculosMovidos(
     sql`select codigo, nome from produtos where id = ${produtoId}`,
   );
   const porProduto = new Map<string, VinculoFornecedorMovido[]>();
-  for (const m of movidos) porProduto.set(m.produtoId, [...(porProduto.get(m.produtoId) ?? []), m]);
+  for (const m of movidos) agruparEm(porProduto, m.produtoId, m);
   for (const [outro, deste] of porProduto) {
     const codigos = deste.map((m) => `"${m.codigoFornecedor}"`).join(', ');
     const vinculo =
