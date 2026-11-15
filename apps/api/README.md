@@ -1114,22 +1114,20 @@ Bloco B1 do plano da 1B (contratos compartilhados e correções de base) e as de
      (conferido também na API, 422 em `confirmacaoCaixa`); `revogado` com data, autor e motivo
      (`revogado_imediato`/`perdido_roubado`), o caixa fica livre (`caixas.terminal_id → terminal_anterior_id`, como na
      desativação confirmada e na carência vencida) e auditoria `terminal_revogado`. Todo destino `revogado` roda com
-     `travaVersao` (libera `caixas`, que tem `fn_versao`; MD 1.5). `perdido` anula, na mesma transação,
-     `usuarios.senha_pdv_hash` de quem acessa a loja (master ou `usuarios_lojas`) e `pessoas.senha_hash` das pessoas
-     cuja senha desce para a loja: a mesma condição da projeção do fluxo `pessoas` (`pessoaRelevante` +
-     `senhaClienteDesce` de `sync/fluxos.ts`: relevante, exigência de senha ligada na loja, limite > 0, não
-     bloqueada), como pede a ERP 12.4 ("as que desceram para aquele terminal"); quem não atende hoje não tem hash no
-     PDV da loja. Auditoria `senha_redefinida` por registro; o `fn_versao` faz o `null` descer nos fluxos
+     `travaVersao` (libera `caixas`, que tem `fn_versao`; MD 1.5). `perdido` anula, na mesma transação, as
+     credenciais que o computador pode guardar: o PIN do PDV (`usuarios.senha_pdv_hash`) de quem acessa ou já acessou
+     a loja e de quem é ou já foi Master, e a senha de cliente (`pessoas.senha_hash`) de quem já foi relevante para a
+     loja (decisão 211). Auditoria `senha_redefinida` por registro; o `fn_versao` faz o `null` descer nos fluxos
      `acesso`/`pessoas` dos outros terminais. `perdido` também vale num terminal **já revogado** por outro motivo
      (furto descoberto depois, ou outra revogação que ganhou a corrida): o controle passa a `perdido_roubado` e a
      empresa só anula e audita (menos `falha_ativacao`, que nunca recebeu dados → 422; e nunca 200 sem anular).
-     `aplicarEstadoNaEmpresa` decide o que falta pelas auditorias `terminal_revogado` (`depois.status`/`motivo`), não
-     só pelo status: a etapa da empresa da ativação passa os anteriores revogados por ela (a revogação que só ficou
-     no controle é completada ali, com anulação, auditoria e alerta) e a desativação confirmada do heartbeat grava a
-     própria auditoria (motivo `MOTIVOS_REVOGACAO.confirmada`, empresa antes do controle, com `travaVersao`).
-     Repetir a mesma revogação só refaz a etapa da empresa; outro modo num terminal já revogado → 422.
-     "Não reconheço" (troca de hardware) é a revogação imediata com observação. O `sync.test.ts` deixou de revogar
-     por SQL.
+     `aplicarEstadoNaEmpresa` decide o que falta pelas auditorias `terminal_revogado` gravadas pelo servidor (sem
+     `evento_id`, decisão 211; `depois.status`/`motivo`), não só pelo status: a etapa da empresa da ativação passa os
+     anteriores revogados por ela (a revogação que só ficou no controle é completada ali, com anulação, auditoria e
+     alerta) e a desativação confirmada do heartbeat grava a própria auditoria (motivo `MOTIVOS_REVOGACAO.confirmada`,
+     empresa antes do controle, com `travaVersao`). Repetir a mesma revogação só refaz a etapa da empresa; outro modo
+     num terminal já revogado → 422. "Não reconheço" (troca de hardware) é a revogação imediata com observação. O
+     `sync.test.ts` deixou de revogar por SQL.
 115. **D20 no código**: a numeração continua passando ao substituto na hora (`decidirNumeracao` não olha os eventos) e
      o terminal que sai do caixa com eventos em `erro`/`retido` gera o alerta crítico
      `TERMINAL_DESATIVADO_COM_EVENTOS` (um por terminal enquanto aberto, com as contagens), na revogação (3 modos e
@@ -6818,6 +6816,58 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        snake_case e o `hashDoPayload`), `packages/shared/src/sync/eventos.spec.ts` (os tetos das quantidades; a baixa
        de insumo de 125.000.000 passa e só a acima da coluna é recusada) e `contratos.spec.ts` (a profundidade do
        payload).
+
+211. **Modo "perdido/roubado": só o servidor registra a revogação, e a anulação cobre o que o computador pode guardar**
+     (PR-15, SEG-B10; SYNC 4.3 item 6 e 9.22; ERP 12.4; revê a decisão 114; `src/terminais/revogacao.ts`,
+     `src/sync/eventos.ts`, `src/sync/ativacao.ts`, `src/sync/handlers/cancelamento.ts`,
+     `packages/shared/src/enums.ts`).
+     - **Ações de auditoria só do servidor.** `ACOES_AUDITORIA_SO_SERVIDOR` (shared) lista as ações do catálogo que
+       só a API grava: `terminal_revogado`, `token_anterior_reutilizado`, `evento_descartado`, `evento_reprocessado`,
+       `lacuna_substituida`, `permissoes_alteradas`, `pix_recebedor_alterado` e `recalcular_saldos`. O PDV não gera
+       nenhuma delas (o `terminal_ativado` dele continua aceito; a fixture do que o PDV grava é conferida no
+       `contratos.spec.ts`, e o código do PDV no `DescritorAuditoriaTests`, que cruza as ações que o caixa grava com a
+       lista lida do `enums.ts`), e o lote `auditoria.registros` que traz alguma é recusado como a ação fora do
+       catálogo: `PAYLOAD_INVALIDO` só naquele evento, com as ações em `detalhes.acoes`; os outros eventos do lote seguem.
+       `ACOES_AUDITORIA` (e o espelho `CatalogosNuvem` do PDV) não muda.
+     - **Quem lê a auditoria como estado do servidor só aceita a linha do servidor.** A revogação (`revogacoesAuditadas`)
+       conta só os `terminal_revogado` sem `evento_id` — os do ERP, da manutenção, da ativação e da desativação
+       confirmada do heartbeat nunca vêm de um evento; as linhas do lote de auditoria de um terminal sempre trazem o
+       dele —, inclusive diante de linhas antigas do lote de auditoria: só a revogação do servidor decide o que o modo
+       perdido ainda tem de anular. Variantes do mesmo padrão: a etapa da empresa da ativação reusa a decisão gravada
+       só pelo `terminal_ativado` da própria etapa (entidade `terminais`, sem `evento_id`; o do PDV é `terminal`, com o
+       evento) e o cancelamento duplo (SYNC 10.4) só reconhece o `cancelar` com `cancelamento_duplo` gravado pelo
+       handler, preso a um evento `venda.cancelada` em `eventos_recebidos` (que não tem purga); o `cancelar` que chega
+       no lote de auditoria fica na auditoria e não decide nada.
+     - **A anulação é pelo que pode ter descido, não pela projeção de hoje.** O terminal revogado não puxa mais nada, e
+       o `pdv.db` dele fica com os hashes do último pull (o PDV só troca a linha espelhada por uma versão nova), além
+       dos backups da mesma máquina, que podem ser de ativações anteriores do caixa. Por isso a anulação cobre quem já
+       teve acesso à loja ou já foi relevante para ela, sem depender da condição de hoje do fluxo nem de data.
+       `anularCredenciaisDaLoja` anula: o **PIN do PDV de quem a projeção do fluxo `acesso` pode ter mandado à loja**
+       (o hash só desce para o Master e para quem tem `usuarios_lojas` da loja): os Masters de hoje, quem tem ou teve
+       linha em `usuarios_lojas` da loja (viva ou excluída) e quem a auditoria do servidor mostra como Master em algum
+       momento (entidade `usuarios`, sem `evento_id`, `master` verdadeiro no `antes` ou no `depois`: a criação, a edição
+       e o `permissoes_alteradas` gravam o campo, e a `auditoria` é só de inserção), inclusive o usuário excluído (a
+       restauração devolveria o hash); e a **senha de cliente de toda pessoa que já foi relevante para a loja** (linha
+       de `pessoas_relevancia_loja` da loja ou de todas as lojas, viva ou excluída, também a da pessoa excluída), sem o
+       filtro de crediário e exigência (`senhaClienteDesce`). Quem só teve acesso a outras lojas (e nunca foi Master)
+       e quem nunca foi relevante para a loja nunca tiveram a credencial naquele computador e a mantêm: o operador de
+       uma loja, com `terminais.revogar` e o escopo da loja do terminal, não para o login do PDV das outras lojas
+       (anular o PIN da empresa inteira, a recomendação inicial do plano do bloco, daria a ele esse efeito sobre
+       usuários que ele nem enxerga no ERP). Cada credencial anulada continua com a auditoria `senha_redefinida`; o ERP
+       avisa no diálogo quem recadastra o PIN (README do ERP › decisão 83).
+     - Sem migração, protocolo novo nem mudança de comportamento no PDV: o PDV 0.12.0 não envia as ações reservadas,
+       e o `null` desce como antes pelos fluxos `acesso` e `pessoas`. Testes: `test/integracao/terminais.test.ts` (o lote de auditoria
+       com `terminal_revogado` → `PAYLOAD_INVALIDO`; com a linha "do terminal" gravada direto no banco, o perdido
+       depois do imediato anula o PIN; as edições de rotina antes da marcação — tirar o usuário da loja, rebaixar o
+       Master pelo ERP, excluir o usuário, bloquear o crediário, a relevância excluída, a pessoa de todas as lojas — e
+       tudo é anulado, menos o PIN de quem só teve acesso a outra loja, mesmo com uma linha "Master" do lote de um
+       terminal, e a senha da pessoa só de outra loja), `test/integracao/ativacao-repeticao.test.ts` (o
+       `terminal_ativado` com `evento_id` não vale como decisão gravada: o caixa inativado é conferido e a ativação
+       recusada), `test/integracao/cancelamento-vasilhame-eventos.test.ts` (o `cancelar` com `cancelamento_duplo` no
+       lote de auditoria não impede o cancelamento duplo real de gravar a gaveta e o alerta) e
+       `packages/shared/src/sync/contratos.spec.ts` (as ações reservadas estão no catálogo e fora da fixture do que o
+       PDV grava) e, no PDV, `DescritorAuditoriaTests.Nenhuma_acao_gravada_e_reservada_ao_servidor` (só teste, sem
+       subir a versão).
 
 ### Operação – tarefas em segundo plano (API)
 

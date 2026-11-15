@@ -11,7 +11,7 @@
  * `SCHEMA_DESCONHECIDO` (transitório): o PDV os mantém no outbox até a fase que os aplica, e só gera o tipo que
  * `versoes_schema` anuncia (T13).
  */
-import { ehAcaoAuditoria, payloadAuditoriaRegistrosSchema } from '@genesis/shared';
+import { ehAcaoAuditoria, ehAcaoAuditoriaSoServidor, payloadAuditoriaRegistrosSchema } from '@genesis/shared';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { mascararSensiveis } from '../auditoria/mascarar.js';
@@ -59,6 +59,14 @@ export const HANDLERS: CatalogoHandlers = {
         if (invalidas.length) {
           throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Ação de auditoria fora do catálogo.', {
             acoes: invalidas,
+          });
+        }
+        // O estado que o servidor lê da auditoria (ex.: a revogação do terminal) só vem dele: o lote do caixa que
+        // traz uma dessas ações é recusado inteiro, como a ação fora do catálogo (o PDV nunca as gera).
+        const reservadas = p.registros.filter((r) => ehAcaoAuditoriaSoServidor(r.acao)).map((r) => r.acao);
+        if (reservadas.length) {
+          throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Ação de auditoria reservada ao servidor.', {
+            acoes: [...new Set(reservadas)],
           });
         }
         let gravados = 0;

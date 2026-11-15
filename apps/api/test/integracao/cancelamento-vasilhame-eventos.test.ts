@@ -762,6 +762,68 @@ describe('venda.cancelada forma A (SYNC 9.9 A, 10.4)', () => {
     expect(n).toBe(1);
   });
 
+  it('o cancelamento do caixa já gravado é só o do evento de cancelamento: um registro de auditoria não o substitui', async () => {
+    const p = await novoPonto();
+    const prod = await criarProduto({ nome: 'CERV REGISTRO DE AUDITORIA C7' });
+    await entrada([[prod, '20', '2']]);
+    const v = venda(p, [{ produto: prod, quantidade: '1.000' }]);
+    const [vf] = await pushOk(p, [evento(p, 'venda.finalizada', v)]);
+    expect(vf, JSON.stringify(vf)).toMatchObject({ status: 'aplicado' });
+    await consultar(
+      emp.nomeBanco,
+      `update vendas set status = 'cancelada', cancelada_em = now(), cancelada_por_id = $2,
+              motivo_cancelamento = 'Cancelada no ERP', cancelamento_origem = 'erp'
+        where id = $1`,
+      [v.vendas.id, operador],
+    );
+    const c = cancelamento(p, v, { motivo: 'Cliente desistiu da compra depois de pagar' });
+    // O lote de auditoria do caixa traz um `cancelar` da venda com o mesmo conteúdo do registro do cancelamento
+    // duplo: ele fica na auditoria, mas não conta como o cancelamento do caixa já gravado.
+    const registros = {
+      registros: [
+        {
+          id: uuidv7(),
+          ocorrido_em: agora(),
+          acao: 'cancelar',
+          entidade: 'vendas',
+          registro_id: v.vendas.id,
+          depois: {
+            cancelada_em: c.vendas.cancelada_em,
+            cancelada_por_id: c.vendas.cancelada_por_id,
+            cancelamento_autorizado_por_id: c.vendas.cancelamento_autorizado_por_id,
+            motivo_cancelamento: c.vendas.motivo_cancelamento,
+            sessao_caixa_cancelamento_id: c.sessao_caixa_cancelamento_id,
+            estornos: c.pagamentos_venda.map((pg) => ({ pagamento_venda_id: pg.id, estorno: pg.estorno })),
+            movimentos_caixa: c.movimentos_caixa.map((m) => ({
+              id: m.id,
+              forma_pagamento_id: m.forma_pagamento_id,
+              valor: m.valor,
+            })),
+            cancelamento_duplo: true,
+          },
+        },
+      ],
+      logins: [],
+    };
+    const [aud] = await pushOk(p, [
+      {
+        ...evento(p, 'venda.finalizada', v),
+        tipo: 'auditoria.registros',
+        agregado_tipo: 'auditoria',
+        agregado_id: uuidv7(),
+        payload: registros,
+        payload_sha256: createHash('sha256').update(jcs(registros), 'utf8').digest('hex'),
+      },
+    ]);
+    expect(aud, JSON.stringify(aud)).toMatchObject({ status: 'aplicado' });
+    const [r] = await pushOk(p, [evento(p, 'venda.cancelada', c)]);
+    expect(r, JSON.stringify(r)).toMatchObject({
+      status: 'aplicado',
+      resultado: { cancelamento_duplo: true, movimentos_caixa: 1, alertas: ['CANCELAMENTO_DUPLO'] },
+    });
+    expect(await alertasAbertos('CANCELAMENTO_DUPLO', `cancelamento_duplo:${v.vendas.id}`)).toHaveLength(1);
+  });
+
   it('casco cobrado volta como CANC_VENDA_PDV; os vazios trazidos voltam ao cliente ou ficam conforme a chave (D29)', async () => {
     const p = await novoPonto();
     const casco = await criarProduto({

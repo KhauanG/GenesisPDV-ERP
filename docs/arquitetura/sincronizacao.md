@@ -388,7 +388,7 @@ sequenceDiagram
 |---|---|
 | Ocupação do caixa | `uq_terminais_pdv_caixa_ativo` passa a valer para `status in ('provisionando','ativo')`: um terminal em provisionamento já ocupa o caixa. O 1º commit trava por caixa (`pg_advisory_xact_lock`) antes de ler os ocupantes: de duas ativações simultâneas do mesmo caixa, a segunda recebe `422 CAIXA_OCUPADO` |
 | Token de terminal `provisionando` | Qualquer chamada `/sync/*` → `503 MANUTENCAO` (`Retry-After: 30`). Na prática o PDV só recebe o token depois do `ativo`, mas a regra protege contra a repetição concorrente |
-| Etapa da empresa idempotente | `insert … on conflict (id) do nothing` em `terminais`; `update caixas` condicional (só troca `terminal_id` se ainda não for o novo, e só então grava `terminal_anterior_id`); o ajuste de `numeracoes` é calculado uma vez e gravado em `auditoria` `terminal_ativado` — a repetição reusa os valores gravados em vez de recalcular |
+| Etapa da empresa idempotente | `insert … on conflict (id) do nothing` em `terminais`; `update caixas` condicional (só troca `terminal_id` se ainda não for o novo, e só então grava `terminal_anterior_id`); o ajuste de `numeracoes` é calculado uma vez e gravado em `auditoria` `terminal_ativado` — a repetição reusa os valores gravados em vez de recalcular (só a linha da própria etapa, sem `evento_id`: o `terminal_ativado` que o PDV envia no lote de auditoria não conta) |
 | API caiu entre os commits | `terminais_pdv` fica `provisionando`. A repetição da ativação (abaixo) ou o reconciliador concluem |
 | Substituição em andamento | Entre o 1º commit (antigo `desativando`, `substituido_por_terminal_id` = novo) e a etapa da empresa do novo, o antigo continua sendo o terminal do caixa: heartbeat, `GET /sync/estado` e pull o tratam como `ativo` (sem comando `revogar`, sem confirmar desativação, `status_terminal: "ativo"`), e "Revogar – aceitar pendências" no ERP é recusado (422). A compensação devolve o antigo a `ativo` e cancela os `revogar` pendentes/entregues dele. Motivo: o PDV só avança o estado local; um `desativando` entregue na janela o deixaria preso se a ativação do novo fosse compensada |
 | 3º commit sem efeito | Se o `update … status = 'ativo'` não alterar a linha (a manutenção compensou ou o ERP revogou enquanto a etapa rodava), a API relê: já `ativo` → `201`; senão `503 MANUTENCAO` sem token (o código compensado voltou a `pendente` e a nova tentativa do PDV ativa) |
@@ -607,14 +607,24 @@ Por isso, além do algoritmo:
    demais clientes não têm hash no PDV.
 5. Pasta de dados com ACL restrita (3.6); backups cifrados (PDV 32.5); banco local cifrado (modelo 4).
 6. Ação no ERP **"Terminal perdido/roubado"** = revogar imediatamente + invalidar PINs (`senha_pdv_hash = null`) de
-   todos os usuários com acesso à loja até redefinição + invalidar as senhas de cliente de crediário da loja
-   (`pessoas.senha_hash = null` das pessoas com crediário que desceram para aquele terminal, com aviso para
+   quem acessa ou já acessou a loja e de quem é ou já foi Master até redefinição + invalidar as senhas de cliente de
+   crediário da loja (`pessoas.senha_hash = null` das pessoas que já foram relevantes para a loja, com aviso para
    redefinição no próximo atendimento). Como a senha do ERP não desce, ela não precisa ser trocada. A ação vale
    também para um terminal **já revogado** por outro motivo (o furto descoberto depois da revogação imediata, da
    carência vencida ou da desativação confirmada, porque o banco local fica na máquina): o motivo passa a
-   `perdido_roubado` e só a anulação acontece. "Desceram" = a mesma condição da projeção do fluxo `pessoas` (item 4)
-   na loja do terminal; a revogação que só ficou no controle é completada pela manutenção ou pela etapa da empresa
-   da ativação do próximo terminal do caixa, com a mesma anulação e auditoria.
+   `perdido_roubado` e só a anulação acontece. A anulação é pelo que o computador **pode guardar**, não pelo que
+   desceria hoje: o terminal revogado não puxa mais nada, o `pdv.db` fica com os hashes do último pull (inclusive os
+   de quem saiu da loja, deixou de ser Master ou teve o crediário bloqueado depois dele) e a máquina pode ter backups
+   de ativações anteriores do caixa. Por isso são anulados o **PIN de quem o fluxo `acesso` pode ter mandado à loja**
+   (o hash só desce para o Master e para quem tem acesso à loja: os Masters de hoje, quem tem ou teve vínculo em
+   `usuarios_lojas` com a loja e quem a auditoria do servidor mostra como Master em algum momento, inclusive os
+   excluídos) e a **senha de cliente de toda pessoa que já foi relevante para a loja** (vínculo em
+   `pessoas_relevancia_loja` com a loja ou com todas, vivo ou excluído), sem a condição de hoje do item 4; quem só
+   teve acesso a outras lojas e quem nunca foi da loja mantêm a credencial. O ERP avisa no diálogo quem recadastra o
+   PIN. O que a função considera já feito vem só das auditorias `terminal_revogado` gravadas pelo servidor (sem
+   `evento_id`; o push recusa essa ação no lote de auditoria do terminal, 9.22). A revogação que só ficou no controle
+   é completada pela manutenção ou pela etapa da empresa da ativação do próximo terminal do caixa, com a mesma
+   anulação e auditoria.
 7. Defasagem: PIN trocado/usuário desativado no ERP só vale no PDV depois do pull do fluxo `acesso` (PDV 7.3).
    O SSE prioriza esse fluxo (18.1) e `pdv.dias_max_offline` limita o pior caso.
 
@@ -3140,6 +3150,12 @@ Agregado `auditoria` (id = id do lote). Enviado a cada 5 min ou 200 registros; n
 
 A nuvem grava `auditoria` (`origem = 'pdv'`, `terminal_id`, `loja_id`, `evento_id`, mesmo `id` do registro local) e
 `historico_logins` (`origem = 'pdv'`). Registro com `id` já existente → ignorado (idempotente por `pk_auditoria`).
+Ação fora de `ACOES_AUDITORIA`, ou uma das que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da
+revogação `terminal_revogado`, `token_anterior_reutilizado`, as decisões da fila `evento_descartado` e
+`evento_reprocessado`, `lacuna_substituida` e as alterações feitas só no ERP), recusa o evento (`PAYLOAD_INVALIDO`,
+com as ações em `detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria
+como estado do servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do
+10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal.
 
 ### 9.23 `terminal.configuracao_alterada`
 
@@ -3394,7 +3410,7 @@ regra acima entra com o vendedor (Fase 3). O financeiro desta seção é da Fase
 | TEF/PIX desfeitos | `tef_cancelado` → a transação de origem (`pagamentos_venda.tef_transacao_id`) passa a `cancelada`; `pix_devolvido_api`/`pix_devolucao_manual` → a cobrança de origem (`pix_cobranca_id`) passa a `devolvida`, com `valor_devolvido` e `devolvida_em`; `devolvido_em_dinheiro` não mexe nelas (O22) |
 | TEF/PIX pendentes | `tef_estorno_pendente`/`pix_devolucao_pendente` → alerta `ESTORNO_PENDENTE` (aviso, um por venda; nome da decisão técnica T25 da Fase 1C; ERP mostra pendência, PDV 13.3) |
 | Comissão | Relatórios ignoram vendas `cancelada`; nada é reescrito |
-| Corrida com o ERP | Venda já cancelada no ERP (`cancelamento_origem = 'erp'`) → o handler **não repete** os estornos lógicos que o ERP já fez (estoque, financeiro, vale, `saldos_credito_pessoas`), mas **aplica do payload do PDV tudo o que é físico**, porque aconteceu no mundo real: `movimentos_caixa` `estorno_venda` (dinheiro que saiu da gaveta), `transacoes_tef` de cancelamento, `pagamentos_venda.estorno` (informativo, devolução PIX incluída) e `documentos_fiscais_eventos` (cancelamento 110111 homologado), todos com idempotência por `id`. As colunas de cancelamento da venda continuam as do ERP; o cancelamento do PDV fica em `auditoria`. Gera `alertas` `CANCELAMENTO_DUPLO` (aviso) com os dois registros (quem, quando, motivo, e o que o PDV devolveu fisicamente), para o financeiro conferir se houve devolução em duplicidade ao cliente. Um segundo `venda.cancelada` do caixa para a mesma venda é conferido com o registro da auditoria, como no caminho do caixa: o mesmo cancelamento (colunas, estornos e os mesmos `estorno_venda`) → `ja_existia`; outro → `AGREGADO_DIVERGENTE` (outro `estorno_venda` seria uma saída de gaveta em dobro, que o alerta deduplicado não acusaria) |
+| Corrida com o ERP | Venda já cancelada no ERP (`cancelamento_origem = 'erp'`) → o handler **não repete** os estornos lógicos que o ERP já fez (estoque, financeiro, vale, `saldos_credito_pessoas`), mas **aplica do payload do PDV tudo o que é físico**, porque aconteceu no mundo real: `movimentos_caixa` `estorno_venda` (dinheiro que saiu da gaveta), `transacoes_tef` de cancelamento, `pagamentos_venda.estorno` (informativo, devolução PIX incluída) e `documentos_fiscais_eventos` (cancelamento 110111 homologado), todos com idempotência por `id`. As colunas de cancelamento da venda continuam as do ERP; o cancelamento do PDV fica em `auditoria`. Gera `alertas` `CANCELAMENTO_DUPLO` (aviso) com os dois registros (quem, quando, motivo, e o que o PDV devolveu fisicamente), para o financeiro conferir se houve devolução em duplicidade ao cliente. Um segundo `venda.cancelada` do caixa para a mesma venda é conferido com o registro da auditoria que o handler gravou (preso ao evento `venda.cancelada`; um `cancelar` vindo no `auditoria.registros` não conta, 9.22), como no caminho do caixa: o mesmo cancelamento (colunas, estornos e os mesmos `estorno_venda`) → `ja_existia`; outro → `AGREGADO_DIVERGENTE` (outro `estorno_venda` seria uma saída de gaveta em dobro, que o alerta deduplicado não acusaria) |
 | Prevenção no ERP | Antes de cancelar uma venda de PDV, o ERP consulta `terminais`: se o terminal informou no último heartbeat a venda em `vendas_cancelamento_pendente` (21.1), o ERP **bloqueia** ("o caixa já cancelou esta venda; aguarde a sincronização"); se o terminal está offline ou com `eventos_pendentes > 0`, o ERP **avisa** ("o caixa está offline com N eventos pendentes; um cancelamento feito lá ainda pode chegar") e exige confirmação |
 
 ### 10.5 Fiscal
@@ -4784,7 +4800,7 @@ plataforma `db:pos-restauracao --empresa <codigo>`):
 | 24a | "Revogar imediatamente" e depois código **novo comum** para o mesmo caixa | O novo começa com série NFC-e nova e salto de +1000 em venda e vale | Decisão contra `caixas.terminal_anterior_id`, sem confirmação de desativação do antigo | 13.3 |
 | 24b | Antigo "em dia" no último heartbeat, mas fica offline e continua vendendo sem saber que foi substituído | — | Sem `desativando_confirmado`, o novo terminal recebe série nova e saltos; o antigo, ao voltar, envia suas vendas sem colidir | 13.3 |
 | 25 | Terminal revogado "aceitando pendências" | Para de vender, fecha o caixa, envia tudo, transmite contingências | `revogado` quando o heartbeat informa 0 pendentes ou na carência | 3.8 |
-| 26 | Terminal revogado imediatamente (roubo) | Bloqueia tudo, mantém o banco | 401 em tudo; "Terminal perdido/roubado" invalida PINs dos usuários da loja e as senhas de crediário que desceram (a senha do ERP nunca esteve no PDV); o próximo terminal do caixa recebe série nova e saltos | 3.8, 4.3, 13.3 |
+| 26 | Terminal revogado imediatamente (roubo) | Bloqueia tudo, mantém o banco | 401 em tudo; "Terminal perdido/roubado" invalida os PINs de quem já teve acesso à loja (e dos Masters, atuais e antigos) e as senhas de crediário de quem já foi da loja (a senha do ERP nunca esteve no PDV); o próximo terminal do caixa recebe série nova e saltos | 3.8, 4.3, 13.3 |
 | 27 | Token vazado | — | Revogar + reativar; uso do token anterior após rotação gera alerta; uso de outra máquina → `HARDWARE_ALTERADO`, sem segredos | 3.7, 20.5 |
 | 27a | Resposta da renovação de token perdida (uma ou duas vezes seguidas) | Tenta `token.pendente` primeiro; `401` → volta ao atual e repete com o mesmo `requisicao_id` | Repetição sem efeito; nunca fica sem token válido | 3.7 |
 | 27b | Token usado de outra máquina (ou placa-mãe trocada) | Bloqueia vendas; "Hardware alterado — aguardando aprovação"; outbox mantido | `409 HARDWARE_ALTERADO`; pull sem segredos; "Confirmar troca de hardware" no ERP | 20.5 |

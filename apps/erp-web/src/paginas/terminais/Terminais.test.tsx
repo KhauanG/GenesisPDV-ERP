@@ -861,6 +861,46 @@ describe('<DetalheTerminal> (ERP 12.4)', () => {
     );
   });
 
+  /** O aviso diz quem precisa recadastrar o PIN e quais senhas de cliente caem (README da API › decisão 211). */
+  const esperarAvisosDoPerdido = (dialogo: HTMLElement) => {
+    expect(
+      within(dialogo).getByText(/quem acessa ou já acessou esta loja e de quem é ou já foi Master/),
+    ).toBeInTheDocument();
+    expect(within(dialogo).getByText(/todas as pessoas que já foram desta loja/)).toBeInTheDocument();
+  };
+
+  it('"Terminal perdido/roubado" num terminal ativo: avisa quem recadastra o PIN e pede o caixa', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = renderizarDetalhe(DETALHE(), PERMISSOES, [
+      ({ url, metodo }) =>
+        metodo === 'POST' && url.pathname === `/api/terminais/${T1}/revogar`
+          ? {
+              corpo: {
+                status: 'revogado',
+                motivo: 'perdido_roubado',
+                alterado: true,
+                pinsAnulados: 2,
+                senhasClienteAnuladas: 4,
+                alertaEventos: false,
+              },
+            }
+          : undefined,
+    ]);
+    await u.click(await screen.findByRole('button', { name: 'Revogar' }));
+    await u.click(await screen.findByRole('menuitem', { name: 'Terminal perdido/roubado' }));
+    const dialogo = await screen.findByRole('dialog', { name: 'Terminal perdido/roubado' });
+    expect(within(dialogo).getByText('Revoga imediatamente.')).toBeInTheDocument();
+    esperarAvisosDoPerdido(dialogo);
+    await u.type(within(dialogo).getByRole('textbox', { name: /Digite 2/ }), '2');
+    await u.click(within(dialogo).getByRole('button', { name: 'Revogar e anular PINs' }));
+    expect(await screen.findByText(/2 PIN\(s\) e 4 senha\(s\) de cliente anulados/)).toBeInTheDocument();
+    expect(chamadas.find((c) => c.metodo === 'POST' && c.url.pathname.endsWith('/revogar'))!.corpo).toEqual({
+      modo: 'perdido',
+      confirmacaoCaixa: 2,
+      observacao: null,
+    });
+  });
+
   it('revogado por outro motivo ainda vira "perdido/roubado" (furto descoberto depois)', async () => {
     const u = userEvent.setup();
     const { chamadas } = renderizarDetalhe(
@@ -889,6 +929,7 @@ describe('<DetalheTerminal> (ERP 12.4)', () => {
     await u.click(item);
     const dialogo = await screen.findByRole('dialog', { name: 'Terminal perdido/roubado' });
     expect(within(dialogo).getByText(/já está revogado/)).toBeInTheDocument();
+    esperarAvisosDoPerdido(dialogo);
     await u.type(within(dialogo).getByRole('textbox', { name: /Digite 2/ }), '2');
     await u.click(within(dialogo).getByRole('button', { name: 'Revogar e anular PINs' }));
     expect(await screen.findByText(/3 PIN\(s\) e 1 senha\(s\) de cliente anulados/)).toBeInTheDocument();

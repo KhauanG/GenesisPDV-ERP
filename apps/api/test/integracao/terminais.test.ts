@@ -73,6 +73,8 @@ const erp = (token = tokenAdmin) => ({
     amb.http().post(url).set('Authorization', `Bearer ${token}`).send(corpo),
   patch: (url: string, corpo: object) =>
     amb.http().patch(url).set('Authorization', `Bearer ${token}`).send(corpo),
+  put: (url: string, corpo: object) =>
+    amb.http().put(url).set('Authorization', `Bearer ${token}`).send(corpo),
   del: (url: string) => amb.http().delete(url).set('Authorization', `Bearer ${token}`),
 });
 
@@ -400,7 +402,7 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
     expect(aud!.depois).toMatchObject({ terminal_anterior_id: t1.id, salto: true });
   });
 
-  it('perdido/roubado: o PIN de quem acessa a loja e a senha do cliente descem nulos para os outros terminais', async () => {
+  it('perdido/roubado: o PIN de quem acessa a loja e a senha do cliente da loja descem nulos para os outros terminais', async () => {
     const operador = await criarUsuario(emp.nomeBanco, {
       login: 'op_loja1',
       lojas: [loja1],
@@ -415,7 +417,7 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
       [operador, outraLoja],
       PIN,
     ]);
-    // Só a senha que desce para a loja é anulada (ERP 12.4): exigência ligada na loja 1 e crediário com limite.
+    // A senha de quem já foi da loja é anulada, desça ela hoje ou não (ERP 12.4); a de quem nunca foi, não.
     await consultar(
       emp.nomeBanco,
       "insert into configuracoes (escopo, loja_id, chave, valor) values ('loja', $1, 'pdv.crediario_exige_senha_cliente', 'true')",
@@ -431,11 +433,20 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
       'insert into pessoas (nome, senha_hash) values ($1, $2) returning id',
       ['Cliente sem crediário', PIN],
     );
-    for (const p of [cliente!.id, semCrediario!.id]) {
+    const [deOutraLoja] = await consultar<{ id: string }>(
+      emp.nomeBanco,
+      'insert into pessoas (nome, senha_hash, limite_compras) values ($1, $2, 500) returning id',
+      ['Cliente da loja 2', PIN],
+    );
+    for (const [p, l] of [
+      [cliente!.id, loja1],
+      [semCrediario!.id, loja1],
+      [deOutraLoja!.id, loja2],
+    ]) {
       await consultar(
         emp.nomeBanco,
         "insert into pessoas_relevancia_loja (pessoa_id, loja_id, motivo, ultima_ocorrencia_em) values ($1, $2, 'crediario', now())",
-        [p, loja1],
+        [p, l],
       );
     }
     const perdido = await ativar(loja1, caixas.l1c3!);
@@ -456,7 +467,7 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
       observacao: 'Roubado na madrugada',
     });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
-    expect(r.body).toMatchObject({ status: 'revogado', senhasClienteAnuladas: 1 });
+    expect(r.body).toMatchObject({ status: 'revogado', senhasClienteAnuladas: 2 });
     expect(r.body.pinsAnulados).toBeGreaterThanOrEqual(1);
     const novos = await amb
       .http()
@@ -466,18 +477,24 @@ describe('revogação (SYNC 3.8; ERP 12.4)', () => {
       (a: { tabela: string; linha: { id: string } }) => a.tabela === 'usuarios' && a.linha.id === operador,
     );
     expect(pinDepois.linha.senha_pdv_hash).toBeNull();
-    // Quem não acessa a loja mantém o PIN; a senha do cliente da loja foi anulada.
+    // Quem só acessa outra loja (e nunca foi Master) nunca teve o PIN neste computador e o mantém; a senha do
+    // cliente da loja foi anulada, com ou sem crediário hoje, e a do cliente que nunca foi da loja fica.
     const [fora] = await consultar(emp.nomeBanco, 'select senha_pdv_hash from usuarios where id = $1', [
       outraLoja,
     ]);
     expect(fora).toEqual({ senha_pdv_hash: PIN });
-    const [p] = await consultar(emp.nomeBanco, 'select senha_hash from pessoas where id = $1', [cliente!.id]);
-    expect(p).toEqual({ senha_hash: null });
-    // Sem limite de crediário a senha nunca desceu: fica.
-    const [sem] = await consultar(emp.nomeBanco, 'select senha_hash from pessoas where id = $1', [
-      semCrediario!.id,
-    ]);
-    expect(sem).toEqual({ senha_hash: PIN });
+    const senhas = await consultar<{ id: string; senha_hash: string | null }>(
+      emp.nomeBanco,
+      'select id, senha_hash from pessoas where id = any($1)',
+      [[cliente!.id, semCrediario!.id, deOutraLoja!.id]],
+    );
+    expect(new Map(senhas.map((s) => [s.id, s.senha_hash]))).toEqual(
+      new Map([
+        [cliente!.id, null],
+        [semCrediario!.id, null],
+        [deOutraLoja!.id, PIN],
+      ]),
+    );
     const aud = await consultar<{ entidade: string }>(
       emp.nomeBanco,
       "select entidade from auditoria where acao = 'senha_redefinida' and registro_id = any($1) order by entidade",
@@ -705,15 +722,15 @@ describe('"Liberar ativações" (SYNC 3.1; ERP 12.2)', () => {
 
 /**
  * Push de um evento `auditoria.registros`: com `hashErrado` fica `erro` (PAYLOAD_INVALIDO) e ocupa a sequência; com
- * `dependencias` apontando para o agregado de um evento em erro, fica `retido`.
+ * `dependencias` apontando para o agregado de um evento em erro, fica `retido`. `payload` troca o lote vazio.
  */
 async function enviarEvento(
   t: { id: string; token: string },
   caixaId: string,
   numero: number,
-  opcoes: { sequencia: number; hashErrado?: boolean; dependeDe?: string },
+  opcoes: { sequencia: number; hashErrado?: boolean; dependeDe?: string; payload?: Record<string, unknown> },
 ) {
-  const payload = { registros: [], logins: [] };
+  const payload = opcoes.payload ?? { registros: [], logins: [] };
   const ev = {
     evento_id: uuidv7(),
     sequencia: opcoes.sequencia,
@@ -744,7 +761,11 @@ async function enviarEvento(
     .set(cabecalhos(t.token))
     .send({ lote_id: uuidv7(), terminal_id: t.id, enviado_em: new Date().toISOString(), eventos: [ev] });
   expect(p.status, JSON.stringify(p.body)).toBe(200);
-  return { ev, status: p.body.resultados[0].status as string };
+  return {
+    ev,
+    status: p.body.resultados[0].status as string,
+    erro: p.body.resultados[0].erro as { codigo: string } | undefined,
+  };
 }
 
 const auditoriasRevogado = async (id: string) =>
@@ -1408,6 +1429,154 @@ describe('token anterior reutilizado no ERP (SYNC 3.7; ERP 12.4)', () => {
     expect((await erp().post(url(t.id), { resolucao: 'tentativa' })).status).toBe(422);
     const outro = await ativar(loja1, await criarCaixa(loja1, 33));
     expect((await erp().post(url(outro.id), { resolucao: 'tentativa' })).status).toBe(404);
+  });
+});
+
+describe('modo perdido: o que o computador do caixa pode guardar (SYNC 4.3 item 6)', () => {
+  /** Linha de auditoria como a que um terminal envia no `auditoria.registros` (com `evento_id`). */
+  const linhaDoTerminal = (t: { id: string }, acao: string, registroId: string, depois: object) =>
+    consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, terminal_id, loja_id, entidade, registro_id, acao, depois, evento_id)
+       values ($1, now(), 'pdv', $2, $3, 'terminais', $4, $5, $6, $7)`,
+      [uuidv7(), t.id, loja1, registroId, acao, JSON.stringify(depois), uuidv7()],
+    );
+
+  it('a revogação registrada pelo terminal não conta: o perdido depois do imediato anula as credenciais', async () => {
+    const op = await usuarioComPin('op_registro_terminal');
+    const caixa = await criarCaixa(loja1, 40);
+    const t = await ativar(loja1, caixa);
+    const marcador = { status: 'revogado', motivo: 'perdido_roubado' };
+    // O push recusa a ação que só o servidor grava, só naquele evento.
+    const enviado = await enviarEvento(t, caixa, 40, {
+      sequencia: 1,
+      payload: {
+        registros: [
+          {
+            id: uuidv7(),
+            ocorrido_em: new Date().toISOString(),
+            acao: 'terminal_revogado',
+            entidade: 'terminais',
+            registro_id: t.id,
+            depois: marcador,
+          },
+        ],
+        logins: [],
+      },
+    });
+    expect(enviado).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    // Uma linha dessas gravada antes da regra (com `evento_id`) também não vale como revogação do servidor.
+    await linhaDoTerminal(t, 'terminal_revogado', t.id, marcador);
+    expect(
+      (await erp().post(`/api/terminais/${t.id}/revogar`, { modo: 'imediato', confirmacaoCaixa: 40 })).status,
+    ).toBe(200);
+    expect(await pinDe(op)).toBe(PIN);
+    const r = await erp().post(`/api/terminais/${t.id}/revogar`, { modo: 'perdido', confirmacaoCaixa: 40 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'revogado', motivo: 'perdido_roubado', alterado: true });
+    expect(r.body.pinsAnulados).toBeGreaterThanOrEqual(1);
+    expect(await pinDe(op)).toBeNull();
+  });
+
+  it('anula o PIN de quem já pôde tê-lo no caixa e a senha de quem já foi da loja, mesmo depois das edições', async () => {
+    const caixa = await criarCaixa(loja1, 41);
+    const t = await ativar(loja1, caixa);
+    // Antes da marcação, edições de rotina tiram as credenciais da projeção de hoje da loja 1.
+    const saiuDaLoja = await criarUsuario(emp.nomeBanco, {
+      login: 'op_saiu_loja1',
+      lojas: [loja1, loja2],
+      perfil: 'operador_caixa',
+    });
+    const exMaster = await criarUsuario(emp.nomeBanco, {
+      login: 'ex_master',
+      master: true,
+      perfil: 'gerente',
+    });
+    const excluido = await criarUsuario(emp.nomeBanco, {
+      login: 'op_excluido',
+      lojas: [loja1],
+      perfil: 'operador_caixa',
+    });
+    // Quem só teve acesso à loja 2 nunca teve o PIN neste caixa, nem com uma linha "Master" enviada por um terminal.
+    const soOutraLoja = await criarUsuario(emp.nomeBanco, {
+      login: 'op_so_loja2',
+      lojas: [loja2],
+      perfil: 'operador_caixa',
+    });
+    await consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, terminal_id, loja_id, entidade, registro_id, acao, depois, evento_id)
+       values ($1, now(), 'pdv', $2, $3, 'usuarios', $4, 'editar', '{"master": true}', $5)`,
+      [uuidv7(), t.id, loja1, soOutraLoja, uuidv7()],
+    );
+    const usuarios = [saiuDaLoja, exMaster, excluido];
+    await consultar(emp.nomeBanco, 'update usuarios set senha_pdv_hash = $2 where id = any($1)', [
+      [...usuarios, soOutraLoja],
+      PIN,
+    ]);
+    await consultar(
+      emp.nomeBanco,
+      'update usuarios_lojas set excluido_em = now() where usuario_id = $1 and loja_id = $2',
+      [saiuDaLoja, loja1],
+    );
+    // O Master rebaixado pelo ERP (só para a loja 2): a auditoria do servidor guarda que ele foi Master.
+    const detalhe = await erp().get(`/api/usuarios/${exMaster}`);
+    expect(detalhe.status, JSON.stringify(detalhe.body)).toBe(200);
+    const rebaixar = await erp().put(`/api/usuarios/${exMaster}`, {
+      ...detalhe.body,
+      master: false,
+      lojas: [loja2],
+    });
+    expect(rebaixar.status, JSON.stringify(rebaixar.body)).toBe(200);
+    await consultar(emp.nomeBanco, 'update usuarios set excluido_em = now() where id = $1', [excluido]);
+
+    const pessoa = async (nome: string, lojaId: string | null, bloqueada = false) => {
+      const [p] = await consultar<{ id: string }>(
+        emp.nomeBanco,
+        'insert into pessoas (nome, senha_hash, limite_compras, bloqueada_credito) values ($1, $2, 500, $3) returning id',
+        [nome, PIN, bloqueada],
+      );
+      await consultar(
+        emp.nomeBanco,
+        "insert into pessoas_relevancia_loja (pessoa_id, loja_id, motivo, ultima_ocorrencia_em) values ($1, $2, 'compra', now())",
+        [p!.id, lojaId],
+      );
+      return p!.id;
+    };
+    const bloqueado = await pessoa('Cliente com crediário bloqueado', loja1, true);
+    const relevanciaExpirada = await pessoa('Cliente que deixou de comprar na loja', loja1);
+    await consultar(
+      emp.nomeBanco,
+      'update pessoas_relevancia_loja set excluido_em = now() where pessoa_id = $1',
+      [relevanciaExpirada],
+    );
+    const todasAsLojas = await pessoa('Cliente de todas as lojas', null);
+    const pessoaExcluida = await pessoa('Cliente excluído do cadastro', loja1);
+    await consultar(emp.nomeBanco, 'update pessoas set excluido_em = now() where id = $1', [pessoaExcluida]);
+    const soLoja2 = await pessoa('Cliente só da loja 2', loja2);
+
+    const r = await erp().post(`/api/terminais/${t.id}/revogar`, { modo: 'perdido', confirmacaoCaixa: 41 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    for (const u of usuarios) expect(await pinDe(u)).toBeNull();
+    expect(await pinDe(soOutraLoja)).toBe(PIN);
+    const senhas = await consultar<{ id: string; senha_hash: string | null }>(
+      emp.nomeBanco,
+      'select id, senha_hash from pessoas where id = any($1)',
+      [[bloqueado, relevanciaExpirada, todasAsLojas, pessoaExcluida, soLoja2]],
+    );
+    const senha = new Map(senhas.map((s) => [s.id, s.senha_hash]));
+    expect(senha.get(bloqueado)).toBeNull();
+    expect(senha.get(relevanciaExpirada)).toBeNull();
+    expect(senha.get(todasAsLojas)).toBeNull();
+    expect(senha.get(pessoaExcluida)).toBeNull();
+    // A pessoa que nunca foi da loja do terminal não teve a senha nele.
+    expect(senha.get(soLoja2)).toBe(PIN);
+    const aud = await consultar<{ registro_id: string }>(
+      emp.nomeBanco,
+      "select registro_id from auditoria where acao = 'senha_redefinida' and registro_id = any($1)",
+      [[...usuarios, bloqueado, relevanciaExpirada, todasAsLojas, pessoaExcluida]],
+    );
+    expect(new Set(aud.map((a) => a.registro_id)).size).toBe(7);
   });
 });
 

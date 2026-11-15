@@ -682,11 +682,19 @@ export class AtivacaoTerminais {
           if (!loja || !caixa) throw new ErroSync('CAIXA_OCUPADO', 'Caixa não encontrado.');
           // Etapa já gravada (a repetição, ou a API caiu antes do 3º commit): a ativação já aconteceu neste banco, e
           // a resposta sai da decisão gravada, sem a conferência abaixo — recusar aqui levaria `concluir` a
-          // compensar no controle uma substituição que a empresa já aplicou.
+          // compensar no controle uma substituição que a empresa já aplicou. A decisão é a linha que esta etapa
+          // grava (sem `evento_id`): o `terminal_ativado` que o PDV envia no lote de auditoria não conta.
           const [ja] = await tx
             .select({ depois: auditoria.depois })
             .from(auditoria)
-            .where(and(eq(auditoria.acao, 'terminal_ativado'), eq(auditoria.registroId, t.id)))
+            .where(
+              and(
+                eq(auditoria.acao, 'terminal_ativado'),
+                eq(auditoria.entidade, 'terminais'),
+                eq(auditoria.registroId, t.id),
+                isNull(auditoria.eventoId),
+              ),
+            )
             .limit(1);
           // Ciclo de vida relido sob a trava do caixa (a exclusão e a edição do caixa travam a mesma linha): loja
           // excluída ou inativada → `LOJA_INATIVA`, como no passo 5 (a compensação devolve o código a `pendente`);

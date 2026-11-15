@@ -13,7 +13,6 @@ import type { AuditoriaService, OrigemAcao } from '../auditoria/auditoria.servic
 import type { terminaisPdv } from '../database/controle/schema.js';
 import { auditoria } from '../database/empresa/auditoria.js';
 import { alertas, caixas, eventosRecebidos, terminais } from '../database/empresa/schema/index.js';
-import { pessoaRelevante, senhaClienteDesce } from '../sync/fluxos.js';
 import { resolverAlertaDesvioRelogio } from '../sync/relogio.js';
 import { fecharSessoesDoTerminal } from '../sync/sessoes-caixa.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -100,10 +99,13 @@ export interface ResultadoEstadoEmpresa {
 }
 
 /**
- * Auditorias `terminal_revogado` já gravadas para o terminal: a da revogação definitiva (`depois.status = revogado`)
- * e a do modo perdido (`depois.motivo = perdido_roubado`, a que anulou as credenciais). É por elas, e não só pelo
- * status, que a função sabe o que falta: o terminal pode chegar a `revogado` na empresa por um caminho que não anula
- * nada (ex.: o furto descoberto depois de uma revogação imediata).
+ * Auditorias `terminal_revogado` já gravadas **pelo servidor** para o terminal: a da revogação definitiva
+ * (`depois.status = revogado`) e a do modo perdido (`depois.motivo = perdido_roubado`, a que anulou as credenciais).
+ * É por elas, e não só pelo status, que a função sabe o que falta: o terminal pode chegar a `revogado` na empresa por
+ * um caminho que não anula nada (ex.: o furto descoberto depois de uma revogação imediata). Só valem as linhas sem
+ * `evento_id`: as que o servidor grava (esta função, a desativação confirmada do heartbeat) nunca vêm de um evento,
+ * e as do lote `auditoria.registros` de um terminal sempre trazem o dele — o push recusa a ação
+ * (`ACOES_AUDITORIA_SO_SERVIDOR`), e a linha gravada antes dessa regra também não conta.
  */
 async function revogacoesAuditadas(tx: DbEmpresa, terminalId: string) {
   const linhas = await tx
@@ -117,6 +119,7 @@ async function revogacoesAuditadas(tx: DbEmpresa, terminalId: string) {
         eq(auditoria.entidade, 'terminais'),
         eq(auditoria.registroId, terminalId),
         eq(auditoria.acao, 'terminal_revogado'),
+        isNull(auditoria.eventoId),
       ),
     );
   return {
@@ -127,9 +130,9 @@ async function revogacoesAuditadas(tx: DbEmpresa, terminalId: string) {
 
 /**
  * Leva `terminais` (e `caixas`) ao estado que o controle gravou: `desativando` ou `revogado`. No `perdido_roubado`,
- * na mesma transação, anula `usuarios.senha_pdv_hash` de quem tem acesso à loja e `pessoas.senha_hash` das pessoas
- * cuja senha desce para ela (SYNC 4.3 item 6), com auditoria por registro; o `fn_versao` faz o `null` descer nos
- * fluxos `acesso` e `pessoas` dos outros terminais. Todo destino `revogado` grava `caixas` (fluxo, `fn_versao`):
+ * na mesma transação, anula as credenciais que o computador do terminal pode guardar (`anularCredenciaisDaLoja`,
+ * SYNC 4.3 item 6), com auditoria por registro; o `fn_versao` faz o `null` descer nos fluxos `acesso` e `pessoas`
+ * dos outros terminais. Todo destino `revogado` grava `caixas` (fluxo, `fn_versao`):
  * a transação precisa de `travaVersao` (MD 1.5).
  *
  * O destino `revogado` também fecha à força a sessão de caixa aberta do terminal (MD 3.12.1, `fechamento_forcado`,
@@ -240,9 +243,22 @@ export async function aplicarEstadoNaEmpresa(
 }
 
 /**
- * SYNC 4.3 item 6 e ERP 12.4: PIN de quem acessa a loja e a senha de cliente das pessoas cuja senha desce para ela,
- * pela mesma condição da projeção do fluxo `pessoas` (relevante para a loja, exigência de senha ligada na loja,
- * crediário com limite e não bloqueado). Quem não atende à condição hoje não tem hash no `pdv.db` da loja.
+ * SYNC 4.3 item 6 e ERP 12.4: as credenciais que o `pdv.db` (e os backups) do computador perdido podem guardar, não
+ * só as que desceriam hoje. O terminal revogado não puxa mais nada, então o banco dele fica com os hashes do último
+ * pull — inclusive os de quem saiu da loja, deixou de ser Master ou teve o crediário bloqueado depois disso — e a
+ * mesma máquina pode ter backups de ativações anteriores do caixa. Por isso a anulação vai por quem **já pôde** ter a
+ * credencial no arquivo, sem limite de data:
+ * - **PIN do PDV** de quem a projeção do fluxo `acesso` manda para a loja em algum momento (`senha_pdv_hash` só desce
+ *   para o Master e para quem tem `usuarios_lojas` da loja): os Masters de hoje, quem tem ou teve linha em
+ *   `usuarios_lojas` da loja (viva ou excluída) e quem a auditoria do servidor mostra como Master em algum momento
+ *   (`usuarios`, sem `evento_id`, com `master` verdadeiro no `antes` ou no `depois`: a criação, a edição e o
+ *   `permissoes_alteradas` gravam o campo, e a `auditoria` é só de inserção), inclusive os excluídos (a restauração
+ *   devolveria o hash). Quem só teve acesso a outras lojas nunca teve o PIN neste computador e o mantém: o operador
+ *   de uma loja não para o login das outras;
+ * - **senha de cliente de toda pessoa que já foi relevante para a loja** (linha de `pessoas_relevancia_loja` da loja
+ *   ou de todas as lojas, viva ou excluída), sem a condição de hoje do crediário e da exigência de senha
+ *   (`senhaClienteDesce`): a pessoa que nunca foi da loja nunca desceu para ela e mantém a senha.
+ * A ação é rara; quem tiver o PIN anulado cadastra um novo, e a senha de cliente se redefine no próximo atendimento.
  */
 async function anularCredenciaisDaLoja(
   tx: DbEmpresa,
@@ -252,9 +268,12 @@ async function anularCredenciaisDaLoja(
 ): Promise<{ pinsAnulados: number; senhasClienteAnuladas: number }> {
   const usuarios = await tx.execute<{ id: string; nome: string }>(sql`
     update usuarios u set senha_pdv_hash = null
-     where u.senha_pdv_hash is not null and u.excluido_em is null
-       and (u.master or exists (select 1 from usuarios_lojas ul
-                                 where ul.usuario_id = u.id and ul.loja_id = ${t.lojaId} and ul.excluido_em is null))
+     where u.senha_pdv_hash is not null
+       and (u.master
+            or exists (select 1 from usuarios_lojas ul where ul.usuario_id = u.id and ul.loja_id = ${t.lojaId})
+            or exists (select 1 from auditoria a
+                        where a.entidade = 'usuarios' and a.registro_id = u.id and a.evento_id is null
+                          and (a.antes ->> 'master' = 'true' or a.depois ->> 'master' = 'true')))
     returning u.id, u.nome`);
   for (const u of usuarios.rows) {
     await servicoAuditoria.registrar(tx, origem, {
@@ -267,14 +286,12 @@ async function anularCredenciaisDaLoja(
       depois: { senha_pdv_hash: null },
     });
   }
-  const escopo = { lojaId: t.lojaId };
-  // Alias `t` (o mesmo das condições do registro de fluxos).
   const pessoas = await tx.execute<{ id: string; nome: string }>(sql`
-    update pessoas t set senha_hash = null
-     where t.senha_hash is not null and t.excluido_em is null
-       and ${pessoaRelevante('id')(escopo)}
-       and ${senhaClienteDesce(escopo)}
-    returning t.id, t.nome`);
+    update pessoas p set senha_hash = null
+     where p.senha_hash is not null
+       and exists (select 1 from pessoas_relevancia_loja r
+                    where r.pessoa_id = p.id and (r.loja_id is null or r.loja_id = ${t.lojaId}))
+    returning p.id, p.nome`);
   for (const p of pessoas.rows) {
     await servicoAuditoria.registrar(tx, origem, {
       acao: 'senha_redefinida',

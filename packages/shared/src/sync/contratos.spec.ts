@@ -3,7 +3,12 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { ehAcaoAuditoria, MOTIVOS_FALHA_LOGIN } from '../enums.js';
+import {
+  ACOES_AUDITORIA_SO_SERVIDOR,
+  ehAcaoAuditoria,
+  ehAcaoAuditoriaSoServidor,
+  MOTIVOS_FALHA_LOGIN,
+} from '../enums.js';
 import { jcs } from '../jcs.js';
 import {
   ativarSchema,
@@ -234,6 +239,11 @@ describe('fixtures do protocolo de sincronização', () => {
     const p = payloadAuditoriaRegistrosSchema.parse(ler('auditoria.registros.payload.json'));
     expect(p.registros.filter((r) => !ehAcaoAuditoria(r.acao)).map((r) => r.acao)).toEqual([]);
     expect(p.registros.map((r) => r.acao)).toContain('hash_fora_dos_limites');
+    // As ações que só o servidor grava são do catálogo, e nenhuma é das que o PDV grava (o push as recusa).
+    expect(ACOES_AUDITORIA_SO_SERVIDOR.every((a) => ehAcaoAuditoria(a))).toBe(true);
+    expect(p.registros.filter((r) => ehAcaoAuditoriaSoServidor(r.acao)).map((r) => r.acao)).toEqual([]);
+    expect(ehAcaoAuditoriaSoServidor('terminal_ativado')).toBe(false);
+    expect(ehAcaoAuditoriaSoServidor('terminal_revogado')).toBe(true);
     // As recusas próprias do caixa (PDV 7.2) também valem em `historico_logins` (check da migração 0009).
     const motivos = p.logins.map((l) => l.motivo_falha).filter((m) => m != null);
     expect(motivos).toEqual(expect.arrayContaining(['sem_acesso_pdv', 'totem', 'hash_fora_dos_limites']));

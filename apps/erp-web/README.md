@@ -1533,6 +1533,15 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       confere o marcador dentro da trava e o login segura a trava até apagá-lo; os dois casos de falha, a nova
       tentativa automática e as duas abas no painel da plataforma) e os de sempre (`Login.test.tsx`, `Plataforma.test.tsx`, `http.test.ts`).
 
+83. **"Terminal perdido/roubado": o aviso diz quem recadastra o PIN** (PR-15, SEG-B10; ERP 12.4; README da API ›
+    decisão 211; `src/paginas/terminais/DialogoRevogar.tsx`). A anulação do modo perdido cobre o PIN do PDV de quem
+    acessa ou já acessou a loja e de quem é ou já foi Master (também nas outras lojas) e a senha de cliente de todas as
+    pessoas que já foram da loja (o computador pode guardar credenciais de antes das edições recentes e de ativações
+    anteriores). O diálogo diz isso nos dois casos (do terminal ativo e do já revogado), com os dois avisos numa
+    constante só (`AVISO_PIN_PERDIDO`, `AVISO_SENHA_CLIENTE_PERDIDO`), e a notificação continua com o número de PINs e
+    senhas anulados. Teste: `Terminais.test.tsx` (o diálogo do terminal ativo e o do já revogado mostram os dois
+    avisos; o ativo pede o caixa e manda o modo `perdido`).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

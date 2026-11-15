@@ -102,6 +102,29 @@ export function ehAcaoAuditoria(valor: unknown): valor is AcaoAuditoria {
 }
 
 /**
+ * Ações do catálogo que só o servidor grava (SYNC 9.22): o estado da revogação do terminal, o token anterior
+ * reutilizado, as decisões da fila de eventos, a lacuna substituída e as alterações feitas só no ERP. O PDV nunca as
+ * gera, e o push recusa o lote de auditoria que traz alguma delas (`PAYLOAD_INVALIDO`, só naquele evento). Também por
+ * isso, quem lê um registro de auditoria como estado do servidor confere que ele não veio de um evento do terminal.
+ */
+export const ACOES_AUDITORIA_SO_SERVIDOR = [
+  'terminal_revogado',
+  'token_anterior_reutilizado',
+  'evento_descartado',
+  'evento_reprocessado',
+  'lacuna_substituida',
+  'permissoes_alteradas',
+  'pix_recebedor_alterado',
+  'recalcular_saldos',
+] as const satisfies readonly AcaoAuditoria[];
+
+const CONJUNTO_ACOES_SO_SERVIDOR: ReadonlySet<string> = new Set(ACOES_AUDITORIA_SO_SERVIDOR);
+
+export function ehAcaoAuditoriaSoServidor(valor: unknown): boolean {
+  return typeof valor === 'string' && CONJUNTO_ACOES_SO_SERVIDOR.has(valor);
+}
+
+/**
  * `historico_logins.motivo_falha` (MD 3.3.6; check `ck_historico_logins_motivo_falha`). Os três últimos são recusas
  * próprias do login offline do PDV (PDV 7.2): sem `pdv.acesso.entrar`, usuário de totem e hash do PIN fora dos limites
  * (SYNC 4.2).

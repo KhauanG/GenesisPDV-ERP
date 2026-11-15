@@ -386,6 +386,31 @@ describe('ciclo de vida do caixa no resgate do código (SYNC 3.3)', () => {
     }
   });
 
+  it('a decisão gravada que a etapa reusa é só a do servidor: o registro vindo de um terminal não conta', async () => {
+    const caixa = await novoCaixa();
+    const { codigo } = await gerarCodigo(caixa);
+    // Um registro `terminal_ativado` com o id do terminal novo, como os que os terminais enviam (com `evento_id`),
+    // e o caixa inativado antes da etapa: a etapa não o toma pela decisão já gravada e confere o caixa.
+    const espiao = espiarEtapa(async (original, args) => {
+      const t = args[1] as { id: string };
+      await consultar(
+        emp.nomeBanco,
+        `insert into auditoria (id, ocorrido_em, origem, terminal_id, loja_id, entidade, registro_id, acao, depois, evento_id)
+         values ($1, now(), 'pdv', $2, $3, 'terminais', $2, 'terminal_ativado', $4, $5)`,
+        [uuidv7(), t.id, loja, JSON.stringify({ numeracoes: [] }), uuidv7()],
+      );
+      await consultar(emp.nomeBanco, 'update caixas set ativo = false where id = $1', [caixa]);
+      return original(...args);
+    });
+    try {
+      const r = await ativar(corpo(codigo, novasChaves(), uuidv7()));
+      expect(r.status, JSON.stringify(r.body)).toBe(422);
+      expect(r.body.erro.codigo).toBe('CODIGO_INVALIDO');
+    } finally {
+      espiao.mockRestore();
+    }
+  });
+
   it('caixa inativado entre o passo 5 e a etapa da empresa: compensa e o código fica cancelado', async () => {
     const caixa = await novoCaixa();
     const { codigo, ativacaoId } = await gerarCodigo(caixa);
