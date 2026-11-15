@@ -38,6 +38,7 @@ import {
   abrirEscritorPlanilha,
   arquivoExportacao,
   colunasVisiveis,
+  comVagaExportacao,
   nomeArquivoExportacao,
   semaforoExportacao,
   TIPOS_EXPORTACAO,
@@ -342,9 +343,12 @@ export class ExportacaoRelatorios {
       provedor.limiteNaHora ?? Number.POSITIVE_INFINITY,
     );
     if (total <= limiteNaHora) {
+      // A vaga do usuário e da empresa antes de ler as linhas (decisão 204); a tarefa tem o teto próprio, abaixo.
       return {
         tipo: 'arquivo',
-        arquivo: await this.naHora(sessao, origem, provedor, formato, entrada, filtros),
+        arquivo: await comVagaExportacao(sessao, () =>
+          this.naHora(sessao, origem, provedor, formato, entrada, filtros),
+        ),
       };
     }
     // A fila roda uma tarefa por vez: sem teto por usuário, um só poderia enfileirar horas de exportação na frente das

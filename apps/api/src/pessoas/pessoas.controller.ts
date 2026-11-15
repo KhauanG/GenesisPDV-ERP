@@ -42,7 +42,12 @@ import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, contem, metadados, ordemDaQuery, ref } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
-import { arquivoExportacao, garantirPodeExportar, type ColunaExportacao } from '../comum/exportacao.js';
+import {
+  arquivoExportacao,
+  comVagaExportacao,
+  garantirPodeExportar,
+  type ColunaExportacao,
+} from '../comum/exportacao.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
@@ -200,28 +205,31 @@ export class PessoasController {
     garantirPodeExportar(sessao, 'pessoas');
     const q = validar(filtroPessoasSchema.extend(exportacaoQuerySchema.shape), query);
     const onde = condicoes(q);
-    const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
-      const [total] = await tx.select({ n: count() }).from(pessoas).where(onde);
-      if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
-        throw new ErroApi(
-          'REGRA_NEGOCIO',
-          `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
-        );
-      }
-      const linhas = (await consultaResumo(tx)
-        .where(onde)
-        .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', pessoas.codigo))) as PessoaResumo[];
-      const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
-      await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
-        acao: 'exportar',
-        entidade: 'pessoas',
-        localizacao: LOCALIZACAO,
-        descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
-        depois: { formato, filtros, linhas: linhas.length },
+    // A vaga do usuário e da empresa antes de ler as linhas (decisão 204).
+    return comVagaExportacao(sessao, async () => {
+      const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
+        const [total] = await tx.select({ n: count() }).from(pessoas).where(onde);
+        if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
+          );
+        }
+        const linhas = (await consultaResumo(tx)
+          .where(onde)
+          .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', pessoas.codigo))) as PessoaResumo[];
+        const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
+        await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+          acao: 'exportar',
+          entidade: 'pessoas',
+          localizacao: LOCALIZACAO,
+          descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
+          depois: { formato, filtros, linhas: linhas.length },
+        });
+        return linhas;
       });
-      return linhas;
+      return arquivoExportacao(q.formato, 'Pessoas', COLUNAS_EXPORTACAO, linhas);
     });
-    return arquivoExportacao(q.formato, 'Pessoas', COLUNAS_EXPORTACAO, linhas);
   }
 
   /**
@@ -275,7 +283,15 @@ export class PessoasController {
         'Definir limite de compras ou bloqueio exige "Pessoas: Alterar limite de compras e bloqueio".',
       );
     }
-    if (senha) garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    if (senha) {
+      // As checagens baratas antes do argon2 de 64 MiB (decisão 204): referência inválida ou documento repetido
+      // recusam sem gastar hash nem o limite. A gravação (`inserirPessoa`) confere de novo.
+      await this.s.tenancy.cx().consulta(async (db) => {
+        await validarReferencias(db, dados);
+        await garantirDocumentoUnico(db, sessao, dados.cpfCnpj);
+      });
+      garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    }
     const senhaHash = senha ? await gerarHashPin(senha) : null;
     const id = await this.s.tenancy
       .cx()
@@ -338,7 +354,12 @@ export class PessoasController {
   ): Promise<PessoaDetalhe> {
     const id = validar(z.uuid(), idBruto);
     const { versao, senha, removerSenha, ...dados } = validar(alterarPessoaSchema, corpo);
-    if (senha) garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    if (senha) {
+      // As checagens baratas antes do argon2 de 64 MiB (decisão 204): pessoa inexistente, versão velha, crédito sem
+      // permissão, referência ou documento repetido recusam sem gastar hash nem o limite. A transação confere de novo.
+      await this.s.tenancy.cx().consulta((db) => conferirAlteracao(db, sessao, id, versao, dados, false));
+      garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    }
     const senhaHash = senha ? await gerarHashPin(senha) : undefined;
     await this.s.tenancy.cx().transacao(
       (tx) =>
@@ -682,6 +703,41 @@ export async function inserirPessoa(
   return p!.id;
 }
 
+/**
+ * O que a alteração confere antes de gravar: a pessoa existe, a versão (quando informada), o crédito com
+ * `pessoas.editar_credito`, as referências e o documento único. Com `travar`, lê a linha com `for update` (na
+ * transação); sem, só lê (a pré-checagem antes do argon2 do PIN, decisão 204). Devolve a linha atual.
+ */
+async function conferirAlteracao(
+  db: DbEmpresa,
+  sessao: SessaoErp,
+  id: string,
+  versao: number | null,
+  dados: DadosPessoa,
+  travar: boolean,
+): Promise<typeof pessoas.$inferSelect> {
+  const consulta = db
+    .select()
+    .from(pessoas)
+    .where(and(eq(pessoas.id, id), isNull(pessoas.excluidoEm)));
+  const [antes] = travar ? await consulta.for('update') : await consulta;
+  if (!antes) throw ErroApi.naoEncontrado('Pessoa não encontrada.');
+  const versaoAtual = await versaoAgregada(db, id);
+  if (versao !== null && versaoAtual !== versao) await conflitoVersao(db, { ...antes, versao: versaoAtual });
+  const mudouCredito =
+    (antes.limiteCompras === null ? null : Number(antes.limiteCompras)) !==
+      (dados.limiteCompras === null ? null : Number(dados.limiteCompras)) ||
+    antes.bloqueadaCredito !== dados.bloqueadaCredito;
+  if (mudouCredito && !sessao.permissoes.has('pessoas.editar_credito')) {
+    throw ErroApi.semPermissao(
+      'Alterar limite de compras ou bloqueio exige "Pessoas: Alterar limite de compras e bloqueio".',
+    );
+  }
+  await validarReferencias(db, dados);
+  if (dados.cpfCnpj !== antes.cpfCnpj) await garantirDocumentoUnico(db, sessao, dados.cpfCnpj, id);
+  return antes;
+}
+
 /** Altera a pessoa (versão quando informada, crédito com `pessoas.editar_credito`, documento único). */
 export async function atualizarPessoa(
   s: Pick<Servicos, 'auditoria'>,
@@ -694,25 +750,7 @@ export async function atualizarPessoa(
   senha: { senhaHash?: string; removerSenha?: boolean } = {},
 ): Promise<void> {
   const { senhaHash, removerSenha } = senha;
-  const [antes] = await tx
-    .select()
-    .from(pessoas)
-    .where(and(eq(pessoas.id, id), isNull(pessoas.excluidoEm)))
-    .for('update');
-  if (!antes) throw ErroApi.naoEncontrado('Pessoa não encontrada.');
-  const versaoAtual = await versaoAgregada(tx, id);
-  if (versao !== null && versaoAtual !== versao) await conflitoVersao(tx, { ...antes, versao: versaoAtual });
-  const mudouCredito =
-    (antes.limiteCompras === null ? null : Number(antes.limiteCompras)) !==
-      (dados.limiteCompras === null ? null : Number(dados.limiteCompras)) ||
-    antes.bloqueadaCredito !== dados.bloqueadaCredito;
-  if (mudouCredito && !sessao.permissoes.has('pessoas.editar_credito')) {
-    throw ErroApi.semPermissao(
-      'Alterar limite de compras ou bloqueio exige "Pessoas: Alterar limite de compras e bloqueio".',
-    );
-  }
-  await validarReferencias(tx, dados);
-  if (dados.cpfCnpj !== antes.cpfCnpj) await garantirDocumentoUnico(tx, sessao, dados.cpfCnpj, id);
+  const antes = await conferirAlteracao(tx, sessao, id, versao, dados, true);
   const antesFilhas = await filhas(tx, id);
   const antesManual = await manterNoPdv(tx, id);
   const { categorias, enderecos, telefones, emails, manterNoPdv: manual, ...colunas } = dados;

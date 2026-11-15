@@ -1,4 +1,6 @@
+import { setTimeout as esperar } from 'node:timers/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { semaforoExportacao } from '../../src/comum/exportacao.js';
 import {
   consultar,
   criarAmbiente,
@@ -485,5 +487,321 @@ describe('cadastro de usuários (ERP 11.1, 11.2)', () => {
       (await amb.http().put(`/api/usuarios/00000000-0000-7000-8000-000000000000`).set(bearer(token)).send({}))
         .status,
     ).toBe(403);
+  });
+});
+
+describe('hash de senha: checagens baratas antes e limite por usuário (decisão 204)', () => {
+  it('404/409/422 (inclusive estoque inexistente) não gastam o limite; a 4ª senha gerada no minuto (limite 3) é 429, também ao criar', async () => {
+    await criarUsuario(emp.nomeBanco, { login: 'mestre_hash', master: true });
+    const token = await amb.entrar(emp.codigo, 'mestre_hash', SENHA_TESTE);
+    // O outro administrador da asserção final é deste teste: o `tokenAdmin` do arquivo já gerou senhas em outros
+    // testes, e a folga dele no limite dependeria da ordem e do relógio.
+    await criarUsuario(emp.nomeBanco, { login: 'outro_adm_hash', master: true });
+    const tokenOutroAdm = await amb.entrar(emp.codigo, 'outro_adm_hash', SENHA_TESTE);
+    const alvo = await criarUsuario(emp.nomeBanco, {
+      login: 'alvo_hash',
+      perfil: 'vendedor',
+      lojas: [loja1],
+    });
+    const anterior = process.env.HASH_LIMITE_POR_MINUTO;
+    // Lido do ambiente a cada chamada (src/seguranca/senhas.ts).
+    process.env.HASH_LIMITE_POR_MINUTO = '3';
+    try {
+      const inexistente = '00000000-0000-7000-8000-00000000abcd';
+      for (let i = 0; i < 5; i++) {
+        const r = await amb.http().post(`/api/usuarios/${inexistente}/redefinir-senha`).set(bearer(token));
+        expect(r.status).toBe(404);
+      }
+      for (let i = 0; i < 4; i++) {
+        const dup = await amb
+          .http()
+          .post('/api/usuarios')
+          .set(bearer(token))
+          .send({ nome: 'Repetido', login: 'admin', perfilId: perfilVendedor, lojas: [loja1] });
+        expect(dup.status).toBe(409);
+      }
+      const semLoja = await amb
+        .http()
+        .post('/api/usuarios')
+        .set(bearer(token))
+        .send({ nome: 'Sem loja', login: 'sem_loja_hash', perfilId: perfilVendedor, lojas: [] });
+      expect(semLoja.status).toBe(422);
+      const lojaInexistente = await amb
+        .http()
+        .post('/api/usuarios')
+        .set(bearer(token))
+        .send({ nome: 'Loja X', login: 'loja_x_hash', perfilId: perfilVendedor, lojas: [inexistente] });
+      expect(lojaInexistente.status).toBe(422);
+      for (let i = 0; i < 3; i++) {
+        const estoqueInexistente = await amb
+          .http()
+          .post('/api/usuarios')
+          .set(bearer(token))
+          .send({
+            nome: 'Estoque X',
+            login: 'estoque_x_hash',
+            perfilId: perfilVendedor,
+            lojas: [loja1],
+            estoques: [inexistente],
+          });
+        expect(estoqueInexistente.status).toBe(422);
+        expect(estoqueInexistente.body.campos).toEqual({ estoques: ['Estoque inexistente ou excluído'] });
+      }
+
+      const status: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        status.push(
+          (await amb.http().post(`/api/usuarios/${alvo}/redefinir-senha`).set(bearer(token))).status,
+        );
+      }
+      expect(status).toEqual([200, 200, 200]);
+      const acima = await amb.http().post(`/api/usuarios/${alvo}/redefinir-senha`).set(bearer(token));
+      expect(acima.status).toBe(429);
+      expect(acima.body.codigo).toBe('LIMITE_TAXA');
+      expect(acima.headers['retry-after']).toBe('60');
+      const criar = await amb
+        .http()
+        .post('/api/usuarios')
+        .set(bearer(token))
+        .send({ nome: 'Novo Hash', login: 'novo_hash', perfilId: perfilVendedor, lojas: [loja1] });
+      expect(criar.status).toBe(429);
+      // Nada gravado pelos recusados.
+      const criados = await consultar(
+        emp.nomeBanco,
+        "select login from usuarios where login in ('novo_hash', 'sem_loja_hash', 'loja_x_hash', 'estoque_x_hash')",
+      );
+      expect(criados).toEqual([]);
+      // O limite é de quem pede: o outro administrador da empresa continua redefinindo.
+      expect(
+        (await amb.http().post(`/api/usuarios/${alvo}/redefinir-senha`).set(bearer(tokenOutroAdm))).status,
+      ).toBe(200);
+    } finally {
+      if (anterior === undefined) delete process.env.HASH_LIMITE_POR_MINUTO;
+      else process.env.HASH_LIMITE_POR_MINUTO = anterior;
+    }
+  });
+
+  it('403 antes do hash, sem gastar o limite: redefinir a senha de quem tem mais acesso e criar com estoque fora dos seus', async () => {
+    const gerente = await criarUsuario(emp.nomeBanco, {
+      login: 'gerente_hash',
+      perfil: 'gerente',
+      lojas: [loja1],
+    });
+    await consultar(
+      emp.nomeBanco,
+      `insert into usuarios_permissoes (usuario_id, permissao, efeito)
+       values ($1, 'usuarios.redefinir_senha', 'conceder'), ($1, 'usuarios.criar', 'conceder')`,
+      [gerente],
+    );
+    // O estoque da loja 2: fora dos estoques permitidos do gerente (só os da loja 1 e os sem loja).
+    const [estoqueLoja2] = await consultar<{ estoque_id: string }>(
+      emp.nomeBanco,
+      'select estoque_id from lojas where id = $1',
+      [loja2],
+    );
+    const token = await amb.entrar(emp.codigo, 'gerente_hash', SENHA_TESTE);
+    const [adm] = await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "select id from usuarios where login = 'admin'",
+    );
+    const anterior = process.env.HASH_LIMITE_POR_MINUTO;
+    process.env.HASH_LIMITE_POR_MINUTO = '1';
+    try {
+      for (let i = 0; i < 3; i++) {
+        const r = await amb.http().post(`/api/usuarios/${adm!.id}/redefinir-senha`).set(bearer(token));
+        expect(r.status).toBe(403);
+        const criar = await amb
+          .http()
+          .post('/api/usuarios')
+          .set(bearer(token))
+          .send({
+            nome: 'Estoque alheio',
+            login: 'estoque_alheio_hash',
+            perfilId: perfilVendedor,
+            lojas: [loja1],
+            estoques: [estoqueLoja2!.estoque_id],
+          });
+        expect(criar.status).toBe(403);
+        expect(criar.body.mensagem).toContain('seus estoques permitidos');
+      }
+      // Os 403 não gastaram o limite (1): a do subordinado sai, e a seguinte passa dele.
+      const sub = await criarUsuario(emp.nomeBanco, {
+        login: 'sub_hash',
+        perfil: 'vendedor',
+        lojas: [loja1],
+      });
+      expect((await amb.http().post(`/api/usuarios/${sub}/redefinir-senha`).set(bearer(token))).status).toBe(
+        200,
+      );
+      expect((await amb.http().post(`/api/usuarios/${sub}/redefinir-senha`).set(bearer(token))).status).toBe(
+        429,
+      );
+    } finally {
+      if (anterior === undefined) delete process.env.HASH_LIMITE_POR_MINUTO;
+      else process.env.HASH_LIMITE_POR_MINUTO = anterior;
+    }
+  });
+});
+
+describe('hash de senha fora do cadastro de usuários: checagens baratas antes (decisão 204)', () => {
+  it('pessoa com PIN e forma de pagamento com senha: 404, 409 e 422 ao criar e alterar não gastam o limite', async () => {
+    await criarUsuario(emp.nomeBanco, { login: 'mestre_pin_hash', master: true });
+    const token = await amb.entrar(emp.codigo, 'mestre_pin_hash', SENHA_TESTE);
+    const criadaPessoa = await amb
+      .http()
+      .post('/api/pessoas')
+      .set(bearer(token))
+      .send({ nome: 'Cliente Hash', cpfCnpj: '529.982.247-25' });
+    expect(criadaPessoa.status).toBe(201);
+    const {
+      id: idPessoa,
+      codigo: _c,
+      origem: _o,
+      senhaDefinida: _s,
+      criadoEm: _cr,
+      atualizadoEm: _a,
+      atualizadoPorNome: _n,
+      ...pessoa
+    } = criadaPessoa.body;
+    const criadaForma = await amb
+      .http()
+      .post('/api/formas-pagamento')
+      .set(bearer(token))
+      .send({
+        descricao: 'Forma Hash',
+        meioPagamentoFiscal: '99',
+        descricaoFiscal: 'Hash',
+        lojaIds: [loja1],
+      });
+    expect(criadaForma.status).toBe(201);
+    const {
+      id: idForma,
+      criadoEm: _fc,
+      atualizadoEm: _fa,
+      atualizadoPorNome: _fn,
+      senhaLiberacaoDefinida: _fs,
+      ...forma
+    } = criadaForma.body;
+    const inexistente = '00000000-0000-7000-8000-00000000abce';
+    const putPessoa = (id: string, versao: number) =>
+      amb
+        .http()
+        .put(`/api/pessoas/${id}`)
+        .set(bearer(token))
+        .send({ ...pessoa, versao, senha: '480297' });
+    const putForma = (id: string, versao: number) =>
+      amb
+        .http()
+        .put(`/api/formas-pagamento/${id}`)
+        .set(bearer(token))
+        .send({ ...forma, versao, senhaLiberacao: 'segredo1' });
+    const anterior = process.env.HASH_LIMITE_POR_MINUTO;
+    process.env.HASH_LIMITE_POR_MINUTO = '1';
+    try {
+      for (let i = 0; i < 2; i++) {
+        expect((await putPessoa(inexistente, pessoa.versao)).status).toBe(404);
+        expect((await putPessoa(idPessoa, pessoa.versao + 7)).status).toBe(409);
+        expect((await putForma(inexistente, forma.versao)).status).toBe(404);
+        expect((await putForma(idForma, forma.versao + 7)).status).toBe(409);
+        const pessoaRepetida = await amb
+          .http()
+          .post('/api/pessoas')
+          .set(bearer(token))
+          .send({ nome: 'Outro Hash', cpfCnpj: '529.982.247-25', senha: '480297' });
+        expect(pessoaRepetida.status).toBe(409);
+        const formaLojaX = await amb
+          .http()
+          .post('/api/formas-pagamento')
+          .set(bearer(token))
+          .send({
+            descricao: 'Forma X',
+            meioPagamentoFiscal: '99',
+            descricaoFiscal: 'X',
+            lojaIds: [inexistente],
+            senhaLiberacao: 'segredo1',
+          });
+        expect(formaLojaX.status).toBe(422);
+      }
+      // Nenhum dos recusados gastou o limite (1): o PIN certo sai, e a senha seguinte já passa dele.
+      expect((await putPessoa(idPessoa, pessoa.versao)).status).toBe(200);
+      const acima = await putForma(idForma, forma.versao);
+      expect(acima.status).toBe(429);
+      expect(acima.body.codigo).toBe('LIMITE_TAXA');
+    } finally {
+      if (anterior === undefined) delete process.env.HASH_LIMITE_POR_MINUTO;
+      else process.env.HASH_LIMITE_POR_MINUTO = anterior;
+    }
+  });
+});
+
+describe('exportação na hora: admissão por usuário e por empresa (decisão 204)', () => {
+  /** Espera até `n` pedidos estarem na fila do semáforo da exportação (o pedido já leu as linhas e passou da admissão). */
+  async function aguardarNaFila(n: number) {
+    const fim = Date.now() + 15_000;
+    while (semaforoExportacao.esperando < n) {
+      if (Date.now() > fim)
+        throw new Error(`a fila da exportação não chegou a ${n}: ${semaforoExportacao.esperando}`);
+      await esperar(20);
+    }
+  }
+
+  /** As outras rotas de exportação na hora: o relatório do catálogo (`ExportacaoRelatorios.naHora`) e as listagens. */
+  const LISTAGENS = [
+    '/api/produtos/exportacao?formato=csv',
+    '/api/produtos/exportar?formato=csv',
+    '/api/pessoas/exportar?formato=csv',
+  ];
+
+  it('a 2ª do mesmo usuário e a 3ª da empresa (limite 2) voltam 429 na hora; outra empresa segue; tudo baixa', async () => {
+    await criarUsuario(emp.nomeBanco, { login: 'exporta_b', master: true });
+    await criarUsuario(emp.nomeBanco, { login: 'exporta_c', master: true });
+    const tokenB = await amb.entrar(emp.codigo, 'exporta_b', SENHA_TESTE);
+    const tokenC = await amb.entrar(emp.codigo, 'exporta_c', SENHA_TESTE);
+    const outra = await amb.criarEmpresa();
+    const tokenOutra = await amb.entrar(outra.codigo, 'admin', outra.senha);
+    const anterior = process.env.EXPORTACOES_SIMULTANEAS_EMPRESA;
+    process.env.EXPORTACOES_SIMULTANEAS_EMPRESA = '2';
+    const exportar = (token: string, rota = '/api/usuarios/exportar?formato=csv') =>
+      amb.http().get(rota).set(bearer(token)).timeout(10_000);
+    // As vagas do processo ocupadas: a exportação admitida lê as linhas e fica esperando a vaga, segurando a admissão.
+    const vagas = await Promise.all(
+      Array.from({ length: semaforoExportacao.limite }, () => semaforoExportacao.adquirir()),
+    );
+    const pendentes: Array<PromiseLike<{ status: number }>> = [];
+    try {
+      pendentes.push(exportar(tokenAdmin).then((r) => r));
+      await aguardarNaFila(1);
+      const mesma = await exportar(tokenAdmin);
+      expect(mesma.status).toBe(429);
+      expect(mesma.body).toMatchObject({ codigo: 'LIMITE_TAXA' });
+      expect(mesma.body.mensagem).toContain('exportação sua em andamento');
+      expect(mesma.headers['retry-after']).toBe('5');
+      // A exportação de relatório (catálogo) na hora e as listagens de produtos e pessoas usam a mesma admissão.
+      for (const rota of LISTAGENS) {
+        const r = await exportar(tokenAdmin, rota);
+        expect(r.status, rota).toBe(429);
+        expect(r.body.codigo, rota).toBe('LIMITE_TAXA');
+        expect(r.headers['retry-after'], rota).toBe('5');
+      }
+
+      pendentes.push(exportar(tokenB).then((r) => r));
+      await aguardarNaFila(2);
+      const terceira = await exportar(tokenC);
+      expect(terceira.status).toBe(429);
+      expect(terceira.body.mensagem).toContain('exportações da empresa');
+
+      // Outra empresa não conta no limite desta.
+      pendentes.push(exportar(tokenOutra).then((r) => r));
+      await aguardarNaFila(3);
+    } finally {
+      for (const liberar of vagas) liberar();
+      if (anterior === undefined) delete process.env.EXPORTACOES_SIMULTANEAS_EMPRESA;
+      else process.env.EXPORTACOES_SIMULTANEAS_EMPRESA = anterior;
+    }
+    expect((await Promise.all(pendentes)).map((r) => r.status)).toEqual([200, 200, 200]);
+    // Com o arquivo pronto, a admissão volta: o mesmo usuário exporta de novo, e o terceiro também.
+    expect((await exportar(tokenAdmin)).status).toBe(200);
+    expect((await exportar(tokenC)).status).toBe(200);
+    for (const rota of LISTAGENS) expect((await exportar(tokenAdmin, rota)).status, rota).toBe(200);
   });
 });

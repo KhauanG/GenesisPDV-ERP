@@ -207,7 +207,11 @@ export class FormasPagamentoController {
       ...dados
     } = validar(criarFormaPagamentoSchema, corpo);
     for (const l of lojaIds) garantirLoja(sessao, l);
-    if (senhaLiberacao) garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    if (senhaLiberacao) {
+      // Referência inválida recusa antes do argon2, sem gastar o limite (decisão 204); a transação confere de novo.
+      await this.s.tenancy.cx().consulta((db) => validarReferencias(db, dados, lojaIds, null));
+      garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    }
     const senhaLiberacaoHash = senhaLiberacao ? await gerarHashSenha(senhaLiberacao) : null;
     const id = await this.s.tenancy.cx().transacao(
       async (tx) => {
@@ -251,13 +255,23 @@ export class FormasPagamentoController {
       corpo,
     );
     for (const l of lojaIds) garantirLoja(sessao, l);
-    if (senhaLiberacao) garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    /** Forma existe e visível, versão e referências (`bloquear`: com `for update`, na transação). */
+    const conferir = async (db: DbEmpresa, bloquear: boolean) => {
+      const atual = await travar(db, id, sessao, bloquear);
+      if (atual.forma.versao !== versao) await conflitoVersao(db, atual.forma);
+      await validarReferencias(db, dados, lojaIds, atual.forma);
+      return atual;
+    };
+    if (senhaLiberacao) {
+      // As checagens baratas antes do argon2 (decisão 204): forma inexistente, versão velha ou referência inválida
+      // recusam sem gastar hash nem o limite de hashes do usuário. A transação confere de novo.
+      await this.s.tenancy.cx().consulta((db) => conferir(db, false));
+      garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
+    }
     const novoHash = senhaLiberacao ? await gerarHashSenha(senhaLiberacao) : undefined;
     await this.s.tenancy.cx().transacao(
       async (tx) => {
-        const { forma: antes, lojaIds: lojasAntes } = await travar(tx, id, sessao);
-        if (antes.versao !== versao) await conflitoVersao(tx, antes);
-        await validarReferencias(tx, dados, lojaIds, antes);
+        const { forma: antes, lojaIds: lojasAntes } = await conferir(tx, true);
         const [depois] = await tx
           .update(formasPagamento)
           .set({
@@ -326,18 +340,19 @@ export class FormasPagamentoController {
 /**
  * Trava a forma para editar ou excluir. Quem tem só algumas lojas edita a forma de "todas" (como antes da 1C) e a das
  * suas lojas; a que também vale numa loja que ele não enxerga é só leitura para ele (403), para não tirar dela, sem ver,
- * uma loja alheia.
+ * uma loja alheia. Com `bloquear` falso só lê, sem `for update` (a pré-checagem antes do argon2, decisão 204).
  */
 async function travar(
   tx: DbEmpresa,
   id: string,
   sessao: SessaoErp,
+  bloquear = true,
 ): Promise<{ forma: LinhaForma; lojaIds: string[] }> {
-  const [f] = await tx
+  const consulta = tx
     .select()
     .from(formasPagamento)
-    .where(and(eq(formasPagamento.id, id), isNull(formasPagamento.excluidoEm)))
-    .for('update');
+    .where(and(eq(formasPagamento.id, id), isNull(formasPagamento.excluidoEm)));
+  const [f] = bloquear ? await consulta.for('update') : await consulta;
   if (!f) throw ErroApi.naoEncontrado('Forma de pagamento não encontrada.');
   const lojaIds = await lojasVivas(tx, id);
   for (const l of lojaIds) garantirLoja(sessao, l);

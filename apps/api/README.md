@@ -159,11 +159,13 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `FILA_TRABALHADOR`                                                                                | `true`                                                          | Esta instância executa a fila (tarefas e e-mails); `false` só enfileira                                                                                                                                                              |
 | `VERIFICACAO_RAZAO_CRON` | vazia (desligada) | Cron (UTC, 5 campos) da verificação periódica do razão de estoque: só confere e abre o alerta `RAZAO_SALDO_DIVERGENTE`; corrigir é o `db:recalcular-saldos --corrigir`. Cron inválido recusa a subida; esvaziar desliga e remove o agendamento já gravado no pg-boss (decisão 147) |
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
+| `ARGON2_ESPERA_MAXIMA_S` / `ARGON2_FILA_MAXIMA` | 20 / 16 | Espera máxima na fila do argon2 (login e gestão) e quantos hashes fora do login podem esperar ao mesmo tempo; acima, 503 `SISTEMA_OCUPADO` com `Retry-After`. Os hashes fora do login usam no máximo `ARGON2_CONCORRENCIA` − 1 vagas: sobra uma para o login (decisão 204) |
 | `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
+| `EXPORTACOES_SIMULTANEAS_USUARIO` / `EXPORTACOES_SIMULTANEAS_EMPRESA` | 1 / 3 | Exportações na hora em andamento por usuário e por empresa, conferidas antes de ler as linhas; 429 `LIMITE_TAXA` com `Retry-After` acima (decisão 204) |
 | `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
 | `IMAGENS_CONCORRENCIA` / `IMAGENS_LIMITE_PIXELS` | 1 / 36000000 | Imagens decodificadas ao mesmo tempo no processo (o sharp, uma thread do libvips cada) e o teto de pixels (largura × altura) aceito no envio, conferido pelo cabeçalho antes de decodificar (decisão 189) |
 | `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
-| `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
+| `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (criar usuário, redefinir a senha de outro, PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisões 93 e 204) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
 | `GENESIS_VERSAO` / `BACKUP_ESTADO_CHAVE` | `desenvolvimento` / `backups/estado.json` | Versão no painel (a imagem define com o commit) e o estado do último backup no bucket (gravado pelo `genesis-backup`) |
@@ -6362,6 +6364,70 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        qualquer formato de marca; os tetos de namespace e de comentários e instruções; a NF-e de 990 itens aceita, com a
        assinatura válida) e a integração "o XML com elementos demais é recusado no envio direto" e "… dentro do .zip é
        recusado também na tarefa do lote grande".
+
+204. **Hash de senha e exportação na hora: admissão antes do trabalho caro** (PR-15, SEG-B04; ERP 3.5, 4.1, 11.2;
+     decisões 93 e 177; `src/seguranca/senhas.ts`, `src/comum/limites-processo.ts`, `src/comum/exportacao.ts`,
+     `src/usuarios/usuarios.controller.ts`, `src/pessoas/pessoas.controller.ts`,
+     `src/formas-pagamento/formas-pagamento.controller.ts`, `src/tarefas/exportar-relatorio.ts`). O argon2 e a geração de arquivo
+     usam filas do processo, que é de todas as empresas; o que um usuário põe nelas fica limitado antes de custar.
+     - **Toda rota que gera hash fora do login tem o limite por usuário** (`garantirLimiteHash`,
+       `HASH_LIMITE_POR_MINUTO`, 10 por minuto, 429): entram nele `POST /usuarios` (criar) e
+       `POST /usuarios/:id/redefinir-senha`, junto do PIN, da senha do cliente e da senha de liberação, que já tinham.
+       Nas duas, as **checagens baratas vêm antes** do limite e do hash, numa leitura fora da transação: ao criar,
+       login/código/CPF repetidos (409), cidade, perfil, lojas e estoques (estoque inexistente ou excluído, 422;
+       fora dos estoques permitidos ao editor, 403; `conferirEstoques`); ao redefinir, o alvo existe (404), só um
+       Master redefine a senha de outro Master e quem não é Master só a de quem tem acesso contido no dele (403). O
+       mesmo vale para a pessoa com `senha` (o PIN de 64 MiB): no `POST /pessoas`, referências (422) e documento
+       repetido (409); no `PUT /pessoas/:id`, também a pessoa existe (404), a versão (409) e o crédito sem
+       `pessoas.editar_credito` (403; `conferirAlteracao`); e para a forma de pagamento com `senhaLiberacao`: no
+       `POST /formas-pagamento`, as referências (422); no `PUT /formas-pagamento/:id`, também a forma existe e é
+       visível (404/403) e a versão (409). O pedido recusado por elas não gasta argon2 nem o limite. A transação
+       confere tudo de novo com a linha travada. Sem senha nova, essas rotas não leem nada a mais (não há hash a
+       proteger). As outras rotas que calculam argon2 foram conferidas: a troca da própria senha e o resgate por e-mail têm o
+       limite por IP e por conta (`LimiteTaxaGuard`), e o resgate confere o token antes; o painel (criar empresa, o CLI
+       `admin:criar`) é só do administrador da plataforma e cria um banco a cada pedido.
+     - **Duas filas no argon2** (`criarFilasArgon2`): a verificação da senha (login do ERP e do painel, troca de senha)
+       entra direto no semáforo geral (`ARGON2_CONCORRENCIA`, 4); os hashes fora do login passam antes por um semáforo
+       de `ARGON2_CONCORRENCIA − 1` vagas, então nunca ocupam (calculando ou esperando) mais que isso do geral e
+       **sobra sempre uma vaga para o login**: quem entra espera no máximo uma rodada desses hashes, por mais que
+       estejam na fila. Com `ARGON2_CONCORRENCIA` = 1 não há o que reservar.
+     - **A fila do semáforo tem limite** (`Semaforo` com `OpcoesSemaforo`): no argon2, prazo de espera
+       (`ARGON2_ESPERA_MAXIMA_S`, 20 s) nas duas filas e tamanho máximo na dos hashes fora do login
+       (`ARGON2_FILA_MAXIMA`, 16). Passou, **503 `SISTEMA_OCUPADO`** com `Retry-After: 5` ("O sistema está conferindo
+       muitas senhas agora. Nada foi feito…") sem ter calculado nada. No login, o 503 sobe igual com ou sem usuário e
+       não conta como senha errada (não bloqueia a conta); o hash fictício que iguala o tempo do login inexistente
+       não fica guardado com erro. Os outros semáforos continuam sem limite de fila: a fila deles já é limitada por
+       quem entra (os contadores de envios por usuário e por empresa, decisões 189 e 202; a fila das tarefas).
+     - **Exportação na hora com admissão** (`comVagaExportacao`, com o contador `entrarEmAndamento`): conferida antes de
+       ler as linhas em `GET /produtos/exportar`, `/pessoas/exportar`, `/usuarios/exportar` e na exportação de relatório
+       que baixa na hora (`/relatorios/:relatorio/exportar` e `/produtos/exportacao`). Cada usuário tem
+       **1 em andamento** (`EXPORTACOES_SIMULTANEAS_USUARIO`) e cada empresa **3** (`EXPORTACOES_SIMULTANEAS_EMPRESA`);
+       acima, 429 `LIMITE_TAXA` com `Retry-After: 5` na hora ("Já há uma exportação sua em andamento…" / "Há outras
+       exportações da empresa em andamento…"), sem ler nada. Os contadores voltam quando o arquivo fica pronto ou a
+       exportação falha. Uma empresa não segura mais que 3 conjuntos de linhas na memória esperando a vaga do
+       `semaforoExportacao`, e a fila dele fica limitada por isso. A exportação em tarefa tem o teto próprio
+       (`EXPORTACOES_PENDENTES_POR_USUARIO`, decisão 177) e não entra nesta conta.
+     - Sem mudança de contrato (`LIMITE_TAXA` e `SISTEMA_OCUPADO` já existiam; o ERP mostra a mensagem), sem migração
+       e sem PDV (o PDV não usa essas rotas). Testes: `src/comum/limites-processo.spec.ts` (fila cheia → 503 na hora
+       e quem esperava segue; espera vencida → 503 sem levar vaga, e quem foi acordado antes do prazo não é recusado;
+       sem opções, 200 esperando por uma hora sem recusa; `entrarEmAndamento` por chave), `src/seguranca/senhas.spec.ts`
+       › "filas do argon2" (com seis hashes de gestão, só `concorrência − 1` calculam e o login entra na hora; a fila
+       da gestão cheia → 503 sem calcular; com concorrência 1, a vaga dividida), `src/seguranca/senhas-fila.spec.ts`
+       (o `verificarSenha` do módulo, com uma vaga só e a vaga ocupada: com e sem hash rejeita com `SISTEMA_OCUPADO`
+       em vez de devolver `false`; depois da rejeição do hash fictício a chamada seguinte calcula de novo; hash
+       inválido é `false`), a integração `test/integracao/login-argon2-ocupado.test.ts` (com a vaga do argon2
+       ocupada, o login com senha errada, certa e de usuário inexistente volta 503 com `Retry-After`, sem mexer em
+       `tentativas_falhas`/`bloqueado_ate` nem gravar `login_negado` ou `historico_logins`; com a vaga livre, a errada
+       conta e a certa entra) e `test/integracao/usuarios.test.ts` › "hash de senha…" (404, 409 e 422 repetidos,
+       inclusive o estoque inexistente, não gastam o limite, e a quarta senha gerada com limite 3 é 429, também ao
+       criar, sem gravar nada; o 403 de quem não pode redefinir e o de criar com estoque fora dos seus também não
+       gastam), "hash de senha fora do cadastro de usuários…" (404 e 409 repetidos no `PUT` da pessoa com PIN e da
+       forma com senha, o 409 do documento repetido ao criar a pessoa com PIN e o 422 da loja inexistente ao criar a
+       forma com senha não gastam o limite 1; o PIN certo sai e a senha seguinte é 429) e "exportação na hora…" (com
+       as vagas do processo ocupadas e uma exportação do usuário na fila, a segunda dele em `/usuarios/exportar`, no
+       relatório do catálogo `/produtos/exportacao` e nas listagens `/produtos/exportar` e `/pessoas/exportar` volta
+       429 com `Retry-After: 5`, e a terceira da empresa com limite 2 também; a de outra empresa segue; tudo baixa
+       200 quando as vagas abrem, e a admissão volta).
 
 ### Operação – tarefas em segundo plano (API)
 

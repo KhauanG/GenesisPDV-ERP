@@ -229,8 +229,12 @@ permissão grava uma linha em `auditoria` (ADR-09) com `antes`/`depois` em `json
 Formato de erro: `{ "codigo": "VALIDACAO", "mensagem": "texto para o usuário", "campos": { "cpf": ["CPF inválido"] } }`.
 Códigos: `VALIDACAO` (422), `NAO_AUTENTICADO` (401), `SEM_PERMISSAO` (403), `EMPRESA_SUSPENSA` (403),
 `NAO_ENCONTRADO` (404), `CONFLITO_VERSAO` (409), `REGRA_NEGOCIO` (422), `LIMITE_PLANO` (422), `ERRO_INTERNO` (500),
-`SISTEMA_OCUPADO` (503, com `Retry-After`: a gravação esperou além do limite pela trava de ordenação enquanto os caixas
-enviavam vendas; nada foi gravado e a tela pede para salvar de novo em alguns segundos — Fase 1C, modelo-de-dados.md 1.5),
+`SISTEMA_OCUPADO` (503, com `Retry-After`; nada foi feito, e dá para tentar de novo em alguns segundos. Dois casos: a
+gravação esperou além do limite pela trava de ordenação enquanto os caixas enviavam vendas, e a tela pede para salvar de
+novo — Fase 1C, modelo-de-dados.md 1.5; ou a fila de conferência e geração de senha do servidor está cheia — no login, na
+troca e no resgate de senha nada foi conferido e não conta como tentativa falha, é só entrar de novo; ao criar usuário,
+redefinir senha, gravar PIN ou senha do cliente e da forma de pagamento nada foi gravado, é só salvar de novo — 4.1 e
+README da API › decisão 204),
 `CORPO_GRANDE` (413), `TEMPO_ESGOTADO` (408) e `TIPO_NAO_SUPORTADO` (415).
 
 Corpo das requisições (README da API › decisão 199): só JSON em UTF-8, sem compressão; até 100 KiB em toda rota e até
@@ -401,6 +405,7 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 | Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6). Na Fase 2 (F2-B29) a regra é só pelo número de linhas, contado no pedido (o tempo não se sabe antes de rodar): até 50.000 o arquivo baixa na hora; acima, a exportação vira a tarefa `exportar_relatorio` (`GET /api/relatorios/<nome>/exportar?formato=xlsx\|csv` responde `202` com a tarefa), que gera o `.xlsx` (ou o `.csv`) em streaming e deixa o link no ícone Tarefas; acima de 5.000.000 de linhas pede para refinar os filtros. O `.xlsx` passa para uma aba nova a cada 1.048.575 linhas (o limite do Excel). Exportar exige `relatorios.exportar` e a permissão do relatório; sem `produtos.ver_custo` as colunas de custo não saem |
 | Paginação | Fase 2, F2-B30 (README do ERP › decisão 65): o relatório de volume pagina **no servidor**: por página (`pagina` e `tamanho`, com o total contado pela API) ou por cursor ("próxima página", para o relatório que lê o razão em ordem). Página, tamanho (20, 25, 35 ou 50) e cursor ficam na URL com os filtros; o Filtrar (e a troca da loja de contexto, quando o filtro de loja vem dela) volta à primeira página; o Voltar/Avançar do navegador traz a página certa. Os totais da tabela são do relatório inteiro. PDF e Imprimir saem da página aberta |
 | Seleção | Opcional: marcação de linhas da página aberta (com "todas da página") e as ações em lote do relatório numa barra; trocar de página ou de filtros limpa a seleção |
+| Exportação na hora | Cada usuário tem 1 exportação na hora em andamento e cada empresa 3 (listagens e relatórios); outra no meio volta 429 "Já há uma exportação sua em andamento…" na hora, sem ler nada (README da API › decisão 204) |
 | Exportação em tarefa | Quando a exportação vira tarefa (`202`), a tela mostra o aviso com as linhas e o andamento e, no fim, o link do arquivo; a mesma tarefa fica no ícone Tarefas (3.6) |
 | Leitura | Consultas de relatório podem usar réplica de leitura do PostgreSQL quando existir |
 
@@ -499,6 +504,7 @@ sequenceDiagram
 | Mensagem de erro | Sempre "Código da empresa, usuário ou senha inválidos." (não revela qual está errado) |
 | Bloqueio por tentativas | 5 falhas seguidas no mesmo (empresa, login) bloqueiam por 15 minutos; mensagem "Usuário bloqueado temporariamente. Tente em X minutos." Um Master pode desbloquear em Usuários |
 | Rate limit | 20 tentativas/minuto por IP |
+| Fila da senha | A conferência da senha tem vaga reservada no servidor: as senhas geradas fora do login (criar usuário, redefinir senha, PIN, senha do cliente e da forma de pagamento) usam no máximo as outras vagas. Quem espera mais de 20 s na fila, ou a senha gerada que chega com 16 já esperando (recusada na hora), recebe 503 `SISTEMA_OCUPADO` com `Retry-After` "O sistema está conferindo muitas senhas agora…"; no login não conta como tentativa falha (README da API › decisão 204) |
 | Empresa suspensa | Só depois de credenciais válidas mostra "Acesso suspenso. Entre em contato com o suporte Genesis." + motivo público definido no painel da plataforma |
 | Usuário inativo, excluído ou com `demissao` ≤ hoje | Tratado como credencial inválida + auditoria `login_negado` com o motivo |
 | Usuário sem permissão de ERP | Se o perfil só tem permissões `pdv.*` (ex.: operador de caixa), mostra "Seu usuário não tem acesso ao ERP." |
@@ -2427,6 +2433,12 @@ Filtros: **Nome** (nome ou login), **Situação** (Ativos/Inativos/Todos) **(Nov
 
 Botões: **Novo**, **Gravar**, **Voltar**, **Excluir**, **Redefinir senha** (gera senha provisória exibida uma vez,
 permissão `usuarios.redefinir_senha`), **Desbloquear** (após tentativas falhas), **Histórico**.
+
+Criar usuário e Redefinir senha geram hash de senha: entram no limite por usuário das senhas geradas (10 por minuto,
+429 acima, como o PIN), conferido depois das regras do cadastro (login repetido, alvo inexistente, Master, lojas e
+estoques inexistentes ou fora dos seus, acesso maior que o seu), que recusam sem gastar o limite. Com a fila das
+senhas geradas cheia no servidor (16 esperando, ou 20 s de espera), voltam 503 `SISTEMA_OCUPADO` com `Retry-After`:
+nada foi gravado, é só salvar de novo em alguns segundos (1.8; README da API › decisão 204).
 
 #### Aba Menus do sistema
 

@@ -54,7 +54,12 @@ import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, ordemDaQuery, ref } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
-import { arquivoExportacao, garantirPodeExportar, type ColunaExportacao } from '../comum/exportacao.js';
+import {
+  arquivoExportacao,
+  comVagaExportacao,
+  garantirPodeExportar,
+  type ColunaExportacao,
+} from '../comum/exportacao.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
@@ -296,29 +301,32 @@ export class ProdutosController {
     garantirPodeExportar(sessao, 'produtos');
     const q = validar(filtroProdutosSchema.extend(exportacaoQuerySchema.shape), query);
     garantirOrdemCusto(q, sessao);
-    const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
-      const onde = condicoes(q, await tiposSemSuporte(tx, q));
-      const [total] = await tx.select({ n: count() }).from(produtos).where(onde);
-      if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
-        throw new ErroApi(
-          'REGRA_NEGOCIO',
-          `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
-        );
-      }
-      const linhas = (await consultaResumo(tx)
-        .where(onde)
-        .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', produtos.codigo))) as ProdutoResumo[];
-      const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
-      await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
-        acao: 'exportar',
-        entidade: 'produtos',
-        localizacao: LOCALIZACAO,
-        descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
-        depois: { formato, filtros, linhas: linhas.length },
+    // A vaga do usuário e da empresa antes de ler as linhas (decisão 204).
+    return comVagaExportacao(sessao, async () => {
+      const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
+        const onde = condicoes(q, await tiposSemSuporte(tx, q));
+        const [total] = await tx.select({ n: count() }).from(produtos).where(onde);
+        if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
+          );
+        }
+        const linhas = (await consultaResumo(tx)
+          .where(onde)
+          .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', produtos.codigo))) as ProdutoResumo[];
+        const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
+        await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+          acao: 'exportar',
+          entidade: 'produtos',
+          localizacao: LOCALIZACAO,
+          descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
+          depois: { formato, filtros, linhas: linhas.length },
+        });
+        return linhas;
       });
-      return linhas;
+      return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
     });
-    return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
   }
 
   /**

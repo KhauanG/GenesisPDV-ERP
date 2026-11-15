@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs';
 import writeXlsxFile, { type SheetData } from 'write-excel-file/node';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { ErroApi } from './erros.js';
-import { limiteDoAmbiente, Semaforo } from './limites-processo.js';
+import { entrarEmAndamento, limiteDoAmbiente, Semaforo } from './limites-processo.js';
 
 export type ValorExportado = string | number | boolean | Date | null | undefined;
 
@@ -34,6 +34,55 @@ export function colunasVisiveis<T>(
  * vale 2): sempre sobra ao menos uma vaga para quem baixa na hora.
  */
 export const semaforoExportacao = new Semaforo(Math.max(2, limiteDoAmbiente('EXPORTACAO_CONCORRENCIA', 2)));
+
+/**
+ * Admissão da exportação na hora (decisão 204): conferida **antes** de ler as linhas (cada exportação junta até
+ * `LIMITE_EXPORTACAO` linhas na memória e depois espera a vaga do `semaforoExportacao`, que é de todas as empresas).
+ * Cada usuário tem até `EXPORTACOES_SIMULTANEAS_USUARIO` (1) em andamento e cada empresa até
+ * `EXPORTACOES_SIMULTANEAS_EMPRESA` (3); acima, 429 `LIMITE_TAXA` com `Retry-After` na hora, sem ler nada. Os
+ * contadores voltam quando o arquivo fica pronto ou a exportação falha. A exportação em tarefa tem o teto próprio
+ * (`EXPORTACOES_PENDENTES_POR_USUARIO`) e não entra aqui.
+ */
+export async function comVagaExportacao<T>(
+  sessao: Pick<SessaoErp, 'empresa' | 'usuarioId'>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const empresaId = sessao.empresa.empresaId;
+  const tirarDoUsuario = entrarEmAndamento(
+    `exportacao:${empresaId}:${sessao.usuarioId}`,
+    limiteDoAmbiente('EXPORTACOES_SIMULTANEAS_USUARIO', 1),
+    () =>
+      new ErroApi(
+        'LIMITE_TAXA',
+        'Já há uma exportação sua em andamento. Aguarde ela terminar e peça de novo.',
+        {
+          cabecalhos: { 'Retry-After': '5' },
+        },
+      ),
+  );
+  let tirarDaEmpresa: () => void;
+  try {
+    tirarDaEmpresa = entrarEmAndamento(
+      `exportacao-empresa:${empresaId}`,
+      limiteDoAmbiente('EXPORTACOES_SIMULTANEAS_EMPRESA', 3),
+      () =>
+        new ErroApi(
+          'LIMITE_TAXA',
+          'Há outras exportações da empresa em andamento. Aguarde alguns segundos e peça de novo.',
+          { cabecalhos: { 'Retry-After': '5' } },
+        ),
+    );
+  } catch (e) {
+    tirarDoUsuario();
+    throw e;
+  }
+  try {
+    return await fn();
+  } finally {
+    tirarDaEmpresa();
+    tirarDoUsuario();
+  }
+}
 
 const FUSO = 'America/Sao_Paulo';
 const partesDataHora = new Intl.DateTimeFormat('pt-BR', {
