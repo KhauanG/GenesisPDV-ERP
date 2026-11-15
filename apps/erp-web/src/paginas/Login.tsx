@@ -17,6 +17,7 @@ import { useDocumentTitle } from '@mantine/hooks';
 import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router';
+import { caminhoDecodificado, caminhoSemDesvio } from '../api/caminho';
 import { ErroRequisicao } from '../api/http';
 import { AvisoSaidaPendente } from '../auth/AvisoSaidaPendente';
 import { Carregando } from '../auth/RotaProtegida';
@@ -26,13 +27,21 @@ import { errosDoZod } from '../util/erros';
 
 export const CHAVE_CODIGO_EMPRESA = 'genesis:codigo-empresa';
 
-/** Só rotas internas do ERP: `voltar` nunca leva para outro site nem para o painel da plataforma. */
+/**
+ * Só rotas internas do ERP: `voltar` nunca leva para outro site nem para o painel da plataforma ou as telas de sessão,
+ * e o caminho é o que diz — sem barra invertida, separador codificado (`%2F`, `%5C`), segmento de ponto nem caractere
+ * de controle (README do ERP › decisão 85). O painel e as telas de sessão são conferidos no caminho como o roteador o
+ * lê: sem diferenciar maiúsculas e com cada segmento decodificado (`/%73air` é a rota `/sair`).
+ */
 export function rotaVoltarSegura(voltar: string | null): string {
+  const lido = voltar ? caminhoDecodificado(voltar) : null;
   const valida =
     !!voltar &&
     voltar.startsWith('/') &&
     !voltar.startsWith('//') &&
-    !/^\/(plataforma|sair|login|trocar-senha)(\/|\?|$)/.test(voltar);
+    caminhoSemDesvio(voltar) &&
+    lido !== null &&
+    !/^\/(plataforma|sair|login|trocar-senha)(\/|$)/i.test(lido);
   return valida ? voltar : '/';
 }
 

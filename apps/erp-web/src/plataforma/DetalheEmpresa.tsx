@@ -20,6 +20,7 @@ import { IconArrowLeft, IconPlayerPause, IconPlayerPlay, IconRefresh } from '@ta
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { segmento } from '../api/caminho';
 import { apiPlataforma } from '../api/clientes';
 import { ErroRequisicao } from '../api/http';
 import { NaoEncontrado } from '../paginas/Erros';
@@ -50,7 +51,10 @@ export function DetalheEmpresa() {
   const [motivo, setMotivo] = useState<string | null>(MOTIVOS[0]!);
   const [detalheMotivo, setDetalheMotivo] = useState('');
   const chave = ['plataforma', 'empresa', codigo];
-  const r = useQuery({ queryKey: chave, queryFn: () => apiPlataforma.get<Detalhe>(`/empresas/${codigo}`) });
+  const r = useQuery({
+    queryKey: chave,
+    queryFn: () => apiPlataforma.get<Detalhe>(`/empresas/${segmento(codigo)}`),
+  });
 
   const atualizar = () => {
     void queryClient.invalidateQueries({ queryKey: chave });
@@ -59,7 +63,7 @@ export function DetalheEmpresa() {
   const acao = useMutation({
     mutationFn: ({ caminho, corpo }: { caminho: string; corpo?: unknown }) =>
       apiPlataforma.post<ResultadoProvisionamento | { status: string }>(
-        `/empresas/${codigo}/${caminho}`,
+        `/empresas/${segmento(codigo)}/${caminho}`,
         corpo,
       ),
     onSuccess: (_d, v) => {

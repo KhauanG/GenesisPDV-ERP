@@ -1,6 +1,7 @@
 import { tarefaEmAndamento, type RespostaTarefas, type TarefaUsuario } from '@genesis/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao } from '../../api/http';
 
@@ -78,7 +79,8 @@ export function useTarefa<R = unknown>(tarefaId: string | null) {
   const queryClient = useQueryClient();
   const consulta = useQuery({
     queryKey: [...CHAVE_TAREFAS, tarefaId],
-    queryFn: ({ signal }) => apiErp.get<TarefaUsuario<R>>(`/tarefas/${tarefaId}`, { sinal: signal }),
+    queryFn: ({ signal }) =>
+      apiErp.get<TarefaUsuario<R>>(`/tarefas/${segmento(tarefaId)}`, { sinal: signal }),
     enabled: !!tarefaId,
     refetchInterval: (q) => intervaloTarefa(q.state.data, q.state.status === 'error' ? q.state.error : null),
   });

@@ -19,6 +19,7 @@ import { Alert, Anchor, Group, Modal, Pagination, Select, Stack, Table, Text } f
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { usePode } from '../../auth/permissoes';
 import { useEu } from '../../auth/sessao';
@@ -117,7 +118,9 @@ export function ModalHistoricoPrecos({
       const q = new URLSearchParams({ pagina: String(filtro.pagina), tamanho: String(TAMANHO) });
       for (const c of ['tipo', 'loja', 'dataInicial', 'dataFinal'] as const)
         if (filtro[c]) q.set(c, filtro[c]);
-      return apiErp.get<Pagina<HistoricoPrecoProduto>>(`/produtos/${produtoId}/historico-precos?${q}`);
+      return apiErp.get<Pagina<HistoricoPrecoProduto>>(
+        `/produtos/${segmento(produtoId)}/historico-precos?${q}`,
+      );
     },
     enabled: aberto,
     placeholderData: keepPreviousData,

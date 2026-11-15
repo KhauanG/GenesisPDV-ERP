@@ -1,5 +1,6 @@
 import type { ErroApi, ExportacaoEmTarefa } from '@genesis/shared';
 import { gravarLocal, lerLocal } from '../util/armazenamento';
+import { caminhoSemDesvio } from './caminho';
 
 /** Erro de uma chamada à API, já no envelope padrão `{ codigo, mensagem, campos }` (ERP 1.8). */
 export class ErroRequisicao extends Error {
@@ -76,6 +77,9 @@ export function nomeDoArquivo(cabecalho: string | null, padrao: string): string 
   const simples = /filename\s*=\s*"?([^";]+)"?/i.exec(cabecalho);
   return simples ? simples[1]!.trim() : padrao;
 }
+
+/** Caminho que o navegador desviaria para outra rota (README do ERP › decisão 85): nada é enviado, vira "não encontrado". */
+const CAMINHO_INVALIDO: ErroApi = { codigo: 'NAO_ENCONTRADO', mensagem: 'Endereço não encontrado.' };
 
 const SEM_CONEXAO: ErroApi = {
   codigo: 'ERRO_INTERNO',
@@ -253,6 +257,8 @@ export function criarCliente(opcoes: OpcoesCliente) {
     op: OpcoesRequisicao = {},
     repetida = false,
   ): Promise<T> {
+    // A rota chamada é a que o caminho diz: sem segmento de ponto nem separador escondido que o navegador resolveria.
+    if (!caminhoSemDesvio(caminho)) throw new ErroRequisicao(404, CAMINHO_INVALIDO);
     const cabecalhos: Record<string, string> = { Accept: op.binario ? '*/*' : 'application/json' };
     // FormData (upload): o navegador define o `multipart/form-data` com o boundary.
     const formulario = typeof FormData !== 'undefined' && corpo instanceof FormData;

@@ -53,6 +53,7 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -919,7 +920,7 @@ export function FormularioRecebimento() {
     try {
       const d = c.novo
         ? await apiErp.post<RecebimentoDetalhe>('/recebimentos', corpo)
-        : await apiErp.put<RecebimentoDetalhe>(`/recebimentos/${id}`, corpo);
+        : await apiErp.put<RecebimentoDetalhe>(`/recebimentos/${segmento(id)}`, corpo);
       queryClient.setQueryData(['recebimentos', d.id], d);
       avisarRemessa(d);
       return d;
@@ -997,7 +998,7 @@ export function FormularioRecebimento() {
   async function estornar(confirmarNegativo: SaldoNegativoEstorno[] = []) {
     setProcessando(true);
     try {
-      const d = await apiErp.post<RecebimentoDetalhe>(`/recebimentos/${id}/estornar`, {
+      const d = await apiErp.post<RecebimentoDetalhe>(`/recebimentos/${segmento(id)}/estornar`, {
         versao: r!.versao,
         motivo: motivoEstorno,
         confirmarNegativo,

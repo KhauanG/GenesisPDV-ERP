@@ -363,6 +363,7 @@ permissões).
 | Alterações não salvas | Sair com alterações pendentes pede confirmação ("Descartar alterações?") |
 | Gravação | Botão desabilitado e indicador durante o envio; sucesso = notificação verde "Registro gravado" e permanece no formulário (com a URL atualizada para `/:id` quando era novo) |
 | Somente leitura | Sem permissão de editar, ou documento imutável: todos os campos desabilitados e só Voltar/Histórico/Imprimir |
+| Id na URL | O `:id` da rota de um registro (formulário, detalhe, impressão) só abre a tela quando é um id de registro (UUID); fora disso a tela é "Página não encontrada" e nada é pedido à API. O id entra no caminho da API como um segmento codificado, e o cliente HTTP não envia caminho com segmento de ponto (`.`, `..`, também com `%2E`), barra invertida ou `%2F`/`%5C` (o mesmo para o `:codigo` da empresa no painel, 6 dígitos) |
 | Campos monetários | Máscara `R$`, aceita vírgula, alinhado à direita |
 | Campos de data | Seletor Mantine com digitação `dd/mm/aaaa`; atalho `H` = hoje |
 
@@ -456,7 +457,10 @@ exibido ao lado do editor.
 
 **Objetivo**: autenticar o usuário na empresa certa (código da empresa + usuário + senha, como no Nuvem3 e ADR-02).
 
-**Rota**: `/login` (pública). Qualquer rota protegida sem sessão redireciona para `/login?voltar=<rota>`.
+**Rota**: `/login` (pública). Qualquer rota protegida sem sessão redireciona para `/login?voltar=<rota>`. O `voltar`
+só vale para uma rota interna do ERP (não o painel da plataforma nem as telas de sessão, em maiúsculas ou minúsculas
+e também com letra codificada, como `/%73air`), com o caminho sem barra invertida, `%2F`/`%5C`, segmento de ponto nem
+caractere de controle ou espaço; fora disso, o login leva ao início.
 
 | Campo | Tipo | Obr. | Validação | Padrão |
 |---|---|---|---|---|

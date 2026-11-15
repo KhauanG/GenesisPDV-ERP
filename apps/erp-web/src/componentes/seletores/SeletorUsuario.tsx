@@ -3,6 +3,7 @@ import { Loader, Select, type SelectProps } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 
@@ -48,7 +49,7 @@ export function SeletorUsuario({
   const conhecido = escolhido && escolhido.id === value ? escolhido : null;
   const atual = useQuery({
     queryKey: ['usuario', value],
-    queryFn: ({ signal }) => apiErp.get<UsuarioDetalhe>(`/usuarios/${value}`, { sinal: signal }),
+    queryFn: ({ signal }) => apiErp.get<UsuarioDetalhe>(`/usuarios/${segmento(value)}`, { sinal: signal }),
     enabled: !!value && !conhecido,
     staleTime: 60_000,
   });

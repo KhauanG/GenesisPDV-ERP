@@ -20,6 +20,7 @@ import {
 import { IconFileImport, IconInfoCircle } from '@tabler/icons-react';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { formatarDecimal } from '../../componentes/grade/decimal';
 
@@ -62,7 +63,7 @@ export function ModalImportarContagem({
     f.set('itensExistentes', existentes);
     if (modo === 'gravar') f.set('versao', String(versao));
     f.set('arquivo', arquivo!);
-    return apiErp.enviar<PreviaContagem>(`/acertos/${acertoId}/importar-contagem`, f);
+    return apiErp.enviar<PreviaContagem>(`/acertos/${segmento(acertoId)}/importar-contagem`, f);
   };
   const ver = useMutation({ mutationFn: () => enviar('previa'), onSuccess: setPrevia });
   const gravar = useMutation({

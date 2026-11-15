@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { z } from 'zod';
+import { idValido, segmento } from '../api/caminho';
 import { apiErp } from '../api/clientes';
 import { ErroRequisicao } from '../api/http';
 import { errosDaApi, errosDoZod } from '../util/erros';
@@ -11,7 +12,9 @@ import { errosDaApi, errosDoZod } from '../util/erros';
 /**
  * Ciclo padrão de um formulário de cadastro (ERP 3.2): carrega o registro, preenche o `useForm`, grava com `POST`
  * (novo) ou `PUT` (com a `versao`), devolve os erros por campo da API/zod ao formulário e exclui. O erro da última
- * gravação vai para o `<FormularioEntidade>` (409 de versão vira o aviso com "Recarregar").
+ * gravação vai para o `<FormularioEntidade>` (409 de versão vira o aviso com "Recarregar"). O id da rota só vira
+ * caminho da API quando é um id de registro (UUID, codificado como um segmento); fora disso a tela é "não encontrado"
+ * e nada é pedido à API (README do ERP › decisão 85).
  */
 export function useCadastro<
   D extends { id: string; versao: number },
@@ -41,14 +44,16 @@ export function useCadastro<
 }) {
   const { api, rota, recurso, id, form } = opcoes;
   const novo = !id;
+  const idInvalido = !novo && !idValido(id);
+  const caminho = idInvalido || novo ? null : `${api}/${segmento(id)}`;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [erro, setErro] = useState<unknown>(null);
 
   const registro = useQuery({
     queryKey: [recurso, id],
-    queryFn: () => apiErp.get<D>(`${api}/${id}`),
-    enabled: !novo,
+    queryFn: () => apiErp.get<D>(caminhoDoRegistro()),
+    enabled: caminho !== null,
   });
 
   useEffect(() => {
@@ -61,6 +66,13 @@ export function useCadastro<
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registro.data]);
 
+  /** Caminho do registro aberto; nunca é montado com um id fora do formato (a tela já é "não encontrado"). */
+  function caminhoDoRegistro(): string {
+    if (caminho === null)
+      throw new ErroRequisicao(404, { codigo: 'NAO_ENCONTRADO', mensagem: 'Registro não encontrado.' });
+    return caminho;
+  }
+
   const errosCampos = (brutos: Record<string, string>) => {
     const campos = opcoes.mapearErros ? opcoes.mapearErros(brutos) : brutos;
     form.setErrors(campos);
@@ -69,7 +81,7 @@ export function useCadastro<
 
   const gravar = useMutation({
     mutationFn: (corpo: unknown) =>
-      novo ? apiErp.post<D>(api, corpo) : apiErp.put<D>(`${api}/${id}`, corpo),
+      novo ? apiErp.post<D>(api, corpo) : apiErp.put<D>(caminhoDoRegistro(), corpo),
     onSuccess: (d) => {
       setErro(null);
       void queryClient.invalidateQueries({ queryKey: ['listagem', recurso] });
@@ -92,7 +104,7 @@ export function useCadastro<
   });
 
   const excluir = useMutation({
-    mutationFn: () => apiErp.del(`${api}/${id}`),
+    mutationFn: () => apiErp.del(caminhoDoRegistro()),
     onSuccess: () => {
       form.resetDirty();
       void queryClient.invalidateQueries({ queryKey: ['listagem', recurso] });
@@ -131,7 +143,8 @@ export function useCadastro<
       setErro(null);
       void registro.refetch();
     },
-    naoEncontrado: !novo && registro.error instanceof ErroRequisicao && registro.error.status === 404,
+    naoEncontrado:
+      idInvalido || (!novo && registro.error instanceof ErroRequisicao && registro.error.status === 404),
   };
 }
 

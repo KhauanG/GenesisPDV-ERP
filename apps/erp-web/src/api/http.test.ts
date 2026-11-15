@@ -148,6 +148,30 @@ describe('cliente HTTP (token em memória + refresh por cookie)', () => {
     expect(await api.baixar('/relatorios/teste/exportar?formato=xlsx')).toHaveProperty('blob');
   });
 
+  it('caminho que o navegador desviaria de rota não é enviado: vira "não encontrado" (decisão 85)', async () => {
+    const { mock } = simularApi(() => ({ corpo: { ok: true } }));
+    const api = novoCliente();
+    api.definirSessao({ tokenAcesso: 'tok', expiraEm: futuro() });
+    const id = '0193bbbb-0000-7000-8000-000000000002';
+    for (const caminho of [
+      `/perfis/../usuarios/${id}`,
+      `/perfis/%2E%2e/usuarios/${id}`,
+      `/perfis\\..\\usuarios\\${id}`,
+      `/perfis/..%2Fusuarios%2F${id}`,
+    ]) {
+      await expect(api.get(caminho), caminho).rejects.toMatchObject({
+        status: 404,
+        codigo: 'NAO_ENCONTRADO',
+      });
+      await expect(api.del(caminho), caminho).rejects.toBeInstanceOf(ErroRequisicao);
+      await expect(api.put(caminho, {}), caminho).rejects.toBeInstanceOf(ErroRequisicao);
+    }
+    expect(mock).not.toHaveBeenCalled();
+    // A consulta pode ter qualquer valor codificado; o caminho normal segue igual.
+    await expect(api.get(`/perfis/${id}?busca=..%2Fx`)).resolves.toEqual({ ok: true });
+    expect(String(mock.mock.calls[0]![0])).toBe(`/api/perfis/${id}?busca=..%2Fx`);
+  });
+
   it('nomeDoArquivo: filename* tem prioridade; sem cabeçalho usa o padrão', () => {
     expect(nomeDoArquivo(`attachment; filename="a.csv"; filename*=UTF-8''Usu%C3%A1rios.csv`, 'x')).toBe(
       'Usuários.csv',

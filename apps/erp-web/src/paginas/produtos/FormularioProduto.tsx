@@ -62,6 +62,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { useUfs } from '../../api/referencias';
 import { ErroRequisicao } from '../../api/http';
@@ -300,7 +301,7 @@ export function FormularioProduto() {
   // Produto novo: unidade UN; duplicar: copia o original sem EAN, sem código interno e sem estoque (ERP 8.2).
   const origem = useQuery({
     queryKey: ['produtos', idUrl, 'origem'],
-    queryFn: () => apiErp.get<ProdutoDetalhe>(`/produtos/${idUrl}`),
+    queryFn: () => apiErp.get<ProdutoDetalhe>(`/produtos/${segmento(idUrl)}`),
     enabled: duplicando,
   });
   useEffect(() => {
@@ -1867,7 +1868,7 @@ function BlocoEstoque({
   const [ajustando, setAjustando] = useState(false);
   const r = useQuery({
     queryKey: ['produtos', produtoId, 'saldos'],
-    queryFn: () => apiErp.get<SaldosProduto>(`/produtos/${produtoId}/saldos`),
+    queryFn: () => apiErp.get<SaldosProduto>(`/produtos/${segmento(produtoId)}/saldos`),
   });
   if (r.isPending) return <Text size="sm">Carregando…</Text>;
   if (r.isError) return <Alert color="red">{(r.error as Error).message}</Alert>;

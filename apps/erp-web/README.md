@@ -1551,6 +1551,26 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     texto de antes. A recusa da própria renumeração (`RENUMERACAO_SEM_NUMERO`) não oferece a ação de novo. Teste:
     `Terminais.test.tsx` (o menu oferece a ação, o diálogo explica, o do lote avisa e o resultado mostra os dois
     números).
+85. **Id da rota e caminho da API: a tela de um tipo de registro só fala com a rota da API daquele tipo** (PR-15,
+    SEG-B11; ERP 3.2 e 4.1; `src/api/caminho.ts`, `src/api/http.ts`, `src/auth/RotaProtegida.tsx` (`ExigeIdValido`),
+    `src/rotas.tsx`, `src/componentes/cadastro.ts`, `src/paginas/Login.tsx`). Todo registro da API tem id UUID
+    (todas as rotas `:id` da API conferem `z.uuid()`), então o id da URL do ERP é conferido em três camadas: (1) a
+    rota — toda rota com `:id` (formulários de cadastro, detalhes das consultas, impressões, o terminal) passa pelo
+    `ExigeIdValido`, que mostra "Página não encontrada" sem montar a tela quando o parâmetro não é um UUID; no painel,
+    o `:codigo` da empresa são 6 dígitos; (2) a tela — `useCadastro` e o formulário de usuários repetem a conferência
+    (sem nenhuma consulta nem gravação com o id fora do formato) e montam o caminho com `segmento()`
+    (`encodeURIComponent`), como as outras telas que levam o id da rota (ou de um registro) para o caminho; (3) o
+    cliente HTTP — `requisitar` não envia caminho que o navegador desviaria de rota: barra invertida, `%2F`/`%5C`,
+    segmento de ponto (`.`, `..`, também escrito com `%2E`) ou caractere de controle e espaço (o leitor de endereço do
+    navegador apaga TAB/LF/CR em qualquer posição, e `.<TAB>.` vira `..`), só na parte antes do `?`; a recusa é um 404
+    `NAO_ENCONTRADO` ("Endereço não encontrado."), que as telas já mostram como "não encontrado" (sem código novo no
+    contrato). O `voltar` do login usa a mesma conferência do caminho e recusa o painel e as telas de sessão no
+    caminho como o roteador o lê: sem diferenciar maiúsculas e com cada segmento decodificado (`/%73air` é a rota
+    `/sair`; segmento que não decodifica é recusado), antes da consulta e do fragmento (`/plataforma#x` também). A API continua sendo a fonte da verdade das permissões;
+    isto garante que o botão de uma tela age sobre o registro do tipo que ela mostra. Testes: `src/api/caminho.test.ts`,
+    `http.test.ts` (nada é enviado), `Login.test.tsx` (`rotaVoltarSegura`) e `src/paginas/IdDaRota.test.tsx` (o link
+    direto e o do login com o id de outro tipo de registro, as duas direções; todas as rotas `:id` da árvore com um id
+    fora do formato; `useCadastro` e o formulário de usuários sem a guarda da rota; o id válido segue abrindo).
 
 ## O que ainda não foi feito (Fase 0)
 

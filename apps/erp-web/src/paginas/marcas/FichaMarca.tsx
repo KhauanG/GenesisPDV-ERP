@@ -4,6 +4,7 @@ import { IconPrinter } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { useMiniaturaArquivo } from '../../componentes/campos/UploadArquivo';
 import { formatarDecimal } from '../../componentes/grade/decimal';
@@ -20,7 +21,7 @@ export function FichaMarcaImpressao() {
   const [params] = useSearchParams();
   const ficha = useQuery({
     queryKey: ['marcas', id, 'ficha'],
-    queryFn: () => apiErp.get<FichaMarca>(`/marcas/${id}/ficha`),
+    queryFn: () => apiErp.get<FichaMarca>(`/marcas/${segmento(id)}/ficha`),
     enabled: !!id,
   });
   const logo = useMiniaturaArquivo(ficha.data?.marca.logotipoArquivoId ?? null);
