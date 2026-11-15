@@ -474,13 +474,28 @@ public sealed partial class SessaoOutroOperadorViewModel(ShellViewModel shell, D
     private Task Escolher(string opcao) => opcao switch
     {
         "1" => ComPermissaoAsync(PermissoesPdv.FecharCaixa, "Troca de turno", liberacao => Shell.IrParaFechamentoAsync(trocaDeTurno: true, liberacao)),
-        "2" => ComPermissaoAsync(PermissoesPdv.OperarDeOutro, $"Operar no caixa de {nomeOperador}", async liberacao =>
+        "2" => OperarAsync(),
+        _ => Task.CompletedTask,
+    };
+
+    /// <summary>
+    /// [2]: com a conferência do fechamento desta sessão já mostrada (decisão 89), recusado antes de pedir a liberação:
+    /// o caixa só fecha (a troca de turno, opção 1, volta na conferência gravada).
+    /// </summary>
+    private async Task OperarAsync()
+    {
+        if (await Caixa.ConferenciaMostradaAsync())
+        {
+            Erro = ServicoCaixa.MensagemConferenciaMostrada;
+            return;
+        }
+
+        await ComPermissaoAsync(PermissoesPdv.OperarDeOutro, $"Operar no caixa de {nomeOperador}", async liberacao =>
         {
             await Caixa.OperarDeOutroAsync(liberacao);
             await Shell.IrParaVendaAsync($"Operando no caixa aberto por {nomeOperador}.");
-        }),
-        _ => Task.CompletedTask,
-    };
+        });
+    }
 
     [RelayCommand]
     private void Sair()
@@ -539,7 +554,23 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
         ZeraCaixa = !trocaDeTurno;
         MontarFormas();
         AvisoPendentes = pendentes > 0 ? $"{pendentes} evento(s) ainda não sincronizado(s): o fechamento será enviado quando houver conexão." : null;
+        RetomarConferencia();
     }
+
+    public const string MensagemConferenciaRetomada =
+        "A conferência deste caixa já foi mostrada: a contagem gravada continua valendo.";
+
+    public const string MensagemRecontagemRetomada =
+        "A conferência deste caixa já foi mostrada: a contagem nova fica registrada como recontagem.";
+
+    public const string MensagemContagemRetomada =
+        "A conferência deste caixa já foi mostrada e recontada: a última contagem continua valendo. Confirme o fechamento.";
+
+    /// <summary>
+    /// A recontagem já mostrada voltou com a conferência desligada (<see cref="FechamentoCego.ContagemFixa"/>): os campos
+    /// mostram a contagem gravada, não se editam e o Enter só confirma.
+    /// </summary>
+    public bool ContagemFixa => Cego.ContagemFixa;
 
     private FechamentoCego Cego => _preparado.Fechamento;
 
@@ -609,7 +640,7 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
 
     public string Teclas => Conferindo
         ? "[Enter] Confirmar o fechamento" + (PodeRecontar ? "   [F4] Recontar (uma vez)" : string.Empty) + (_gravacaoRecusada ? "   [Esc] Voltar" : string.Empty)
-        : "[Enter] " + (Cego.Regras.TemConferencia ? "Conferir" : "Confirmar o fechamento") + "   [F3] Contar cédulas" +
+        : "[Enter] " + (Cego.Regras.TemConferencia ? "Conferir" : "Confirmar o fechamento") + (ContagemFixa ? string.Empty : "   [F3] Contar cédulas") +
           (PodeEscolherZera ? "   [F5] Zera caixa sim/não" : string.Empty) + "   [Esc] Voltar";
 
     /// <summary>O botão do Enter: o mesmo rótulo da legenda ("Conferir", "Confirmar o fechamento").</summary>
@@ -632,7 +663,7 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
     {
         foreach (var forma in Formas)
         {
-            forma.SomenteLeitura = !Contando;
+            forma.SomenteLeitura = !Contando || ContagemFixa;
         }
 
         OnPropertyChanged(nameof(JustificativaVisivel));
@@ -654,7 +685,7 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
             return;
         }
 
-        if (Contando)
+        if (Contando && !ContagemFixa)
         {
             var valores = new Dictionary<Guid, decimal>();
             foreach (var forma in Formas)
@@ -662,7 +693,8 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
                 valores[forma.Apurada.Forma.Id] = LerValor(forma.Valor) ?? 0m;
             }
 
-            Cego.Contar(valores);
+            // Com a conferência, a contagem é gravada (com a auditoria) antes de o calculado aparecer (decisão 89).
+            await Caixa.ContarFechamentoAsync(_preparado, valores);
             if (Cego.Etapa == EtapaFechamento.Conferencia)
             {
                 MostrarConferencia();
@@ -698,7 +730,7 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
     [RelayCommand]
     private void ContarCedulas()
     {
-        if (Contando && Formas.Count > 0)
+        if (Contando && !ContagemFixa && Formas.Count > 0)
         {
             Contador = new ContadorCedulasViewModel(
                 (total, _) =>
@@ -745,6 +777,46 @@ public sealed partial class FechamentoCaixaViewModel : TelaCaixaViewModel
         {
             Formas.Add(new FormaFechamentoViewModel(forma, Cego.CalculadoVisivel));
         }
+    }
+
+    /// <summary>
+    /// A conferência desta sessão já foi mostrada (decisão 89): a tela volta nela com a contagem gravada (sair ou reiniciar
+    /// não dá contagem nova; recontar segue a regra), ou, com a conferência desligada depois, conta às cegas e a nova
+    /// vira a recontagem; se a mostrada já era a recontagem, a contagem gravada fica e só falta confirmar.
+    /// </summary>
+    private void RetomarConferencia()
+    {
+        if (!Cego.Retomada)
+        {
+            return;
+        }
+
+        if (Cego.ContagemFixa)
+        {
+            // Sem a conferência (O3) o calculado não aparece: só o que o operador já digitou, somente leitura.
+            foreach (var forma in Formas)
+            {
+                forma.Valor = NumeroBr.Dinheiro(Cego.Digitado(forma.Apurada.Forma.Id));
+                forma.SomenteLeitura = true;
+            }
+
+            Aviso = MensagemContagemRetomada;
+            return;
+        }
+
+        if (Cego.Etapa != EtapaFechamento.Conferencia)
+        {
+            Aviso = MensagemRecontagemRetomada;
+            return;
+        }
+
+        foreach (var forma in Formas)
+        {
+            forma.Valor = NumeroBr.Dinheiro(Cego.Digitado(forma.Apurada.Forma.Id));
+        }
+
+        MostrarConferencia();
+        Aviso = Cego.ExigeJustificativa ? $"{MensagemConferenciaRetomada} {FechamentoCego.MensagemJustificativa}" : MensagemConferenciaRetomada;
     }
 
     private void MostrarConferencia()

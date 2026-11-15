@@ -220,6 +220,12 @@ public sealed class ServicoVenda(
             return false;
         }
 
+        // Decisão 89: a sessão com a conferência do fechamento já mostrada não recebe venda (mudaria o calculado dela).
+        if (await repositorioCaixa.ConferenciaMostradaAsync(sessaoId, ct) is not null)
+        {
+            return false;
+        }
+
         venda.VincularSessaoCaixa(sessaoId);
         await repositorio.SalvarEmAndamentoAsync(venda, ct: ct);
         log.LogWarning("Venda {Numero} sem sessão de caixa incluída na sessão {Sessao}", venda.NumeroExibicao, sessaoId);
@@ -497,6 +503,12 @@ public sealed class ServicoVenda(
             throw new RegraNegocioException(MensagemCaixaFechado);
         }
 
+        // Decisão 89: com a conferência do fechamento já mostrada, a sessão só fecha (a venda mudaria o calculado dela).
+        if (caixa is not null)
+        {
+            await caixa.GarantirSemConferenciaMostradaAsync(ct);
+        }
+
         // T13: a venda nem começa se a nuvem não aceita o `venda.finalizada` (o gravador recusaria no commit).
         if (!await repositorioCaixa.TipoAceitoAsync("venda.finalizada", FabricaEventos.VersaoSchemaVenda, ct))
         {
@@ -666,12 +678,13 @@ public sealed class ServicoVenda(
     /// </summary>
     public async Task AlterarQuantidadeAsync(int sequencia, decimal quantidade, CancellationToken ct = default)
     {
-        // Só a redução que o Core aceitaria pede o supervisor (combo, casco, decimal fora do fracionável e fora do fator
-        // da embalagem continuam com a recusa de sempre, antes de qualquer PIN).
+        // Toda redução que o Core aceitaria pede o supervisor, pela mesma regra de formato que ele aplica
+        // (Venda.QuantidadeAceita; decisão 88): a fração do item pesado também. Combo, casco, decimal fora do fracionável,
+        // mais de 3 casas e fora do fator da embalagem (só a de fator maior que 1) continuam com a recusa de sempre, antes
+        // de qualquer PIN.
         if (Atual is { Aberta: true } venda && venda.ObterItem(sequencia) is { Cancelado: false, EhKit: false, EhCasco: false } item
-            && quantidade > 0m && quantidade < item.Quantidade
-            && (item.Fracionavel || decimal.Truncate(quantidade) == quantidade)
-            && quantidade % (item.Embalagem?.Fator ?? 1m) == 0m
+            && quantidade < item.Quantidade
+            && Venda.QuantidadeAceita(item, quantidade)
             && await CancelarItemExigeLiberacaoAsync(ct))
         {
             throw new ReducaoExigeLiberacaoException(item, item.Quantidade - quantidade);
@@ -1196,6 +1209,12 @@ public sealed class ServicoVenda(
         }
 
         var aberta = sessao.SessaoCaixa ?? throw new RegraNegocioException(RepositorioCaixa.MensagemSemSessao);
+        // Decisão 89: o cancelamento tiraria a venda do calculado que a conferência já mostrada confere.
+        if (await repositorioCaixa.ConferenciaMostradaAsync(aberta.Id, ct) is not null)
+        {
+            throw new RegraNegocioException(ServicoCaixa.MensagemConferenciaMostrada);
+        }
+
         if (!await repositorioCaixa.TipoAceitoAsync("venda.cancelada", FabricaEventos.VersaoSchemaVenda, ct))
         {
             throw new RegraNegocioException(Data.Outbox.GravadorOutbox.MensagemTipoNaoAnunciado("venda.cancelada", FabricaEventos.VersaoSchemaVenda));

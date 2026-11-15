@@ -695,6 +695,69 @@ public class UsabilidadeTelasTests
     }
 
     [AvaloniaFact]
+    public async Task Diminuir_item_pesado_para_quantidade_fracionada_tambem_pede_o_supervisor_e_vira_cancelamento_parcial()
+    {
+        // README do PDV › decisão 88: toda redução que o Core aceita passa pelo controle de cancelar item; a exceção do
+        // "múltiplo da embalagem" vale só para o fator maior que 1 (o item pesado sem embalagem não fica de fora).
+        using var pdv = await AmbienteUi.IniciarAsync();
+        var venda = await pdv.AtivarDemonstracaoELogarAsync();
+        var sessao = pdv.Servicos.GetRequiredService<SessaoTerminal>();
+        var maria = sessao.Operador!;
+        await pdv.EntrarCodigoAsync("2*0050");
+        await pdv.EsperarAsync(() => venda.Itens.Count == 1, "2 kg de queijo");
+        var queijo = venda.ServicoVenda.Atual!.ObterItem(1);
+        Assert.True(queijo.Fracionavel);
+        Assert.Null(queijo.Embalagem);
+
+        sessao.Operador = maria with { Permissoes = new HashSet<string>(PermissoesPdv.PerfilOperador.Where(p => p != PermissoesPdv.CancelarItem), StringComparer.Ordinal) };
+        var servico = pdv.Servicos.GetRequiredService<ServicoVenda>();
+        // Para inteiro e para fracionado, a redução pede o supervisor com o que sai.
+        var inteira = await Assert.ThrowsAsync<ReducaoExigeLiberacaoException>(() => servico.AlterarQuantidadeAsync(1, 1m, Ct));
+        Assert.Equal(1m, inteira.Quantidade);
+        var fracionada = await Assert.ThrowsAsync<ReducaoExigeLiberacaoException>(() => servico.AlterarQuantidadeAsync(1, 0.001m, Ct));
+        Assert.Equal((1, 1.999m), (fracionada.Sequencia, fracionada.Quantidade));
+        Assert.Equal(2m, venda.ServicoVenda.Atual!.ObterItem(1).Quantidade);
+        // O que o Core recusa de qualquer jeito (4 casas) recusa antes, sem pedir o supervisor.
+        var quatroCasas = await Assert.ThrowsAnyAsync<RegraNegocioException>(() => servico.AlterarQuantidadeAsync(1, 1.0005m, Ct));
+        Assert.IsNotType<ReducaoExigeLiberacaoException>(quatroCasas);
+
+        // F3 2 → 1,5: a tela pede o supervisor; com a liberação, a linha de 2 fica cancelada e entra a de 1,5.
+        pdv.Tecla(Key.F3);
+        await pdv.EsperarFocoAsync("CampoQuantidade");
+        pdv.Digitar("1,5");
+        pdv.Tecla(Key.Enter);
+        await pdv.EsperarAsync(() => venda.Dialogo is DialogoLiberacaoViewModel { Pedido.Permissao: PermissoesPdv.CancelarItem }, "liberação da redução fracionada");
+        Assert.Equal(2m, venda.ServicoVenda.Atual!.ObterItem(1).Quantidade);
+        await LiberarComCarlosAsync(pdv, venda, "Cliente levou menos");
+        await pdv.EsperarAsync(() => venda.Dialogo is null, "redução feita");
+        await using var db = Banco(pdv);
+        var original = await db.ItensVenda.AsNoTracking().SingleAsync(i => i.Sequencia == 1, Ct);
+        Assert.Equal((true, Carlos), (original.Cancelado, original.AutorizadoPorId));
+        Assert.Equal(1.5m, (await db.ItensVenda.AsNoTracking().SingleAsync(i => !i.Cancelado, Ct)).Quantidade);
+        Assert.Equal(1, await db.LogAuditoriaLocal.CountAsync(a => a.Acao == "item_cancelado" && a.AutorizadoPorId == Carlos, Ct));
+        Assert.Equal(1, await db.LogAuditoriaLocal.CountAsync(a => a.Acao == "liberacao" && a.AutorizadoPorId == Carlos, Ct));
+
+        // Com a chave "cancelar item exige supervisor" e a permissão, a redução fracionada também pede o supervisor.
+        sessao.Operador = maria;
+        var agora = DateTimeOffset.UtcNow;
+        await pdv.Servicos.GetRequiredService<RepositorioEspelhos>().GravarAsync(
+            [
+                new ConfiguracaoRegistro
+                {
+                    Id = Guid.CreateVersion7(), Escopo = "loja", LojaId = sessao.Identidade!.LojaId,
+                    Chave = ChavesConfiguracao.CancelarItemExigeSupervisor, Valor = "true", CriadoEm = agora, AtualizadoEm = agora, Versao = 1,
+                },
+            ],
+            Ct);
+        var linha = venda.ServicoVenda.Atual!.Itens.Single(i => !i.Cancelado);
+        await Assert.ThrowsAsync<ReducaoExigeLiberacaoException>(() => servico.AlterarQuantidadeAsync(linha.Sequencia, 0.75m, Ct));
+        Assert.Equal(1.5m, venda.ServicoVenda.Atual!.ObterItem(linha.Sequencia).Quantidade);
+        // Aumentar continua livre.
+        await servico.AlterarQuantidadeAsync(linha.Sequencia, 1.75m, Ct);
+        Assert.Equal(1.75m, venda.ServicoVenda.Atual!.ObterItem(linha.Sequencia).Quantidade);
+    }
+
+    [AvaloniaFact]
     public async Task Desconto_sem_a_permissao_do_operador_pede_o_supervisor_na_janela_do_item_e_no_f6()
     {
         using var pdv = await AmbienteUi.IniciarAsync();

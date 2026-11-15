@@ -113,6 +113,72 @@ public class CaixaTests
     }
 
     [Fact]
+    public void Conferencia_ja_mostrada_volta_na_conferencia_e_a_recontagem_segue_a_regra()
+    {
+        // README do PDV › decisão 89: a máquina da mesma sessão nasce da conferência gravada, nunca de uma contagem nova.
+        var mostrada = new ConferenciaMostrada(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 200m, [Vale.Id] = 5m }, null);
+        var semRecontagem = new RegrasFechamento(Tolerancia: 1m, MostraConferencia: true);
+        var retomada = new FechamentoCego(ApuracaoPadrao(), semRecontagem, podeVerCalculado: false, mostrada);
+        Assert.True(retomada.Retomada);
+        Assert.Equal(EtapaFechamento.Conferencia, retomada.Etapa);
+        Assert.Equal((200m, 0m), (retomada.Digitado(Dinheiro.Id), retomada.Digitado(Pix.Id)));
+        Assert.False(retomada.PodeRecontar);
+        Assert.Throws<InvalidOperationException>(() => retomada.Contar(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 212.90m }));
+        Assert.Throws<InvalidOperationException>(() => retomada.ValidarContagem(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 212.90m }));
+        // A diferença da contagem mostrada continua pedindo a justificativa.
+        Assert.True(retomada.ExigeJustificativa);
+        Assert.Equal(FechamentoCego.MensagemJustificativa, Assert.Throws<RegraNegocioException>(() => retomada.Confirmar(true, null)).Message);
+        var conferido = retomada.Confirmar(true, "Faltou troco");
+        Assert.Equal((false, 200m), (conferido.Recontagem, conferido.DinheiroDigitado));
+
+        // Com a recontagem permitida: uma vez, e a mostrada fica como a primeira.
+        var comRecontagem = new FechamentoCego(ApuracaoPadrao(), semRecontagem with { PermiteRecontagem = true }, false, mostrada);
+        Assert.True(comRecontagem.PodeRecontar);
+        comRecontagem.Recontar();
+        comRecontagem.Contar(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 212.90m, [Pix.Id] = 30m });
+        var recontado = comRecontagem.Confirmar(false, null);
+        Assert.True(recontado.Recontagem);
+        Assert.Equal([200m, 0m], recontado.Formas.Select(f => f.PrimeiraContagem));
+
+        // A mostrada depois da recontagem volta sem outra recontagem.
+        var segunda = new ConferenciaMostrada(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 212.90m }, new Dictionary<Guid, decimal> { [Dinheiro.Id] = 200m });
+        var depoisDaRecontagem = new FechamentoCego(ApuracaoPadrao(), semRecontagem with { PermiteRecontagem = true }, false, segunda);
+        Assert.False(depoisDaRecontagem.PodeRecontar);
+        Assert.Equal(200m, depoisDaRecontagem.Confirmar(false, null).Formas[0].PrimeiraContagem);
+
+        // A conferência desligada depois de mostrada: a contagem nova é cega (nada do calculado) e vira a recontagem.
+        var cega = new FechamentoCego(ApuracaoPadrao(), RegrasFechamento.PadraoDono, podeVerCalculado: false, mostrada);
+        Assert.True(cega.Retomada);
+        Assert.Equal(EtapaFechamento.Contagem, cega.Etapa);
+        Assert.False(cega.CalculadoVisivel);
+        cega.Contar(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 212.90m, [Pix.Id] = 30m });
+        var cegaConferida = cega.Confirmar(true, null);
+        Assert.True(cegaConferida.Recontagem);
+        Assert.Equal([200m, 0m], cegaConferida.Formas.Select(f => f.PrimeiraContagem));
+        Assert.False(cega.ContagemFixa);
+
+        // Desligada depois da recontagem mostrada: a recontagem já foi usada, não há terceira contagem. A gravada é a
+        // final (só confirmar) e a primeira continua a primeira.
+        var fixa = new FechamentoCego(ApuracaoPadrao(), RegrasFechamento.PadraoDono, podeVerCalculado: false, segunda);
+        Assert.Equal((true, true, true), (fixa.Retomada, fixa.ContagemFixa, fixa.Recontou));
+        Assert.Equal(EtapaFechamento.Pronto, fixa.Etapa);
+        Assert.False(fixa.CalculadoVisivel);
+        Assert.False(fixa.PodeRecontar);
+        Assert.Throws<InvalidOperationException>(() => fixa.ValidarContagem(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 300m }));
+        Assert.Throws<InvalidOperationException>(() => fixa.Contar(new Dictionary<Guid, decimal> { [Dinheiro.Id] = 300m }));
+        Assert.Throws<RegraNegocioException>(fixa.Recontar);
+        var fixaConferida = fixa.Confirmar(true, null);
+        Assert.True(fixaConferida.Recontagem);
+        Assert.Equal([212.90m, 0m], fixaConferida.Formas.Select(f => f.Digitado));
+        Assert.Equal([200m, 0m], fixaConferida.Formas.Select(f => f.PrimeiraContagem));
+        fixa.MarcarConfirmado();
+        Assert.Equal(EtapaFechamento.Confirmado, fixa.Etapa);
+
+        // Sem conferência mostrada, nada muda.
+        Assert.False(new FechamentoCego(ApuracaoPadrao(), semRecontagem, false).Retomada);
+    }
+
+    [Fact]
     public void Fechamento_nao_cego_mostra_a_todos_e_valor_contado_invalido_e_recusado()
     {
         var fechamento = new FechamentoCego(ApuracaoPadrao(), new RegrasFechamento(FechamentoCego: false), podeVerCalculado: false);

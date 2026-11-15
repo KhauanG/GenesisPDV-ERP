@@ -497,9 +497,36 @@ public sealed partial class ShellViewModel(IServiceProvider servicos, ILogger<Sh
             case SituacaoAposLogin.SessaoDeOutro:
                 PaginaAtual = new SessaoOutroOperadorViewModel(this, r.Sessao!, r.NomeOperadorSessao!);
                 break;
+            case SituacaoAposLogin.Fechar:
+                await IrParaFechamentoRetomadoAsync();
+                break;
             default:
                 await IrParaVendaAsync();
                 break;
+        }
+    }
+
+    /// <summary>
+    /// O login do dono da sessão depois de mostrada a conferência do fechamento (decisão 89; o app reiniciou ou o
+    /// operador saiu da tela): direto para o fechamento, que volta na conferência gravada. Sem <c>pdv.caixa.fechar</c>, ou
+    /// com o fechamento recusado agora, a venda abre com o aviso (venda e movimentos recusados; o F11 › 3 pede o
+    /// supervisor).
+    /// </summary>
+    private async Task IrParaFechamentoRetomadoAsync()
+    {
+        if (Servico<SessaoTerminal>().Operador?.Tem(Core.Caixa.PermissoesPdv.FecharCaixa) != true)
+        {
+            await IrParaVendaAsync(ServicoCaixa.MensagemConferenciaMostrada);
+            return;
+        }
+
+        try
+        {
+            await IrParaFechamentoAsync();
+        }
+        catch (RegraNegocioException e)
+        {
+            await IrParaVendaAsync($"{ServicoCaixa.MensagemConferenciaMostrada} {e.Message}");
         }
     }
 

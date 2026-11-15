@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using GenesisPDV.Core.Caixa;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Core.Vendas;
@@ -214,10 +215,87 @@ public sealed class RepositorioCaixa(IDbContextFactory<PdvDbContext> fabrica, IR
         }
 
         estado.AtualizadoEm = relogio.Agora;
+        // A conferência gravada era desta sessão (ou de outra já encerrada): o fechamento a consome no mesmo commit.
+        if (await db.ConfiguracaoTerminal.FirstOrDefaultAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, ct) is { } conferencia)
+        {
+            db.ConfiguracaoTerminal.Remove(conferencia);
+        }
+
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return gravado.Sequencia;
     }
+
+    /// <summary>
+    /// A conferência do fechamento já mostrada na sessão <paramref name="sessaoCaixaId"/> (decisão 89), ou nula: sem
+    /// registro, de outra sessão ou ilegível (um valor que não se lê não prende o fechamento).
+    /// </summary>
+    public async Task<ConferenciaMostrada?> ConferenciaMostradaAsync(Guid sessaoCaixaId, CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        var valor = await db.ConfiguracaoTerminal.AsNoTracking()
+            .Where(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento).Select(c => c.Valor).FirstOrDefaultAsync(ct);
+        if (valor is null)
+        {
+            return null;
+        }
+
+        ConferenciaGravada? gravada;
+        try
+        {
+            gravada = JsonSerializer.Deserialize<ConferenciaGravada>(valor);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return gravada is { Contagem: { } contagem } && gravada.SessaoCaixaId == sessaoCaixaId
+            ? new ConferenciaMostrada(contagem, gravada.PrimeiraContagem)
+            : null;
+    }
+
+    /// <summary>
+    /// Grava a conferência que a tela vai mostrar (PDV 21.2; decisão 89): a contagem, a primeira (depois da recontagem) e
+    /// a auditoria <paramref name="auditoria"/> num commit, só com a sessão aberta. Só depois do commit a tela mostra o
+    /// calculado: reiniciar o app não dá uma contagem nova, porque a preparação da mesma sessão volta a esta.
+    /// </summary>
+    public async Task RegistrarConferenciaAsync(
+        Guid sessaoCaixaId, ConferenciaMostrada conferencia, RegistroAuditoria auditoria, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(conferencia);
+        ArgumentNullException.ThrowIfNull(auditoria);
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await ExigirSessaoAsync(db, sessaoCaixaId, ct);
+        var gravada = new ConferenciaGravada(
+            sessaoCaixaId,
+            new Dictionary<Guid, decimal>(conferencia.Contagem),
+            conferencia.PrimeiraContagem is null ? null : new Dictionary<Guid, decimal>(conferencia.PrimeiraContagem),
+            relogio.Agora,
+            auditoria.UsuarioId);
+        var linha = await db.ConfiguracaoTerminal.FirstOrDefaultAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, ct);
+        if (linha is null)
+        {
+            linha = new ConfiguracaoTerminal { Chave = ChavesConfiguracaoTerminal.ConferenciaFechamento };
+            db.ConfiguracaoTerminal.Add(linha);
+        }
+
+        linha.Valor = JsonSerializer.Serialize(gravada);
+        linha.AtualizadoEm = relogio.Agora;
+        linha.AtualizadoPorId = auditoria.UsuarioId;
+        AdicionarAuditoria(db, [auditoria], sessaoCaixaId);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>O valor JSON de <c>configuracao_terminal['fechamento.conferencia']</c>.</summary>
+    private sealed record ConferenciaGravada(
+        [property: JsonPropertyName("sessao_caixa_id")] Guid SessaoCaixaId,
+        [property: JsonPropertyName("contagem")] Dictionary<Guid, decimal>? Contagem,
+        [property: JsonPropertyName("primeira_contagem")] Dictionary<Guid, decimal>? PrimeiraContagem,
+        [property: JsonPropertyName("mostrada_em")] DateTimeOffset MostradaEm,
+        [property: JsonPropertyName("usuario_id")] Guid? UsuarioId);
 
     /// <summary>
     /// <c>venda.cancelada</c> forma A (SYNC 9.9 A; PDV 13.3; Fase 1C, bloco C11b): a venda finalizada cancelada pelo

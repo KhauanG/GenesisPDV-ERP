@@ -60,6 +60,13 @@ public sealed record FechamentoConferido(
     public decimal ValorCaixa => ZeraCaixa ? 0m : DinheiroDigitado;
 }
 
+/// <summary>
+/// A conferência (Calculado × Digitado × Diferença) já mostrada nesta sessão de caixa, como o App a gravou no SQLite
+/// antes de mostrá-la (README do PDV › decisão 89): a contagem mostrada e, se ela já era a recontagem, a primeira. Só
+/// o que o operador digitou; o calculado não é gravado.
+/// </summary>
+public sealed record ConferenciaMostrada(IReadOnlyDictionary<Guid, decimal> Contagem, IReadOnlyDictionary<Guid, decimal>? PrimeiraContagem);
+
 /// <summary>Etapas do fechamento cego (21.2).</summary>
 public enum EtapaFechamento
 {
@@ -80,6 +87,13 @@ public enum EtapaFechamento
 /// Fluxo do fechamento cego (PDV 21.2, passos 1–3) como máquina de estados pura: contagem por forma, conferência (só com
 /// <see cref="RegrasFechamento.TemConferencia"/>), recontagem uma vez e confirmação. Valores digitados: ≥ 0,00 e até R$
 /// 9.999.999,99; vazio = 0,00. A tela nunca lê o calculado sem <see cref="CalculadoVisivel"/>.
+/// <para>
+/// A conferência mostrada não se desfaz saindo da tela (reiniciar o app, queda de energia): o App grava a contagem antes
+/// de mostrá-la (<see cref="ConferenciaMostrada"/>) e a máquina da mesma sessão nasce dela (<see cref="Retomada"/>): de
+/// volta na conferência com a contagem gravada, e a recontagem segue a regra de sempre (uma vez, com a chave). Com a
+/// conferência desligada depois, a contagem nova é cega e a mostrada fica como a primeira (recontagem registrada); se a
+/// mostrada já era a recontagem, não há contagem nova: a gravada fica (<see cref="ContagemFixa"/>) e só falta confirmar.
+/// </para>
 /// </summary>
 public sealed class FechamentoCego
 {
@@ -91,7 +105,8 @@ public sealed class FechamentoCego
     private Dictionary<Guid, decimal> _contagem = [];
     private Dictionary<Guid, decimal>? _primeira;
 
-    public FechamentoCego(ResultadoApuracao apuracao, RegrasFechamento regras, bool podeVerCalculado)
+    /// <param name="anterior">A conferência já mostrada nesta sessão (gravada no SQLite), ou nula.</param>
+    public FechamentoCego(ResultadoApuracao apuracao, RegrasFechamento regras, bool podeVerCalculado, ConferenciaMostrada? anterior = null)
     {
         ArgumentNullException.ThrowIfNull(apuracao);
         ArgumentNullException.ThrowIfNull(regras);
@@ -104,7 +119,50 @@ public sealed class FechamentoCego
         Regras = regras;
         CalculadoVisivel = regras.VeCalculadoNaContagem(podeVerCalculado);
         ImprimeCalculado = regras.ImprimeCalculadoNoRelatorio(podeVerCalculado);
+        if (anterior is null)
+        {
+            return;
+        }
+
+        // Só as formas desta apuração (a forma que saiu da lista não volta; a que entrou depois conta 0,00).
+        var contagem = DasFormas(anterior.Contagem);
+        var primeira = anterior.PrimeiraContagem is null ? null : DasFormas(anterior.PrimeiraContagem);
+        Retomada = true;
+        if (regras.TemConferencia)
+        {
+            _contagem = contagem;
+            _primeira = primeira;
+            Etapa = EtapaFechamento.Conferencia;
+        }
+        else if (primeira is not null)
+        {
+            // Desligada depois da recontagem mostrada: a recontagem (uma vez) já foi usada. A contagem mostrada e a
+            // primeira ficam como estão e só falta confirmar; uma terceira contagem apagaria a segunda, já conferida.
+            _contagem = contagem;
+            _primeira = primeira;
+            ContagemFixa = true;
+            Etapa = EtapaFechamento.Pronto;
+        }
+        else
+        {
+            // A conferência foi desligada depois de mostrada: nada se mostra de novo (O3), mas a contagem nova não apaga
+            // a que o operador já conferiu.
+            _primeira = contagem;
+        }
     }
+
+    /// <summary>
+    /// A recontagem já mostrada voltou com a conferência desligada: a contagem gravada é a final, não se conta de novo
+    /// (<see cref="ValidarContagem"/> e <see cref="Contar"/> recusam) e só falta confirmar.
+    /// </summary>
+    public bool ContagemFixa { get; }
+
+    /// <summary>
+    /// A máquina nasceu de uma conferência já mostrada nesta sessão (<see cref="ConferenciaMostrada"/>): com a conferência
+    /// ligada, começa nela; sem ela, a contagem nova vira a recontagem da mostrada (ou, se a mostrada já era a
+    /// recontagem, fica pronta com a gravada: <see cref="ContagemFixa"/>).
+    /// </summary>
+    public bool Retomada { get; }
 
     public RegrasFechamento Regras { get; }
 
@@ -119,6 +177,9 @@ public sealed class FechamentoCego
     public IReadOnlyList<FormaApurada> Formas => _apuracao.Formas;
 
     public bool Recontou => _primeira is not null;
+
+    /// <summary>A primeira contagem, depois da recontagem (nula antes dela).</summary>
+    public IReadOnlyDictionary<Guid, decimal>? PrimeiraContagem => _primeira;
 
     public bool PodeRecontar => Etapa == EtapaFechamento.Conferencia && Regras.PermiteRecontagem && !Recontou;
 
@@ -135,9 +196,20 @@ public sealed class FechamentoCego
     /// </summary>
     public void Contar(IReadOnlyDictionary<Guid, decimal> valores)
     {
+        _contagem = new Dictionary<Guid, decimal>(ValidarContagem(valores));
+        Etapa = Regras.TemConferencia ? EtapaFechamento.Conferencia : EtapaFechamento.Pronto;
+    }
+
+    /// <summary>
+    /// A contagem que o <see cref="Contar"/> gravaria (forma → valor, ausente = 0,00), conferida sem mudar a etapa: o App
+    /// grava a conferência com ela no SQLite antes de contar e mostrar (decisão 89). Recusa o mesmo que o <see cref="Contar"/>.
+    /// </summary>
+    public IReadOnlyDictionary<Guid, decimal> ValidarContagem(IReadOnlyDictionary<Guid, decimal> valores)
+    {
         ArgumentNullException.ThrowIfNull(valores);
-        // Sem conferência, a tela pode corrigir a contagem até confirmar (nada foi mostrado ao operador).
-        if (Etapa is not (EtapaFechamento.Contagem or EtapaFechamento.Pronto))
+        // Sem conferência, a tela pode corrigir a contagem até confirmar (nada foi mostrado ao operador); a recontagem
+        // mostrada que voltou (ContagemFixa) não se corrige.
+        if (ContagemFixa || Etapa is not (EtapaFechamento.Contagem or EtapaFechamento.Pronto))
         {
             throw new InvalidOperationException("A contagem já foi informada.");
         }
@@ -159,9 +231,11 @@ public sealed class FechamentoCego
             throw new InvalidOperationException("Forma contada fora da lista do fechamento.");
         }
 
-        _contagem = contagem;
-        Etapa = Regras.TemConferencia ? EtapaFechamento.Conferencia : EtapaFechamento.Pronto;
+        return contagem;
     }
+
+    private Dictionary<Guid, decimal> DasFormas(IReadOnlyDictionary<Guid, decimal> valores) =>
+        Formas.Where(f => valores.ContainsKey(f.Forma.Id)).ToDictionary(f => f.Forma.Id, f => valores[f.Forma.Id]);
 
     /// <summary>Volta da conferência para recontar, uma vez (<c>pdv.permite_recontagem</c>): a primeira contagem fica.</summary>
     public void Recontar()

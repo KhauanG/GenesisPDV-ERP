@@ -1402,9 +1402,24 @@ public sealed class Venda
         return produto.Tipo == TipoProduto.Produzido ? "produto produzido (ficha técnica) não pode ser componente de combo" : null;
     }
 
+    /// <summary>
+    /// A quantidade nova passa pelas regras de formato do <see cref="AlterarQuantidade"/>: maior que zero e até
+    /// 9.999,999, no máximo 3 casas, inteira fora do fracionável e múltipla do fator da embalagem (só a de fator maior que
+    /// 1). É a mesma regra que a alteração aplica: quem decide se a redução pede o controle de cancelar item (o
+    /// <c>ServicoVenda</c>) usa esta, e nenhuma redução aceita pelo Core fica fora dele (README do PDV › decisão 88).
+    /// </summary>
+    public static bool QuantidadeAceita(ItemVenda item, decimal quantidade)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        return MotivoQuantidadeInvalida(quantidade, item.Fracionavel) is null && MultiploDoFator(item, quantidade);
+    }
+
+    private static bool MultiploDoFator(ItemVenda item, decimal quantidade) =>
+        item.Embalagem is not { Fator: > 1m } e || quantidade % e.Fator == 0m;
+
     private static void ExigirMultiploDoFator(ItemVenda item, decimal quantidade, string oQue)
     {
-        if (item.Embalagem is { Fator: > 1m } e && quantidade % e.Fator != 0m)
+        if (!MultiploDoFator(item, quantidade) && item.Embalagem is { } e)
         {
             throw new RegraNegocioException(
                 $"{oQue} do item {item.Sequencia} deve ser em múltiplos de {e.Fator:0.###} (embalagem {e.Sigla ?? "EMB"} com {e.Fator:0.###}).");
@@ -2561,20 +2576,27 @@ public sealed class Venda
 
     private static void ValidarQuantidade(decimal quantidade, bool fracionavel)
     {
+        if (MotivoQuantidadeInvalida(quantidade, fracionavel) is { } motivo)
+        {
+            throw new RegraNegocioException(motivo);
+        }
+    }
+
+    private static string? MotivoQuantidadeInvalida(decimal quantidade, bool fracionavel)
+    {
         if (quantidade <= 0m || quantidade > QuantidadeMaxima)
         {
-            throw new RegraNegocioException("Quantidade deve ser maior que zero e no máximo 9.999,999.");
+            return "Quantidade deve ser maior que zero e no máximo 9.999,999.";
         }
 
         if (!Arredondamento.CabeEm(quantidade, Arredondamento.CasasQuantidade))
         {
-            throw new RegraNegocioException("Quantidade com no máximo 3 casas decimais.");
+            return "Quantidade com no máximo 3 casas decimais.";
         }
 
-        if (!fracionavel && decimal.Truncate(quantidade) != quantidade)
-        {
-            throw new RegraNegocioException("Produto vendido por unidade, informe quantidade inteira.");
-        }
+        return !fracionavel && decimal.Truncate(quantidade) != quantidade
+            ? "Produto vendido por unidade, informe quantidade inteira."
+            : null;
     }
 
     private ItemVenda ObterItemAtivo(int sequencia)

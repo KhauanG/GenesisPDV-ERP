@@ -50,6 +50,12 @@ public enum SituacaoAposLogin
 
     /// <summary>Sessão de outro operador: diálogo da troca de turno ou de operar no caixa dele.</summary>
     SessaoDeOutro,
+
+    /// <summary>
+    /// Sessão do mesmo operador com a conferência do fechamento já mostrada (README do PDV › decisão 89): direto para o
+    /// fechamento, que volta na conferência gravada (vender ou movimentar a sessão mexeria no calculado dela).
+    /// </summary>
+    Fechar,
 }
 
 /// <param name="NomeOperadorSessao">Quem abriu a sessão encontrada (diálogo "aberto por FULANO desde 08:02").</param>
@@ -121,6 +127,14 @@ public sealed class ServicoCaixa(
     public const string MensagemSemFormaDinheiro =
         "Nenhuma forma de pagamento do tipo Dinheiro no cadastro (ERP › Formas de pagamento): cadastre uma e sincronize para fechar o caixa.";
     public const string MensagemConfirmandoDesativacao = "O terminal está confirmando a desativação pedida no ERP: aguarde a resposta.";
+
+    /// <summary>
+    /// A conferência do fechamento desta sessão já foi mostrada (decisão 89): a sessão fica presa ao fechamento. Venda,
+    /// sangria, reforço, cancelamentos e operar no caixa de outro mudariam o calculado que a contagem gravada confere.
+    /// </summary>
+    public const string MensagemConferenciaMostrada =
+        "A conferência do fechamento deste caixa já foi mostrada: agora o caixa só fecha (F11 › 3 ou a troca de turno). " +
+        "Vendas e movimentos ficam para a próxima sessão.";
     public const string MensagemEmpresaEmImplantacao = "Empresa em implantação: o caixa só abre depois que o ERP ligar Configurações › Geral › Ativa.";
     public const string MensagemLojaSemPdv = "Esta loja não usa PDV (ERP › Lojas › Usa PDV desligado): o caixa não abre nova sessão.";
 
@@ -134,6 +148,13 @@ public sealed class ServicoCaixa(
 
     /// <summary>Auditoria da sangria recusada acima do estimado (20.1; está em <c>ACOES_AUDITORIA</c> do shared).</summary>
     public const string AcaoSangriaRecusada = "sangria_recusada";
+
+    /// <summary>
+    /// A conferência do fechamento foi mostrada (21.2; decisão 89): gravada com a contagem antes de a tela mostrar o
+    /// calculado. Só local (fora do catálogo da nuvem): o que chega ao ERP é o <c>caixa.fechado</c> com a recontagem e a
+    /// primeira contagem.
+    /// </summary>
+    public const string AcaoConferenciaFechamento = "fechamento_conferencia";
 
     /// <summary>
     /// Venda liberada acima do limite de gaveta (20.4): vale para a próxima venda desta sessão <b>e deste operador</b>,
@@ -235,9 +256,14 @@ public sealed class ServicoCaixa(
         if (sessao.SessaoCaixa is { } aberta)
         {
             await AtualizarGavetaAsync(ct, recarregarRegras: false);
-            return aberta.OperadorId == operador.Id
-                ? new ResultadoAposLogin(SituacaoAposLogin.Vender, Sessao: aberta)
-                : new ResultadoAposLogin(SituacaoAposLogin.SessaoDeOutro, Sessao: aberta, NomeOperadorSessao: await NomeUsuarioAsync(aberta.OperadorId, ct));
+            if (aberta.OperadorId != operador.Id)
+            {
+                // A troca de turno (opção 1) volta na conferência gravada; operar no caixa dele (opção 2) é recusado.
+                return new ResultadoAposLogin(SituacaoAposLogin.SessaoDeOutro, Sessao: aberta, NomeOperadorSessao: await NomeUsuarioAsync(aberta.OperadorId, ct));
+            }
+
+            return new ResultadoAposLogin(
+                await caixa.ConferenciaMostradaAsync(aberta.Id, ct) is null ? SituacaoAposLogin.Vender : SituacaoAposLogin.Fechar, Sessao: aberta);
         }
 
         GarantirAberturaPermitida();
@@ -371,8 +397,35 @@ public sealed class ServicoCaixa(
                            ? new FormaCaixa(doEspelho.Id, doEspelho.Descricao, doEspelho.TipoForma)
                            : throw new RegraNegocioException(MensagemSemFormaDinheiro));
         var apuracao = ApuracaoCaixa.Calcular(aberta.FundoTroco, dados.Pagamentos, dados.Movimentos, dinheiro, oferecidas);
-        var cego = new FechamentoCego(apuracao, Regras.Fechamento, operador.Tem(PermissoesPdv.VerCalculadoFechamento));
+        // A conferência já mostrada nesta sessão (decisão 89) volta: sair da tela ou reiniciar não dá contagem nova.
+        var anterior = await caixa.ConferenciaMostradaAsync(aberta.Id, ct);
+        var cego = new FechamentoCego(apuracao, Regras.Fechamento, operador.Tem(PermissoesPdv.VerCalculadoFechamento), anterior);
         return new FechamentoPreparado(aberta, dados, cego, nomeOperadorSessao);
+    }
+
+    /// <summary>
+    /// Passo 1 (21.2): confere a contagem e, quando a conferência vem em seguida (<see cref="RegrasFechamento.TemConferencia"/>),
+    /// grava no SQLite a contagem que vai ser mostrada (e a primeira, depois da recontagem) com a auditoria
+    /// <c>fechamento_conferencia</c>, num commit, <b>antes</b> de a máquina ir à conferência (decisão 89). Recusada a
+    /// gravação, nada muda e a tela não mostra o calculado. A contagem sem conferência não grava nada (pode ser corrigida
+    /// até confirmar: nada foi mostrado).
+    /// </summary>
+    public async Task ContarFechamentoAsync(FechamentoPreparado preparado, IReadOnlyDictionary<Guid, decimal> valores, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(preparado);
+        var cego = preparado.Fechamento;
+        var contagem = cego.ValidarContagem(valores);
+        if (cego.Regras.TemConferencia)
+        {
+            var operador = Operador;
+            var numero = sessao.Identidade?.NumeroCaixa ?? preparado.Sessao.NumeroCaixa;
+            var auditoria = new RegistroAuditoria(AcaoConferenciaFechamento, operador.Id, "sessoes_caixa", preparado.Sessao.Id,
+                $"Conferência do fechamento do caixa {numero:00} mostrada a {operador.Nome}" + (cego.Recontou ? " (recontagem)" : string.Empty),
+                Localizacao: "pdv.caixa");
+            await caixa.RegistrarConferenciaAsync(preparado.Sessao.Id, new ConferenciaMostrada(contagem, cego.PrimeiraContagem), auditoria, ct);
+        }
+
+        cego.Contar(contagem);
     }
 
     /// <summary>
@@ -480,6 +533,7 @@ public sealed class ServicoCaixa(
         var operador = Operador;
         ExigirPermissao(operador, PermissoesPdv.OperarDeOutro, liberacao, automatica: false);
         var aberta = sessao.SessaoCaixa ?? throw new RegraNegocioException(RepositorioCaixa.MensagemSemSessao);
+        await GarantirSemConferenciaMostradaAsync(ct);
         await using var db = await fabrica.CreateDbContextAsync(ct);
         // Ação só local (fica no caixa); a liberação do supervisor também sobe no lote de auditoria.
         db.LogAuditoriaLocal.Add(Auditoria(operador.Id, liberacao?.Supervisor.Id, aberta.Id, "caixa_operar_de_outro",
@@ -491,6 +545,23 @@ public sealed class ServicoCaixa(
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>A conferência do fechamento da sessão aberta já foi mostrada (decisão 89): a sessão só fecha.</summary>
+    public async Task<bool> ConferenciaMostradaAsync(CancellationToken ct = default) =>
+        sessao.SessaoCaixa is { } aberta && await caixa.ConferenciaMostradaAsync(aberta.Id, ct) is not null;
+
+    /// <summary>
+    /// Recusa o que mexe no calculado da sessão aberta (venda nova, sangria, reforço, cancelamento de movimento ou de
+    /// venda, operar no caixa de outro) depois de mostrada a conferência do fechamento (decisão 89): a contagem gravada
+    /// é conferida contra o calculado de quando foi mostrada, e a retomada não pode compará-la com um calculado novo.
+    /// </summary>
+    public async Task GarantirSemConferenciaMostradaAsync(CancellationToken ct = default)
+    {
+        if (await ConferenciaMostradaAsync(ct))
+        {
+            throw new RegraNegocioException(MensagemConferenciaMostrada);
+        }
     }
 
     /// <summary>Situação da sessão aberta para a tela de venda (8.1): alerta de sessão antiga ou bloqueio da venda nova.</summary>
@@ -624,6 +695,7 @@ public sealed class ServicoCaixa(
         GarantirForaDaConfirmacao();
         await CarregarRegrasAsync(ct);
         var aberta = sessao.SessaoCaixa ?? throw new RegraNegocioException(RepositorioCaixa.MensagemSemSessao);
+        await GarantirSemConferenciaMostradaAsync(ct);
         await GarantirTipoAceitoAsync(TipoEvento(tipo), ct);
         return new PreparoMovimento(await caixa.DinheiroGavetaAsync(aberta.Id, ct) ?? 0m, EstimadoVisivel);
     }
@@ -738,6 +810,7 @@ public sealed class ServicoCaixa(
         var operador = Operador;
         ExigirPermissao(operador, PermissoesPdv.CancelarMovimento, liberacao, automatica: false);
         GarantirForaDaConfirmacao();
+        await GarantirSemConferenciaMostradaAsync(ct);
         var texto = RegrasMovimentoCaixa.MotivoCancelamento(motivo);
         var movimento = (await MovimentosAsync(ct)).FirstOrDefault(m => m.Id == movimentoId)
                         ?? throw new RegraNegocioException("Movimento não encontrado na sessão aberta.");

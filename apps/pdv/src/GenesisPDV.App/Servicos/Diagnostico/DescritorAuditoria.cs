@@ -96,6 +96,7 @@ public static partial class DescritorAuditoria
         new("reimpressao", GrupoAuditoria.Caixa, "reimprimiu um comprovante", "Reimpressão"),
         new(ServicoCaixa.AcaoSangriaRecusada, GrupoAuditoria.Caixa, "teve uma sangria recusada", "Sangria recusada"),
         new("caixa_operar_de_outro", GrupoAuditoria.Caixa, "operou o caixa aberto por outra pessoa", "Caixa de outro operador"),
+        new(ServicoCaixa.AcaoConferenciaFechamento, GrupoAuditoria.Caixa, "viu a conferência do fechamento", "Conferência do fechamento"),
         new("movimentar", GrupoAuditoria.Caixa, "fez um movimento", "Movimento"),
         new("conferir", GrupoAuditoria.Caixa, "conferiu", "Conferência"),
 

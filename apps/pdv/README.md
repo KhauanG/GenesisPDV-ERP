@@ -342,7 +342,7 @@ dados.
 
 ### Gerar o instalador e publicar uma versão (desenvolvimento)
 
-- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.12.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84; a `0.12.0`, a R2 da Fase 2, decisões 85 e 86). A mesma aparece no
+- **Versão única:** a `<Version>` do `apps/pdv/Directory.Build.props` (hoje `0.13.0`: a `0.9.0` abriu o piloto, decisão 62; a `0.9.1` trouxe a usabilidade da decisão 65; a `0.10.0` traz a Central do PDV, decisões 66 a 79; a `0.11.0`, a R1 da Fase 2, decisões 81 a 84; a `0.12.0`, a R2 da Fase 2, decisões 85 e 86; a `0.13.0`, os reforços do caixa do PR-15 de segurança, decisões 88 a 90). A mesma aparece no
   nome do instalador, no rodapé do login e do assistente e no `versao_app` que vai à nuvem.
 - **Windows** (SDK do .NET 10; o Inno Setup 6 vem pelo Chocolatey se faltar):
   `pwsh apps/pdv/instalador/windows/gerar-instalador.ps1 [-Versao X.Y.Z] [-UrlApi https://...]` →
@@ -3903,3 +3903,65 @@ reimpresso continua o original, com o número do caixa.
     - **Pendência do dono** (`docs/andamento.md`): atualizar os caixas das lojas para o 0.12.0, um de cada vez, antes
       da execução real do fechamento (`docs/implantacao/checklist-fechamento-fase2.md`, passo 0); o saldo novo dos
       passos 2 a 5 é conferido também na pesquisa F2 do caixa.
+
+88. **Diminuir a quantidade passa pelo controle de cancelar item em toda redução que o Core aceita** (PR-15 de
+    segurança, SEG-B12; PDV 13.1; decisão 65). Diminuir a quantidade de um item já lançado é um cancelamento parcial:
+    sem `pdv.venda.cancelar_item`, ou com `pdv.cancelar_item_exige_supervisor` ligada, o `ServicoVenda` recusa com
+    `ReducaoExigeLiberacaoException` e a tela pede o supervisor (linha cancelada, `autorizado_por_id`, auditorias
+    `item_cancelado` e `liberacao`).
+    - **Uma regra só:** quem decide se a redução pede o controle usa `Venda.QuantidadeAceita` (Core), a mesma regra de
+      formato que o `AlterarQuantidade` aplica — maior que zero e até 9.999,999, no máximo 3 casas, inteira fora do
+      fracionável e múltipla do fator da embalagem **só quando o fator é maior que 1**. A fração do item pesado (KG, L,
+      M) sem embalagem entra no controle: a redução do queijo de 2 para 1,5 ou para 0,001 pede o supervisor como a de 2
+      para 1.
+    - O que o Core recusaria de qualquer jeito (decimal na unidade, 4 casas, fora do fator do fardo, combo, casco)
+      continua recusado antes de qualquer PIN. Aumentar continua livre.
+    - Testes: `PrecosTests.Quantidade_aceita_e_a_mesma_regra_da_alteracao` (Core) e
+      `UsabilidadeTelasTests.Diminuir_item_pesado_para_quantidade_fracionada_tambem_pede_o_supervisor_e_vira_cancelamento_parcial`
+      (a fração pelo serviço e pelo F3, a liberação com as auditorias e a chave da loja).
+
+89. **A conferência do fechamento é gravada antes de aparecer e a mesma sessão volta a ela** (PR-15 de segurança,
+    SEG-B12; PDV 21.2; vale com `pdv.fechamento_mostra_conferencia` ligada — o padrão O3 do dono não mostra conferência).
+    - **Gravada antes de mostrar:** o Enter da contagem passa pelo `ServicoCaixa.ContarFechamentoAsync`, que confere a
+      contagem (`FechamentoCego.ValidarContagem`) e, quando a conferência vem em seguida, grava num commit só a
+      `configuracao_terminal['fechamento.conferencia']` (chave interna: a sessão, a contagem mostrada e a primeira
+      contagem depois da recontagem, a hora e quem contou — só o que o operador digitou, nunca o calculado) e a
+      auditoria local `fechamento_conferencia` (grupo Caixa do Histórico de uso; fora do catálogo da nuvem: o que chega
+      ao ERP é o `caixa.fechado` com `recontagem` e `valor_primeira_contagem`). Só depois do commit a tela mostra
+      Calculado × Digitado × Diferença; se a gravação falhar, nada é mostrado e a contagem pode ser repetida.
+    - **A mesma sessão volta a ela:** a preparação do fechamento (`PrepararFechamentoAsync`, também a troca de turno pelo
+      próximo operador) lê a conferência da sessão aberta e monta o `FechamentoCego` a partir dela (`Retomada`): a tela
+      abre já na conferência com a contagem gravada (somente leitura, o aviso "A conferência deste caixa já foi
+      mostrada…"), o Esc continua sem sair dela e a recontagem segue a regra de sempre (uma vez, só com
+      `pdv.permite_recontagem`; a mostrada vira a primeira contagem). A diferença acima da tolerância continua pedindo a
+      justificativa. Fechar o app, reiniciar o computador ou faltar energia na conferência não dá uma contagem nova.
+    - **A sessão fica presa ao fechamento:** enquanto a chave existir, nada muda o calculado que a contagem gravada
+      confere. A venda nova, a sangria e o reforço, o cancelamento de movimento ou de venda finalizada, a venda antiga
+      sem sessão que entraria nela e o "Operar no caixa de FULANO" (opção 2 da troca de turno) são recusados com
+      `ServicoCaixa.MensagemConferenciaMostrada`. O login do dono da sessão vai direto ao fechamento (a conferência
+      gravada); sem `pdv.caixa.fechar`, a venda abre com o aviso e o F11 › 3 pede o supervisor. O próximo operador
+      fecha pela troca de turno (opção 1), que também volta na conferência. Sem isso, uma venda depois do reinício
+      faria a retomada comparar a contagem velha com um calculado novo (diferença falsa), e uma sangria lançada depois
+      de ver uma falta a esconderia.
+    - **Conferência desligada depois de mostrada:** a contagem nova é cega (nada do calculado aparece, O3) e é gravada
+      como recontagem, com a mostrada como a primeira contagem. Se a mostrada já era a recontagem (a regra de recontar
+      uma vez já foi usada), não há contagem nova: a tela mostra a contagem gravada, somente leitura e sem o calculado
+      (`FechamentoCego.ContagemFixa`), e o Enter confirma com a recontagem e a primeira contagem como estavam.
+    - **Fim:** o commit do `caixa.fechado` apaga a chave; a de outra sessão é ignorada, e um valor ilegível não prende o
+      fechamento. Sem migração EF nem mudança de protocolo (chave nova em `ChavesConfiguracaoTerminal.Internas`: nunca
+      aparece na tela, no pacote de suporte nem no `terminal.configuracao_alterada`).
+    - Testes: `CaixaTests.Conferencia_ja_mostrada_volta_na_conferencia_e_a_recontagem_segue_a_regra` (Core),
+      `RepositorioCaixaTests.Conferencia_do_fechamento_grava_com_a_auditoria_vale_so_para_a_sessao_e_o_fechamento_a_consome`
+      (Data) e, no App, `CaixaTelasTests.Conferencia_mostrada_fica_gravada_e_reiniciar_o_app_volta_nela_sem_contagem_nova`,
+      `Com_recontagem_a_conferencia_retomada_reconta_uma_vez_e_guarda_a_primeira_contagem`,
+      `Conferencia_mostrada_prende_a_sessao_ao_fechamento_sem_venda_nem_movimento_depois_de_reiniciar`,
+      `Conferencia_desligada_depois_de_mostrada_reconta_as_cegas_e_grava_a_recontagem` e
+      `Troca_de_turno_volta_na_conferencia_mostrada_e_operar_no_caixa_do_outro_e_recusado` (o app reiniciado na mesma
+      pasta).
+
+90. **Versão 0.13.0: os reforços do caixa do PR-15 de segurança** (SEG-B12; decisões 88 e 89). A `<Version>` do
+    `Directory.Build.props` passa de 0.12.0 para **0.13.0** (e os exemplos do `GenesisPDV.iss` e do
+    `gerar-instalador.ps1`), o número do meio como nas decisões 84 e 85; o SEG-B13 entra na mesma versão. **Sem
+    migração EF, sem `Esquema.g.cs` novo e sem mudança de protocolo** (`versoes_schema` e a `versao_schema_local` não
+    mudam): o 0.12.0 instalado continua sincronizando com a API do PR-15, e o 0.13.0 funciona com a API anterior. A ordem
+    de sempre na implantação: a API antes do PDV (SYNC 17.2).
