@@ -3,7 +3,12 @@ import { createHash } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { ehAcaoAuditoria, MOTIVOS_FALHA_LOGIN } from '../enums.js';
+import {
+  ACOES_AUDITORIA_SO_SERVIDOR,
+  ehAcaoAuditoria,
+  ehAcaoAuditoriaSoServidor,
+  MOTIVOS_FALHA_LOGIN,
+} from '../enums.js';
 import { jcs } from '../jcs.js';
 import {
   ativarSchema,
@@ -12,10 +17,14 @@ import {
   eventoSchema,
   FLUXOS,
   heartbeatSchema,
+  NUMERO_VENDA_MAXIMO,
+  VALE_NUMERO_MAXIMO,
   LIMITE_RECUPERAR_MAXIMO,
   MAXIMO_IDS_EVENTOS_STATUS,
   MAXIMO_SEQUENCIAS_LACUNA,
   payloadAuditoriaRegistrosSchema,
+  PROFUNDIDADE_MAXIMA_PAYLOAD,
+  profundidadeAte,
   pushSchema,
   recuperarQuerySchema,
   renovarTokenSchema,
@@ -144,6 +153,23 @@ describe('fixtures do protocolo de sincronização', () => {
     );
   });
 
+  it('heartbeat: o contador de venda vai até o que cabe no número exibido; o de vale, até os 7 dígitos do código', () => {
+    const hb = ler('heartbeat.requisicao.json') as Record<string, unknown>;
+    for (const [campo, maximo] of [
+      ['venda_ultimo_numero', NUMERO_VENDA_MAXIMO],
+      ['vale_ultimo_numero', VALE_NUMERO_MAXIMO],
+    ] as const) {
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: maximo }).success).toBe(true);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: maximo + 1 }).success).toBe(false);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: -1 }).success).toBe(false);
+      expect(heartbeatSchema.safeParse({ ...hb, [campo]: null }).success).toBe(true);
+    }
+    expect(heartbeatSchema.safeParse({ ...hb, vale_ultimo_numero: 10_000_000 }).success).toBe(false);
+    expect(`L99-C99-${NUMERO_VENDA_MAXIMO}`).toHaveLength(20);
+    // `VC` + loja 2 + caixa 2 + sequencial 7 + DV (SYNC 13.4; `ck_vales_codigo ^VC[0-9]{12}$`).
+    expect(`VC9999${VALE_NUMERO_MAXIMO}0`).toMatch(/^VC[0-9]{12}$/);
+  });
+
   it('chave com nome errado numa requisição é apontada (o zod só a descartaria)', () => {
     const hb = ler('heartbeat.requisicao.json') as Record<string, unknown>;
     const errado = { ...hb, nfce_contingencia_mais_antiga: hb.nfce_contingencia_mais_antiga_em };
@@ -166,6 +192,31 @@ describe('fixtures do protocolo de sincronização', () => {
       expect(ev.terminal_id).toBe(lote.terminal_id);
       expect(createHash('sha256').update(jcs(ev.payload), 'utf8').digest('hex')).toBe(ev.payload_sha256);
     }
+  });
+
+  it('push: o payload aninha até 32 níveis; acima, o envelope é recusado sem percorrer o payload recursivamente', () => {
+    const bruto = pushSchema.parse(ler('push.auditoria.requisicao.json')).eventos[0] as Record<
+      string,
+      unknown
+    >;
+    /** Payload com `n` níveis de objeto/lista (o próprio payload é o primeiro). */
+    const aninhado = (n: number) => {
+      let v: unknown = { fim: true };
+      for (let i = 1; i < n - 1; i++) v = [v];
+      return { registros: v };
+    };
+    expect(profundidadeAte(aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD), PROFUNDIDADE_MAXIMA_PAYLOAD)).toBe(true);
+    expect(profundidadeAte(aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD + 1), PROFUNDIDADE_MAXIMA_PAYLOAD)).toBe(
+      false,
+    );
+    expect(profundidadeAte({ a: 1, b: 'x', c: null }, 1)).toBe(true);
+    expect(eventoSchema.safeParse({ ...bruto, payload: aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD) }).success).toBe(
+      true,
+    );
+    const fundo = eventoSchema.safeParse({ ...bruto, payload: aninhado(PROFUNDIDADE_MAXIMA_PAYLOAD + 1) });
+    expect(fundo.error?.issues.map((i) => i.path.join('.'))).toEqual(['payload']);
+    // Cem mil níveis: a conferência termina (sem recursão) e recusa.
+    expect(eventoSchema.safeParse({ ...bruto, payload: aninhado(100_000) }).success).toBe(false);
   });
 
   it('pull: a página traz um tombstone (excluido_em preenchido) e decimais em texto', () => {
@@ -207,6 +258,11 @@ describe('fixtures do protocolo de sincronização', () => {
     const p = payloadAuditoriaRegistrosSchema.parse(ler('auditoria.registros.payload.json'));
     expect(p.registros.filter((r) => !ehAcaoAuditoria(r.acao)).map((r) => r.acao)).toEqual([]);
     expect(p.registros.map((r) => r.acao)).toContain('hash_fora_dos_limites');
+    // As ações que só o servidor grava são do catálogo, e nenhuma é das que o PDV grava (o push as recusa).
+    expect(ACOES_AUDITORIA_SO_SERVIDOR.every((a) => ehAcaoAuditoria(a))).toBe(true);
+    expect(p.registros.filter((r) => ehAcaoAuditoriaSoServidor(r.acao)).map((r) => r.acao)).toEqual([]);
+    expect(ehAcaoAuditoriaSoServidor('terminal_ativado')).toBe(false);
+    expect(ehAcaoAuditoriaSoServidor('terminal_revogado')).toBe(true);
     // As recusas próprias do caixa (PDV 7.2) também valem em `historico_logins` (check da migração 0009).
     const motivos = p.logins.map((l) => l.motivo_falha).filter((m) => m != null);
     expect(motivos).toEqual(expect.arrayContaining(['sem_acesso_pdv', 'totem', 'hash_fora_dos_limites']));

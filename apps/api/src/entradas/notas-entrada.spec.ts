@@ -74,12 +74,14 @@ describe('separarArquivosNfe', () => {
   });
 
   it('os limites de zip-bomba valem somados para o envio: o .zip que passaria do que resta é recusado sem abrir', async () => {
-    // 64 KiB de texto repetido (a taxa só é conferida acima disso) comprimem para ~120 bytes: um .zip de 999 entradas
-    // declara 62 MiB e cabe nos limites de um .zip (1.000 entradas, 100 MiB), mas o segundo igual passaria das 1.000
-    // entradas do envio.
-    const entrada = Buffer.alloc(64 * 1024, 'a');
+    // Um .zip de 999 entradas pequenas cabe nos limites de um .zip (1.000 entradas, 100 MiB), mas o segundo igual
+    // passaria das 1.000 entradas do envio.
     const grande = montarZip(
-      Array.from({ length: 999 }, (_, i) => ({ nome: `lixo-${i}.txt`, dados: entrada })),
+      Array.from({ length: 999 }, (_, i) => ({
+        nome: `lixo-${i}.txt`,
+        dados: Buffer.from(`${i}`),
+        guardar: true,
+      })),
     );
     expect(grande.length).toBeLessThan(300 * 1024);
     const pecas = await separarArquivosNfe([
@@ -94,6 +96,20 @@ describe('separarArquivosNfe', () => {
     // O que ainda cabe (o .zip de uma entrada) segue.
     expect(pecas.filter((p) => 'xml' in p).map((p) => 'xml' in p && p.xml.nome)).toEqual([
       'pequeno.zip › n.xml',
+    ]);
+  });
+
+  it('a taxa de compressão vale para o .zip inteiro: muitas entradas pequenas e muito comprimidas são recusadas', async () => {
+    // 64 KiB de texto repetido (a taxa por entrada só é conferida acima disso) comprimem para ~120 bytes: 999 entradas
+    // declaram 62 MiB num .zip de menos de 300 KiB, bem acima da taxa 100 do arquivo inteiro (decisão 197).
+    const entrada = Buffer.alloc(64 * 1024, 'a');
+    const comprimido = montarZip(
+      Array.from({ length: 999 }, (_, i) => ({ nome: `lixo-${i}.txt`, dados: entrada })),
+    );
+    expect(comprimido.length).toBeLessThan(300 * 1024);
+    const pecas = await separarArquivosNfe([{ nome: 'a.zip', conteudo: comprimido }]);
+    expect(pecas.map((p) => 'recusa' in p && `${p.recusa.motivo}:${p.recusa.arquivo}`)).toEqual([
+      'ZIP_GRANDE_DEMAIS:a.zip',
     ]);
   });
 

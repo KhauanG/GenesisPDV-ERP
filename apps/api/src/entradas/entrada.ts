@@ -56,6 +56,7 @@ import { erroCampo } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
 import { produtosHistoricoPrecos } from '../database/empresa/schema/index.js';
+import { exigirEstoqueAtivo } from '../estoques/acertos.js';
 import { compensacoesDoDocumento, compensarDefinir } from '../estoques/compensacao.js';
 import {
   lancarDocumento,
@@ -996,6 +997,9 @@ export async function estornarEntrada(
      where m.documento_tipo = ${doc.documentoTipo} and m.documento_id = ${doc.documentoId}
        and m.tipo_movimento = ${doc.tipoMovimento} and m.estorno_de_id is null
        and not exists (select 1 from movimentos_estoque e where e.estorno_de_id = m.id)`);
+  // O estoque continua ativo (`exigirEstoqueAtivo`): o estorno não lança no estoque que o administrador fechou.
+  for (const estoqueId of new Set(movs.map((m) => m.estoque_id)))
+    await exigirEstoqueAtivo(tx, estoqueId, 'estornar');
   // As compensações que um "Definir" lançou contra estas entradas: estornadas junto, no item da entrada compensada.
   for (const c of await compensacoesDoDocumento(tx, doc.documentoTipo, doc.documentoId))
     movs.push({ ...c, fator: '1', pessoa_id: null, compensacao: true });

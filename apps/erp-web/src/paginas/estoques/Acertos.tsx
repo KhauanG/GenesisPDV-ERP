@@ -52,6 +52,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -706,13 +707,16 @@ export function FormularioAcerto() {
     } else setErroAcao((e as Error).message);
   };
   const efetivar = useMutation({
-    mutationFn: () => apiErp.post<AcertoDetalhe>(`/acertos/${id}/efetivar`, { versao: a!.versao }),
+    mutationFn: () => apiErp.post<AcertoDetalhe>(`/acertos/${segmento(id)}/efetivar`, { versao: a!.versao }),
     onSuccess: (d) => depoisDaAcao(d, 'Acerto efetivado: estoque atualizado'),
     onError: aoErroAcao,
   });
   const estornar = useMutation({
     mutationFn: () =>
-      apiErp.post<AcertoDetalhe>(`/acertos/${id}/estornar`, { versao: a!.versao, motivo: motivoEstorno }),
+      apiErp.post<AcertoDetalhe>(`/acertos/${segmento(id)}/estornar`, {
+        versao: a!.versao,
+        motivo: motivoEstorno,
+      }),
     onSuccess: (d) => {
       setEstornando(false);
       setMotivoEstorno('');

@@ -12,6 +12,7 @@ import { IconCopy } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -108,7 +109,7 @@ export function FormularioPerfil() {
   async function duplicar() {
     setDuplicando(true);
     try {
-      const novo = await apiErp.post<PerfilDetalhe>(`/perfis/${id}/duplicar`);
+      const novo = await apiErp.post<PerfilDetalhe>(`/perfis/${segmento(id)}/duplicar`);
       void queryClient.invalidateQueries({ queryKey: ['listagem', 'perfis'] });
       notifications.show({ color: 'green', message: `Perfil duplicado: ${novo.nome}` });
       navigate(`${ROTA_PERFIS}/${novo.id}`);

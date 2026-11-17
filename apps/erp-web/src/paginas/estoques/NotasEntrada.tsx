@@ -43,6 +43,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -345,7 +346,8 @@ export function FormularioNotaEntrada() {
   const [erroMovimentacao, setErroMovimentacao] = useState<ErroAcaoNota | null>(null);
   const r = useQuery({
     queryKey: ['nota-entrada', id],
-    queryFn: ({ signal }) => apiErp.get<NotaEntradaDetalhe>(`/notas-entrada/${id}`, { sinal: signal }),
+    queryFn: ({ signal }) =>
+      apiErp.get<NotaEntradaDetalhe>(`/notas-entrada/${segmento(id)}`, { sinal: signal }),
     enabled: !!id,
   });
   const n = r.data;
@@ -353,7 +355,7 @@ export function FormularioNotaEntrada() {
   const acao = useMutation({
     mutationFn: (tipo: 'ignorar' | 'reabrir') =>
       apiErp.post<NotaEntradaDetalhe>(
-        `/notas-entrada/${id}/${tipo}`,
+        `/notas-entrada/${segmento(id)}/${tipo}`,
         tipo === 'ignorar' ? { versao: n!.versao, motivo } : { versao: n!.versao },
       ),
     onSuccess: (d, tipo) => {

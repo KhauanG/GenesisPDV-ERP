@@ -4,6 +4,8 @@
  * cabeçalho e as linhas como valores crus (número/booleano/data do xlsx, texto do CSV); linhas totalmente vazias
  * saem, mas o número da linha original é mantido para o relatório.
  */
+import { Readable } from 'node:stream';
+import { crc32 } from 'node:zlib';
 import { Logger } from '@nestjs/common';
 import { LIMITE_LINHAS_IMPORTACAO } from '@genesis/shared';
 import { readSheet } from 'read-excel-file/node';
@@ -15,17 +17,22 @@ const log = new Logger('Planilha');
 
 /**
  * Limites contra planilha-bomba (o processo é de todas as empresas): o `.xlsx` é um zip e o `read-excel-file`
- * descompacta tudo em memória sem teto. Antes de ler, o diretório central é conferido (entradas, tamanho
- * descompactado por entrada e total, taxa de compressão) e cada entrada é descompactada **de verdade** com
- * `maxOutputLength` igual ao tamanho declarado (cabeçalho mentiroso também é recusado), pelo percurso comum
- * (`percorrerZip`, o mesmo dos XMLs de NF-e, com limites próprios). No máximo `PLANILHA_CONCORRENCIA` (padrão 2)
- * leituras ao mesmo tempo no processo.
+ * descompacta tudo em memória sem teto. Por isso ele **não descompacta nada** (README da API › decisão 197): o
+ * diretório central é conferido (entradas, tamanho descompactado por entrada e total, taxa de compressão, a estrutura
+ * de um zip só) e as entradas que o leitor usa são descompactadas **uma vez**, por nós, com `maxOutputLength` igual ao
+ * tamanho declarado (cabeçalho mentiroso também é recusado), pelo percurso comum (`percorrerZip`, o mesmo dos XMLs de
+ * NF-e, com limites próprios); o `read-excel-file` recebe um zip novo, montado só com essas entradas já descompactadas
+ * e guardadas sem compressão (`zipConferido`). No máximo `PLANILHA_CONCORRENCIA` (padrão 2) leituras ao mesmo tempo no
+ * processo.
  */
 export const LIMITES_ZIP: LimitesZip & { porEntradaBytes: number } = {
   entradas: 100,
   porEntradaBytes: 120 * 1024 * 1024,
   totalBytes: 150 * 1024 * 1024,
-  /** Taxa máxima (descompactado ÷ compactado) para entradas acima de 1 MiB. */
+  /**
+   * Taxa máxima (descompactado ÷ compactado) das entradas acima de 1 MiB e do arquivo inteiro quando o total passa
+   * de 1 MiB (decisão 197).
+   */
   taxa: 100,
   taxaAPartirDeBytes: 1024 * 1024,
 };
@@ -88,15 +95,24 @@ const grandeDemais = () =>
     'A planilha é grande demais depois de descompactada. Divida o arquivo ou salve como .csv.',
   );
 
+/** Uma entrada do `.xlsx` já descompactada dentro dos `LIMITES_ZIP`. */
+export interface EntradaPlanilha {
+  nome: string;
+  conteudo: Buffer;
+}
+
 /**
- * Confere o zip do `.xlsx` antes do `readSheet` (LIMITES_ZIP), com o percurso comum (`percorrerZip`, `comum/zip.ts`):
- * o diretório central e cada entrada descompactada de verdade, com o teto do tamanho declarado.
+ * As entradas que o `read-excel-file` lê (as `.xml` e `.xml.rels`, o mesmo filtro dele; pastas, imagens e o resto
+ * ficam de fora sem descompactar), descompactadas pelo percurso comum (`percorrerZip`, `comum/zip.ts`) com o teto do
+ * tamanho declarado, depois de conferido o zip inteiro contra os `LIMITES_ZIP`.
  */
-export async function conferirZip(conteudo: Buffer): Promise<void> {
+export async function conferirZip(conteudo: Buffer): Promise<EntradaPlanilha[]> {
+  const entradas: EntradaPlanilha[] = [];
   try {
     await percorrerZip(conteudo, LIMITES_ZIP, async (entrada) => {
       if (entrada.descompactado > LIMITES_ZIP.porEntradaBytes) throw new RecusaZip('grande_demais');
-      await entrada.ler();
+      if (!entrada.nome.endsWith('.xml') && !entrada.nome.endsWith('.xml.rels')) return;
+      entradas.push({ nome: entrada.nome, conteudo: await entrada.ler() });
     });
   } catch (e) {
     if (!(e instanceof RecusaZip)) throw e;
@@ -104,13 +120,64 @@ export async function conferirZip(conteudo: Buffer): Promise<void> {
       ? grandeDemais()
       : new ErroApi('VALIDACAO', 'O arquivo .xlsx está corrompido.');
   }
+  return entradas;
+}
+
+/**
+ * Um zip novo com as entradas já descompactadas, guardadas sem compressão (método 0), com o tamanho e o CRC certos e
+ * sem descritor de dados: o leitor da planilha só copia o que já está dentro dos limites. Em fluxo, para a memória não
+ * dobrar: cada entrada sai da lista quando é entregue.
+ */
+export function zipConferido(entradas: EntradaPlanilha[]): Readable {
+  function* partes(): Generator<Buffer> {
+    const centrais: Buffer[] = [];
+    let deslocamento = 0;
+    for (let e = entradas.shift(); e; e = entradas.shift()) {
+      const nome = Buffer.from(e.nome, 'utf8');
+      const crc = crc32(e.conteudo);
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(10, 4);
+      local.writeUInt16LE(0x800, 6);
+      local.writeUInt32LE(crc, 14);
+      local.writeUInt32LE(e.conteudo.length, 18);
+      local.writeUInt32LE(e.conteudo.length, 22);
+      local.writeUInt16LE(nome.length, 26);
+      const central = Buffer.alloc(46);
+      central.writeUInt32LE(0x02014b50, 0);
+      central.writeUInt16LE(10, 4);
+      central.writeUInt16LE(10, 6);
+      central.writeUInt16LE(0x800, 8);
+      central.writeUInt32LE(crc, 16);
+      central.writeUInt32LE(e.conteudo.length, 20);
+      central.writeUInt32LE(e.conteudo.length, 24);
+      central.writeUInt16LE(nome.length, 28);
+      central.writeUInt32LE(deslocamento, 42);
+      centrais.push(central, nome);
+      deslocamento += 30 + nome.length + e.conteudo.length;
+      yield local;
+      yield nome;
+      yield e.conteudo;
+    }
+    const tamanhoCentral = centrais.reduce((s, b) => s + b.length, 0);
+    const fim = Buffer.alloc(22);
+    fim.writeUInt32LE(0x06054b50, 0);
+    fim.writeUInt16LE(centrais.length / 2, 8);
+    fim.writeUInt16LE(centrais.length / 2, 10);
+    fim.writeUInt32LE(tamanhoCentral, 12);
+    fim.writeUInt32LE(deslocamento, 16);
+    yield* centrais;
+    yield fim;
+  }
+  return Readable.from(partes(), { objectMode: false });
 }
 
 async function lerXlsx(conteudo: Buffer): Promise<Celula[][]> {
-  await conferirZip(conteudo);
+  const entradas = await conferirZip(conteudo);
+  if (!entradas.length) throw new ErroApi('VALIDACAO', MENSAGEM_ILEGIVEL);
   let dados: unknown[][];
   try {
-    dados = (await readSheet(conteudo)) as unknown[][];
+    dados = (await readSheet(zipConferido(entradas))) as unknown[][];
   } catch (e) {
     // A mensagem da biblioteca fica no log (não é útil ao usuário e expõe detalhes internos).
     log.warn(`Falha ao ler .xlsx: ${(e as Error).message}`);

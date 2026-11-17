@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using GenesisPDV.Core.Comum;
+using GenesisPDV.Core.Vendas;
 using GenesisPDV.Data.Backup;
 using GenesisPDV.Data.Entidades;
 using GenesisPDV.Data.Repositorios;
@@ -399,8 +400,79 @@ public class BackupLocalTests
             await db.IdentidadeTerminal.ExecuteUpdateAsync(s => s.SetProperty(i => i.TokenProtegido, new byte[] { 9, 9, 9 }), Ct);
         }
 
-        // Corrupção fora de identidade_terminal: um índice com o conteúdo trocado reprova o integrity_check, mas a linha
-        // do terminal ainda sai (o token rotacionado depois do backup não volta ao antigo).
+        // Corrupção fora de identidade_terminal: o token rotacionado depois do backup não volta ao antigo.
+        CorromperForaDaIdentidade(banco);
+        var r = await new RestauracaoBackup(banco.Fabrica, banco.Caminhos, backup, relogio).RestaurarAsync(arquivo.Arquivo, null, null, Ct);
+        Assert.Contains(".corrompido-", r.BancoAnterior, StringComparison.Ordinal);
+        Assert.Equal(new byte[] { 9, 9, 9 }, (byte[])banco.Escalar("select token_protegido from identidade_terminal")!);
+    }
+
+    /// <summary>
+    /// A página de <c>estado_conexao</c> (gravada a cada heartbeat) estragada no banco em uso: a <c>maior_hora_vista</c>
+    /// não sai, mas o token pendente da rotação em curso (SYNC 3.7), lido antes e à parte, continua no arquivo restaurado.
+    /// </summary>
+    [Fact]
+    public async Task Banco_em_uso_com_a_pagina_de_estado_conexao_corrompida_mantem_o_token_pendente()
+    {
+        var (banco, relogio, backup) = await AtivadoAsync();
+        using var _ = banco;
+        var arquivo = await backup.FazerAsync(MotivosBackup.Periodico, Ct);
+        Assert.Equal(0L, EscalarNoBackup(arquivo.Arquivo, $"select count(*) from configuracao_terminal where chave = '{ChavesConfiguracaoTerminal.TokenPendente}'"));
+
+        // Depois do backup: a rotação pedida e o token novo guardado como pendente.
+        var pendenteEmUso = new Dictionary<string, string> { ["token"] = "dGVzdGU=", ["requisicao_id"] = Guid.CreateVersion7().ToString("D") };
+        var terminal = new RepositorioTerminal(banco.Fabrica, relogio);
+        await terminal.GravarConfiguracaoAsync(ChavesConfiguracaoTerminal.TokenPendente, pendenteEmUso, ct: Ct);
+        await using (var db = banco.Fabrica.CreateDbContext())
+        {
+            await db.IdentidadeTerminal.ExecuteUpdateAsync(s => s.SetProperty(i => i.TokenProtegido, new byte[] { 9, 9, 9 }), Ct);
+        }
+
+        var esperado = (string)banco.Escalar($"select valor from configuracao_terminal where chave = '{ChavesConfiguracaoTerminal.TokenPendente}'")!;
+        CorromperPaginaDaTabela(banco, "estado_conexao");
+        var r = await new RestauracaoBackup(banco.Fabrica, banco.Caminhos, backup, relogio).RestaurarAsync(arquivo.Arquivo, null, null, Ct);
+        Assert.Contains(".corrompido-", r.BancoAnterior, StringComparison.Ordinal);
+        Assert.Equal(new byte[] { 9, 9, 9 }, (byte[])banco.Escalar("select token_protegido from identidade_terminal")!);
+        Assert.Equal(esperado, banco.Escalar($"select valor from configuracao_terminal where chave = '{ChavesConfiguracaoTerminal.TokenPendente}'"));
+    }
+
+    /// <summary>
+    /// Estraga só a página raiz de <paramref name="tabela"/> (o byte do tipo da página): o <c>SELECT</c> nela lança
+    /// SQLITE_CORRUPT, e as outras tabelas continuam saindo na leitura direta.
+    /// </summary>
+    private static void CorromperPaginaDaTabela(BancoTemporario banco, string tabela)
+    {
+        SqliteConnection.ClearAllPools();
+        long raiz, tamanho;
+        using (var c = new SqliteConnection($"Data Source={banco.Caminhos.ArquivoBanco};Pooling=False"))
+        {
+            c.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = $"SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = '{tabela}';";
+            raiz = (long)cmd.ExecuteScalar()!;
+            cmd.CommandText = "PRAGMA page_size;";
+            tamanho = (long)cmd.ExecuteScalar()!;
+        }
+
+        SqliteConnection.ClearAllPools();
+        using (var f = new FileStream(banco.Caminhos.ArquivoBanco, FileMode.Open, FileAccess.Write))
+        {
+            f.Position = ((raiz - 1) * tamanho) + (raiz == 1 ? 100 : 0);
+            f.WriteByte(0xFF);
+        }
+
+        Assert.Throws<SqliteException>(() => banco.Escalar($"select count(*) from {tabela}"));
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>
+    /// Um índice com o conteúdo trocado reprova o <c>integrity_check</c>, mas as linhas de <c>identidade_terminal</c> e de
+    /// <c>estado_conexao</c> ainda saem (o caminho da restauração automática depois do banco corrompido).
+    /// </summary>
+    private static void CorromperForaDaIdentidade(BancoTemporario banco)
+    {
         SqliteConnection.ClearAllPools();
         using (var c = new SqliteConnection($"Data Source={banco.Caminhos.ArquivoBanco};Pooling=False"))
         {
@@ -415,9 +487,83 @@ public class BackupLocalTests
 
         SqliteConnection.ClearAllPools();
         Assert.NotEqual("ok", banco.Escalar("PRAGMA integrity_check;")?.ToString());
-        var r = await new RestauracaoBackup(banco.Fabrica, banco.Caminhos, backup, relogio).RestaurarAsync(arquivo.Arquivo, null, null, Ct);
-        Assert.Contains(".corrompido-", r.BancoAnterior, StringComparison.Ordinal);
-        Assert.Equal(new byte[] { 9, 9, 9 }, (byte[])banco.Escalar("select token_protegido from identidade_terminal")!);
+    }
+
+    /// <summary>
+    /// SYNC 3.8 e 22.1: o status do terminal só avança (<c>ativo → desativando → revogado</c>), e a restauração fica com o
+    /// mais restritivo entre o do arquivo e o do banco em uso — também na automática, com o banco em uso corrompido. O
+    /// backup tirado antes da ordem do ERP não devolve o caixa a <c>ativo</c>: offline, ele continua sem reservar número
+    /// de venda e sem abrir o caixa. A maior hora já vista (relógio de alta-água, PDV 30.5) também não volta.
+    /// </summary>
+    [Theory]
+    [InlineData(StatusIdentidade.Desativando, false)]
+    [InlineData(StatusIdentidade.Revogado, false)]
+    [InlineData(StatusIdentidade.Desativando, true)]
+    [InlineData(StatusIdentidade.Revogado, true)]
+    public async Task Restaurar_backup_de_antes_da_ordem_do_erp_mantem_o_status_e_o_caixa_nao_vende_nem_abre(string status, bool emUsoCorrompido)
+    {
+        var (banco, relogio, backup) = await AtivadoAsync();
+        using var _ = banco;
+        var antigo = await backup.FazerAsync(MotivosBackup.Periodico, Ct);
+        Assert.Equal(StatusIdentidade.Ativo, EscalarNoBackup(antigo.Arquivo, "select status from identidade_terminal"));
+
+        // Depois do backup: a ordem do ERP gravada e o relógio de alta-água adiantado.
+        relogio.Agora = relogio.Agora.AddHours(2);
+        Assert.True(await new RepositorioTerminal(banco.Fabrica, relogio).AvancarStatusAsync(status, Ct));
+        await using (var db = banco.Fabrica.CreateDbContext())
+        {
+            await db.EstadoConexao.ExecuteUpdateAsync(s => s.SetProperty(c => c.MaiorHoraVista, relogio.Agora), Ct);
+        }
+
+        if (emUsoCorrompido)
+        {
+            CorromperForaDaIdentidade(banco);
+        }
+
+        await new RestauracaoBackup(banco.Fabrica, banco.Caminhos, backup, relogio).RestaurarAsync(antigo.Arquivo, null, null, Ct);
+        Assert.Equal(status, banco.Escalar("select status from identidade_terminal"));
+        Assert.Equal("2026-11-04T14:00:00.000Z", banco.Escalar("select maior_hora_vista from estado_conexao"));
+
+        var venda = await Assert.ThrowsAsync<RegraNegocioException>(() => new RepositorioVendas(banco.Fabrica, relogio).ReservarNumeroVendaAsync(Ct));
+        Assert.Equal(RepositorioVendas.MensagemTerminalDesativando, venda.Message);
+        var sessao = new SessaoCaixaRegistro
+        {
+            Id = IdGerador.Novo(),
+            LojaId = Guid.CreateVersion7(),
+            CaixaId = Guid.CreateVersion7(),
+            NumeroCaixa = 2,
+            TerminalId = Terminal,
+            OperadorId = Guid.CreateVersion7(),
+            DiaOperacional = DateOnly.FromDateTime(relogio.Agora.UtcDateTime),
+            AbertaEm = relogio.Agora,
+        };
+        var abrir = await Assert.ThrowsAsync<RegraNegocioException>(() => new RepositorioCaixa(banco.Fabrica, relogio).AbrirAsync(
+            sessao, null, new EventoParaOutbox(Guid.CreateVersion7(), "caixa.aberto", 1, "sessao_caixa", sessao.Id, relogio.Agora, "{}", new string('0', 64)), Ct));
+        Assert.Equal(RepositorioCaixa.MensagemTerminalDesativando, abrir.Message);
+        Assert.Equal(0L, banco.Escalar("select count(*) from sessoes_caixa"));
+    }
+
+    /// <summary>Restauração com o terminal ativo nos dois bancos: o status fica <c>ativo</c> e a maior hora do arquivo, se for maior, fica.</summary>
+    [Fact]
+    public async Task Restaurar_com_o_terminal_ativo_fica_ativo_e_a_maior_hora_vista_mais_nova_vale()
+    {
+        var (banco, relogio, backup) = await AtivadoAsync();
+        using var _ = banco;
+        await using (var db = banco.Fabrica.CreateDbContext())
+        {
+            await db.EstadoConexao.ExecuteUpdateAsync(s => s.SetProperty(c => c.MaiorHoraVista, relogio.Agora.AddHours(5)), Ct);
+        }
+
+        var arquivo = await backup.FazerAsync(MotivosBackup.Periodico, Ct);
+        await using (var db = banco.Fabrica.CreateDbContext())
+        {
+            await db.EstadoConexao.ExecuteUpdateAsync(s => s.SetProperty(c => c.MaiorHoraVista, relogio.Agora.AddHours(1)), Ct);
+        }
+
+        await new RestauracaoBackup(banco.Fabrica, banco.Caminhos, backup, relogio).RestaurarAsync(arquivo.Arquivo, null, null, Ct);
+        Assert.Equal(StatusIdentidade.Ativo, banco.Escalar("select status from identidade_terminal"));
+        Assert.Equal("2026-11-04T17:00:00.000Z", banco.Escalar("select maior_hora_vista from estado_conexao"));
+        Assert.Equal(1101L, await new RepositorioVendas(banco.Fabrica, relogio).ReservarNumeroVendaAsync(Ct));
     }
 
     [Fact]

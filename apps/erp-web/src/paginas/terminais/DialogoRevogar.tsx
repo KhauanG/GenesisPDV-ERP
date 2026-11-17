@@ -7,6 +7,16 @@ import { ErroRequisicao } from '../../api/http';
 import { useAcoesTerminais } from '../../api/terminais';
 import { numeroCaixa, rotuloTerminal } from './rotulos';
 
+/**
+ * O que o modo perdido anula (README da API › decisão 211), o mesmo texto no terminal ativo e no já revogado: o PIN
+ * de quem o computador pode ter recebido (quem acessa ou já acessou a loja e quem é ou já foi Master) e a senha de
+ * cliente de quem já foi da loja.
+ */
+const AVISO_PIN_PERDIDO =
+  'Anula o PIN do PDV de quem acessa ou já acessou esta loja e de quem é ou já foi Master, também nas outras lojas (cada um cadastra um novo): o computador pode guardar esses PINs.';
+const AVISO_SENHA_CLIENTE_PERDIDO =
+  'Anula a senha de cliente do crediário de todas as pessoas que já foram desta loja (redefinir no próximo atendimento).';
+
 const TEXTOS: Record<ModoRevogacao, { titulo: string; botao: string; efeitos: string[] }> = {
   aceitar_pendencias: {
     titulo: 'Revogar – aceitar pendências',
@@ -31,8 +41,8 @@ const TEXTOS: Record<ModoRevogacao, { titulo: string; botao: string; efeitos: st
     botao: 'Revogar e anular PINs',
     efeitos: [
       'Revoga imediatamente.',
-      'Anula o PIN do PDV de todos os usuários com acesso à loja (cada um cadastra um novo).',
-      'Anula a senha de cliente do crediário das pessoas da loja (redefinir no próximo atendimento).',
+      AVISO_PIN_PERDIDO,
+      AVISO_SENHA_CLIENTE_PERDIDO,
       'A senha do ERP não muda: ela nunca desce para o PDV.',
     ],
   },
@@ -41,8 +51,8 @@ const TEXTOS: Record<ModoRevogacao, { titulo: string; botao: string; efeitos: st
 /** "Terminal perdido/roubado" num terminal já revogado (o furto descoberto depois): só anula as credenciais. */
 const PERDIDO_JA_REVOGADO = [
   'O terminal já está revogado: o token continua sem valer.',
-  'Anula o PIN do PDV de todos os usuários com acesso à loja (cada um cadastra um novo).',
-  'Anula a senha de cliente do crediário que desceu para a loja (redefinir no próximo atendimento).',
+  AVISO_PIN_PERDIDO,
+  AVISO_SENHA_CLIENTE_PERDIDO,
   'A senha do ERP não muda: ela nunca desce para o PDV.',
 ];
 

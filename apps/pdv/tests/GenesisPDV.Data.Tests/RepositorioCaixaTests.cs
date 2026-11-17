@@ -198,6 +198,57 @@ public class RepositorioCaixaTests
     }
 
     [Fact]
+    public async Task Conferencia_do_fechamento_grava_com_a_auditoria_vale_so_para_a_sessao_e_o_fechamento_a_consome()
+    {
+        // README do PDV › decisão 89.
+        var (banco, repo) = await CriarAsync();
+        using var _ = banco;
+        var agora = banco.Relogio.Agora;
+        var sessao = Sessao(agora);
+        var dinheiro = Guid.CreateVersion7();
+        var mostrada = new ConferenciaMostrada(new Dictionary<Guid, decimal> { [dinheiro] = 148.50m }, null);
+        var auditoria = new RegistroAuditoria("fechamento_conferencia", Operador, "sessoes_caixa", sessao.Id, "Conferência mostrada", Localizacao: "pdv.caixa");
+
+        // Sem a sessão aberta, nada é gravado.
+        await Assert.ThrowsAsync<RegraNegocioException>(() => repo.RegistrarConferenciaAsync(sessao.Id, mostrada, auditoria, Ct));
+        Assert.Equal(0L, Contar(banco, "select count(*) from log_auditoria_local"));
+
+        await repo.AbrirAsync(sessao, Movimento(sessao, TipoMovimentoCaixa.Abertura, 150m, agora), Evento("caixa.aberto", sessao.Id, agora), Ct);
+        Assert.Null(await repo.ConferenciaMostradaAsync(sessao.Id, Ct));
+        await repo.RegistrarConferenciaAsync(sessao.Id, mostrada, auditoria, Ct);
+        var lida = await repo.ConferenciaMostradaAsync(sessao.Id, Ct);
+        Assert.Equal(148.50m, lida!.Contagem[dinheiro]);
+        Assert.Null(lida.PrimeiraContagem);
+        // Outra sessão não herda a conferência.
+        Assert.Null(await repo.ConferenciaMostradaAsync(Guid.CreateVersion7(), Ct));
+        Assert.Equal(sessao.Id.ToString("D"), banco.Escalar("select sessao_caixa_id from log_auditoria_local where acao = 'fechamento_conferencia'"));
+
+        // A recontagem mostrada substitui a linha (a primeira fica junto).
+        await repo.RegistrarConferenciaAsync(
+            sessao.Id, new ConferenciaMostrada(new Dictionary<Guid, decimal> { [dinheiro] = 150m }, mostrada.Contagem), auditoria, Ct);
+        lida = await repo.ConferenciaMostradaAsync(sessao.Id, Ct);
+        Assert.Equal((150m, 148.50m), (lida!.Contagem[dinheiro], lida.PrimeiraContagem![dinheiro]));
+        Assert.Equal(1L, Contar(banco, "select count(*) from configuracao_terminal where chave = 'fechamento.conferencia'"));
+        Assert.Equal(2L, Contar(banco, "select count(*) from log_auditoria_local where acao = 'fechamento_conferencia'"));
+
+        // O valor ilegível não prende o fechamento.
+        using (var conexao = banco.AbrirConexao())
+        using (var comando = conexao.CreateCommand())
+        {
+            comando.CommandText = "update configuracao_terminal set valor = '[1,2]' where chave = 'fechamento.conferencia'";
+            comando.ExecuteNonQuery();
+        }
+
+        Assert.Null(await repo.ConferenciaMostradaAsync(sessao.Id, Ct));
+        await repo.RegistrarConferenciaAsync(sessao.Id, mostrada, auditoria, Ct);
+
+        // O fechamento consome a conferência no mesmo commit (a auditoria fica).
+        await repo.FecharAsync(TrocaTurno(sessao, agora), [], null, agora, Evento("caixa.fechado", sessao.Id, agora), Ct);
+        Assert.Equal(0L, Contar(banco, "select count(*) from configuracao_terminal where chave = 'fechamento.conferencia'"));
+        Assert.Equal(3L, Contar(banco, "select count(*) from log_auditoria_local where acao = 'fechamento_conferencia'"));
+    }
+
+    [Fact]
     public async Task Em_desativacao_nao_abre_o_caixa_mas_fecha()
     {
         var (banco, repo) = await CriarAsync();

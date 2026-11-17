@@ -110,10 +110,7 @@ const TEMPLATES_PDV = ['cupom_cabecalho', 'cupom_rodape', 'vale_compra', 'recibo
 const lojaNulaOuX = (e: EscopoTerminal) => sql`t.loja_id is null or t.loja_id = ${e.lojaId}`;
 /** UF da loja do terminal (tabelas por UF, MD 6.2). */
 const ufDaLoja = (e: EscopoTerminal) => sql`(select l.uf from lojas l where l.id = ${e.lojaId})`;
-/**
- * Pessoa relevante para a loja do terminal (MD 3.5.4): existe vínculo não excluído com a loja ou com todas. Também
- * usada pelo modo perdido (`terminais/revogacao.ts`), que anula só as senhas que descem para a loja.
- */
+/** Pessoa relevante para a loja do terminal (MD 3.5.4): existe vínculo não excluído com a loja ou com todas. */
 export const pessoaRelevante = (coluna: string) => (e: Pick<EscopoTerminal, 'lojaId'>) =>
   sql`exists (select 1 from pessoas_relevancia_loja r where r.pessoa_id = ${sql.raw(`t.${coluna}`)} and r.excluido_em is null and (r.loja_id is null or r.loja_id = ${e.lojaId}))`;
 /**
@@ -153,7 +150,8 @@ export const CHAVES_SENHA_CLIENTE_PDV = [
  * Senha do cliente (crediário, SYNC 4.1 e 4.3 item 4): só desce com `pdv.crediario_exige_senha_cliente` ligada na
  * loja do terminal **e** crediário habilitado (`coalesce(limite_compras, limite padrão) > 0` e não bloqueada); senão
  * `null`. Mudar o limite ou o bloqueio da pessoa gera versão nova da linha; mudar a configuração toca as pessoas.
- * A condição (alias `t` = pessoas) é a mesma que o modo perdido usa para anular as senhas que desceram.
+ * O modo perdido não usa esta condição (a de hoje): anula a senha de quem já foi relevante para a loja
+ * (`terminais/revogacao.ts`).
  */
 export const senhaClienteDesce = (e: Pick<EscopoTerminal, 'lojaId'>) =>
   sql`(${configuracaoEfetiva('pdv.crediario_exige_senha_cliente', e)})::boolean

@@ -600,7 +600,10 @@ Limite de 5 tentativas erradas por IP em 10 minutos (bloqueio de 30 min).
 | `sucesso` | `boolean` | não | — | |
 | `motivo_falha` | `varchar(40)` | sim | — | `codigo_invalido`, `expirado`, `empresa_inativa`, `limite_plano`, `ip_bloqueado` |
 
-- `ix_tentativas_ativacao_ip_criado_em (ip, criado_em)`. Retenção: 30 dias.
+- `ix_tentativas_ativacao_ip_criado_em (ip, criado_em)` (bloqueio por IP), `ix_tentativas_ativacao_codigo_empresa_criado_em
+  (codigo_empresa, criado_em)` (bloqueio do código da empresa) e `ix_tentativas_ativacao_criado_em (criado_em)` (limite
+  global, manutenção e purga). Retenção: 30 dias (a manutenção dos terminais apaga as mais antigas). O IP já bloqueado
+  grava no máximo uma linha `ip_bloqueado` por janela de 30 min (README da API › decisão 213).
 
 ### 2.7 `versoes_app_pdv`
 
@@ -1552,7 +1555,9 @@ permissões da API (cache de acesso).
 Retenção: 1 ano.
 
 `redefinicoes_senha` — `id`, `criado_em`, `usuario_id uuid not null`, `token_hash varchar(64) not null` (único),
-`expira_em timestamptz not null` (1 h), `usado_em timestamptz null`, `ip inet null`.
+`expira_em timestamptz not null` (1 h), `usado_em timestamptz null`, `ip inet null`. `usado_em` também marca o link
+invalidado sem uso: a troca de senha, a mudança de e-mail/ativo/totem/demissão, a exclusão do usuário e um envio mais
+novo invalidam os pendentes; o resgate exige `criado_em > usuarios.senha_alterada_em` (README da API › decisão 206).
 
 ---
 
@@ -1793,7 +1798,11 @@ linha `compra` ao aplicar a venda e a pessoa desce. Offline, cliente fora do esp
 - Tarefa diária exclui logicamente as linhas `compra`/`delivery` com `ultima_ocorrencia_em` anterior a
   `pdv.pessoas_meses_relevancia` meses e as linhas `crediario` sem limite nem saldo. O PDV, ao receber a linha excluída,
   **purga do espelho local** a pessoa e as filhas se ela não tiver outra linha ativa para a loja nem venda/evento local
-  pendente (exceção à regra 6.4.4, que é a forma de a pessoa sair do PC).
+  em curso (exceção à regra 6.4.4, que é a forma de a pessoa sair do PC). Em curso = venda não finalizada nem cancelada
+  e evento ainda a subir (`pendente`, `enviando`, `erro_temporario`); o recusado em quarentena não segura. A purga
+  adiada é por estado (PR-15, SEG-B13; README do PDV › decisão 91): a cada ciclo do pull de `pessoas` o PDV confere de
+  novo toda pessoa do espelho que já teve relevância na loja e não tem nenhuma viva, porque a linha excluída desce uma
+  vez só.
 - Fase 1C (C14, README da API › decisão 139): a tarefa diária roda às 04:17 de Brasília em cada empresa ativa ou
   suspensa; o prazo é o `pdv.pessoas_meses_relevancia` da loja da linha (ou o da empresa, ou 12 meses); o
   `crediario` expira quando a pessoa fica sem `limite_compras` próprio e sem saldo em aberto. Em lotes de 500, cada um

@@ -13,6 +13,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -173,7 +174,8 @@ function DetalheMovimento({ grupo }: { grupo: Grupo }) {
   const pode = usePode();
   const r = useQuery({
     queryKey: ['movimento-caixa', id],
-    queryFn: ({ signal }) => apiErp.get<MovimentoCaixaDetalhe>(`/movimentos-caixa/${id}`, { sinal: signal }),
+    queryFn: ({ signal }) =>
+      apiErp.get<MovimentoCaixaDetalhe>(`/movimentos-caixa/${segmento(id)}`, { sinal: signal }),
     enabled: !!id,
   });
   const m = r.data;

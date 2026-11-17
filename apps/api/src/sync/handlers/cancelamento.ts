@@ -453,13 +453,17 @@ type RegistroDoCaixa = ReturnType<typeof registroDoCaixa>;
 /**
  * O cancelamento do caixa já gravado numa corrida com o ERP (a auditoria `cancelar` do caixa com
  * `cancelamento_duplo`), ou nulo. É o único registro dele: as colunas de cancelamento da venda continuam as do ERP.
+ * Só vale a linha que este handler grava, presa a um evento `venda.cancelada`: um `cancelar` que chegou no lote
+ * `auditoria.registros` do caixa fica na auditoria, mas não decide o que o cancelamento aplica.
  */
 async function cancelamentoDuploGravado(tx: DbEmpresa, vendaId: string): Promise<RegistroDoCaixa | null> {
   const { rows } = await tx.execute<{ depois: RegistroDoCaixa }>(sql`
-    select depois from auditoria
-     where entidade = 'vendas' and registro_id = ${vendaId} and acao = 'cancelar' and origem = 'pdv'
-       and depois @> '{"cancelamento_duplo": true}'::jsonb
-     order by ocorrido_em, id
+    select a.depois from auditoria a
+     where a.entidade = 'vendas' and a.registro_id = ${vendaId} and a.acao = 'cancelar' and a.origem = 'pdv'
+       and a.depois @> '{"cancelamento_duplo": true}'::jsonb
+       and exists (select 1 from eventos_recebidos e
+                    where e.evento_id = a.evento_id and e.tipo = 'venda.cancelada')
+     order by a.ocorrido_em, a.id
      limit 1`);
   return rows[0]?.depois ?? null;
 }
@@ -707,7 +711,9 @@ async function aplicarEmAndamento(
   }
   // Sem estoque, custo nem financeiro (SYNC 9.9 B, 10.1): o documento como veio, para o relatório de canceladas.
   await gravarLinhasVenda(tx, linhas);
-  await avancarNumeracao(ctx, original.vendas.numero);
+  // Como no `venda.finalizada`: o número acima da margem do caixa, renumerado, não entra em `numeracoes` (decisão 212).
+  if (!renumeracao || renumeracao.original.avancaNumeracao)
+    await avancarNumeracao(ctx, original.vendas.numero);
   const caixa = String(terminal.numeroCaixa).padStart(2, '0');
   await registrarAuditoriaPdv(ctx, {
     entidade: 'vendas',

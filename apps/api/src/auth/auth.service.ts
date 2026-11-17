@@ -17,6 +17,7 @@ import { historicoLogins, lojas, sessoesUsuario, usuarios } from '../database/em
 import type { AssinadorJwt } from '../seguranca/jwt.js';
 import { gerarHashSenha, verificarSenha } from '../seguranca/senhas.js';
 import { gerarSegredo, sha256Hex } from '../seguranca/tokens.js';
+import { invalidarRedefinicoesPendentes } from './redefinicao-senha.js';
 import type { ContextoEmpresa } from '../tenancy/contexto.js';
 import type { EmpresaResolvida, ResolvedorEmpresas } from '../tenancy/resolvedor.js';
 import type { DbEmpresa, Tenancy } from '../tenancy/tenancy.js';
@@ -298,16 +299,21 @@ export class AuthService {
     const contexto = this.resolvedor.contexto(alvo.empresa);
     await this.tenancy.executarNaEmpresa(contexto, () =>
       this.tenancy.cx().transacao(async (tx) => {
-        const [s] = await tx
+        // A linha do cookie apresentado, aberta ou já rotacionada, travada como no refresh: um refresh com o mesmo
+        // cookie em andamento termina antes, e o logout encerra a sucessora que ele criou. O logout encerra a família
+        // inteira (decisão 206), não só a linha apresentada.
+        const [apresentada] = await tx
+          .select({ familiaId: sessoesUsuario.familiaId })
+          .from(sessoesUsuario)
+          .where(eq(sessoesUsuario.refreshTokenHash, sha256Hex(alvo.segredo)))
+          .for('update');
+        if (!apresentada) return;
+        const encerradas = await tx
           .update(sessoesUsuario)
           .set({ encerradaEm: new Date(), motivoEncerramento: 'logout' })
-          .where(
-            and(
-              eq(sessoesUsuario.refreshTokenHash, sha256Hex(alvo.segredo)),
-              isNull(sessoesUsuario.encerradaEm),
-            ),
-          )
-          .returning();
+          .where(and(eq(sessoesUsuario.familiaId, apresentada.familiaId), isNull(sessoesUsuario.encerradaEm)))
+          .returning({ usuarioId: sessoesUsuario.usuarioId });
+        const s = encerradas[0];
         if (!s) return;
         const [u] = await tx
           .select({ nome: usuarios.nome })
@@ -374,11 +380,13 @@ export class AuthService {
           .set({
             senhaHash: novoHash,
             senhaProvisoria: false,
-            senhaAlteradaEm: new Date(),
+            senhaAlteradaEm: sql`now()`,
             tentativasFalhas: 0,
           })
           .where(eq(usuarios.id, u.id))
           .returning();
+        // Link de "esqueci minha senha" ainda pendente não vale mais com a senha nova (decisão 206).
+        await invalidarRedefinicoesPendentes(tx, u.id);
         await tx
           .update(sessoesUsuario)
           .set({ encerradaEm: new Date(), motivoEncerramento: 'senha_alterada' })

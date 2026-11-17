@@ -100,6 +100,11 @@ export const SINAL_TAREFA_MS = 30_000;
  * ocupado atrasar alguns sinais sem que a tarefa viva pareça morta.
  */
 export const LIMITE_SINAL_TAREFA_MS = 3 * 60_000;
+/**
+ * Tarefa `na_fila` que devia ter começado há mais que isto está atrasada: a prontidão avisa (o trabalhador parado), e o
+ * teto das importações pendentes (decisão 209) não a conta (o job dela pode ter se perdido).
+ */
+export const MINUTOS_TAREFA_ATRASADA = 5;
 
 /**
  * Só o processo parado (sem sinal) leva a isto: a expiração do job no pg-boss não marca a tarefa (o worker segura a

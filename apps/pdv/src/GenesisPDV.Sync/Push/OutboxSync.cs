@@ -17,7 +17,10 @@ namespace GenesisPDV.Sync.Push;
 /// <summary>
 /// Catálogos da nuvem que o <c>auditoria.registros</c> precisa respeitar: <c>ACOES_AUDITORIA</c> e
 /// <c>MOTIVOS_FALHA_LOGIN</c> de <c>packages/shared/src/enums.ts</c> (o <c>CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem</c> lê
-/// o arquivo e confere as duas listas). Ação fora do catálogo derrubaria o evento inteiro na API (<c>PAYLOAD_INVALIDO</c>).
+/// o arquivo e confere as duas listas). Ação fora do catálogo derrubaria o evento inteiro na API (<c>PAYLOAD_INVALIDO</c>), e
+/// também a que está no catálogo mas só o servidor grava (<c>ACOES_AUDITORIA_SO_SERVIDOR</c>: <c>terminal_revogado</c>,
+/// <c>permissoes_alteradas</c>, <c>evento_descartado</c>…; README da API › decisão 211): o PDV nunca grava uma delas no
+/// <c>log_auditoria_local</c> (o <c>DescritorAuditoriaTests.Nenhuma_acao_gravada_e_reservada_ao_servidor</c> confere).
 /// </summary>
 public static class CatalogosNuvem
 {

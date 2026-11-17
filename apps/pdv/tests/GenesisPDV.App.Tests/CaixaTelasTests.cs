@@ -4,6 +4,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using GenesisPDV.App.Servicos;
 using GenesisPDV.App.ViewModels;
+using GenesisPDV.Core.Comum;
 using GenesisPDV.Core.Vendas;
 using GenesisPDV.Data;
 using GenesisPDV.Data.Entidades;
@@ -76,6 +77,28 @@ public class CaixaTelasTests
     {
         venda.Cancelar(Maria, "Cliente desistiu da compra", DateTimeOffset.UtcNow);
         await pdv.Servicos.GetRequiredService<IRepositorioVendas>().EncerrarAsync(venda, null, ct: Ct);
+    }
+
+    /// <summary>
+    /// Login com a conferência do fechamento já mostrada na sessão aberta (decisão 89): o dono da sessão vai direto ao
+    /// fechamento, sem passar pela venda.
+    /// </summary>
+    private static async Task<FechamentoCaixaViewModel> EntrarNoFechamentoAsync(AmbienteUi pdv)
+    {
+        await pdv.EntrarAsync("1", "1234");
+        await pdv.EsperarAsync(() => pdv.Shell.PaginaAtual is FechamentoCaixaViewModel, "fechamento direto do login");
+        await pdv.EsperarAsync(() => pdv.NomeFocado() == "CampoValorForma", "foco no dinheiro");
+        return (FechamentoCaixaViewModel)pdv.Shell.PaginaAtual!;
+    }
+
+    /// <summary>Mostra a conferência do fechamento com o <paramref name="contado"/> em dinheiro (a chave ligada antes).</summary>
+    private static async Task<FechamentoCaixaViewModel> MostrarConferenciaAsync(AmbienteUi pdv, string contado)
+    {
+        var fechamento = await AbrirFechamentoAsync(pdv);
+        pdv.Digitar(contado);
+        pdv.Tecla(Key.Enter);
+        await pdv.EsperarAsync(() => fechamento.Conferindo, "conferência");
+        return fechamento;
     }
 
     private static async Task<FechamentoCaixaViewModel> AbrirFechamentoAsync(AmbienteUi pdv)
@@ -324,6 +347,281 @@ public class CaixaTelasTests
         var f = await db.FechamentosCaixa.SingleAsync(Ct);
         Assert.Equal((true, -0.40m), (f.Recontagem, f.Diferenca));
         Assert.Equal(98m, (await db.FechamentosCaixaFormas.SingleAsync(Ct)).ValorPrimeiraContagem);
+    }
+
+    [AvaloniaFact]
+    public async Task Conferencia_mostrada_fica_gravada_e_reiniciar_o_app_volta_nela_sem_contagem_nova()
+    {
+        // README do PDV › decisão 89: a contagem é gravada (com a auditoria) antes de o calculado aparecer; a mesma sessão
+        // volta à conferência gravada depois de reiniciar, e a recontagem segue a regra (aqui, desligada).
+        var raiz = AmbienteUi.NovaRaiz();
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"));
+            var fechamento = await AbrirFechamentoAsync(primeiro);
+            primeiro.Digitar("98");
+            primeiro.Tecla(Key.Enter);
+            await primeiro.EsperarAsync(() => fechamento.Conferindo, "conferência");
+            Assert.Equal("-2,00", fechamento.Formas[0].DiferencaTexto);
+            Assert.False(fechamento.PodeRecontar);
+            await using var db = Banco(primeiro);
+            var auditoria = await db.LogAuditoriaLocal.SingleAsync(l => l.Acao == ServicoCaixa.AcaoConferenciaFechamento, Ct);
+            Assert.Equal((Maria, "sessoes_caixa"), (auditoria.UsuarioId!.Value, auditoria.Entidade));
+            Assert.True(await db.ConfiguracaoTerminal.AnyAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, Ct));
+        }
+
+        // O app reinicia na conferência (uma queda de energia, por exemplo) e a MARIA entra de novo na sessão aberta: o
+        // login vai direto ao fechamento.
+        using var segundo = await AmbienteUi.IniciarAsync(raiz);
+        var retomado = await EntrarNoFechamentoAsync(segundo);
+        Assert.True(retomado.Conferindo);
+        Assert.Equal(("98,00", "100,00", "-2,00"), (retomado.Formas[0].Valor, retomado.Formas[0].CalculadoTexto, retomado.Formas[0].DiferencaTexto));
+        Assert.True(retomado.Formas[0].SomenteLeitura);
+        Assert.False(retomado.PodeRecontar);
+        Assert.StartsWith(FechamentoCaixaViewModel.MensagemConferenciaRetomada, retomado.Aviso, StringComparison.Ordinal);
+        // O Esc continua sem sair da conferência; a diferença continua pedindo a justificativa.
+        segundo.Tecla(Key.Escape);
+        await AmbienteUi.Pausa();
+        Assert.Same(retomado, segundo.Shell.PaginaAtual);
+        segundo.Tecla(Key.Enter);
+        await segundo.EsperarAsync(() => retomado.Erro is not null, "justificativa obrigatória");
+        Assert.Equal(Core.Caixa.FechamentoCego.MensagemJustificativa, retomado.Erro);
+        retomado.Justificativa = "Troco dado a mais";
+        segundo.Tecla(Key.Enter);
+        await segundo.EsperarAsync(() => retomado.Concluido, "fechamento gravado");
+        await using var banco = Banco(segundo);
+        var f = await banco.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal((98m, false, "Troco dado a mais"), (f.TotalDigitado, f.Recontagem, f.Justificativa));
+        Assert.Null((await banco.FechamentosCaixaFormas.SingleAsync(Ct)).ValorPrimeiraContagem);
+        // O fechamento consome a conferência gravada no mesmo commit; a auditoria fica (uma só: a retomada não grava outra).
+        Assert.False(await banco.ConfiguracaoTerminal.AnyAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, Ct));
+        Assert.Equal(1, await banco.LogAuditoriaLocal.CountAsync(l => l.Acao == ServicoCaixa.AcaoConferenciaFechamento, Ct));
+    }
+
+    [AvaloniaFact]
+    public async Task Com_recontagem_a_conferencia_retomada_reconta_uma_vez_e_guarda_a_primeira_contagem()
+    {
+        var raiz = AmbienteUi.NovaRaiz();
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"), (ChavesConfiguracao.PermiteRecontagem, "true"));
+            var fechamento = await AbrirFechamentoAsync(primeiro);
+            primeiro.Digitar("98");
+            primeiro.Tecla(Key.Enter);
+            await primeiro.EsperarAsync(() => fechamento.Conferindo, "conferência");
+            Assert.True(fechamento.PodeRecontar);
+        }
+
+        // Depois de reiniciar: a conferência da contagem de 98 volta; a recontagem (uma vez) a guarda como a primeira.
+        using (var segundo = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            var retomado = await EntrarNoFechamentoAsync(segundo);
+            Assert.True(retomado.Conferindo);
+            Assert.True(retomado.PodeRecontar);
+            segundo.Tecla(Key.F4);
+            await segundo.EsperarAsync(() => retomado.Contando, "recontagem");
+            await segundo.EsperarFocoAsync("CampoValorForma");
+            segundo.Digitar("100");
+            segundo.Tecla(Key.Enter);
+            await segundo.EsperarAsync(() => retomado.Conferindo, "segunda conferência");
+            Assert.False(retomado.PodeRecontar);
+        }
+
+        // Reiniciar na segunda conferência não devolve a recontagem: fecha com a recontagem e a primeira contagem.
+        using var terceiro = await AmbienteUi.IniciarAsync(raiz);
+        var final = await EntrarNoFechamentoAsync(terceiro);
+        Assert.True(final.Conferindo);
+        Assert.Equal("100,00", final.Formas[0].Valor);
+        Assert.False(final.PodeRecontar);
+        terceiro.Tecla(Key.F4);
+        await AmbienteUi.Pausa();
+        Assert.True(final.Conferindo);
+        terceiro.Tecla(Key.Enter);
+        await terceiro.EsperarAsync(() => final.Concluido, "fechamento gravado");
+        await using var db = Banco(terceiro);
+        var f = await db.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal((100m, true), (f.TotalDigitado, f.Recontagem));
+        Assert.Equal(98m, (await db.FechamentosCaixaFormas.SingleAsync(Ct)).ValorPrimeiraContagem);
+        Assert.Equal(2, await db.LogAuditoriaLocal.CountAsync(l => l.Acao == ServicoCaixa.AcaoConferenciaFechamento, Ct));
+    }
+
+    [AvaloniaFact]
+    public async Task Conferencia_mostrada_prende_a_sessao_ao_fechamento_sem_venda_nem_movimento_depois_de_reiniciar()
+    {
+        // Decisão 89: mostrada a conferência, nada muda o calculado que a contagem gravada confere. Uma venda depois do
+        // reinício faria a retomada comparar os 112,90 contados com um calculado novo (diferença falsa); uma sangria ou um
+        // cancelamento esconderia uma falta já vista.
+        var raiz = AmbienteUi.NovaRaiz();
+        Guid vendaId;
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            var venda = await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"));
+            // Uma venda de R$ 12,90 em dinheiro: o calculado fica em R$ 112,90.
+            await primeiro.EntrarCodigoAsync("0044");
+            primeiro.Tecla(Key.F10);
+            await primeiro.EsperarFocoAsync("CampoValorRecebido");
+            primeiro.Digitar("20");
+            primeiro.Tecla(Key.Enter);
+            await primeiro.EsperarAsync(() => venda.Dialogo is null && venda.CaixaLivre, "venda finalizada");
+            var fechamento = await MostrarConferenciaAsync(primeiro, "112,90");
+            Assert.Equal("0,00", fechamento.Formas[0].DiferencaTexto);
+            await using var db = Banco(primeiro);
+            vendaId = (await db.Vendas.SingleAsync(Ct)).Id;
+        }
+
+        using var segundo = await AmbienteUi.IniciarAsync(raiz);
+        var retomado = await EntrarNoFechamentoAsync(segundo);
+        Assert.True(retomado.Conferindo);
+        Assert.Equal(("112,90", "112,90", "0,00"), (retomado.Formas[0].Valor, retomado.Formas[0].CalculadoTexto, retomado.Formas[0].DiferencaTexto));
+
+        // Venda nova, sangria, reforço, cancelar movimento ou a venda paga e operar no caixa de outro: recusados.
+        var servicoVenda = segundo.Servicos.GetRequiredService<ServicoVenda>();
+        var caixa = segundo.Servicos.GetRequiredService<ServicoCaixa>();
+        var supervisor = new LiberacaoConcedida(new Operador(Carlos, 2, "carlos", "CARLOS", 100m, Master: true), "Conferência já mostrada", DateTimeOffset.UtcNow);
+        Assert.True(await caixa.ConferenciaMostradaAsync(Ct));
+        List<Func<Task>> recusadas =
+        [
+            () => servicoVenda.ProcessarEntradaAsync("0044", null, Ct),
+            () => caixa.PrepararMovimentoAsync(TipoMovimentoCaixa.Sangria, Ct),
+            () => caixa.RegistrarMovimentoAsync(new DadosMovimentoCaixa(TipoMovimentoCaixa.Sangria, 50m, null, "MARIA", null, null), null, Ct),
+            () => caixa.RegistrarMovimentoAsync(new DadosMovimentoCaixa(TipoMovimentoCaixa.Reforco, 50m, null, null, null, null), null, Ct),
+            () => caixa.CancelarMovimentoAsync(Guid.CreateVersion7(), "Lançada errada", supervisor, Ct),
+            () => servicoVenda.PrepararCancelamentoAsync(vendaId, Ct),
+            () => servicoVenda.CancelarFinalizadaAsync(vendaId, "Cliente desistiu da compra", liberacao: supervisor, ct: Ct),
+            () => caixa.OperarDeOutroAsync(supervisor, Ct),
+        ];
+        foreach (var acao in recusadas)
+        {
+            Assert.Equal(ServicoCaixa.MensagemConferenciaMostrada, (await Assert.ThrowsAsync<RegraNegocioException>(acao)).Message);
+        }
+
+        Assert.False(servicoVenda.VendaAberta);
+
+        // A conferência retomada continua a de quando foi mostrada: confirma sem diferença e sem justificativa.
+        segundo.Tecla(Key.Enter);
+        await segundo.EsperarAsync(() => retomado.Concluido, "fechamento gravado");
+        await using var banco = Banco(segundo);
+        var f = await banco.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal((112.90m, 112.90m, 0m, (string?)null), (f.TotalCalculado, f.TotalDigitado, f.Diferenca, f.Justificativa));
+        Assert.Equal(StatusVenda.Finalizada, (await banco.Vendas.SingleAsync(Ct)).Status);
+        Assert.False(await banco.MovimentosCaixa.AnyAsync(m => m.Tipo == TipoMovimentoCaixa.Sangria || m.Tipo == TipoMovimentoCaixa.Reforco, Ct));
+        Assert.Equal(["caixa.aberto", "venda.finalizada", "caixa.fechado"],
+            await banco.EventosSaida.OrderBy(e => e.SequenciaTerminal).Select(e => e.Tipo).ToListAsync(Ct));
+    }
+
+    [AvaloniaFact]
+    public async Task Conferencia_desligada_depois_de_mostrada_reconta_as_cegas_e_grava_a_recontagem()
+    {
+        // Decisão 89: o ERP desliga a conferência depois de ela aparecer; a contagem nova é cega (O3) e fica registrada
+        // como recontagem, com a mostrada como a primeira contagem.
+        var raiz = AmbienteUi.NovaRaiz();
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"));
+            await MostrarConferenciaAsync(primeiro, "98");
+            await using var db = Banco(primeiro);
+            await db.Database.ExecuteSqlAsync($"update configuracoes set valor = 'false' where chave = {ChavesConfiguracao.FechamentoMostraConferencia}", Ct);
+        }
+
+        using var segundo = await AmbienteUi.IniciarAsync(raiz);
+        var cego = await EntrarNoFechamentoAsync(segundo);
+        Assert.True(cego.Contando);
+        Assert.False(cego.ContagemFixa);
+        Assert.False(cego.CalculadoVisivel);
+        Assert.All(cego.Formas, f => Assert.Equal((string.Empty, (string?)null, false), (f.Valor, f.CalculadoTexto, f.SomenteLeitura)));
+        Assert.Equal(FechamentoCaixaViewModel.MensagemRecontagemRetomada, cego.Aviso);
+        segundo.Digitar("100");
+        segundo.Tecla(Key.Enter);
+        await segundo.EsperarAsync(() => cego.Concluido, "fechamento gravado");
+        Assert.All(cego.Formas, f => Assert.Null(f.CalculadoTexto));
+        await using var banco = Banco(segundo);
+        var f = await banco.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal((100m, true), (f.TotalDigitado, f.Recontagem));
+        var forma = await banco.FechamentosCaixaFormas.SingleAsync(Ct);
+        Assert.Equal((100m, (decimal?)98m), (forma.ValorDigitado, forma.ValorPrimeiraContagem));
+        Assert.False(await banco.ConfiguracaoTerminal.AnyAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, Ct));
+    }
+
+    [AvaloniaFact]
+    public async Task Recontagem_mostrada_com_a_conferencia_desligada_depois_so_confirma_a_contagem_gravada()
+    {
+        // A recontagem (uma vez) já foi usada e a segunda conferência apareceu: desligada a conferência, não há terceira
+        // contagem. A tela traz a contagem gravada, sem o calculado e somente leitura, e o Enter confirma.
+        var raiz = AmbienteUi.NovaRaiz();
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"), (ChavesConfiguracao.PermiteRecontagem, "true"));
+            var fechamento = await MostrarConferenciaAsync(primeiro, "98");
+            primeiro.Tecla(Key.F4);
+            await primeiro.EsperarAsync(() => fechamento.Contando, "recontagem");
+            await primeiro.EsperarFocoAsync("CampoValorForma");
+            primeiro.Digitar("99");
+            primeiro.Tecla(Key.Enter);
+            await primeiro.EsperarAsync(() => fechamento.Conferindo, "segunda conferência");
+            await using var db = Banco(primeiro);
+            await db.Database.ExecuteSqlAsync($"update configuracoes set valor = 'false' where chave = {ChavesConfiguracao.FechamentoMostraConferencia}", Ct);
+        }
+
+        using var segundo = await AmbienteUi.IniciarAsync(raiz);
+        var pronto = await EntrarNoFechamentoAsync(segundo);
+        Assert.True(pronto.ContagemFixa);
+        Assert.False(pronto.CalculadoVisivel);
+        Assert.Equal(("99,00", (string?)null, true), (pronto.Formas[0].Valor, pronto.Formas[0].CalculadoTexto, pronto.Formas[0].SomenteLeitura));
+        Assert.Equal(FechamentoCaixaViewModel.MensagemContagemRetomada, pronto.Aviso);
+        Assert.DoesNotContain("[F3]", pronto.Teclas, StringComparison.Ordinal);
+        // O F3 (contar cédulas) não troca a contagem gravada.
+        segundo.Tecla(Key.F3);
+        await AmbienteUi.Pausa();
+        Assert.Null(pronto.Contador);
+        segundo.Tecla(Key.Enter);
+        await segundo.EsperarAsync(() => pronto.Concluido, "fechamento gravado");
+        await using var banco = Banco(segundo);
+        var f = await banco.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal((99m, true), (f.TotalDigitado, f.Recontagem));
+        Assert.Equal(98m, (await banco.FechamentosCaixaFormas.SingleAsync(Ct)).ValorPrimeiraContagem);
+    }
+
+    [AvaloniaFact]
+    public async Task Troca_de_turno_volta_na_conferencia_mostrada_e_operar_no_caixa_do_outro_e_recusado()
+    {
+        // A MARIA viu a conferência e o app reiniciou; o CARLOS entra: operar no caixa dela é recusado antes do PIN, e a
+        // troca de turno (opção 1) abre já na conferência gravada (decisão 89).
+        var raiz = AmbienteUi.NovaRaiz();
+        using (var primeiro = await AmbienteUi.IniciarAsync(raiz, apagar: false))
+        {
+            await primeiro.AtivarDemonstracaoELogarAsync(fundo: "100");
+            await ConfigurarAsync(primeiro, (ChavesConfiguracao.FechamentoMostraConferencia, "true"));
+            await MostrarConferenciaAsync(primeiro, "98");
+        }
+
+        using var pdv = await AmbienteUi.IniciarAsync(raiz);
+        await pdv.EntrarAsync("2", "4321");
+        await pdv.EsperarFocoAsync("PainelSessaoOutro");
+        var dialogo = (SessaoOutroOperadorViewModel)pdv.Shell.PaginaAtual!;
+        pdv.Tecla(Key.D2);
+        await pdv.EsperarAsync(() => dialogo.Erro is not null, "operar recusado");
+        Assert.Equal(ServicoCaixa.MensagemConferenciaMostrada, dialogo.Erro);
+        Assert.Same(dialogo, pdv.Shell.PaginaAtual);
+        pdv.Tecla(Key.D1);
+        await pdv.EsperarAsync(() => pdv.Shell.PaginaAtual is FechamentoCaixaViewModel, "troca de turno");
+        var troca = (FechamentoCaixaViewModel)pdv.Shell.PaginaAtual!;
+        Assert.True(troca.Conferindo);
+        Assert.False(troca.ZeraCaixa);
+        Assert.Equal(("98,00", "100,00", "-2,00"), (troca.Formas[0].Valor, troca.Formas[0].CalculadoTexto, troca.Formas[0].DiferencaTexto));
+        Assert.StartsWith(FechamentoCaixaViewModel.MensagemConferenciaRetomada, troca.Aviso, StringComparison.Ordinal);
+        troca.Justificativa = "Troco dado a mais";
+        pdv.Tecla(Key.Enter);
+        await pdv.EsperarAsync(() => troca.Concluido, "troca registrada");
+        await using var banco = Banco(pdv);
+        var f = await banco.FechamentosCaixa.SingleAsync(Ct);
+        Assert.Equal(("troca_turno", 98m, false, "Troco dado a mais"), (f.Tipo, f.TotalDigitado, f.Recontagem, f.Justificativa));
+        Assert.False(await banco.ConfiguracaoTerminal.AnyAsync(c => c.Chave == ChavesConfiguracaoTerminal.ConferenciaFechamento, Ct));
+        Assert.False(await banco.LogAuditoriaLocal.AnyAsync(l => l.Acao == "caixa_operar_de_outro", Ct));
     }
 
     [AvaloniaFact]

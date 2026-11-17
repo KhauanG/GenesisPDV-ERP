@@ -57,6 +57,7 @@ import {
   efetivarAcerto,
   estornarAcerto,
   exigirAcertoEstornavel,
+  exigirEstoqueAtivo,
   exigirTipoEstoqueAtivo,
   gravarItensRascunho,
   lojaDoEstoque,
@@ -65,6 +66,8 @@ import {
 } from './acertos.js';
 import { folhaContagem, gravarContagem, planejarContagem } from './contagem.js';
 import { estoqueVisivel } from './permitidos.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
+import { PrazoLeituraEnvio } from '../comum/prazo-envio.js';
 
 const LOCALIZACAO = 'Estoque › Acerto de Estoque';
 
@@ -239,6 +242,7 @@ export class AcertosController {
 
   @Permissao('estoque_acertos.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -284,6 +288,7 @@ export class AcertosController {
 
   @Permissao('estoque_acertos.criar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,
@@ -367,7 +372,7 @@ export class AcertosController {
   @Permissao('estoque_acertos.criar')
   @Post(':id/importar-contagem')
   @HttpCode(200)
-  @UseInterceptors(uploadContagem)
+  @UseInterceptors(PrazoLeituraEnvio, uploadContagem)
   async importarContagem(
     @Param('id') idBruto: string,
     @UploadedFile() arquivo: ArquivoEnviado | undefined,
@@ -508,6 +513,7 @@ export class AcertosController {
         if (a.status !== 'efetivado')
           throw new ErroApi('REGRA_NEGOCIO', 'Só um acerto efetivado pode ser estornado.');
         exigirAcertoEstornavel(a);
+        await exigirEstoqueAtivo(tx, a.estoqueId, 'estornar');
         await exigirTipoEstoqueAtivo(tx, a.tipoEstoqueId, 'estornar');
         if (a.tipoEstoqueDestinoId)
           await exigirTipoEstoqueAtivo(tx, a.tipoEstoqueDestinoId, 'estornar', 'tipoEstoqueDestinoId');

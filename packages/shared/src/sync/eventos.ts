@@ -21,6 +21,7 @@
  */
 import { z } from 'zod';
 import { TIPOS_FORMA_PAGAMENTO } from '../formas-pagamento.js';
+import { NUMERO_VENDA_MAXIMO } from './contratos.js';
 
 const uuid = z.uuid();
 const anulavel = <T extends z.ZodType>(s: T) => s.nullable().optional();
@@ -45,6 +46,15 @@ const dinheiroComSinal = decimalTexto(13, 2, true);
 const preco = decimalTexto(11, 4);
 /** `numeric(15,3)`. */
 const quantidade = decimalTexto(12, 3);
+/**
+ * Quantidade de estoque de uma linha do PDV (item da venda, devolução de cascos): até 9.999.999,999. O PDV limita o
+ * item a 9.999,999 (`Venda.QuantidadeMaxima`, já com o fator da embalagem) e a devolução avulsa a 9.999 cascos; o
+ * casco cobrado na venda é o cheio × a quantidade de cascos do produto (até 999), que fica abaixo do teto. O teto
+ * deixa margem acima do que o caixa produz e mantém cada evento longe do limite do saldo (`numeric(15,3)`; README da
+ * API › decisão 210).
+ */
+export const QUANTIDADE_MAXIMA_LINHA_PDV = '9999999.999';
+const quantidadeLinhaPdv = decimalTexto(7, 3);
 /** `numeric(7,4)`. */
 const percentual = decimalTexto(3, 4);
 
@@ -462,7 +472,8 @@ export type PayloadCaixaFechado = z.infer<typeof payloadCaixaFechadoSchema>;
 const cabecalhoVenda = <S extends z.ZodType>(status: S) =>
   z.object({
     id: uuid,
-    numero: z.number().int().min(1),
+    // Até o que cabe no número exibido (README da API › decisão 212); a nuvem ainda confere a margem do caixa.
+    numero: z.number().int().min(1).max(NUMERO_VENDA_MAXIMO),
     numero_exibicao: textoPreenchido(20),
     loja_id: uuid,
     caixa_id: uuid,
@@ -515,6 +526,12 @@ const cabecalhoVenda = <S extends z.ZodType>(status: S) =>
   });
 
 /** Baixa de estoque do item produzido (SYNC 9.7, só payload), já multiplicada pela quantidade e com a perda. */
+/**
+ * A baixa de um insumo da ficha técnica fica com o tamanho da coluna (`quantidade`, não `quantidadeLinhaPdv`): o PDV
+ * a calcula como o item (até 9.999,999) × a quantidade da ficha (até 999.999.999.999 no cadastro) × (1 + a perda, até
+ * 100%), sem teto próprio, então nenhum teto menor sai do que o caixa produz. Quem segura o tamanho é o motor de
+ * estoque (`LIMITE_ESTOQUE`, só daquele evento e com conserto; README da API › decisão 210).
+ */
 const componenteEstoque = z.object({
   produto_id: uuid,
   variacao_id: anulavel(uuid),
@@ -536,7 +553,7 @@ const itemVenda = z
     peso_digitado: z.boolean().optional(),
     descricao: textoPreenchido(120),
     unidade: textoPreenchido(6),
-    quantidade: maiorQueZero(quantidade),
+    quantidade: maiorQueZero(quantidadeLinhaPdv),
     preco_tabela: preco,
     preco_unitario: preco,
     origem_preco: z.enum(ORIGENS_PRECO_ITEM).optional(),
@@ -928,7 +945,7 @@ export const payloadVasilhameMovimentadoSchema = z
       operador_id: uuid,
       pessoa_id: anulavel(uuid),
       produto_vasilhame_id: uuid,
-      quantidade: maiorQueZero(quantidade),
+      quantidade: maiorQueZero(quantidadeLinhaPdv),
       destino: z.enum(DESTINOS_MOVIMENTO_VASILHAME),
       vale_id: anulavel(uuid),
       ocorrido_em: instante,

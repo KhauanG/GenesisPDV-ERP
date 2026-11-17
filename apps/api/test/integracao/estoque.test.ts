@@ -640,6 +640,135 @@ describe('projeção do custo médio e custo do combo (MD 3.6.3; ERP 8.2.1, 8.2.
   });
 });
 
+describe('estoque inativado ou excluído depois do rascunho (ERP 13.6; README da API › decisão 210)', () => {
+  let gerente: string;
+
+  /** Depósito sem loja, criado pelo admin. */
+  async function deposito(nome: string): Promise<string> {
+    const r = await amb.http().post('/api/estoques').set(bearer(admin)).send({ nome, tipo: 'deposito' });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return r.body.id as string;
+  }
+
+  async function ativarEstoque(id: string, ativo: boolean) {
+    const atual = await amb.http().get(`/api/estoques/${id}`).set(bearer(admin));
+    const r = await amb
+      .http()
+      .put(`/api/estoques/${id}`)
+      .set(bearer(admin))
+      .send({ nome: atual.body.nome, tipo: atual.body.tipo, ativo, versao: atual.body.versao });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+  }
+
+  async function estornar(id: string) {
+    const atual = await amb.http().get(`/api/acertos/${id}`).set(bearer(admin));
+    return amb
+      .http()
+      .post(`/api/acertos/${id}/estornar`)
+      .set(bearer(admin))
+      .send({ versao: atual.body.versao, motivo: 'Lançado errado' });
+  }
+
+  const movimentosDo = async (estoqueId: string) =>
+    (
+      await consultar<{ n: number }>(
+        emp.nomeBanco,
+        'select count(*)::int as n from movimentos_estoque where estoque_id = $1',
+        [estoqueId],
+      )
+    )[0]!.n;
+  const saldosDo = (estoqueId: string) =>
+    consultar<{ quantidade: string }>(
+      emp.nomeBanco,
+      'select quantidade::text from saldos_estoque where estoque_id = $1',
+      [estoqueId],
+    );
+
+  it('rascunho de quem continua com o estoque: efetivar no estoque inativado é recusado; reativado, efetiva', async () => {
+    const fechado = await deposito('Depósito fechado depois do rascunho');
+    await criarUsuario(emp.nomeBanco, { login: 'gerente-ciclo', perfil: 'gerente', estoques: [fechado] });
+    gerente = await amb.entrar(emp.codigo, 'gerente-ciclo', SENHA_TESTE);
+    const rascunho = await criarAcerto(
+      {
+        estoqueId: fechado,
+        tipoAjuste: 'entrada',
+        itens: [{ produtoId: cerveja, quantidade: '5', custoUnitario: '2' }],
+      },
+      gerente,
+    );
+    expect(rascunho.status, JSON.stringify(rascunho.body)).toBe(201);
+    await ativarEstoque(fechado, false);
+    // O rascunho novo já era recusado; o antigo também passa a ser, na efetivação.
+    const novo = await criarAcerto(
+      { estoqueId: fechado, tipoAjuste: 'entrada', itens: [{ produtoId: cerveja, quantidade: '1' }] },
+      gerente,
+    );
+    expect(novo.status).toBe(422);
+    const r = await efetivar(rascunho.body.id, gerente);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(r.body).toMatchObject({
+      codigo: 'REGRA_NEGOCIO',
+      campos: {
+        estoqueId: [
+          'O estoque "Depósito fechado depois do rascunho" está inativo: reative o estoque antes de efetivar',
+        ],
+      },
+    });
+    expect(await saldosDo(fechado)).toEqual([]);
+    expect(await movimentosDo(fechado)).toBe(0);
+    await ativarEstoque(fechado, true);
+    const depois = await efetivar(rascunho.body.id, gerente);
+    expect(depois.status, JSON.stringify(depois.body)).toBe(200);
+    expect(await saldosDo(fechado)).toEqual([{ quantidade: '5.000' }]);
+  });
+
+  it('estoque excluído depois do rascunho: a efetivação é recusada e nenhum movimento entra nele', async () => {
+    const excluido = await deposito('Depósito excluído depois do rascunho');
+    const rascunho = await criarAcerto({
+      estoqueId: excluido,
+      tipoAjuste: 'entrada',
+      itens: [{ produtoId: cerveja, quantidade: '5', custoUnitario: '2' }],
+    });
+    expect(rascunho.status, JSON.stringify(rascunho.body)).toBe(201);
+    expect((await amb.http().delete(`/api/estoques/${excluido}`).set(bearer(admin))).status).toBe(204);
+    const r = await efetivar(rascunho.body.id);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(r.body.campos).toEqual({
+      estoqueId: ['O estoque do documento foi excluído: não dá mais para efetivar'],
+    });
+    expect(await movimentosDo(excluido)).toBe(0);
+    expect(await saldosDo(excluido)).toEqual([]);
+  });
+
+  it('estorno de acerto num estoque inativado (saldo zero) é recusado até reativar', async () => {
+    const zerado = await deposito('Depósito zerado e inativado');
+    const entrada = await criarAcerto({
+      estoqueId: zerado,
+      tipoAjuste: 'entrada',
+      itens: [{ produtoId: energetico, quantidade: '4', custoUnitario: '12' }],
+    });
+    expect((await efetivar(entrada.body.id)).status).toBe(200);
+    const saida = await criarAcerto({
+      estoqueId: zerado,
+      tipoAjuste: 'saida',
+      itens: [{ produtoId: energetico, quantidade: '4' }],
+    });
+    expect((await efetivar(saida.body.id)).status).toBe(200);
+    await ativarEstoque(zerado, false);
+    const r = await estornar(saida.body.id);
+    expect(r.status, JSON.stringify(r.body)).toBe(422);
+    expect(r.body.campos).toEqual({
+      estoqueId: [
+        'O estoque "Depósito zerado e inativado" está inativo: reative o estoque antes de estornar',
+      ],
+    });
+    expect(await saldosDo(zerado)).toEqual([{ quantidade: '0.000' }]);
+    await ativarEstoque(zerado, true);
+    expect((await estornar(saida.body.id)).status).toBe(200);
+    expect(await saldosDo(zerado)).toEqual([{ quantidade: '4.000' }]);
+  });
+});
+
 describe('ordem de lançamento do razão (F2-B2)', () => {
   it('no fim da suíte, a cadeia de cada linha fecha por seq_lancamento e o replay repete o razão', async () => {
     expect(await conferirRazaoDasEmpresas(amb.bancoControle)).toBeGreaterThan(0);

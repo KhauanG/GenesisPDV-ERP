@@ -1852,7 +1852,10 @@ os totais `ICMSTot` batem com a soma dos itens.
 > LT 350ML (1,000 UN, R$ 3,49)"); liberado, a sequência fica travada no diálogo (só a quantidade a cancelar muda). A
 > mesma regra vale para **diminuir a quantidade** (`F3`, janela do item, `-`): é um cancelamento parcial e, sem a
 > permissão, o supervisor libera; liberado, entra como o cancelamento parcial abaixo (linha original cancelada com o
-> autorizador e o motivo, nova linha com o restante, as mesmas auditorias).
+> autorizador e o motivo, nova linha com o restante, as mesmas auditorias). Vale para **toda redução que a venda
+> aceita**, inteira ou fracionada (o item pesado de 2 kg para 1,5 kg ou 0,001 kg também pede o supervisor); só o que
+> a venda recusaria de qualquer jeito (decimal na unidade, mais de 3 casas, fora do múltiplo do fardo de fator maior
+> que 1) é recusado antes do PIN (README do PDV › decisão 88).
 - O item **não é apagado**: `cancelado = true`, quem, quando, autorizado por; aparece riscado; sai dos totais, do
   rateio e da NFC-e; fica no evento da venda (auditoria e relatório de cancelamentos).
 - Cancelar parcialmente a quantidade (ex.: tirar 2 de 12): diálogo "Quantidade a cancelar" → a linha original é
@@ -3063,7 +3066,14 @@ Passo 1 – **Contagem cega** (se `pdv.fechamento_cego`, nuvem, padrão ligado; 
   `pdv.caixa.ver_calculado_fechamento`). Diferença ≠ 0 em dinheiro acima de `pdv.tolerancia_diferenca_caixa` (nuvem,
   padrão R$ 0,00) pede justificativa obrigatória; o operador pode voltar e recontar **uma vez**
   (`pdv.permite_recontagem`); a recontagem fica registrada (`fechamentos_caixa.recontagem`,
-  `fechamentos_caixa_formas.valor_primeira_contagem`).
+  `fechamentos_caixa_formas.valor_primeira_contagem`). A contagem que vai à conferência é **gravada no SQLite antes de
+  aparecer** (com a auditoria local `fechamento_conferencia`), e a mesma sessão volta a ela: sair da tela, fechar o app
+  ou faltar energia na conferência não dá uma contagem nova — o fechamento reabre na conferência com a contagem gravada,
+  e recontar continua valendo uma vez, só com a chave (a mostrada fica como a primeira contagem). Mostrada a
+  conferência, a sessão **só fecha**: venda nova, sangria, reforço, cancelamentos e "operar no caixa de outro" são
+  recusados, e o login do dono da sessão vai direto ao fechamento (o próximo operador fecha pela troca de turno).
+  Desligada a conferência depois de mostrada, a contagem nova é cega e fica registrada como recontagem; se a mostrada
+  já era a recontagem, a contagem gravada fica e só falta confirmar (README do PDV › decisão 89).
 - **Padrão do dono (O3, 31/10/2026; roadmap D12), mais rígido**: `pdv.fechamento_mostra_conferencia = false` e
   `pdv.permite_recontagem = false` — **ninguém vê o esperado no PDV** (nem o supervisor ou o gerente com a permissão),
   não há passo 2 nem recontagem, e só o gerente vê Calculado × Contado × Diferença no ERP (14.9 do ERP). A
@@ -4204,7 +4214,10 @@ no PIX, a liberação do gerente), p50 0,59 s e p95 1,6 s; outbox vazio 0,5 s de
   mantido (do banco corrompido, pela leitura direta da linha de `identidade_terminal`; se nem ela sai, fica o do
   backup: rotacionado depois dele, vale como anterior por 7 dias, com o alerta `TOKEN_ANTERIOR_REUTILIZADO`, e depois
   pede nova ativação); `restaurado_em`, a restauração pendente e a auditoria `restaurar`
-  ficam no arquivo restaurado; o app reabre e o handshake aplica a 22.1 (reidratação, salto) antes de liberar as
+  ficam no arquivo restaurado. O que só avança também vem do banco em uso (PR-15, SEG-B13; README do PDV › decisão
+  92): o `identidade_terminal.status` fica o mais restritivo dos dois (`ativo → desativando → revogado`; o backup de
+  antes da ordem de desativação do ERP não devolve o caixa a `ativo`, nem offline: a reserva de número e a abertura do
+  caixa continuam recusadas, SYNC 3.8) e a `estado_conexao.maior_hora_vista` fica a maior (30.5); o app reabre e o handshake aplica a 22.1 (reidratação, salto) antes de liberar as
   vendas. Offline, a primeira venda salta +1000 (modo restaurado).
 - **Recuperar dados de terminal antigo** (sincronizacao.md 22.3; máquina perdida ou morta, reinstalação sem o banco):
   ação explícita no PDV **novo**, já ativado como substituto — `Ctrl+Alt+C` › "Recuperar dados de terminal antigo"

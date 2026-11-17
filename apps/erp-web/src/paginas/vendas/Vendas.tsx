@@ -29,6 +29,7 @@ import { IconAlertTriangle, IconArrowLeft } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -232,7 +233,7 @@ export function DetalheVenda() {
   const pode = usePode();
   const r = useQuery({
     queryKey: ['venda', id],
-    queryFn: ({ signal }) => apiErp.get<VendaDetalhe>(`/vendas/${id}`, { sinal: signal }),
+    queryFn: ({ signal }) => apiErp.get<VendaDetalhe>(`/vendas/${segmento(id)}`, { sinal: signal }),
     enabled: !!id,
   });
   const v = r.data;

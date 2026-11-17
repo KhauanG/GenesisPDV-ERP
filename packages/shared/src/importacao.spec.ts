@@ -6,6 +6,7 @@ import {
   filtrosExportacaoClientesSchema,
   filtrosExportacaoProdutosSchema,
   formatarBalancaPlanilha,
+  indiceUnidadesPlanilha,
   lerBalancaPlanilha,
   lerBooleanoPlanilha,
   lerCodigoPlanilha,
@@ -233,6 +234,24 @@ describe('planilha de produtos do Nuvem3 (edição em massa)', () => {
     expect(sigla('fardos')).toBe('FD');
     expect(sigla('Garrafa')).toBeNull();
     expect(sigla('Litro')).toBeNull();
+  });
+
+  it('índice de unidades: a sigla vence a descrição, que vence o sinônimo; texto vazio não acha nada', () => {
+    const un = { sigla: 'UN', descricao: 'Unidade' };
+    // A descrição de uma é a sigla da outra, e a descrição "Pacote" é também sinônimo de PCT.
+    const peca = { sigla: 'PC', descricao: 'un' };
+    const pt = { sigla: 'PT', descricao: 'Pacote' };
+    const pct = { sigla: 'PCT', descricao: 'Pacote fechado' };
+    const indice = indiceUnidadesPlanilha([un, peca, pt, pct]);
+    expect(indice('UN')).toBe(un);
+    expect(indice('Unidade')).toBe(un);
+    expect(indice('pacote')).toBe(pt);
+    expect(indice('Pacotes')).toBe(pct);
+    expect(indice('Peca')).toBe(peca);
+    // Sinônimo de uma sigla que a empresa não tem (CX), texto vazio ou só espaços.
+    expect(indice('Caixa')).toBeNull();
+    expect(indice('')).toBeNull();
+    expect(indice('   ')).toBeNull();
   });
 
   it('Excluir, balança e comparação decimal', () => {

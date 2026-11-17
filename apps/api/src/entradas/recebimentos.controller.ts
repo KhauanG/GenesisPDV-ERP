@@ -43,6 +43,7 @@ import {
   resumoMovimentacao,
   sqlVersaoRecebimento,
 } from './recebimentos.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Estoque › Recebimentos';
 
@@ -159,6 +160,7 @@ export class RecebimentosController {
   /** Cria o rascunho; a resposta traz o aviso de remessa repetida, se houver (não impede salvar). */
   @Permissao('recebimentos.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -202,6 +204,7 @@ export class RecebimentosController {
   /** Altera o rascunho inteiro (cabeçalho e itens) conferindo a versão do documento (409 se outro mexeu). */
   @Permissao('recebimentos.editar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,
@@ -330,6 +333,7 @@ export class RecebimentosController {
    */
   @Permissao('recebimentos.estornar')
   @Post(':id/estornar')
+  @CorpoGrande()
   @HttpCode(200)
   async estornar(
     @Param('id') idBruto: string,

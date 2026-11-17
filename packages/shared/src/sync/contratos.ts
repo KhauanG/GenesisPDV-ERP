@@ -36,7 +36,21 @@ export const MAX_COMANDOS_HEARTBEAT = 100;
 /** Alfabeto do código de ativação, sem caracteres ambíguos (0/O, 1/I/L) (SYNC 3.1). */
 export const ALFABETO_ATIVACAO = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 
-/** SYNC 19.2: até 50 eventos ou 8 MiB por lote (o limite de bytes vale no corpo, `useBodyParser` da API). */
+/**
+ * Maior número de venda do caixa (SYNC 13.1): 12 dígitos, o que cabe no número exibido de 20 caracteres
+ * (`L01-C01-` + 12 dígitos; a loja vai de 1 a 99). Vale para o `numero` dos eventos de venda e para o contador de
+ * venda do heartbeat (README da API › decisão 212).
+ */
+export const NUMERO_VENDA_MAXIMO = 999_999_999_999;
+
+/**
+ * Maior sequencial de vale-compra do caixa (SYNC 13.4): os 7 dígitos que o código do vale guarda
+ * (`VC` + loja 2 + caixa 2 + sequencial 7 + DV; `ck_vales_codigo`). Vale para o contador de vale do heartbeat
+ * (README da API › decisão 212): acima disso nenhum vale válido existe.
+ */
+export const VALE_NUMERO_MAXIMO = 9_999_999;
+
+/** SYNC 19.2: até 50 eventos ou 8 MiB por lote (o limite de bytes vale no corpo: `CORPO_JSON_LIMITE_LOTE_KB` da API). */
 export const MAXIMO_EVENTOS_LOTE = 50;
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -109,6 +123,25 @@ export type RecuperarQuery = z.infer<typeof recuperarQuerySchema>;
 
 const dependencia = z.object({ agregado_tipo: z.string().min(1).max(30), agregado_id: uuid });
 
+/**
+ * Até quantos níveis de objeto/lista o payload de um evento aninha (SYNC 7.3). O maior payload do PDV tem uns 5 (a
+ * venda › itens › componentes); o teto deixa folga e garante que o JCS do hash (8.1) e a gravação em `jsonb`, que
+ * percorrem o payload recursivamente, terminem.
+ */
+export const PROFUNDIDADE_MAXIMA_PAYLOAD = 32;
+
+/** O valor aninha no máximo `limite` níveis de objeto/lista (percurso sem recursão: o próprio teste não estoura). */
+export function profundidadeAte(valor: unknown, limite: number): boolean {
+  const pilha: Array<[unknown, number]> = [[valor, 1]];
+  while (pilha.length) {
+    const [v, nivel] = pilha.pop()!;
+    if (v === null || typeof v !== 'object') continue;
+    if (nivel > limite) return false;
+    for (const filho of Array.isArray(v) ? v : Object.values(v)) pilha.push([filho, nivel + 1]);
+  }
+  return true;
+}
+
 /** Envelope de cada evento do push (SYNC 7.3). */
 export const eventoSchema = z.object({
   evento_id: uuid,
@@ -137,7 +170,9 @@ export const eventoSchema = z.object({
     versao_app: z.string().max(20).optional(),
     versao_schema_local: z.number().int().optional(),
   }),
-  payload: z.record(z.string(), z.unknown()),
+  payload: z.record(z.string(), z.unknown()).refine((p) => profundidadeAte(p, PROFUNDIDADE_MAXIMA_PAYLOAD), {
+    message: `aninhamento acima de ${PROFUNDIDADE_MAXIMA_PAYLOAD} níveis`,
+  }),
   payload_sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 export type EnvelopeEvento = z.infer<typeof eventoSchema>;
@@ -261,6 +296,8 @@ export const pushSchema = z
   });
 
 const inteiroOpcional = z.number().int().nullable().optional();
+/** Contador de numeração informado pelo terminal: de 0 ao maior número que o documento comporta (venda ou vale). */
+const contadorNumeracao = (maximo: number) => z.number().int().min(0).max(maximo).nullable().optional();
 
 /** Situação local do terminal informada no heartbeat (SYNC 3.8). */
 export const ESTADOS_LOCAIS_TERMINAL = ['ativo', 'desativando', 'desativando_confirmado'] as const;
@@ -279,8 +316,8 @@ export const heartbeatSchema = z.object({
   evento_mais_antigo_em: instante.nullable().optional(),
   eventos_rejeitados: z.number().int().min(0).default(0),
   ultima_sequencia_gerada: inteiroOpcional,
-  venda_ultimo_numero: inteiroOpcional,
-  vale_ultimo_numero: inteiroOpcional,
+  venda_ultimo_numero: contadorNumeracao(NUMERO_VENDA_MAXIMO),
+  vale_ultimo_numero: contadorNumeracao(VALE_NUMERO_MAXIMO),
   nfce_ultimo_numero: z
     .array(z.object({ serie: z.number().int(), ambiente: z.number().int(), numero: z.number().int() }))
     .optional(),

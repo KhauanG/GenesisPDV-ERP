@@ -1,6 +1,15 @@
+import { createHash } from 'node:crypto';
+import { setTimeout as esperar } from 'node:timers/promises';
 import { MENSAGEM_CREDENCIAIS_INVALIDAS } from '@genesis/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { consultar, criarAmbiente, SENHA_TESTE, type Ambiente, type EmpresaTeste } from './ambiente.js';
+import {
+  conectar,
+  consultar,
+  criarAmbiente,
+  SENHA_TESTE,
+  type Ambiente,
+  type EmpresaTeste,
+} from './ambiente.js';
 
 let amb: Ambiente;
 let emp: EmpresaTeste;
@@ -9,6 +18,32 @@ function cookieRefresh(res: { headers: Record<string, unknown> }): string | unde
   const lista = (res.headers['set-cookie'] as string[] | undefined) ?? [];
   const c = lista.find((x) => x.startsWith('genesis_refresh='));
   return c?.split(';')[0];
+}
+
+/** Id da sessão do cookie `genesis_refresh=<código>.<segredo>` (o banco guarda só o SHA-256 do segredo). */
+async function sessaoDoCookie(cookie: string): Promise<string> {
+  const segredo = cookie.split('=')[1]!.split('.')[1]!;
+  const [s] = await consultar<{ id: string }>(
+    emp.nomeBanco,
+    'select id from sessoes_usuario where refresh_token_hash = $1',
+    [createHash('sha256').update(segredo).digest('hex')],
+  );
+  return s!.id;
+}
+
+/** Espera até `n` requisições estarem paradas numa trava de linha do banco. */
+async function aguardarEspera(banco: string, n: number): Promise<void> {
+  const fim = Date.now() + 10_000;
+  for (;;) {
+    const [r] = await consultar<{ n: number }>(
+      banco,
+      `select count(*)::int as n from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock' and pid <> pg_backend_pid()`,
+    );
+    if (r!.n >= n) return;
+    if (Date.now() > fim) throw new Error(`esperava ${n} requisições na trava`);
+    await esperar(20);
+  }
 }
 
 beforeAll(async () => {
@@ -231,6 +266,68 @@ describe('login do ERP (ERP 4)', () => {
     expect((await amb.http().get('/api/auth/eu').set(bearer)).status).toBe(200);
     expect((await amb.http().post('/api/auth/logout').set('Cookie', cookieRefresh(r1)!)).status).toBe(204);
     expect((await amb.http().get('/api/auth/eu').set(bearer)).status).toBe(401);
+  });
+
+  it('logout com o cookie de antes de uma rotação encerra a família inteira (a sessão sucessora também)', async () => {
+    const login = await amb
+      .http()
+      .post('/api/auth/login')
+      .send({ codigoEmpresa: emp.codigo, login: 'admin', senha: SENHA_TESTE });
+    const c1 = cookieRefresh(login)!;
+    // A renovação de outra aba (ou agendada) girou o cookie enquanto o "Sair" ainda levava o anterior.
+    const r1 = await amb.http().post('/api/auth/refresh').set('Cookie', c1);
+    expect(r1.status).toBe(200);
+    const c2 = cookieRefresh(r1)!;
+    const sair = await amb.http().post('/api/auth/logout').set('Cookie', c1);
+    expect(sair.status).toBe(204);
+    expect((await amb.http().post('/api/auth/refresh').set('Cookie', c2)).status).toBe(401);
+    expect(
+      (await amb.http().get('/api/auth/eu').set('Authorization', `Bearer ${r1.body.tokenAcesso}`)).status,
+    ).toBe(401);
+    const [abertas] = await consultar<{ n: number }>(
+      emp.nomeBanco,
+      `select count(*)::int as n from sessoes_usuario
+        where encerrada_em is null and familia_id = (select familia_id from sessoes_usuario where id = $1)`,
+      [await sessaoDoCookie(c1)],
+    );
+    expect(abertas!.n).toBe(0);
+  });
+
+  it('logout que chega durante a rotação espera por ela e encerra a sucessora', async () => {
+    const login = await amb
+      .http()
+      .post('/api/auth/login')
+      .send({ codigoEmpresa: emp.codigo, login: 'admin', senha: SENHA_TESTE });
+    const c1 = cookieRefresh(login)!;
+    const id = await sessaoDoCookie(c1);
+    // Uma conexão segura a linha da sessão: o refresh entra na fila primeiro e o logout atrás dele.
+    const trava = await conectar(emp.nomeBanco);
+    try {
+      await trava.query('begin');
+      await trava.query('select id from sessoes_usuario where id = $1 for update', [id]);
+      const refresh = amb
+        .http()
+        .post('/api/auth/refresh')
+        .set('Cookie', c1)
+        .then((r) => r);
+      await aguardarEspera(emp.nomeBanco, 1);
+      const sair = amb
+        .http()
+        .post('/api/auth/logout')
+        .set('Cookie', c1)
+        .then((r) => r);
+      await aguardarEspera(emp.nomeBanco, 2);
+      await trava.query('commit');
+      const [rr, rs] = await Promise.all([refresh, sair]);
+      expect(rr.status).toBe(200);
+      expect(rs.status).toBe(204);
+      expect((await amb.http().post('/api/auth/refresh').set('Cookie', cookieRefresh(rr)!)).status).toBe(401);
+      expect(
+        (await amb.http().get('/api/auth/eu').set('Authorization', `Bearer ${rr.body.tokenAcesso}`)).status,
+      ).toBe(401);
+    } finally {
+      await trava.end();
+    }
   });
 
   it('inatividade: 60 min sem requisição encerram a sessão; o refresh não conta como uso', async () => {

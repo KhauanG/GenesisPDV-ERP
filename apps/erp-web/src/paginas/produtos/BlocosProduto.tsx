@@ -59,6 +59,7 @@ import {
 } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 import { useCategorias } from '../../api/produtos';
@@ -613,7 +614,10 @@ export function ModalAjustarEstoque({
     try {
       const res = enviar
         ? await enviar(r.data)
-        : await apiErp.post<ResultadoAjusteProduto>(`/produtos/${produtoId}/ajustar-estoque`, r.data);
+        : await apiErp.post<ResultadoAjusteProduto>(
+            `/produtos/${segmento(produtoId)}/ajustar-estoque`,
+            r.data,
+          );
       if (aoAjustar) await aoAjustar(res);
       else await cliente.invalidateQueries({ queryKey: ['produtos', produtoId, 'saldos'] });
       const dif = Number(res.diferenca);
@@ -987,7 +991,7 @@ export function BlocoValidade({ form, produtoId }: { form: Form; produtoId: stri
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const saldos = useQuery({
     queryKey: ['produtos', produtoId, 'saldos'],
-    queryFn: () => apiErp.get<SaldosProduto>(`/produtos/${produtoId}/saldos`),
+    queryFn: () => apiErp.get<SaldosProduto>(`/produtos/${segmento(produtoId)}/saldos`),
     enabled: !!produtoId,
   });
   const lojas = useMemo(

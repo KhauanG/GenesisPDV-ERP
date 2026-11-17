@@ -46,6 +46,7 @@ import {
 } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -157,7 +158,7 @@ export function Categorias() {
   const recarregar = () => queryClient.invalidateQueries({ queryKey: ['categorias'] });
   const excluir = useMutation({
     mutationFn: ({ id, confirmar }: { id: string; confirmar: boolean }) =>
-      apiErp.del(`/categorias/${id}${confirmar ? '?confirmar=true' : ''}`),
+      apiErp.del(`/categorias/${segmento(id)}${confirmar ? '?confirmar=true' : ''}`),
     onSuccess: () => {
       void recarregar();
       setEdicao(null);
@@ -185,7 +186,10 @@ export function Categorias() {
         });
       let versao = nos.get(id)!.versao;
       if (plano.mover) {
-        const r = await apiErp.post<CategoriaNo>(`/categorias/${id}/mover`, { versao, ...plano.mover });
+        const r = await apiErp.post<CategoriaNo>(`/categorias/${segmento(id)}/mover`, {
+          versao,
+          ...plano.mover,
+        });
         anotar([[id, versao, r.versao]]);
         versao = r.versao;
       }

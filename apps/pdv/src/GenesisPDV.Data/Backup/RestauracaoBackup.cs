@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GenesisPDV.Core.Comum;
@@ -54,7 +55,11 @@ public sealed record ConferenciaRestauracao(string Arquivo, Guid TerminalId, lon
 /// seria o "token anterior reutilizado" da SYNC 3.7), a <see cref="RestauracaoPendente"/> e a auditoria local
 /// <c>restaurar</c> (sobe no próximo lote). Se nem a leitura direta sai, fica o token do backup: rotacionado depois
 /// dele, a nuvem o aceita como anterior por 7 dias (com o alerta <c>TOKEN_ANTERIOR_REUTILIZADO</c>) e, depois disso,
-/// o terminal precisa de nova ativação.</item>
+/// o terminal precisa de nova ativação. O que só avança também não volta com o arquivo: o
+/// <c>identidade_terminal.status</c> fica o mais restritivo entre o do arquivo e o do banco em uso
+/// (<see cref="StatusIdentidade.Ordem"/>; SYNC 3.8: o backup de antes da ordem de desativação do ERP não devolve o caixa
+/// a <c>ativo</c>, nem offline) e a <c>estado_conexao.maior_hora_vista</c> fica a maior das duas (relógio de alta-água,
+/// PDV 30.5).</item>
 /// <item>O banco em uso vai para <c>backup/</c> (<see cref="MotivosBackup.AntesRestauracao"/>, fora da retenção
 /// automática: pode ser a única cópia dos eventos que ele não enviou); ilegível, é renomeado ao lado
 /// (<c>pdv.db.corrompido-…</c>). Nada é apagado.</item>
@@ -161,7 +166,9 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
         long SequenciaEvento,
         DateTimeOffset? UltimoBackupEm,
         int? EventosPendentes,
-        bool SoOIndiceCorrompido = false);
+        bool SoOIndiceCorrompido = false,
+        string? Status = null,
+        DateTimeOffset? MaiorHoraVista = null);
 
     /// <summary>
     /// Nulo se o banco não é do PDV ou não sai; com <paramref name="conferir"/>, também se não passa no
@@ -185,21 +192,24 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
             Guid? terminal = null;
             byte[]? token = null;
             DateTimeOffset? ultimoBackup = null;
+            string? status = null;
             using (var cmd = c.CreateCommand())
             {
-                cmd.CommandText = "SELECT terminal_id, token_protegido, ultimo_backup_em FROM identidade_terminal LIMIT 1;";
+                cmd.CommandText = "SELECT terminal_id, token_protegido, ultimo_backup_em, status FROM identidade_terminal LIMIT 1;";
                 using var r = cmd.ExecuteReader();
                 if (r.Read())
                 {
                     terminal = Guid.ParseExact(r.GetString(0), "D");
                     token = r.IsDBNull(1) ? null : (byte[])r.GetValue(1);
                     ultimoBackup = r.IsDBNull(2) ? null : DataHoraUtcTexto.Ler(r.GetString(2));
+                    status = r.IsDBNull(3) ? null : r.GetString(3);
                 }
             }
 
             string? pendente = null;
             long evento = 0;
             int? aEnviar = null;
+            DateTimeOffset? maiorHora = null;
             try
             {
                 pendente = Escalar(c, $"SELECT valor FROM configuracao_terminal WHERE chave = '{ChavesConfiguracaoTerminal.TokenPendente}';") as string;
@@ -214,7 +224,18 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
                 // Corrompido: o terminal e o token já bastam (o resto fica com o que saiu).
             }
 
-            return new BancoLido(terminal, token, pendente, evento, ultimoBackup, aEnviar, soOIndice);
+            // À parte e por último: a página de estado_conexao (gravada a cada heartbeat) estragada não pode levar junto o
+            // token pendente da rotação (SYNC 3.7), a sequência e a contagem lidos acima.
+            try
+            {
+                maiorHora = MaiorHoraVista(c);
+            }
+            catch (SqliteException) when (!conferir)
+            {
+                // Sem ela, o arquivo restaurado fica com a própria (o relógio de alta-água só não avança por esta).
+            }
+
+            return new BancoLido(terminal, token, pendente, evento, ultimoBackup, aEnviar, soOIndice, status, maiorHora);
         }
         catch (Exception e) when (e is SqliteException || (!conferir && e is FormatException or InvalidCastException))
         {
@@ -237,6 +258,24 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
         return linhas is [var unica] && string.Equals(unica, "ok", StringComparison.OrdinalIgnoreCase) ? []
             : linhas.Count == 0 ? ["sem resposta do integrity_check"] : linhas;
     }
+
+    /// <summary>
+    /// <c>estado_conexao.maior_hora_vista</c>; nula sem a linha, sem a coluna (backup de schema anterior) ou com um texto
+    /// fora do formato (não recusa o arquivo: no destino, a hora do banco em uso a substitui).
+    /// </summary>
+    private static DateTimeOffset? MaiorHoraVista(SqliteConnection c) =>
+        TemMaiorHoraVista(c)
+        && Escalar(c, "SELECT maior_hora_vista FROM estado_conexao LIMIT 1;") is string texto
+        && DateTimeOffset.TryParseExact(texto, DataHoraUtcTexto.Formato, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var hora)
+            ? hora
+            : null;
+
+    private static bool TemMaiorHoraVista(SqliteConnection c) =>
+        Escalar(c, "SELECT count(*) FROM pragma_table_info('estado_conexao') WHERE name = 'maior_hora_vista';") is 1L;
+
+    /// <summary>Posição na ordem do ciclo de vida (<see cref="StatusIdentidade.Ordem"/>); -1 = desconhecido ou nulo.</summary>
+    private static int OrdemStatus(string? status) => status is null ? -1 : Array.IndexOf(StatusIdentidade.Ordem, status);
 
     private static bool Tabela(SqliteConnection c, string nome) =>
         Escalar(c, $"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '{nome}';") is 1L;
@@ -268,6 +307,20 @@ public sealed class RestauracaoBackup(FabricaPdvDb fabrica, CaminhosPdv caminhos
             GravarConfiguracao(c, ChavesConfiguracaoTerminal.BuscaReconstruir, "true", agora);
         }
         Executar(c, "UPDATE identidade_terminal SET restaurado_em = $agora;", ("$agora", DataHoraUtcTexto.Formatar(agora)));
+        // O ciclo de vida só avança (SYNC 3.8): o `desativando`/`revogado` do banco em uso vale sobre o `ativo` do arquivo,
+        // e os bloqueios da reserva de venda e da abertura do caixa (que leem este status) continuam valendo offline.
+        if (emUso?.Status is { } statusEmUso
+            && OrdemStatus(statusEmUso) > OrdemStatus(Escalar(c, "SELECT status FROM identidade_terminal LIMIT 1;") as string))
+        {
+            Executar(c, "UPDATE identidade_terminal SET status = $status;", ("$status", statusEmUso));
+        }
+
+        // Relógio de alta-água (PDV 30.5): nunca diminui, nem com o arquivo mais antigo.
+        if (emUso?.MaiorHoraVista is { } maiorEmUso && TemMaiorHoraVista(c) && !(MaiorHoraVista(c) >= maiorEmUso))
+        {
+            Executar(c, "UPDATE estado_conexao SET maior_hora_vista = $hora;", ("$hora", DataHoraUtcTexto.Formatar(maiorEmUso)));
+        }
+
         if (emUso?.Token is { Length: > 0 } token)
         {
             Executar(c, "UPDATE identidade_terminal SET token_protegido = $token;", ("$token", token));

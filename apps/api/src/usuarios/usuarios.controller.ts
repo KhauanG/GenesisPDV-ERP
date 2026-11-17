@@ -36,9 +36,15 @@ import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQ
 import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
+import { invalidarRedefinicoesPendentes, mudouVinculoRecuperacao } from '../auth/redefinicao-senha.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { ErroApi } from '../comum/erros.js';
-import { arquivoExportacao, garantirPodeExportar, type ColunaExportacao } from '../comum/exportacao.js';
+import {
+  arquivoExportacao,
+  comVagaExportacao,
+  garantirPodeExportar,
+  type ColunaExportacao,
+} from '../comum/exportacao.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
@@ -66,6 +72,7 @@ import {
 } from '../seguranca/senhas.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 type LinhaUsuario = typeof usuarios.$inferSelect;
 
@@ -233,28 +240,31 @@ export class UsuariosController {
     garantirPodeExportar(sessao, 'usuarios');
     const q = validar(filtroUsuariosSchema.extend(exportacaoQuerySchema.shape), query);
     const { onde, ordem } = condicoesListagem(q, sessao);
-    const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
-      const [total] = await tx.select({ n: count() }).from(usuarios).where(onde);
-      if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
-        throw new ErroApi(
-          'REGRA_NEGOCIO',
-          `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
-        );
-      }
-      const linhas = await consultaResumo(tx)
-        .where(onde)
-        .orderBy(...ordem);
-      const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
-      await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
-        acao: 'exportar',
-        entidade: 'usuarios',
-        localizacao: LOCALIZACAO,
-        descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
-        depois: { formato, filtros, linhas: linhas.length },
+    // A vaga do usuário e da empresa antes de ler as linhas (decisão 204).
+    return comVagaExportacao(sessao, async () => {
+      const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
+        const [total] = await tx.select({ n: count() }).from(usuarios).where(onde);
+        if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
+          );
+        }
+        const linhas = await consultaResumo(tx)
+          .where(onde)
+          .orderBy(...ordem);
+        const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
+        await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+          acao: 'exportar',
+          entidade: 'usuarios',
+          localizacao: LOCALIZACAO,
+          descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
+          depois: { formato, filtros, linhas: linhas.length },
+        });
+        return linhas;
       });
-      return linhas;
+      return arquivoExportacao(q.formato, 'Usuarios', COLUNAS_EXPORTACAO, linhas);
     });
-    return arquivoExportacao(q.formato, 'Usuarios', COLUNAS_EXPORTACAO, linhas);
   }
 
   @Permissao('usuarios.ver')
@@ -287,15 +297,19 @@ export class UsuariosController {
       throw ErroApi.semPermissao('Só um usuário Master pode criar outro Master.');
     }
     garantirLimiteDesconto(sessao, dados.limiteDescontoPct);
+    // As checagens baratas antes do argon2 (decisão 204): login/código/CPF repetido, cidade, perfil, lojas e estoques
+    // recusam sem gastar hash nem o limite de hashes do usuário. A transação confere tudo de novo.
+    await this.s.tenancy.cx().consulta(async (db) => {
+      await this.conferirCriacao(db, sessao, dados, lojasInformadas);
+      await this.conferirEstoques(db, sessao, estoquesInformados);
+    });
+    garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
     const senhaGerada = senha ? undefined : gerarSenhaProvisoria();
     // argon2 fora da transação (transação curta, MD 1.5).
     const senhaHash = await gerarHashSenha(senha ?? senhaGerada!);
     const id = await this.s.tenancy.cx().transacao(
       async (tx) => {
-        await this.garantirUnicos(tx, dados);
-        await garantirMunicipio(tx, dados.municipioIbge, dados.uf);
-        if (dados.perfilId) await this.garantirPerfil(tx, sessao, dados.perfilId);
-        const lojasFinais = dados.master ? [] : await this.resolverLojas(tx, sessao, lojasInformadas, []);
+        const lojasFinais = await this.conferirCriacao(tx, sessao, dados, lojasInformadas);
         const [novo] = await tx
           .insert(usuarios)
           .values({
@@ -409,6 +423,8 @@ export class UsuariosController {
           .where(and(eq(usuarios.id, usuarioId), eq(usuarios.versao, versao)))
           .returning();
         if (!depois) await this.conflito(tx, antes);
+        // Outro e-mail, inativo, totem ou demissão: o link de "esqueci minha senha" pendente deixa de valer (decisão 206).
+        if (mudouVinculoRecuperacao(antes, depois!)) await invalidarRedefinicoesPendentes(tx, usuarioId);
         if (!dados.master) await this.gravarLojas(tx, sessao, usuarioId, lojasAntes, lojasFinais);
         // Vínculo `usuarios.pessoa_id` = motivo `funcionario` da pessoa (MD 3.5.4; D19).
         const pessoasVinculadas = [antes.pessoaId, depois!.pessoaId].filter((p): p is string => !!p);
@@ -470,6 +486,7 @@ export class UsuariosController {
           .update(usuarios)
           .set({ excluidoEm: new Date(), atualizadoPorId: sessao.usuarioId })
           .where(eq(usuarios.id, usuarioId));
+        await invalidarRedefinicoesPendentes(tx, usuarioId);
         // Sem o usuário, a pessoa vinculada pode deixar de ser relevante como funcionário (MD 3.5.4).
         if (antes.pessoaId) await recalcularRelevancia(tx, [antes.pessoaId]);
         await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
@@ -595,6 +612,17 @@ export class UsuariosController {
     if (usuarioId === sessao.usuarioId) {
       throw new ErroApi('REGRA_NEGOCIO', 'Para a própria senha use Minha conta › Trocar senha.');
     }
+    // O alvo e as regras de quem pode redefinir antes do argon2 (decisão 204): o pedido que seria 404/403 não gasta hash
+    // nem o limite de hashes do usuário. A transação confere de novo com a linha travada.
+    await this.s.tenancy.cx().consulta(async (db) => {
+      const [alvo] = await db
+        .select()
+        .from(usuarios)
+        .where(and(eq(usuarios.id, usuarioId), isNull(usuarios.excluidoEm)));
+      if (!alvo) throw ErroApi.naoEncontrado('Usuário não encontrado.');
+      await this.garantirPodeRedefinir(db, sessao, alvo);
+    });
+    garantirLimiteHash(`${sessao.empresa.empresaId}:${sessao.usuarioId}`);
     const senha = gerarSenhaProvisoria();
     const hash = await gerarHashSenha(senha);
     await this.s.tenancy.cx().transacao(
@@ -605,19 +633,20 @@ export class UsuariosController {
           .where(and(eq(usuarios.id, usuarioId), isNull(usuarios.excluidoEm)))
           .for('update');
         if (!antes) throw ErroApi.naoEncontrado('Usuário não encontrado.');
-        if (antes.master && !sessao.master)
-          throw ErroApi.semPermissao('Só um usuário Master pode redefinir a senha de outro Master.');
-        await this.garantirAlvoSubordinado(tx, sessao, antes);
+        await this.garantirPodeRedefinir(tx, sessao, antes);
         await tx
           .update(usuarios)
           .set({
             senhaHash: hash,
             senhaProvisoria: true,
+            // Conta como troca de senha: o link de "esqueci minha senha" criado antes não vale mais (decisão 206).
+            senhaAlteradaEm: sql`now()`,
             tentativasFalhas: 0,
             bloqueadoAte: null,
             atualizadoPorId: sessao.usuarioId,
           })
           .where(eq(usuarios.id, usuarioId));
+        await invalidarRedefinicoesPendentes(tx, usuarioId);
         await tx
           .update(sessoesUsuario)
           .set({ encerradaEm: new Date(), motivoEncerramento: 'encerrada_admin' })
@@ -652,6 +681,7 @@ export class UsuariosController {
 
   @Permissao('usuarios.permissoes')
   @Put(':id/permissoes')
+  @CorpoGrande()
   async alterarPermissoes(
     @Param('id') id: string,
     @Body() corpo: unknown,
@@ -813,27 +843,11 @@ export class UsuariosController {
     usuarioId: string,
     informados: readonly string[],
   ): Promise<string[]> {
-    const informadosUnicos = [...new Set(informados)];
-    if (informadosUnicos.length) {
-      const existentes = await tx
-        .select({ id: estoques.id })
-        .from(estoques)
-        .where(and(inArray(estoques.id, informadosUnicos), isNull(estoques.excluidoEm)));
-      if (existentes.length !== informadosUnicos.length) {
-        throw new ErroApi('VALIDACAO', 'Verifique os campos destacados.', {
-          campos: { estoques: ['Estoque inexistente ou excluído'] },
-        });
-      }
-    }
+    const informadosUnicos = await this.conferirEstoques(tx, sessao, informados);
     const antes = await this.estoquesDoUsuario(tx, usuarioId);
     // Mesma regra das lojas (resolverLojas): só concede/retira estoques permitidos ao editor (ERP 2.1); os que ele
     // não vê e o usuário já tinha são preservados.
-    const invisiveis = await this.estoquesInvisiveis(tx, sessao, [...informadosUnicos, ...antes]);
-    if (informadosUnicos.some((e) => invisiveis.has(e))) {
-      throw ErroApi.semPermissao(
-        'Você só pode conceder estoques que estão entre os seus estoques permitidos.',
-      );
-    }
+    const invisiveis = await this.estoquesInvisiveis(tx, sessao, antes);
     const pedidos = [...new Set([...antes.filter((e) => invisiveis.has(e)), ...informadosUnicos])];
     const remover = antes.filter((e) => !pedidos.includes(e));
     const incluir = pedidos.filter((e) => !antes.includes(e));
@@ -860,6 +874,34 @@ export class UsuariosController {
       );
     }
     return pedidos;
+  }
+
+  /**
+   * Os estoques informados (só leitura): inexistente ou excluído → 422 no campo; fora dos estoques permitidos ao
+   * editor → 403. Roda antes do argon2 na criação (decisão 204) e de novo na gravação; devolve a lista sem repetidos.
+   */
+  private async conferirEstoques(
+    db: DbEmpresa,
+    sessao: SessaoErp,
+    informados: readonly string[],
+  ): Promise<string[]> {
+    const unicos = [...new Set(informados)];
+    if (!unicos.length) return unicos;
+    const existentes = await db
+      .select({ id: estoques.id })
+      .from(estoques)
+      .where(and(inArray(estoques.id, unicos), isNull(estoques.excluidoEm)));
+    if (existentes.length !== unicos.length) {
+      throw new ErroApi('VALIDACAO', 'Verifique os campos destacados.', {
+        campos: { estoques: ['Estoque inexistente ou excluído'] },
+      });
+    }
+    if ((await this.estoquesInvisiveis(db, sessao, unicos)).size) {
+      throw ErroApi.semPermissao(
+        'Você só pode conceder estoques que estão entre os seus estoques permitidos.',
+      );
+    }
+    return unicos;
   }
 
   /** Estoques da lista que o editor não enxerga (fora dos estoques permitidos dele, `estoqueVisivel`). */
@@ -899,6 +941,37 @@ export class UsuariosController {
         },
       });
     }
+  }
+
+  /**
+   * O que a criação confere no banco antes de gravar (só leitura): login/código/CPF únicos, cidade, perfil e lojas.
+   * Roda antes do argon2 e de novo na transação (decisão 204); devolve as lojas finais (Master: nenhuma).
+   */
+  private async conferirCriacao(
+    db: DbEmpresa,
+    sessao: SessaoErp,
+    dados: {
+      login: string;
+      codigo?: number | undefined;
+      cpf: string | null;
+      municipioIbge: number | null;
+      uf: string | null;
+      perfilId?: string | null | undefined;
+      master: boolean;
+    },
+    lojasInformadas: readonly string[],
+  ): Promise<string[]> {
+    await this.garantirUnicos(db, dados);
+    await garantirMunicipio(db, dados.municipioIbge, dados.uf);
+    if (dados.perfilId) await this.garantirPerfil(db, sessao, dados.perfilId);
+    return dados.master ? [] : this.resolverLojas(db, sessao, lojasInformadas, []);
+  }
+
+  /** Só um Master redefine a senha de outro Master, e quem não é Master só a de quem tem acesso contido no dele. */
+  private async garantirPodeRedefinir(db: DbEmpresa, sessao: SessaoErp, alvo: LinhaUsuario): Promise<void> {
+    if (alvo.master && !sessao.master)
+      throw ErroApi.semPermissao('Só um usuário Master pode redefinir a senha de outro Master.');
+    await this.garantirAlvoSubordinado(db, sessao, alvo);
   }
 
   private async detalhe(db: DbEmpresa, id: string, sessao: SessaoErp): Promise<UsuarioDetalhe | null> {

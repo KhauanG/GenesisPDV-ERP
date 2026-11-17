@@ -27,17 +27,18 @@ import {
   type DestinoArquivo,
 } from '@genesis/shared';
 import type { Response } from 'express';
-import { catchError, defer, finalize, mergeMap, throwError } from 'rxjs';
+import { catchError, finalize, throwError } from 'rxjs';
 import { z } from 'zod';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { lojaPermitida } from '../autorizacao/lojas.js';
 import { ErroApi } from '../comum/erros.js';
-import { garantirLimitePorMinuto, limiteDoAmbiente, Semaforo } from '../comum/limites-processo.js';
+import { comVaga, garantirLimitePorMinuto, limiteDoAmbiente, Semaforo } from '../comum/limites-processo.js';
 import { Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import type { Servicos } from '../servicos.js';
 import { podeEnviar } from './arquivos.js';
+import { PrazoLeituraEnvio } from '../comum/prazo-envio.js';
 
 /** O que o multer entrega (memória; o limite do destino corta o stream antes de juntar mais que isso). */
 interface ArquivoRecebido {
@@ -124,13 +125,7 @@ class LimiteEnvioArquivo implements NestInterceptor {
 @Injectable()
 class VagaEnvioArquivo implements NestInterceptor {
   intercept(_ctx: ExecutionContext, next: CallHandler) {
-    let liberar: (() => void) | undefined;
-    return defer(async () => {
-      liberar = await semaforoEnvios.adquirir();
-    }).pipe(
-      mergeMap(() => next.handle()),
-      finalize(() => liberar?.()),
-    );
+    return comVaga(semaforoEnvios, () => next.handle());
   }
 }
 
@@ -172,7 +167,7 @@ export class ArquivosController {
    */
   @Post()
   @HttpCode(201)
-  @UseInterceptors(LimiteEnvioArquivo, upload, VagaEnvioArquivo)
+  @UseInterceptors(PrazoLeituraEnvio, LimiteEnvioArquivo, upload, VagaEnvioArquivo)
   enviar(
     @UploadedFile() arquivo: ArquivoRecebido | undefined,
     @Query() query: unknown,

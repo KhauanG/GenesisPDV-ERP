@@ -34,9 +34,10 @@ import {
 } from 'drizzle-orm';
 import type { SessaoErp } from '../auth/auth.service.js';
 import type { AuditoriaService, OrigemAcao } from '../auditoria/auditoria.service.js';
-import { garantirLoja } from '../autorizacao/lojas.js';
+import { garantirLoja, lojaPermitida } from '../autorizacao/lojas.js';
+import type { PermissoesEfetivas } from '../autorizacao/permissoes-efetivas.js';
 import { ErroApi } from '../comum/erros.js';
-import { alertas, eventosRecebidos, terminais, vendas } from '../database/empresa/schema/index.js';
+import { alertas, eventosRecebidos, tarefas, terminais, vendas } from '../database/empresa/schema/index.js';
 import {
   alertarEventoComErro,
   ALERTA_EVENTO_DESCARTADO,
@@ -49,7 +50,8 @@ import {
   type TerminalDoEvento,
 } from '../sync/aplicacao.js';
 import { ErroRegraEvento, ErroTransitorioEvento, traduzirErroBanco } from '../sync/erros.js';
-import type { ExecucaoTarefa, TarefasSegundoPlano } from '../tarefas/tarefas.js';
+import { conferirLiberacaoLacuna } from '../sync/lacunas.js';
+import { sessaoDaTarefa, type ExecucaoTarefa, type TarefasSegundoPlano } from '../tarefas/tarefas.js';
 import type { DbEmpresa, Tenancy } from '../tenancy/tenancy.js';
 import { resolverAlertasSemEventos } from './revogacao.js';
 
@@ -230,7 +232,8 @@ const jaResolvido = (status: string | undefined) =>
 /**
  * O evento continua pendente, mas não na situação em que a ação foi decidida (outra pessoa agiu entre a leitura e a
  * trava): nada muda, 409. Ex.: o retido da cadeia que foi a `erro` `DEPENDENCIA_DESCARTADA` (8.5 pede decisão
- * humana) ou a venda que deixou de ser `NUMERO_VENDA_DUPLICADO` antes do "Aplicar com novo número".
+ * humana) ou a venda que deixou de ser `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` antes do "Aplicar com
+ * novo número".
  */
 const situacaoMudou = (l: LinhaEvento) =>
   new ErroApi(
@@ -242,7 +245,8 @@ const situacaoMudou = (l: LinhaEvento) =>
 type Precondicao = (l: LinhaEvento) => boolean;
 
 const retido: Precondicao = (l) => l.status === 'retido';
-const duplicado: Precondicao = (l) =>
+/** "Aplicar com novo número": `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` (`aceitaNovoNumero`). */
+const aceitaNumeroNovo: Precondicao = (l) =>
   aceitaNovoNumero({ status: l.status, erroCodigo: l.erroCodigo, tipo: l.tipo });
 const comCodigo =
   (codigo: string): Precondicao =>
@@ -303,11 +307,24 @@ const publico = ({ numero: _n, terminalId: _t, ...d }: DesfechoInterno): Desfech
 const bloqueadoPor = (eventoId: string): SQL =>
   sql`${eventosRecebidos.dependencias} @> ${JSON.stringify([{ evento_id_bloqueador: eventoId }])}::jsonb`;
 
+/**
+ * Só o que já tinha chegado quando a tarefa foi criada, pela hora gravada da chegada (`eventos_recebidos.criado_em`
+ * até o `criado_em` da própria linha da tarefa, microssegundos do banco, sem o arredondamento do `Date`): o lote do
+ * ERP não pega os eventos que o push trouxe depois do pedido. Não é exatamente o conjunto contado no pedido: um evento
+ * que já tinha chegado e só caiu no código depois da contagem (um retido reaplicado, um Reprocessar que mudou o
+ * código, o placeholder da lacuna trocado, que guarda a hora do começo do push) também entra, e a `quantidade` da
+ * auditoria do pedido é a contagem daquele momento (o resultado da tarefa traz o `total` real). Cada evento ainda
+ * passa pela `precondicao` (`comCodigo`) sob a trava, com o acesso de quem pediu conferido na execução.
+ */
+const recebidoAteATarefa = (tarefaId: string): SQL =>
+  sql`${eventosRecebidos.criadoEm} <= (select t.criado_em from ${tarefas} t where t.id = ${tarefaId}::uuid)`;
+
 export class FilaDecisao {
   constructor(
     private readonly tenancy: Tenancy,
     private readonly auditoria: AuditoriaService,
     private readonly tarefas: TarefasSegundoPlano,
+    private readonly permissoes: PermissoesEfetivas,
   ) {
     tarefas.registrarTipo(TAREFA_REPROCESSAR_EVENTOS, (e) => this.executarLote(e));
     tarefas.registrarTipo(TAREFA_REPROCESSAR_APOS_LACUNA, (e) => this.executarAposLacuna(e));
@@ -348,6 +365,14 @@ export class FilaDecisao {
    * `evento_reprocessado`, origem PDV e modo `lacuna`). A seleção vale de novo sob a trava (`causadoPorLacuna`): o que
    * mudou de código ou foi resolvido no meio do caminho é pulado. O retido cujo bloqueador ainda está pendente volta a
    * ficar retido.
+   *
+   * Antes de tudo, quem liberou a recuperação é conferido de novo com o acesso do momento (`conferirLiberacaoLacuna`, a
+   * mesma regra do push: ativo, `pdv.config.fiscal` e a loja do terminal): quem perdeu o acesso entre o push e a
+   * execução não responde mais pela continuação, a tarefa falha sem aplicar nada e os eventos ficam na fila de decisão
+   * do ERP. A seleção vale para o momento da execução, sem o limite pela hora da tarefa (`recebidoAteATarefa`) do
+   * lote do ERP: a continuação reaplica eventos do próprio PDV, não uma escolha humana, e `reaplicar` não solta
+   * dependentes — o retido que chegou depois da tarefa nascer, preso a um `erro` da lacuna, só sai daqui (o retido
+   * não abre alerta; sem isso ficaria retido de vez).
    */
   async executarAposLacuna(e: ExecucaoTarefa): Promise<{ resultado: Record<string, unknown> }> {
     const { terminalId, desde, loteId } = e.tarefa.parametros as {
@@ -355,7 +380,22 @@ export class FilaDecisao {
       desde: number;
       loteId: string;
     };
-    const ids = await this.tenancy.cx().consulta(async (db) =>
+    const cx = this.tenancy.cx();
+    const lojaId = await this.lojaDoTerminal(terminalId);
+    try {
+      await cx.consulta((db) =>
+        conferirLiberacaoLacuna(
+          db,
+          this.permissoes,
+          this.tenancy.atual().empresaId,
+          e.tarefa.usuarioId,
+          lojaId,
+        ),
+      );
+    } catch (erro) {
+      throw new Error((erro as Error).message, { cause: erro });
+    }
+    const ids = await cx.consulta(async (db) =>
       (
         await db
           .select({ eventoId: eventosRecebidos.eventoId })
@@ -409,7 +449,10 @@ export class FilaDecisao {
     return this.reprocessarComDependentes(l.eventoId, origem, {});
   }
 
-  /** Aplicar com novo número (SYNC 11.2, 13.1): só o `erro` `NUMERO_VENDA_DUPLICADO` de um documento de venda. */
+  /**
+   * Aplicar com novo número (SYNC 11.2, 13.1): só o `erro` `NUMERO_VENDA_DUPLICADO` ou `NUMERO_VENDA_IMPLAUSIVEL` de um
+   * documento de venda (o segundo grava na faixa sem avançar a numeração do caixa, decisão 212).
+   */
   async aplicarNovoNumero(
     sessao: SessaoErp,
     id: string,
@@ -419,10 +462,13 @@ export class FilaDecisao {
     if (!aceitaNovoNumero({ status: l.status, erroCodigo: l.erroCodigo, tipo: l.tipo })) {
       throw new ErroApi(
         'REGRA_NEGOCIO',
-        '"Aplicar com novo número" só vale para a venda com erro NUMERO_VENDA_DUPLICADO.',
+        '"Aplicar com novo número" só vale para a venda com erro NUMERO_VENDA_DUPLICADO ou NUMERO_VENDA_IMPLAUSIVEL.',
       );
     }
-    return this.reprocessarComDependentes(l.eventoId, origem, { novoNumero: true, precondicao: duplicado });
+    return this.reprocessarComDependentes(l.eventoId, origem, {
+      novoNumero: true,
+      precondicao: aceitaNumeroNovo,
+    });
   }
 
   /**
@@ -616,6 +662,11 @@ export class FilaDecisao {
    * O que outra pessoa ou um reprocessamento anterior da mesma tarefa já resolveu (ou tirou do código) é pulado e
    * contado em `ignorados`; o transitório do banco é tentado de novo e, se persistir, contado em `adiados` (o evento
    * continua em `erro`, sem tentativa registrada).
+   *
+   * A tarefa confere de novo o que a rota conferiu, com o acesso **do momento** (`sessaoDaTarefa`, como a importação e
+   * a exportação): quem pediu tem de continuar ativo, com `terminais.gerenciar` e com a loja atual do terminal; faltando
+   * algo, a tarefa falha sem aplicar nada (os eventos continuam em `erro`). E o lote vale só para os `erro` do código
+   * recebidos até a criação da tarefa, pela hora gravada da chegada (`recebidoAteATarefa`, com os seus limites).
    */
   async executarLote(e: ExecucaoTarefa): Promise<{ resultado: Record<string, unknown> }> {
     const {
@@ -627,7 +678,15 @@ export class FilaDecisao {
       codigo: string;
       origem?: Partial<OrigemLote>;
     };
-    const ids = await this.tenancy.cx().consulta(async (db) =>
+    const cx = this.tenancy.cx();
+    const sessao = await cx.consulta((db) =>
+      sessaoDaTarefa(db, this.tenancy, this.permissoes, e.tarefa.usuarioId, e.tarefa.id),
+    );
+    if (!sessao.permissoes.has('terminais.gerenciar'))
+      throw new Error('O usuário não tem mais a permissão de gerenciar terminais.');
+    if (!lojaPermitida(sessao, await this.lojaDoTerminal(terminalId)))
+      throw new Error('O usuário não tem mais acesso à loja deste terminal.');
+    const ids = await cx.consulta(async (db) =>
       (
         await db
           .select({ eventoId: eventosRecebidos.eventoId })
@@ -637,6 +696,7 @@ export class FilaDecisao {
               eq(eventosRecebidos.terminalId, terminalId),
               eq(eventosRecebidos.status, 'erro'),
               eq(eventosRecebidos.erroCodigo, codigo),
+              recebidoAteATarefa(e.tarefa.id),
             ),
           )
           .orderBy(asc(eventosRecebidos.sequenciaTerminal))
@@ -644,8 +704,8 @@ export class FilaDecisao {
     );
     const origem: OrigemAcao = {
       origem: 'erp',
-      usuarioId: e.tarefa.usuarioId,
-      usuarioNome: doLote?.usuarioNome ?? null,
+      usuarioId: sessao.usuarioId,
+      usuarioNome: doLote?.usuarioNome ?? sessao.usuarioNome,
       ip: doLote?.ip ?? null,
       userAgent: doLote?.userAgent ?? null,
       requisicaoId: doLote?.requisicaoId ?? null,
@@ -679,6 +739,17 @@ export class FilaDecisao {
   }
 
   // -------------------------------------------------------------------------------------------------------------
+
+  /** Loja atual do terminal (para as tarefas reconferirem o acesso); terminal sumido → a tarefa falha. */
+  private async lojaDoTerminal(terminalId: string): Promise<string> {
+    const [t] = await this.tenancy
+      .cx()
+      .consulta((db) =>
+        db.select({ lojaId: terminais.lojaId }).from(terminais).where(eq(terminais.id, terminalId)),
+      );
+    if (!t) throw new Error('Terminal não encontrado.');
+    return t.lojaId;
+  }
 
   private async carregar(sessao: SessaoErp, id: string): Promise<LinhaEvento> {
     const [l] = await this.tenancy

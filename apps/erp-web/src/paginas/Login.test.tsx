@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { rotas } from '../rotas';
 import { renderizarRotas, simularApi, type RespostaFalsa } from '../teste/utilidades';
-import { CHAVE_CODIGO_EMPRESA } from './Login';
+import { CHAVE_CODIGO_EMPRESA, rotaVoltarSegura } from './Login';
 
 const USUARIO = {
   id: '01928f3a-7c1e-7b2d-9a40-5e2f1c3d4b5a',
@@ -148,6 +148,21 @@ describe('fluxo de login do ERP', () => {
     expect(await screen.findByRole('heading', { name: 'Usuários' })).toBeInTheDocument();
   });
 
+  it('voltar com letra codificada (`/%73air`, a rota /sair) não desconecta: o login leva ao início (decisão 85)', async () => {
+    const { chamadas } = simularApi(
+      semSessao,
+      rota('POST', '/api/auth/login', () => ({ corpo: respostaLogin() })),
+      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver']) })),
+      rota('POST', '/api/auth/logout', () => ({ status: 204 })),
+    );
+    const { router } = renderizarRotas(rotas, '/login?voltar=%2F%2573air');
+    await screen.findByRole('button', { name: 'Entrar' });
+    await preencher('100001', 'maria', 'Senha123');
+    expect(await screen.findByText(/Olá, Maria/)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
+    expect(chamadas.some((c) => c.url.pathname === '/api/auth/logout')).toBe(false);
+  });
+
   it('com sessão válida no cookie, a rota abre direto; Sair encerra e volta ao login', async () => {
     const { chamadas } = simularApi(
       rota('POST', '/api/auth/refresh', () => ({ corpo: respostaLogin() })),
@@ -186,5 +201,57 @@ describe('fluxo de login do ERP', () => {
     expect(await screen.findByRole('heading', { name: 'Exportação' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Exportar clientes/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /Exportar produtos/i })).toBeDisabled();
+  });
+});
+
+describe('rotaVoltarSegura', () => {
+  it('aceita a rota interna, com a consulta que tiver', () => {
+    expect(rotaVoltarSegura('/cadastros/usuarios')).toBe('/cadastros/usuarios');
+    expect(rotaVoltarSegura('/produtos?busca=..%2Fx%5C')).toBe('/produtos?busca=..%2Fx%5C');
+    expect(rotaVoltarSegura('/produtos?busca=%2Fplataforma')).toBe('/produtos?busca=%2Fplataforma');
+    expect(rotaVoltarSegura('/plataformas')).toBe('/plataformas');
+    expect(rotaVoltarSegura('/cadastros/%70erfis')).toBe('/cadastros/%70erfis');
+    expect(rotaVoltarSegura('/cadastros/perfis/0193bbbb-0000-7000-8000-000000000002/permissoes')).toBe(
+      '/cadastros/perfis/0193bbbb-0000-7000-8000-000000000002/permissoes',
+    );
+  });
+
+  it('recusa outro site, o painel, as telas de sessão e o caminho com desvio escondido (decisão 85)', () => {
+    for (const voltar of [
+      null,
+      '',
+      'cadastros',
+      '//exemplo.invalido',
+      '/plataforma/empresas',
+      '/Plataforma/empresas',
+      '/LOGIN',
+      '/login',
+      '/cadastros/perfis/..%2Fusuarios%2F0193bbbb-0000-7000-8000-000000000002',
+      '/cadastros/perfis/..%2fusuarios',
+      '/cadastros/perfis/x%5Cy',
+      '/\\exemplo.invalido',
+      '/cadastros/../plataforma',
+      '/cadastros/./usuarios',
+      '/cadastros/%2E%2E/plataforma',
+      // O roteador decodifica cada segmento antes de escolher a rota: `/%73air` é `/sair`.
+      '/%73air',
+      '/%70lataforma/empresas',
+      '/%50LATAFORMA',
+      '/%6Cogin',
+      '/trocar%2Dsenha',
+      '/%',
+      // O painel e as telas de sessão também com fragmento.
+      '/plataforma#x',
+      '/sair#',
+      // O leitor de endereço do navegador apaga TAB/LF/CR e o espaço nas pontas.
+      '/pla\ttaforma',
+      '/\t/outro.site',
+      '/\tsair',
+      '/cadastros/.\t./sair',
+      '/.\n./plataforma',
+      '/sair ',
+    ]) {
+      expect(rotaVoltarSegura(voltar), String(voltar)).toBe('/');
+    }
   });
 });

@@ -1499,6 +1499,79 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     - **A execução real** (importação, carga do Nuvem3, contagens, NF-e reais, transferência, conferência) é do dono,
       pelas telas do ERP, no checklist `docs/implantacao/checklist-fechamento-fase2.md`.
 
+82. **"Sair" confirmado pelo servidor e serializado com a renovação** (PR-15, SEG-B06; ERP 4.4; README da API ›
+    decisão 206; `src/api/http.ts`, `src/auth/sessao.tsx`, `src/plataforma/sessao.tsx`,
+    `src/auth/AvisoSaidaPendente.tsx`).
+    - **A saída só vale com o 2xx do logout.** `encerrarSessao()` (no cliente HTTP) grava antes um marcador sem
+      segredo no `localStorage` (`genesis:erp-saida-pendente`; na plataforma `genesis:plataforma-saida-pendente`) e só
+      o apaga com o 2xx. O cookie de refresh é `httpOnly` e só a resposta do servidor o limpa: um logout que não chega
+      (sem conexão) ou falha (500) não encerra a sessão, e o ERP não trata isso como saída.
+    - **Com o marcador, nada renova pelo cookie**: `renovar()` devolve `null` sem chamar o servidor, em qualquer aba, e
+      a resposta de uma renovação que chega depois do "Sair" é descartada (o token não volta à memória). Ao abrir, o
+      ERP (e o painel) com o marcador tenta o logout **antes** de qualquer renovação e fica no login se ele falhar.
+    - **Falhou: o navegador fica fechado e avisa.** O token sai da memória, o cache é limpo, as outras abas saem
+      também e o login mostra "Saída não concluída" com **Tentar sair de novo**; o logout é tentado de novo sozinho a
+      cada 30 s (`INTERVALO_NOVA_SAIDA_MS`) e quando a conexão volta (`online`). Entrar de novo com o marcador tenta o
+      logout antes; o login bem-sucedido apaga o marcador (o cookie novo substitui o anterior).
+    - **A nova tentativa nunca derruba a sessão de outra aba.** Ela usa `repetirSaida()`, não o `encerrarSessao()` do
+      "Sair": não grava o marcador e confere, dentro da trava entre abas e logo antes do fetch, se ele ainda existe.
+      Sem ele (outra aba concluiu a saída ou entrou de novo), não chama o servidor (sairia com o cookie novo, que as
+      abas compartilham) e a aba só passa a "saiu". O login (`abrirSessao()`) faz o POST e apaga o marcador dentro da
+      mesma trava, então a nova tentativa de outra aba não cruza com ele. O evento `storage` da chave do marcador tira
+      o aviso das outras abas na hora (`aoConcluirSaidaEmOutraAba`). Vale também para o painel da plataforma.
+    - **Logout serializado com a renovação**: `encerrarSessao()` espera a renovação em andamento desta aba e chama o
+      logout dentro da mesma trava entre abas do refresh (Web Locks `genesis-erp-refresh` / `genesis-plataforma-refresh`),
+      então sai com o cookie atual. A API, por sua vez, encerra a família inteira da sessão (decisão 206 dela), o que
+      cobre também o logout que cruza com a renovação de uma aba com uma versão anterior do ERP.
+    - Testes: `src/auth/saida.test.tsx` (logout que falha por rede e por 500 → aviso, nada de renovação na próxima
+      abertura, "Tentar sair de novo" conclui e a abertura seguinte só tenta renovar; o controle com 204 sem aviso;
+      entrar de novo com a saída pendente chama o logout antes do login e libera a renovação; o logout espera a
+      renovação em andamento e não reinstala o token; com o marcador a renovação não chama o servidor; a nova tentativa
+      automática a cada `INTERVALO_NOVA_SAIDA_MS` e no evento `online`; o "Sair" manda `pendente` às outras abas e a
+      mensagem recebida leva ao login com ou sem o aviso; duas abas: o login de uma apaga o marcador e o tique da outra
+      não chama o logout nem regrava o marcador; o evento `storage` tira o aviso sem chamar o servidor; `repetirSaida()`
+      confere o marcador dentro da trava e o login segura a trava até apagá-lo; os dois casos de falha, a nova
+      tentativa automática e as duas abas no painel da plataforma) e os de sempre (`Login.test.tsx`, `Plataforma.test.tsx`, `http.test.ts`).
+
+83. **"Terminal perdido/roubado": o aviso diz quem recadastra o PIN** (PR-15, SEG-B10; ERP 12.4; README da API ›
+    decisão 211; `src/paginas/terminais/DialogoRevogar.tsx`). A anulação do modo perdido cobre o PIN do PDV de quem
+    acessa ou já acessou a loja e de quem é ou já foi Master (também nas outras lojas) e a senha de cliente de todas as
+    pessoas que já foram da loja (o computador pode guardar credenciais de antes das edições recentes e de ativações
+    anteriores). O diálogo diz isso nos dois casos (do terminal ativo e do já revogado), com os dois avisos numa
+    constante só (`AVISO_PIN_PERDIDO`, `AVISO_SENHA_CLIENTE_PERDIDO`), e a notificação continua com o número de PINs e
+    senhas anulados. Teste: `Terminais.test.tsx` (o diálogo do terminal ativo e o do já revogado mostram os dois
+    avisos; o ativo pede o caixa e manda o modo `perdido`).
+84. **Fila de decisão: "Aplicar com novo número" também na venda fora da sequência do caixa** (PR-15, SEG-B15; ERP
+    12.5; README da API › decisão 212; `src/paginas/terminais/FilaDecisao.tsx`). A venda com o código
+    `NUMERO_VENDA_IMPLAUSIVEL` (número muito acima da numeração do caixa) ganha a ação pelo `aceitaNovoNumero` do
+    shared, e o diálogo diz o que acontece: a venda vai para a faixa de renumeração sem avançar a numeração do caixa,
+    com o número original na observação e na auditoria, e que as próximas vendas do mesmo terminal também caem ali
+    (o PDV continua contando a partir do número alto): para normalizar o caixa, "Substituir terminal". O diálogo de
+    "Reprocessar todos com o código" avisa, nesse código, que reprocessar não resolve. O duplicado continua com o
+    texto de antes. A recusa da própria renumeração (`RENUMERACAO_SEM_NUMERO`) não oferece a ação de novo. Teste:
+    `Terminais.test.tsx` (o menu oferece a ação, o diálogo explica, o do lote avisa e o resultado mostra os dois
+    números).
+85. **Id da rota e caminho da API: a tela de um tipo de registro só fala com a rota da API daquele tipo** (PR-15,
+    SEG-B11; ERP 3.2 e 4.1; `src/api/caminho.ts`, `src/api/http.ts`, `src/auth/RotaProtegida.tsx` (`ExigeIdValido`),
+    `src/rotas.tsx`, `src/componentes/cadastro.ts`, `src/paginas/Login.tsx`). Todo registro da API tem id UUID
+    (todas as rotas `:id` da API conferem `z.uuid()`), então o id da URL do ERP é conferido em três camadas: (1) a
+    rota — toda rota com `:id` (formulários de cadastro, detalhes das consultas, impressões, o terminal) passa pelo
+    `ExigeIdValido`, que mostra "Página não encontrada" sem montar a tela quando o parâmetro não é um UUID; no painel,
+    o `:codigo` da empresa são 6 dígitos; (2) a tela — `useCadastro` e o formulário de usuários repetem a conferência
+    (sem nenhuma consulta nem gravação com o id fora do formato) e montam o caminho com `segmento()`
+    (`encodeURIComponent`), como as outras telas que levam o id da rota (ou de um registro) para o caminho; (3) o
+    cliente HTTP — `requisitar` não envia caminho que o navegador desviaria de rota: barra invertida, `%2F`/`%5C`,
+    segmento de ponto (`.`, `..`, também escrito com `%2E`) ou caractere de controle e espaço (o leitor de endereço do
+    navegador apaga TAB/LF/CR em qualquer posição, e `.<TAB>.` vira `..`), só na parte antes do `?`; a recusa é um 404
+    `NAO_ENCONTRADO` ("Endereço não encontrado."), que as telas já mostram como "não encontrado" (sem código novo no
+    contrato). O `voltar` do login usa a mesma conferência do caminho e recusa o painel e as telas de sessão no
+    caminho como o roteador o lê: sem diferenciar maiúsculas e com cada segmento decodificado (`/%73air` é a rota
+    `/sair`; segmento que não decodifica é recusado), antes da consulta e do fragmento (`/plataforma#x` também). A API continua sendo a fonte da verdade das permissões;
+    isto garante que o botão de uma tela age sobre o registro do tipo que ela mostra. Testes: `src/api/caminho.test.ts`,
+    `http.test.ts` (nada é enviado), `Login.test.tsx` (`rotaVoltarSegura`) e `src/paginas/IdDaRota.test.tsx` (o link
+    direto e o do login com o id de outro tipo de registro, as duas direções; todas as rotas `:id` da árvore com um id
+    fora do formato; `useCadastro` e o formulário de usuários sem a guarda da rota; o id válido segue abrindo).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

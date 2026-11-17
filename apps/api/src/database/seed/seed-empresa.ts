@@ -265,9 +265,20 @@ export async function aplicarSeedEmpresa(
   }
   if (existente.senha_provisoria) {
     // "Tentar novamente" do provisionamento: a senha anterior nunca foi exibida, então gera outra.
+    // Conta como troca de senha: link de "esqueci minha senha" pendente deixa de valer (README da API › decisão 206).
     await cliente.query(
-      'update usuarios set senha_hash = $2, tentativas_falhas = 0, bloqueado_ate = null where id = $1',
+      `update usuarios set senha_hash = $2, senha_alterada_em = now(), tentativas_falhas = 0, bloqueado_ate = null
+        where id = $1`,
       [existente.id, admin.senhaHash],
+    );
+    await cliente.query(
+      `update mensagens_enviadas set status = 'cancelada'
+        where template_tipo = 'redefinicao_senha' and registro_id = $1 and status = 'pendente'`,
+      [existente.id],
+    );
+    await cliente.query(
+      'update redefinicoes_senha set usado_em = now() where usuario_id = $1 and usado_em is null',
+      [existente.id],
     );
     return { admin: 'senha_provisoria_redefinida' };
   }

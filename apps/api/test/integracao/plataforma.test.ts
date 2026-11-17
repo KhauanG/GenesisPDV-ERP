@@ -314,6 +314,31 @@ describe('painel da plataforma (ERP 19)', () => {
     ).toBe(401);
   });
 
+  it('logout com o cookie de antes de uma rotação encerra a família inteira (a sessão sucessora também)', async () => {
+    const a = await novoAdmin('saida-familia');
+    const r = await loginPlataforma(a);
+    const cookie = cookieDe(r);
+    const r2 = await amb.http().post('/api/plataforma/auth/refresh').set('Cookie', cookie);
+    expect(r2.status).toBe(200);
+    const cookie2 = cookieDe(r2);
+    expect((await amb.http().post('/api/plataforma/auth/logout').set('Cookie', cookie)).status).toBe(204);
+    expect((await amb.http().post('/api/plataforma/auth/refresh').set('Cookie', cookie2)).status).toBe(401);
+    expect(
+      (
+        await amb
+          .http()
+          .get('/api/plataforma/auth/eu')
+          .set(bearer(r2.body.tokenAcesso as string))
+      ).status,
+    ).toBe(401);
+    const [abertas] = await consultar<{ n: number }>(
+      amb.bancoControle,
+      'select count(*)::int as n from sessoes_admin where admin_id = $1 and encerrada_em is null',
+      [a.id],
+    );
+    expect(abertas!.n).toBe(0);
+  });
+
   it('refresh simultâneo com o mesmo cookie não bifurca a sessão; reuso fora da janela derruba tudo', async () => {
     const a = await novoAdmin('paralelo');
     const login = await loginPlataforma(a);

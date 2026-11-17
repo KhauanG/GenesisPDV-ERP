@@ -908,10 +908,10 @@ describe('estoque da venda (SYNC 10.2, 15.1, 15.3, 15.5)', () => {
     expect(await saldo(prod)).toBe(15);
   });
 
-  it('estoque do contexto: válido baixa nele; inativo ou excluído baixa no da loja com ESTOQUE_CONTEXTO_INVALIDO', async () => {
+  it('estoque do contexto: o atual ou um que a loja já usou baixa nele; de outro local (mesmo o que a loja já teve e hoje é de outra), inativo ou excluído baixa no da loja com ESTOQUE_CONTEXTO_INVALIDO', async () => {
     const p = await novoPonto();
     const prod = await criarProduto({ nome: 'CERV CONTEXTO C6B' });
-    const [{ id: outro }] = (await consultar<{ id: string }>(
+    const [{ id: anterior }] = (await consultar<{ id: string }>(
       emp.nomeBanco,
       "insert into estoques (nome) values ('Estoque balcão C6B') returning id",
     )) as [{ id: string }];
@@ -923,35 +923,96 @@ describe('estoque da venda (SYNC 10.2, 15.1, 15.3, 15.5)', () => {
       emp.nomeBanco,
       "insert into estoques (nome, excluido_em) values ('Estoque excluído C6B', now()) returning id",
     )) as [{ id: string }];
+    const [{ id: deposito }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome, tipo) values ('Depósito C6B', 'deposito') returning id",
+    )) as [{ id: string }];
+    const outraLoja = await criarLoja(emp.nomeBanco, 3, 'Loja 3 - Contexto');
+    const [{ estoque_id: daOutraLoja }] = (await consultar<{ estoque_id: string }>(
+      emp.nomeBanco,
+      'select estoque_id from lojas where id = $1',
+      [outraLoja],
+    )) as [{ estoque_id: string }];
+    const [{ id: transferido }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into estoques (nome) values ('Estoque transferido C6B') returning id",
+    )) as [{ id: string }];
+    // A loja usou o `anterior` e o `transferido` e voltou ao dela, pelo cadastro da loja no ERP (a troca fica na
+    // auditoria, SYNC 10.2); o cadastro, que só recusa o estoque vinculado agora a outra loja, passou o `transferido`
+    // para a loja 4.
+    const vincular = async (estoqueId: string, lojaId = loja) => {
+      const atual = await amb.http().get(`/api/lojas/${lojaId}`).set(bearer());
+      expect(atual.status, JSON.stringify(atual.body)).toBe(200);
+      const r = await amb
+        .http()
+        .put(`/api/lojas/${lojaId}`)
+        .set(bearer())
+        .send({ ...atual.body, estoqueId });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    };
+    await vincular(anterior);
+    await vincular(transferido);
+    await vincular(estoqueLoja);
+    await vincular(transferido, await criarLoja(emp.nomeBanco, 4, 'Loja 4 - Transferida'));
+    // Uma linha "de terminal" na auditoria da loja (com `evento_id`) não conta como vínculo.
+    await consultar(
+      emp.nomeBanco,
+      `insert into auditoria (id, ocorrido_em, origem, entidade, registro_id, acao, antes, depois, evento_id)
+       values ($1, now(), 'pdv', 'lojas', $2, 'editar', $3, $3, $4)`,
+      [uuidv7(), loja, JSON.stringify({ estoqueId: deposito }), uuidv7()],
+    );
+    for (const estoque of [anterior, daOutraLoja, deposito, transferido]) {
+      await entrada([[prod, '10', '2']], estoque);
+    }
     await entrada([[prod, '10', '2']]);
-    await entrada([[prod, '10', '2']], outro);
     const contexto = (estoque: string) => ({
       contexto: { loja_id: loja, caixa_id: p.caixa, numero_caixa: p.numero, estoque_id: estoque },
     });
-    const [ok, fallback, semEstoque] = await pushOk(p, [
-      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(outro)),
+    const resultados = await pushOk(p, [
+      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(anterior)),
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(estoqueLoja),
+      ),
       evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '2.000' }]), contexto(velho)),
       evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '3.000' }]), contexto(excluido)),
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(daOutraLoja),
+      ),
+      evento(p, 'venda.finalizada', venda(p, [{ produto: prod, quantidade: '1.000' }]), contexto(deposito)),
+      // O que a loja já teve e hoje é o estoque de outra loja: é daquela, e a baixa não pode cair nele.
+      evento(
+        p,
+        'venda.finalizada',
+        venda(p, [{ produto: prod, quantidade: '1.000' }]),
+        contexto(transferido),
+      ),
     ]);
-    expect(ok).toMatchObject({ status: 'aplicado' });
-    expect(ok!.resultado).not.toHaveProperty('alertas');
-    expect(fallback).toMatchObject({
-      status: 'aplicado',
-      resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] },
-    });
-    expect(semEstoque).toMatchObject({
-      status: 'aplicado',
-      resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] },
-    });
-    expect(await saldo(prod, tipoPadrao, outro)).toBe(9);
-    expect(await saldo(prod)).toBe(5);
-    for (const estoque of [velho, excluido]) {
-      expect(
-        await alertasAbertos(
-          'ESTOQUE_CONTEXTO_INVALIDO',
-          `estoque_contexto_invalido:${p.terminal}:${estoque}`,
-        ),
-      ).toHaveLength(1);
+    const [noAnterior, noAtual, ...fallback] = resultados;
+    for (const ok of [noAnterior, noAtual]) {
+      expect(ok).toMatchObject({ status: 'aplicado' });
+      expect(ok!.resultado).not.toHaveProperty('alertas');
+    }
+    for (const r of fallback) {
+      expect(r).toMatchObject({ status: 'aplicado', resultado: { alertas: ['ESTOQUE_CONTEXTO_INVALIDO'] } });
+    }
+    expect(await saldo(prod, tipoPadrao, anterior)).toBe(9);
+    // O da loja: 10 − 1 (o atual) − 2 − 3 − 1 − 1 − 1 (os de fora, lançados nele).
+    expect(await saldo(prod)).toBe(1);
+    expect(await saldo(prod, tipoPadrao, daOutraLoja)).toBe(10);
+    expect(await saldo(prod, tipoPadrao, deposito)).toBe(10);
+    expect(await saldo(prod, tipoPadrao, transferido)).toBe(10);
+    for (const estoque of [velho, excluido, daOutraLoja, deposito, transferido]) {
+      const [alerta] = await alertasAbertos(
+        'ESTOQUE_CONTEXTO_INVALIDO',
+        `estoque_contexto_invalido:${p.terminal}:${estoque}`,
+      );
+      expect(alerta?.dados).toEqual({ estoque_contexto_id: estoque, estoque_usado_id: estoqueLoja });
     }
   });
 });
@@ -1831,6 +1892,268 @@ describe('payload completo do caixa (C4; SYNC 9.7, 8.4)', () => {
     const [de] = await pushOk(p, [evento(p, 'venda.finalizada', v)]);
     expect(de).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
   }, 60_000);
+});
+
+describe('limites do estoque e dos valores do evento (SYNC 11.2; README da API › decisão 210)', () => {
+  /** Acerto efetivado agora pelo admin (Master: o saldo negativo passa). */
+  async function acertoAgora(
+    tipoAjuste: 'entrada' | 'saida' | 'definir',
+    produtoId: string,
+    quantidade: string,
+  ) {
+    const a = await amb
+      .http()
+      .post('/api/acertos')
+      .set(bearer())
+      .send({
+        estoqueId: estoqueLoja,
+        tipoAjuste,
+        dataContagem: agora(),
+        motivo: 'Teste',
+        itens: [{ produtoId, quantidade }],
+      });
+    expect(a.status, JSON.stringify(a.body)).toBe(201);
+    const atual = await amb.http().get(`/api/acertos/${a.body.id}`).set(bearer());
+    return amb
+      .http()
+      .post(`/api/acertos/${a.body.id}/efetivar`)
+      .set(bearer())
+      .send({ versao: atual.body.versao });
+  }
+
+  const linhaDoEvento = async (eventoId: string) =>
+    (
+      await consultar<{ status: string; erro_codigo: string | null; tentativas: number }>(
+        emp.nomeBanco,
+        'select status, erro_codigo, tentativas from eventos_recebidos where evento_id = $1',
+        [eventoId],
+      )
+    )[0];
+
+  it('quantidade do item acima do que o caixa produz: só aquele evento é rejeitado (PAYLOAD_INVALIDO), o lote segue', async () => {
+    const p = await novoPonto();
+    const alvo = await criarProduto({ nome: 'CERVEJA DO TETO DA QUANTIDADE' });
+    const outro = await criarProduto({ nome: 'REFRI DO MESMO LOTE' });
+    const absurda = evento(
+      p,
+      'venda.finalizada',
+      venda(p, [{ produto: alvo, quantidade: '999999999999.999', preco: '0.0100' }]),
+    );
+    const comum = evento(p, 'venda.finalizada', venda(p, [{ produto: outro, quantidade: '1.000' }]));
+    const [r1, r2] = await pushOk(p, [absurda, comum]);
+    expect(r1).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    expect(r2).toMatchObject({ status: 'aplicado' });
+    expect(await saldo(alvo)).toBe(0);
+    expect(await saldo(outro)).toBe(-1);
+    // O maior item que o caixa produz (9.999,999) continua entrando.
+    const [r3] = await pushOk(p, [
+      evento(p, 'venda.finalizada', venda(p, [{ produto: alvo, quantidade: '9999.999', preco: '0.0100' }])),
+    ]);
+    expect(r3).toMatchObject({ status: 'aplicado' });
+    expect(await saldo(alvo)).toBe(-9999.999);
+  });
+
+  it('saldo no limite do sistema: a venda que passaria dele é rejeitada (LIMITE_ESTOQUE) em qualquer terminal, sem parar o lote; o "Definir" conserta', async () => {
+    const a = await novoPonto();
+    const b = await novoPonto();
+    const alvo = await criarProduto({ nome: 'CERVEJA NO LIMITE DO SALDO' });
+    const outro = await criarProduto({ nome: 'AGUA FORA DO LIMITE' });
+    // No ERP, o lançamento que passaria do limite já é recusado (422 com a mensagem), sem gravar nada.
+    const longe = await acertoAgora('saida', alvo, '999999999990');
+    expect(longe.status, JSON.stringify(longe.body)).toBe(422);
+    expect(longe.body).toMatchObject({
+      codigo: 'REGRA_NEGOCIO',
+      detalhes: { produtoId: alvo, estoqueId: estoqueLoja },
+    });
+    expect(longe.body.mensagem).toMatch(/fora do limite do sistema/);
+    expect(await saldo(alvo)).toBe(0);
+    // Até o limite, passa.
+    expect((await acertoAgora('saida', alvo, '99999999990')).status).toBe(200);
+    expect(await saldo(alvo)).toBe(-99_999_999_990);
+    // Terminal A: a venda de 10 passaria do limite; só ela é rejeitada, e a seguinte do mesmo lote entra.
+    const va = evento(a, 'venda.finalizada', venda(a, [{ produto: alvo, quantidade: '10.000' }]));
+    const [ra, rOutro] = await pushOk(a, [
+      va,
+      evento(a, 'venda.finalizada', venda(a, [{ produto: outro, quantidade: '1.000' }])),
+    ]);
+    expect(ra).toMatchObject({ status: 'rejeitado', erro: { codigo: 'LIMITE_ESTOQUE' } });
+    expect(rOutro).toMatchObject({ status: 'aplicado' });
+    expect(await linhaDoEvento(va.evento_id)).toEqual({
+      status: 'erro',
+      erro_codigo: 'LIMITE_ESTOQUE',
+      tentativas: 1,
+    });
+    // A linha nos detalhes do protocolo, em snake_case como nos outros códigos (SYNC 2.3 e 11.2).
+    const [linhaRejeitada] = await consultar<{ resultado: { detalhes: Record<string, unknown> } }>(
+      emp.nomeBanco,
+      'select resultado from eventos_recebidos where evento_id = $1',
+      [va.evento_id],
+    );
+    expect(linhaRejeitada!.resultado.detalhes).toEqual({
+      estoque_id: estoqueLoja,
+      produto_id: alvo,
+      variacao_id: null,
+      tipo_estoque_id: tipoPadrao,
+    });
+    // Terminal B: a venda que ainda cabe entra; a que passaria do limite é rejeitada do mesmo jeito.
+    const [rb1] = await pushOk(b, [
+      evento(b, 'venda.finalizada', venda(b, [{ produto: alvo, quantidade: '5.000' }])),
+    ]);
+    expect(rb1).toMatchObject({ status: 'aplicado' });
+    const [rb2] = await pushOk(b, [
+      evento(b, 'venda.finalizada', venda(b, [{ produto: alvo, quantidade: '5.000' }])),
+    ]);
+    expect(rb2).toMatchObject({ status: 'rejeitado', erro: { codigo: 'LIMITE_ESTOQUE' } });
+    expect(await saldo(alvo)).toBe(-99_999_999_995);
+    // O "Definir" leva a linha de volta (aproxima de zero), e as vendas voltam a entrar.
+    expect((await acertoAgora('definir', alvo, '20')).status).toBe(200);
+    expect(await saldo(alvo)).toBe(20);
+    const [rb3] = await pushOk(b, [
+      evento(b, 'venda.finalizada', venda(b, [{ produto: alvo, quantidade: '5.000' }])),
+    ]);
+    expect(rb3).toMatchObject({ status: 'aplicado' });
+    expect(await saldo(alvo)).toBe(15);
+  });
+
+  it('custo acima da coluna: o "Definir" de linha enorme com custo alto é recusado e se faz em partes; no push LIMITE_ESTOQUE', async () => {
+    const alvo = await criarProduto({ nome: 'CHOPP DO CUSTO NO LIMITE', precoCusto: '200' });
+    // Duas Saídas que cabem (4,95e10 × R$ 200 = 9,9e12 em custo_total) levam a linha a −9,9e10, dentro do limite.
+    expect((await acertoAgora('saida', alvo, '49500000000')).status).toBe(200);
+    expect((await acertoAgora('saida', alvo, '49500000000')).status).toBe(200);
+    expect(await saldo(alvo)).toBe(-99_000_000_000);
+    const movimentos = async () =>
+      (
+        await consultar<{ n: number }>(
+          emp.nomeBanco,
+          'select count(*)::int as n from movimentos_estoque where produto_id = $1',
+          [alvo],
+        )
+      )[0]!.n;
+    const antes = await movimentos();
+    // O "Definir" para 0 seria uma entrada de 9,9e10 × R$ 200 = 1,98e13, acima de numeric(15,2): o rascunho já é
+    // recusado (422 no item, com o caminho), sem acerto nem movimento.
+    const acertosAntes = (
+      await consultar<{ n: number }>(emp.nomeBanco, 'select count(*)::int as n from acertos_estoque')
+    )[0]!.n;
+    const definir = await amb
+      .http()
+      .post('/api/acertos')
+      .set(bearer())
+      .send({
+        estoqueId: estoqueLoja,
+        tipoAjuste: 'definir',
+        dataContagem: agora(),
+        motivo: 'Teste',
+        itens: [{ produtoId: alvo, quantidade: '0' }],
+      });
+    expect(definir.status, JSON.stringify(definir.body)).toBe(422);
+    expect(definir.body).toMatchObject({ codigo: 'VALIDACAO' });
+    expect(definir.body.campos['itens.0.quantidade'][0]).toMatch(/limite do sistema.*em partes/);
+    expect(await saldo(alvo)).toBe(-99_000_000_000);
+    expect(await movimentos()).toBe(antes);
+    expect(
+      (await consultar<{ n: number }>(emp.nomeBanco, 'select count(*)::int as n from acertos_estoque'))[0]!.n,
+    ).toBe(acertosAntes);
+    // Em partes: uma Entrada que cabe e depois o "Definir" do resto zeram a linha.
+    expect((await acertoAgora('entrada', alvo, '49500000000')).status).toBe(200);
+    expect((await acertoAgora('definir', alvo, '0')).status).toBe(200);
+    expect(await saldo(alvo)).toBe(0);
+    // No push: a venda de produto com estoque cujo custo passa da coluna é rejeitada pelo motor (LIMITE_ESTOQUE, com
+    // a linha nos detalhes), não pelo overflow do banco, e o lote segue.
+    const p = await novoPonto();
+    const caro = await criarProduto({ nome: 'WHISKY COM CUSTO NO TETO', precoCusto: '99999999999' });
+    const outro = await criarProduto({ nome: 'GELO DO MESMO LOTE' });
+    const v = evento(
+      p,
+      'venda.finalizada',
+      venda(p, [{ produto: caro, quantidade: '1000.000', preco: '1.0000' }]),
+    );
+    const [r1, r2] = await pushOk(p, [
+      v,
+      evento(p, 'venda.finalizada', venda(p, [{ produto: outro, quantidade: '1.000' }])),
+    ]);
+    expect(r1).toMatchObject({
+      status: 'rejeitado',
+      erro: { codigo: 'LIMITE_ESTOQUE', mensagem: expect.stringMatching(/custo do lançamento/) },
+    });
+    expect(r2).toMatchObject({ status: 'aplicado' });
+    expect(await saldo(caro)).toBe(0);
+  });
+
+  it('valor calculado que não cabe na coluna (classe 22 do PostgreSQL): só aquele evento é rejeitado, sem ERRO_INTERNO', async () => {
+    const p = await novoPonto();
+    // Serviço sem estoque: o custo da venda é o de referência × a quantidade, acima do numeric(15,2).
+    const caro = await criarProduto({
+      nome: 'SERVICO COM CUSTO NO TETO',
+      tipo: 'servico',
+      controlaEstoque: false,
+      precoCusto: '99999999999',
+    });
+    const outro = await criarProduto({ nome: 'SUCO DO MESMO LOTE' });
+    const v = evento(
+      p,
+      'venda.finalizada',
+      venda(p, [{ produto: caro, quantidade: '1000.000', preco: '1.0000' }]),
+    );
+    const [r1, r2] = await pushOk(p, [
+      v,
+      evento(p, 'venda.finalizada', venda(p, [{ produto: outro, quantidade: '1.000' }])),
+    ]);
+    expect(r1).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    expect(r2).toMatchObject({ status: 'aplicado' });
+    expect(await linhaDoEvento(v.evento_id)).toEqual({
+      status: 'erro',
+      erro_codigo: 'PAYLOAD_INVALIDO',
+      tentativas: 1,
+    });
+  });
+
+  it('número que o JSON lê como Infinity: só aquele evento é rejeitado; aninhamento fundo demais: 400 sem estourar', async () => {
+    const p = await novoPonto();
+    const produto = await criarProduto({ nome: 'CHA DO LOTE COM INFINITO' });
+    const infinito = evento(p, 'venda.finalizada', {
+      ...venda(p, [{ produto, quantidade: '1.000' }]),
+      observacao_extra: '__INF__',
+    });
+    const comum = evento(p, 'venda.finalizada', venda(p, [{ produto, quantidade: '1.000' }]));
+    const corpo = JSON.stringify({
+      lote_id: uuidv7(),
+      terminal_id: p.terminal,
+      enviado_em: agora(),
+      eventos: [infinito, comum],
+    });
+    const r = await amb
+      .http()
+      .post('/sync/push')
+      .set({ ...cabecalhos(p.token), 'Content-Type': 'application/json' })
+      .send(corpo.replace('"__INF__"', '1e400'));
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.resultados).toMatchObject([
+      { status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } },
+      { status: 'aplicado' },
+    ]);
+    expect(await saldo(produto)).toBe(-1);
+    // Aninhamento muito fundo: o envelope é recusado antes do hash e da gravação, sem derrubar o processo.
+    let fundo = '1';
+    for (let i = 0; i < 100_000; i++) fundo = `[${fundo}]`;
+    const aninhado = evento(p, 'venda.finalizada', {
+      ...venda(p, [{ produto, quantidade: '1.000' }]),
+      extra: '__FUNDO__',
+    });
+    const lote = JSON.stringify({
+      lote_id: uuidv7(),
+      terminal_id: p.terminal,
+      enviado_em: agora(),
+      eventos: [aninhado],
+    });
+    const f = await amb
+      .http()
+      .post('/sync/push')
+      .set({ ...cabecalhos(p.token), 'Content-Type': 'application/json' })
+      .send(lote.replace('"__FUNDO__"', fundo));
+    expect(f.status, JSON.stringify(f.body).slice(0, 500)).toBe(400);
+    expect(f.body.erro.codigo).toBe('REQUISICAO_INVALIDA');
+  });
 });
 
 describe('ordem de lançamento do razão (F2-B2)', () => {

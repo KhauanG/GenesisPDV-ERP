@@ -44,6 +44,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { idValido, segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -160,6 +161,9 @@ const ABAS = ['dados', 'menus', 'permissoes', 'acessos'] as const;
 export function FormularioUsuario() {
   const { id, aba } = useParams();
   const novo = !id;
+  // O id da rota só vira caminho da API quando é um id de registro (README do ERP › decisão 85).
+  const idInvalido = !novo && !idValido(id);
+  const caminho = `/usuarios/${segmento(id ?? '')}`;
   const eu = useEu();
   const pode = usePode();
   const navigate = useNavigate();
@@ -181,8 +185,8 @@ export function FormularioUsuario() {
 
   const registro = useQuery({
     queryKey: ['usuario', id],
-    queryFn: () => apiErp.get<UsuarioDetalhe>(`/usuarios/${id}`),
-    enabled: !novo,
+    queryFn: () => apiErp.get<UsuarioDetalhe>(caminho),
+    enabled: !novo && !idInvalido,
   });
 
   useEffect(() => {
@@ -202,7 +206,7 @@ export function FormularioUsuario() {
     mutationFn: (corpo: unknown) =>
       novo
         ? apiErp.post<RespostaUsuarioGravado>('/usuarios', corpo)
-        : apiErp.put<RespostaUsuarioGravado>(`/usuarios/${id}`, corpo),
+        : apiErp.put<RespostaUsuarioGravado>(caminho, corpo),
     onSuccess: (r) => {
       setErro(null);
       void queryClient.invalidateQueries({ queryKey: ['listagem', 'usuarios'] });
@@ -225,7 +229,7 @@ export function FormularioUsuario() {
   });
 
   const excluir = useMutation({
-    mutationFn: () => apiErp.del(`/usuarios/${id}`),
+    mutationFn: () => apiErp.del(caminho),
     onSuccess: () => {
       form.resetDirty();
       void queryClient.invalidateQueries({ queryKey: ['listagem', 'usuarios'] });
@@ -262,6 +266,7 @@ export function FormularioUsuario() {
     gravar.mutate(r.data);
   }
 
+  if (idInvalido) return <NaoEncontrado inicio={ROTA_USUARIOS} />;
   if (!novo && registro.isError) {
     if (registro.error instanceof ErroRequisicao && registro.error.status === 404) {
       return <NaoEncontrado inicio={ROTA_USUARIOS} />;

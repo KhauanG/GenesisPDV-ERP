@@ -14,6 +14,7 @@ import { IconAlertTriangle, IconArrowLeft, IconInfoCircle } from '@tabler/icons-
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -200,7 +201,8 @@ export function DetalheFechamentoCaixa() {
   const pode = usePode();
   const r = useQuery({
     queryKey: ['sessao-caixa', id],
-    queryFn: ({ signal }) => apiErp.get<SessaoCaixaDetalhe>(`/sessoes-caixa/${id}`, { sinal: signal }),
+    queryFn: ({ signal }) =>
+      apiErp.get<SessaoCaixaDetalhe>(`/sessoes-caixa/${segmento(id)}`, { sinal: signal }),
     enabled: !!id,
   });
   const s = r.data;

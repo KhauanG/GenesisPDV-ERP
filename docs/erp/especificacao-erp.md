@@ -229,8 +229,21 @@ permissão grava uma linha em `auditoria` (ADR-09) com `antes`/`depois` em `json
 Formato de erro: `{ "codigo": "VALIDACAO", "mensagem": "texto para o usuário", "campos": { "cpf": ["CPF inválido"] } }`.
 Códigos: `VALIDACAO` (422), `NAO_AUTENTICADO` (401), `SEM_PERMISSAO` (403), `EMPRESA_SUSPENSA` (403),
 `NAO_ENCONTRADO` (404), `CONFLITO_VERSAO` (409), `REGRA_NEGOCIO` (422), `LIMITE_PLANO` (422), `ERRO_INTERNO` (500),
-`SISTEMA_OCUPADO` (503, com `Retry-After`: a gravação esperou além do limite pela trava de ordenação enquanto os caixas
-enviavam vendas; nada foi gravado e a tela pede para salvar de novo em alguns segundos — Fase 1C, modelo-de-dados.md 1.5).
+`SISTEMA_OCUPADO` (503, com `Retry-After`; nada foi feito, e dá para tentar de novo em alguns segundos. Dois casos: a
+gravação esperou além do limite pela trava de ordenação enquanto os caixas enviavam vendas, e a tela pede para salvar de
+novo — Fase 1C, modelo-de-dados.md 1.5; ou a fila de conferência e geração de senha do servidor está cheia — no login, na
+troca e no resgate de senha nada foi conferido e não conta como tentativa falha, é só entrar de novo; ao criar usuário,
+redefinir senha, gravar PIN ou senha do cliente e da forma de pagamento nada foi gravado, é só salvar de novo — 4.1 e
+README da API › decisão 204),
+`CORPO_GRANDE` (413), `TEMPO_ESGOTADO` (408) e `TIPO_NAO_SUPORTADO` (415).
+
+Corpo das requisições (README da API › decisão 199): só JSON em UTF-8, sem compressão; até 100 KiB em toda rota e até
+4 MiB nas que gravam documentos com muitos itens (produto, acerto, recebimento, nota de entrada, transferência, cadastro
+em massa, grupo de preço, pessoa, perfil, permissões do usuário), lido depois do login e da permissão conferidos. Acima,
+413 `CORPO_GRANDE`; formulário, texto ou conteúdo comprimido, 415 `TIPO_NAO_SUPORTADO`; o corpo que não chega inteiro em
+60 s (`CORPO_JSON_PRAZO_LEITURA_S`), 408 `TEMPO_ESGOTADO`. Arquivos vão em multipart, com os limites de cada envio e o
+mesmo prazo de 60 s para o arquivo chegar inteiro (`ENVIO_ARQUIVO_PRAZO_LEITURA_S`, 408 `TEMPO_ESGOTADO`; README da
+API › decisão 202).
 
 ---
 
@@ -350,6 +363,7 @@ permissões).
 | Alterações não salvas | Sair com alterações pendentes pede confirmação ("Descartar alterações?") |
 | Gravação | Botão desabilitado e indicador durante o envio; sucesso = notificação verde "Registro gravado" e permanece no formulário (com a URL atualizada para `/:id` quando era novo) |
 | Somente leitura | Sem permissão de editar, ou documento imutável: todos os campos desabilitados e só Voltar/Histórico/Imprimir |
+| Id na URL | O `:id` da rota de um registro (formulário, detalhe, impressão) só abre a tela quando é um id de registro (UUID); fora disso a tela é "Página não encontrada" e nada é pedido à API. O id entra no caminho da API como um segmento codificado, e o cliente HTTP não envia caminho com segmento de ponto (`.`, `..`, também com `%2E`), barra invertida ou `%2F`/`%5C` (o mesmo para o `:codigo` da empresa no painel, 6 dígitos) |
 | Campos monetários | Máscara `R$`, aceita vírgula, alinhado à direita |
 | Campos de data | Seletor Mantine com digitação `dd/mm/aaaa`; atalho `H` = hoje |
 
@@ -392,6 +406,7 @@ Usada em Acerto, Recebimento manual, Transferência, Orçamento, Venda, Cadastro
 | Volume | Relatórios que passam de 50.000 linhas ou 30 s rodam como tarefa em segundo plano (3.6). Na Fase 2 (F2-B29) a regra é só pelo número de linhas, contado no pedido (o tempo não se sabe antes de rodar): até 50.000 o arquivo baixa na hora; acima, a exportação vira a tarefa `exportar_relatorio` (`GET /api/relatorios/<nome>/exportar?formato=xlsx\|csv` responde `202` com a tarefa), que gera o `.xlsx` (ou o `.csv`) em streaming e deixa o link no ícone Tarefas; acima de 5.000.000 de linhas pede para refinar os filtros. O `.xlsx` passa para uma aba nova a cada 1.048.575 linhas (o limite do Excel). Exportar exige `relatorios.exportar` e a permissão do relatório; sem `produtos.ver_custo` as colunas de custo não saem |
 | Paginação | Fase 2, F2-B30 (README do ERP › decisão 65): o relatório de volume pagina **no servidor**: por página (`pagina` e `tamanho`, com o total contado pela API) ou por cursor ("próxima página", para o relatório que lê o razão em ordem). Página, tamanho (20, 25, 35 ou 50) e cursor ficam na URL com os filtros; o Filtrar (e a troca da loja de contexto, quando o filtro de loja vem dela) volta à primeira página; o Voltar/Avançar do navegador traz a página certa. Os totais da tabela são do relatório inteiro. PDF e Imprimir saem da página aberta |
 | Seleção | Opcional: marcação de linhas da página aberta (com "todas da página") e as ações em lote do relatório numa barra; trocar de página ou de filtros limpa a seleção |
+| Exportação na hora | Cada usuário tem 1 exportação na hora em andamento e cada empresa 3 (listagens e relatórios); outra no meio volta 429 "Já há uma exportação sua em andamento…" na hora, sem ler nada (README da API › decisão 204) |
 | Exportação em tarefa | Quando a exportação vira tarefa (`202`), a tela mostra o aviso com as linhas e o andamento e, no fim, o link do arquivo; a mesma tarefa fica no ícone Tarefas (3.6) |
 | Leitura | Consultas de relatório podem usar réplica de leitura do PostgreSQL quando existir |
 
@@ -413,6 +428,11 @@ reiniciando) não congela o andamento: a tela e o painel avisam, com "Tentar nov
 alguma permissão que cria tarefa (exportar relatório, importar produtos/clientes/NF-e, gerenciar terminais, autorizar a
 faixa do PDV). A tela que pediu a tarefa (Importação, upload de NF-e, exportação do relatório) acompanha a dela até
 terminar, com o mesmo componente de andamento.
+
+Toda tarefa confere de novo, ao rodar, o acesso de quem a pediu (o do momento, não o do pedido): o usuário desativado
+ou excluído, ou que perdeu a permissão ou a loja exigida pela ação, faz a tarefa terminar `falhou` com o motivo, sem
+gravar nada com o acesso antigo (importações, NF-e em lote, exportação e, desde o PR-15, o "Reprocessar todos com o
+código" e a continuação da lacuna recuperada do PDV; README da API › decisão 213).
 
 ### 3.7 Impressão
 
@@ -437,7 +457,10 @@ exibido ao lado do editor.
 
 **Objetivo**: autenticar o usuário na empresa certa (código da empresa + usuário + senha, como no Nuvem3 e ADR-02).
 
-**Rota**: `/login` (pública). Qualquer rota protegida sem sessão redireciona para `/login?voltar=<rota>`.
+**Rota**: `/login` (pública). Qualquer rota protegida sem sessão redireciona para `/login?voltar=<rota>`. O `voltar`
+só vale para uma rota interna do ERP (não o painel da plataforma nem as telas de sessão, em maiúsculas ou minúsculas
+e também com letra codificada, como `/%73air`), com o caminho sem barra invertida, `%2F`/`%5C`, segmento de ponto nem
+caractere de controle ou espaço; fora disso, o login leva ao início.
 
 | Campo | Tipo | Obr. | Validação | Padrão |
 |---|---|---|---|---|
@@ -490,6 +513,7 @@ sequenceDiagram
 | Mensagem de erro | Sempre "Código da empresa, usuário ou senha inválidos." (não revela qual está errado) |
 | Bloqueio por tentativas | 5 falhas seguidas no mesmo (empresa, login) bloqueiam por 15 minutos; mensagem "Usuário bloqueado temporariamente. Tente em X minutos." Um Master pode desbloquear em Usuários |
 | Rate limit | 20 tentativas/minuto por IP |
+| Fila da senha | A conferência da senha tem vaga reservada no servidor: as senhas geradas fora do login (criar usuário, redefinir senha, PIN, senha do cliente e da forma de pagamento) usam no máximo as outras vagas. Quem espera mais de 20 s na fila, ou a senha gerada que chega com 16 já esperando (recusada na hora), recebe 503 `SISTEMA_OCUPADO` com `Retry-After` "O sistema está conferindo muitas senhas agora…"; no login não conta como tentativa falha (README da API › decisão 204) |
 | Empresa suspensa | Só depois de credenciais válidas mostra "Acesso suspenso. Entre em contato com o suporte Genesis." + motivo público definido no painel da plataforma |
 | Usuário inativo, excluído ou com `demissao` ≤ hoje | Tratado como credencial inválida + auditoria `login_negado` com o motivo |
 | Usuário sem permissão de ERP | Se o perfil só tem permissões `pdv.*` (ex.: operador de caixa), mostra "Seu usuário não tem acesso ao ERP." |
@@ -518,11 +542,27 @@ só é aceita no PDV online, validada pela API, quando `pdv.login_aceita_senha_e
 - Se o usuário tem e-mail cadastrado: envia link de redefinição de uso único (expira em 1 h, `redefinicoes_senha.expira_em`, modelo 3.3.6) para o e-mail.
 - Se não tem: mostra "Peça a um administrador da sua empresa para redefinir sua senha." (Usuários › Redefinir senha).
 - A resposta é sempre a mesma ("Se os dados estiverem corretos, você receberá um e-mail"), para não revelar usuários.
+- O link fica preso à senha e ao e-mail de quando foi pedido (README da API › decisão 206): a troca da própria senha,
+  a senha provisória gerada pelo administrador (que conta como troca de senha), o uso de outro link e a edição do
+  usuário que muda e-mail, ativo, totem ou demissão (ou a exclusão) invalidam os links pendentes; o link criado antes
+  da última troca de senha não vale; o envio relê o usuário e não manda o link a um e-mail que não é mais o dele; vale
+  só o link mais novo de cada usuário. Em todos esses casos: "Link de redefinição inválido ou expirado. Peça outro."
 
 ### 4.4 Sair
 
 Menu **SAIR** (`/sair`): encerra a sessão (`sessoes_usuario.encerrada_em = now()`, `motivo_encerramento = 'logout'`),
 limpa o estado local, auditoria `logout`, volta para `/login` com o código da empresa preenchido.
+
+- O logout encerra a **família** da sessão (a sessão do cookie e as sucessoras das renovações), inclusive quando cruza
+  com uma renovação em andamento (README da API › decisão 206); o ERP espera a renovação desta aba e chama o logout na
+  mesma trava entre abas do refresh.
+- A saída só vale com a confirmação (2xx) do servidor (README do ERP › decisão 82). Sem ela (sem conexão, erro), o
+  navegador fica fechado mesmo assim — o token sai da memória e um marcador de "saída pendente" impede a renovação
+  pelo cookie em qualquer aba e na próxima abertura —, o login mostra "Saída não concluída" com **Tentar sair de novo**
+  e o ERP tenta de novo sozinho (ao abrir, a cada 30 s e quando a conexão volta). Entrar de novo também tenta o logout
+  antes. A nova tentativa só chama o servidor enquanto o marcador existe: se outra aba já concluiu a saída ou entrou
+  de novo, esta só deixa o aviso (nunca encerra a sessão aberta na outra aba). O painel da plataforma segue a mesma
+  regra.
 
 **Entidades**: `genesis_control.empresas`; `usuarios`, `sessoes_usuario` (modelo 3.3.6: `refresh_token_hash`,
 `familia_id`, `expira_em`, `ultimo_uso_em`, `ip`, `user_agent`, `encerrada_em`, `motivo_encerramento` `logout`/
@@ -888,7 +928,7 @@ quando fechados, ex.: "Categorias: CERVEJA › LATA"):
 | `preco_custo` | Preço de Custo | preço | N | ≥ 0; atualizado por recebimentos (último custo). No tipo **Combo (kit)**: somente leitura, calculado pela composição (8.2.17) | 0 |
 | `custo_medio` | Custo médio **(Novo)** | preço | — | somente leitura (calculado pelo razão, 13.1.4) | — |
 | `markup_pct` | Markup % | percentual | N | botão **Calcular**: `preco_venda = preco_custo × (1 + markup/100)`, arredondado a 2 casas; ao digitar preço de venda, o markup exibido é recalculado. No **Combo (kit)** o preço é sempre digitado: o markup é só exibição (recalculado com o custo) e o botão Calcular não aparece | Margem de lucro das Configurações › Geral |
-| `preco_venda` | Preço de Venda | preço | S | > 0 para produtos vendáveis (não exigido para Matéria-prima); se Configurações › Geral › "Altera Preço do Produto no ERP" = Não, só editável com `produtos.alterar_preco` | — |
+| `preco_venda` | Preço de Venda | preço | S | > 0 para produtos vendáveis (não exigido para Matéria-prima); se Configurações › Geral › "Altera Preço do Produto no ERP" = Não, só editável com `produtos.alterar_preco` (como todo campo que decide o preço, 9.1) | — |
 | `margem_pct` | Margem % **(Novo)** | — | — | exibição: `(venda − custo) / venda` | — |
 
 Tipos de produto (`tipo`, enum `produtos.tipo` do modelo 3.6.3). O levantamento registra **7 opções** no formulário e
@@ -1288,7 +1328,7 @@ Regras:
 |---|---|
 | EAN duplicado | Conforme `geral.ean_duplicado`: `bloquear` (padrão: erro) ou `avisar` (confirmação "O EAN 789… já está no produto X. Gravar mesmo assim?" — só no período de migração do Nuvem3, que aceita duplicados). Relatório (16.3.1) e filtro "EAN duplicado" sempre disponíveis |
 | Alteração de preço | Grava auditoria com antes/depois e alimenta o histórico de preços (`produtos_historico_precos`: produto, loja, tipo de preço, valor anterior, novo, usuário, data) **(Novo)** |
-| Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV |
+| Exclusão | Bloqueada se houver saldo ≠ 0 em algum estoque ou se o produto for componente (padrão ou alternativa ativa) de combo ou insumo de ficha técnica ativa; com movimentos, exclusão é lógica e o produto some do PDV. Quem tem lojas restritas não exclui o produto que tem preço, estoque mínimo ou faixa de uma loja fora das permitidas (403; a de loja excluída não conta; inativar continua possível — README da API › decisão 207) |
 | Sincronização | Segue o **modelo 6.2** (fluxo `catalogo`): descem **todos** os produtos, ativos e inativos (o PDV filtra `ativo` e `produtos_lojas.ativo_na_loja`), com as filhas (`produtos_codigos_barras`, variações, componentes, complementos, lotes…), `produtos_lojas` e `produtos_precos_quantidade` da loja do terminal, sem custo, markup, `descricao_longa`, preços de menu digital/iFood e dimensões; foto como `foto_url`. O saldo vai no fluxo `estoque` (`saldos_estoque` do estoque vinculado, tipos vendáveis) |
 | Cadastro mínimo | Para vender no PDV: nome, unidade, preço de venda > 0; para loja com NFC-e: + NCM válido, CFOP, situação ICMS/PIS/COFINS e origem |
 
@@ -1458,6 +1498,26 @@ Fluxo: upload → **pré-visualização** (validação de todas as linhas; tabel
 tarefa em segundo plano → relatório final (criados, atualizados, inativados, sem alteração, com erro, planilha de
 erros para download). Auditoria por produto gravado com origem `importacao`.
 
+**Leitura do `.xlsx`** (PR-15, README da API › decisão 197): o arquivo precisa ser um zip só, exatamente o que o
+diretório central descreve (cabeçalhos locais um atrás do outro desde o início do arquivo, iguais às entradas, sem bytes
+antes, entre ou depois); a prévia e a releitura da confirmação conferem os limites (entradas, tamanho descompactado por
+entrada e total, taxa de compressão por entrada e do arquivo inteiro) e descompactam uma vez, com o teto declarado, só o
+que o leitor da planilha usa; fora disso, "O arquivo .xlsx está corrompido." ou "A planilha é grande demais depois de
+descompactada.". **Clientes sem `pessoas.ver`** (decisão 198): a prévia e o relatório mostram na Descrição só o que veio
+na planilha (nome, CPF/CNPJ, código ou id digitado), nunca o nome do cadastro achado, e a linha sai sem o id do
+cadastro; a ação "Atualizar" continua indicada. O 409 do CPF/CNPJ repetido (no formulário e na gravação da importação)
+diz só que o documento já está cadastrado, sem o código e o nome da outra pessoa.
+
+**Confirmação e custo da análise** (PR-15, README da API › decisão 209): a mesma planilha não vira outra tarefa
+enquanto a confirmação anterior dela está pendente: executando, a confirmação é recusada ("Esta planilha já está sendo
+importada…"); ainda na fila, a confirmação devolve a mesma tarefa, com as opções desta vez, e a agenda de novo (assim se
+recupera o envio à fila que falhou). Cada usuário tem até 2 importações (de produtos e de clientes juntas) na fila ou
+executando (`IMPORTACOES_PENDENTES_POR_USUARIO`; a parada na fila há mais de 5 min não conta); acima, a confirmação é
+recusada (422) sem criar a tarefa. A análise (a prévia e a
+tarefa) custa o mesmo por linha com qualquer quantidade de produtos no mesmo EAN ou de unidades cadastradas, e cede a
+vez às outras requisições do servidor a cada 2.000 linhas; o resultado (ações, produtos achados, erros e avisos) é o
+mesmo de antes.
+
 **Identificação do produto existente**, nesta ordem: `id` (UUID) → `codigo` (Id Produto; aceita a coluna `IdProduto`
 do Nuvem3) → `codigo_interno` → `ean` (pelo EAN só quando a linha não traz código interno ou o produto achado não tem
 um). Código inválido (não inteiro de 1 a 2.147.483.647) ou repetido na planilha é erro da linha; código de produto
@@ -1617,7 +1677,10 @@ Produzido; unidade não fracionável e igual à dos demais membros; um produto p
 produto que já está em outro grupo pede confirmação e o move). Botão **Simular**: quantidades de exemplo por produto →
 preço de cada linha pela regra do PDV 11.3 (mesmo código de `packages/shared`).
 
-Regras: alterações auditadas; excluir o grupo desvincula os produtos na mesma transação; descem ao PDV no fluxo
+Regras: alterações auditadas; excluir o grupo desvincula os produtos na mesma transação (com faixa de uma loja fora
+das lojas permitidas de quem exclui, a exclusão é recusada, como a troca para o modo `produto`; faixa de loja excluída
+não conta; README da API ›
+decisões 88 e 207); descem ao PDV no fluxo
 `catalogo` (grupos: todos; faixas: loja nula ou do terminal — modelo 6.2). **Entidades**: `grupos_preco_quantidade`,
 `grupos_preco_quantidade_faixas`, `produtos`. **API**: `/api/grupos-preco-quantidade`.
 
@@ -1655,7 +1718,7 @@ Legenda das tabelas abaixo: **Loja** = aceita sobreposição por loja; **PDV** =
 | Logotipo | `geral.logotipo_arquivo_id` | uuid→`arquivos` (png/jpg/webp ≤ 1 MB; **SVG não**: é documento com script, Fase 2, F2-B43) | — | N | S | cabeçalho do ERP, impressões, cupom não fiscal (a loja tem logotipo próprio em Lojas › Anexos, 10.3.4) |
 | Banner | `geral.banner_arquivo_id` | uuid→`arquivos` (imagem ≤ 3 MB) | — | N | S | tela de espera do PDV, menu digital (banners por loja em Lojas › Aparência, 10.3.5) |
 | Ativa | `geral.ativa` | booleano | Sim | N | S | (efeito não observado no Nuvem3) aqui: Não = **modo implantação**: ERP funciona, PDVs não abrem caixa e exibem "Empresa em implantação" |
-| Altera Preço do Produto no ERP | `geral.altera_preco_produto_erp` | booleano | Sim | N | N | Não = preço de venda só muda por recebimento (markup) ou por quem tem `produtos.alterar_preco` |
+| Altera Preço do Produto no ERP | `geral.altera_preco_produto_erp` | booleano | Sim | N | N | Não = preço de venda só muda por recebimento (markup) ou por quem tem `produtos.alterar_preco`. No cadastro do produto a trava vale para tudo que decide o preço cobrado: os preços do produto, a quantidade mínima do atacado, a vigência da promoção, o grupo de preço por quantidade, "Solicita preço PDV" e "Genérico", o preço, o fator e o código dos códigos de barras com preço (inclusive o código principal) e o código que entra na venda, o preço próprio e o acréscimo gelado da loja (também a linha da loja retirada), as faixas, o preço adicional dos complementos e o acréscimo das alternativas do combo. A opção que entra na venda (código de barras, complemento, alternativa; nova, recriada ou reativada) só passa com o valor da mesma opção que sai no mesmo salvamento, ou sem preço quando a mesma opção não tem nem teve preço (a última excluída conta): excluir e recriar a opção, no mesmo salvamento ou em dois, não troca o valor; repetir o gravado não conta (README da API › decisões 68 e 208) |
 | Produto Usa Fornecedores | `geral.produto_usa_fornecedores` | booleano | Não | N | N | exibe o bloco Fornecedores no produto (8.2.14) |
 | Cadastrar produtos "Com variações" **(Novo)** | `produtos.variacoes_habilitadas` | booleano | Não | N | N | Não = o tipo não pode ser escolhido no cadastro nem na importação (8.2.1; F2-B1, roadmap D43); ligada pelo bloco da grade de variações (8.2.16). Ao gravar Sim, a tela lista os terminais ativos com o PDV anterior à guarda das variações (F2-B34) ou sem versão conhecida e pede "Gravar mesmo assim": eles vendem o produto com variações com o preço e o saldo do pai |
 | Cadastrar produtos "Com complementos" **(Novo)** | `produtos.complementos_habilitados` | booleano | **Sim** (desde o F2-B51) | N | N | idem para "Com complementos"; ligada por padrão pelo bloco do modal Complementos (8.2.16; F2-B51, README da API › decisão 194). O caixa ainda vende o produto sem os complementos até a Fase 3 |
@@ -2309,7 +2372,7 @@ Posições de caixa da loja (`caixas`, modelo 3.2.7):
 | Nº inicial (para ativação) | Nº inicial | inteiro | N | editável só enquanto o caixa nunca teve terminal: grava `numeracoes.ultimo_numero = nº inicial − 1` da série/ambiente; depois, o PDV é o dono da sequência (sync 13.2) |
 | `tef_terminal` | Nº terminal TEF | texto | N | |
 | `pos_id_terminal` **(Novo)** | Nº lógico/serial do POS | texto(40) | N | maquininha POS usada neste caixa: padrão de `pagamentos_venda.id_terminal_pagamento` (`idTermPag` da NFC-e) |
-| `ativo` | Ativo | booleano | S | |
+| `ativo` | Ativo | booleano | S | inativar o caixa (ou excluí-lo, ou excluir a loja) cancela os códigos de ativação pendentes dele (12.3), com `auditoria` `cancelar` de cada um; caixa inativo não recebe código nem terminal |
 | Terminal atual | link para `/cadastros/pdvs/:id` (`caixas.terminal_id`) | — | — | |
 
 #### 10.3.11 Taxas de entrega (Novo) [FUT – módulo opcional de delivery, decisão D4]
@@ -2408,6 +2471,12 @@ Filtros: **Nome** (nome ou login), **Situação** (Ativos/Inativos/Todos) **(Nov
 
 Botões: **Novo**, **Gravar**, **Voltar**, **Excluir**, **Redefinir senha** (gera senha provisória exibida uma vez,
 permissão `usuarios.redefinir_senha`), **Desbloquear** (após tentativas falhas), **Histórico**.
+
+Criar usuário e Redefinir senha geram hash de senha: entram no limite por usuário das senhas geradas (10 por minuto,
+429 acima, como o PIN), conferido depois das regras do cadastro (login repetido, alvo inexistente, Master, lojas e
+estoques inexistentes ou fora dos seus, acesso maior que o seu), que recusam sem gastar o limite. Com a fila das
+senhas geradas cheia no servidor (16 esperando, ou 20 s de espera), voltam 503 `SISTEMA_OCUPADO` com `Retry-After`:
+nada foi gravado, é só salvar de novo em alguns segundos (1.8; README da API › decisão 204).
 
 #### Aba Menus do sistema
 
@@ -2604,6 +2673,8 @@ Regras:
   descrição, `validade_horas`, `expira_em`, `substitui_terminal_id`, `criado_por_usuario_id`, `usado_em`,
   `terminal_id`). Uso único.
 - O código é exibido **uma vez** (botão copiar); depois aparece mascarado (`••••-••RD`) na lista de pendentes.
+- Só para caixa vivo e **ativo** (10.3.10): excluir ou inativar o caixa, ou excluir a loja, cancela os códigos
+  pendentes dele, e a ativação confere o caixa de novo no resgate (sync 3.3 item 5).
 - 5 tentativas erradas de ativação por IP em 10 min bloqueiam o IP por 30 min.
 
 Ativação (lado da API, para referência; contrato completo no sync 3.2–3.4):
@@ -2642,7 +2713,7 @@ Ações:
 |---|---|---|
 | **Revogar – aceitar pendências** (padrão) | `terminais.revogar` | estado `Desativando` (sync 3.8): o PDV recebe o aviso no próximo contato, termina a venda atual, **para de vender** (grava localmente que não reserva mais número de venda, NFC-e ou vale), permite fechar o caixa, envia todos os eventos pendentes, NFC-e em contingência e inutilizações pendentes. `Desativando → Revogado` quando o heartbeat traz `estado_local = 'desativando_confirmado'` com os números finais e a nuvem confere que recebeu tudo até eles (é essa confirmação que libera a **Série atual** para o próximo terminal do caixa, 12.3), **ou** ao fim da carência (`terminais_pdv.carencia_ate`, máx. 7 dias) — neste caso sem confirmação, e o próximo terminal do caixa recebe série nova e salto de segurança |
 | **Revogar imediatamente** | `terminais.revogar` + confirmação digitando o nº do caixa | token invalidado na hora; qualquer chamada responde 401 `TERMINAL_REVOGADO`; o PDV bloqueia o uso e mantém o banco local intacto para suporte |
-| **Terminal perdido/roubado** **(Novo)** | `terminais.revogar` + confirmação digitando o nº do caixa | revoga imediatamente **e** invalida os PINs do PDV (`senha_pdv_hash = null`) de todos os usuários com acesso à loja até redefinição **e** as senhas de cliente do crediário (`pessoas.senha_hash = null` das pessoas com crediário que desceram para aquele terminal, com aviso para redefinição no próximo atendimento) (sync 4.3 item 6). A senha do ERP não desce ao PDV, por isso **não** precisa ser trocada (`senha_provisoria` não muda). O próximo terminal do caixa recebe série nova e salto (12.3) |
+| **Terminal perdido/roubado** **(Novo)** | `terminais.revogar` + confirmação digitando o nº do caixa | revoga imediatamente **e** invalida os PINs do PDV (`senha_pdv_hash = null`) de **quem acessa ou já acessou a loja e de quem é ou já foi Master** até redefinição **e** as senhas de cliente do crediário (`pessoas.senha_hash = null` das pessoas que já foram relevantes para a loja, com aviso para redefinição no próximo atendimento) (sync 4.3 item 6): o computador perdido pode guardar os hashes do último pull e de ativações anteriores, então a anulação não depende de quem tem acesso à loja hoje; quem só teve acesso a outras lojas mantém o PIN; o diálogo avisa quem recadastra o PIN. A senha do ERP não desce ao PDV, por isso **não** precisa ser trocada (`senha_provisoria` não muda). O próximo terminal do caixa recebe série nova e salto (12.3) |
 | Terminal revogado com eventos tardios | — | um terminal Revogado recebe **401** em tudo, inclusive no push; eventos que ficaram nele só entram pela **recuperação assistida** (sync 22.3): ação **Gerar código de recuperação** abaixo, usado no PDV substituto |
 | **Gerar código de recuperação** **(Novo)** | `terminais.gerenciar` | código de uso único (24 h, vinculado ao `terminal_id` antigo, auditado) para o PDV novo importar o backup do antigo: eventos não enviados, NFC-e em contingência e inutilizações pendentes (sync 22.3) |
 | **Substituir terminal** | `terminais.ativar` + `terminais.revogar` (PDV 5.2) | gera código de ativação para o **mesmo caixa** com a escolha "Série atual / Série nova" (12.3); ao ativar o novo, o antigo vai para `Desativando`. Regra de numeração do sync 13.1–13.3, a mesma de qualquer código gerado para um caixa que já teve terminal (`caixas.terminal_anterior_id`, com ou sem substituição): antigo com desativação **confirmada** (`estado_local = 'desativando_confirmado'` com números finais que a nuvem recebeu) → venda, NFC-e e vale continuam em `greatest(numeracoes.ultimo_numero, números finais confirmados) + 1` na série atual; sem confirmação (mesmo com heartbeat recente "em dia") → **salto de segurança** na venda e no vale (`base + 1000`, configurável na plataforma; o ERP mostra "Números 000501–001500 do Caixa 02 reservados ao terminal antigo") e **série NFC-e nova obrigatória**. Se o código foi gerado para "Série atual" e a confirmação deixou de valer até a ativação (ex.: chegou evento do antigo depois dela), a ativação falha com `CAIXA_OCUPADO` ("gere novo código com série nova") |
@@ -2674,13 +2745,13 @@ JSON somente leitura). Ações (permissão `terminais.gerenciar`, todas auditada
 |---|---|
 | **Reprocessar** | reaplica o payload gravado com o código atual (depois de corrigir o cadastro ou publicar correção); sucesso reprocessa os retidos dependentes em ordem |
 | **Reprocessar todos com este código** | o mesmo, em lote (ex.: depois de publicar um upcaster) |
-| **Aplicar com novo número** | só para `NUMERO_VENDA_DUPLICADO` (sync 13.1) |
+| **Aplicar com novo número** | só para `NUMERO_VENDA_DUPLICADO` e `NUMERO_VENDA_IMPLAUSIVEL` (sync 13.1; no segundo, o número muito acima da numeração do caixa, a venda vai para a faixa de renumeração sem avançar a numeração; README da API › decisão 212). No `NUMERO_VENDA_IMPLAUSIVEL`, as vendas seguintes do mesmo terminal também caem no código (o PDV continua contando a partir do número alto) e reprocessar não resolve: aplica-se o novo número às que estão na fila e, para normalizar o caixa, **Substituir terminal** (12.4; a ativação descarta o contador acima da margem e o PDV recomeça da base da nuvem). O diálogo e o do "Reprocessar todos com o código" dizem isso. A recusa da renumeração (`RENUMERACAO_SEM_NUMERO`, sem número que caiba) não oferece a ação de novo |
 | **Descartar** | justificativa ≥ 15 caracteres e, para `venda.*`/`caixa.*`/`nfce.*`, confirmação digitando o número exibido da venda; grava `descartado_em/por/justificativa` e gera alerta crítico `EVENTO_DESCARTADO` no Dashboard (venda nunca é descartada sem alerta) |
 
 O resultado volta ao PDV no heartbeat seguinte (`eventos_resolvidos`).
 
 Fase 1C (C8), na tela: a lista é paginada (50 por página) e filtra por situação e código; cada linha tem o menu
-**Ações** (Reprocessar, Aplicar com novo número só no `NUMERO_VENDA_DUPLICADO`, Descartar, Ver payload), e o botão
+**Ações** (Reprocessar, Aplicar com novo número só no `NUMERO_VENDA_DUPLICADO` e no `NUMERO_VENDA_IMPLAUSIVEL`, Descartar, Ver payload), e o botão
 **Reprocessar todos com o código** lista os códigos de erro do terminal com a quantidade e cria uma tarefa (ícone
 Tarefas, 3.6). Reprocessar e Aplicar com novo número pedem confirmação e mostram o desfecho do evento e dos
 dependentes reaplicados em seguida ("Evento nº 1 aplicado. 3 de 3 evento(s) que dependiam dele aplicados"). O
@@ -2950,9 +3021,18 @@ Listagem: filtro **Nome**; colunas **Nome**, **Loja vinculada**, **Tipo**, **Ati
 | `tipo` | Tipo | enum `loja`/`deposito`/`outro` | S | `deposito` = CD |
 | Loja vinculada | exibição | — | — | a loja que aponta para este estoque (10.3.1), se houver |
 | `endereco` | Endereço | texto | N | |
-| `ativo` | Ativo | booleano | S | inativar exige saldo zero em todos os produtos e nenhuma transferência em trânsito |
+| `ativo` | Ativo | booleano | S | inativar exige saldo zero em todos os produtos e nenhuma transferência em trânsito; no estoque inativo (ou excluído) nenhum documento lança: o acerto em rascunho não se efetiva nem o efetivado se estorna, e o recebimento e a NF-e não se movimentam nem se estornam (422 no estoque, "reative o estoque antes de …"; README da API › decisão 210) |
 
 Seed na criação da empresa: nenhum (criado junto da primeira loja). Exclusão bloqueada com movimentos.
+
+**Limites do sistema** (README da API › decisão 210): o saldo de cada produto num estoque (e de cada lote) vai até
+99.999.999.999,999 para mais ou para menos, e o custo de cada movimento cabe no tamanho do campo. O documento do ERP
+que passaria disso é recusado (422, "fora do limite do sistema: confira as quantidades") sem gravar nada; a venda do
+caixa que passaria disso fica na fila de decisão com o erro `LIMITE_ESTOQUE` (o "Definir" corrige a linha e o
+**Reprocessar** aplica a venda). O valor de cada item do acerto (a quantidade, ou a diferença do "Definir", × o custo
+ou o preço) também cabe no campo (até R$ 9.999.999.999.999,99): o "Definir" de uma linha enorme com custo alto é
+recusado no item ("um saldo muito grande se acerta em partes"), e a linha se acerta com Entradas ou Saídas de acerto
+menores antes do "Definir".
 
 ### 13.3 Recebimento manual de produtos
 
@@ -3137,7 +3217,10 @@ Colunas: **Nome** (emitente, link), **Data Recebimento**, **Data Movimentação*
 pelo mesmo método da importação de planilha, com limites próprios (1.000 entradas, 100 MiB descompactados, taxa ≤ 100
 acima de 64 KiB, cada XML até 1 MiB). A assinatura conferida é a da `NFe` (a do protocolo, que algumas autorizadoras
 assinam, não conta). Os totais que não batem com os itens só avisam. A nota guarda o CFOP do XML e os impostos
-só gravados; a aba **Conversão de CFOP** e a coluna CFOP de entrada ficam para a 3F/4.
+só gravados; a aba **Conversão de CFOP** e a coluna CFOP de entrada ficam para a 3F/4. Desde o PR-15 (README da API ›
+decisão 203), o XML também tem teto de estrutura, contado antes de ler: até 60.000 elementos e atributos, 1.000
+declarações de namespace e 100 comentários ou instruções (a NF-e de 990 itens tem uns 43 mil elementos); acima, a nota
+é recusada com "O XML tem elementos, atributos ou comentários demais para uma NF-e.", no envio direto e no lote.
 
 **Fase 2, F2-B19** (README da API › decisão 164; README do ERP › decisão 59): sem a aba "Pela Sefaz", a "Tela de
 entrada" é a área de upload no topo da listagem (arrastar ou escolher `.xml`/`.zip`, até 20 MB no envio), sem campo
@@ -3148,7 +3231,10 @@ nota existente, só para quem vê a loja e o estoque dela) ou recusada com o mot
 ocupado com os caixas, por exemplo) recusa só aquele arquivo. Acima de 20 XMLs o envio vira uma tarefa, acompanhada
 na própria tela do upload (progresso e, no fim, o mesmo resultado por arquivo, ou a mensagem da falha) e também no
 ícone Tarefas do cabeçalho (F2-B30). Os limites contra zip-bomba (1.000 entradas e 100 MiB descompactados) valem
-por `.zip` e somados para o envio inteiro. O emitente vira o
+por `.zip` e somados para o envio inteiro. Cada usuário faz um envio por vez e a empresa, até 3 ao mesmo tempo (o
+seguinte recebe "Há outros envios de NF-e da empresa em andamento…" e envia de novo em seguida); o arquivo tem 60 s
+para chegar inteiro (acima, "O envio do arquivo demorou além do prazo. Tente de novo."), e a fila de processamento só
+conta os envios que já chegaram (README da API › decisão 202). O emitente vira o
 fornecedor pelo CNPJ/CPF normalizado: a pessoa que já existe não é alterada (só ganha a categoria Fornecedor), e a
 nova nasce com o nome, a fantasia, a IE, o telefone e o endereço do XML. O aviso fixo "Sem consulta à SEFAZ: confira se
 a nota não foi cancelada pelo emitente." aparece no upload e em toda nota. "Ignorar nota" (pendente ou pronta, com
@@ -4618,6 +4704,12 @@ escolhida.
 | Exportar | Excel |
 
 O botão **Histórico** de cada formulário abre a mesma visão filtrada pelo registro (incluindo as sub-coleções).
+
+**Quem tem lojas restritas** vê as linhas das lojas permitidas e as sem loja (cadastros da empresa), redigidas pelo
+que o cadastro esconderia (salário, custo, linhas de outras lojas). As linhas de **usuário, login e sessão do ERP**
+(`usuarios`, `login`, `sessoes_usuario`) seguem a visibilidade do usuário (11.1): só aparecem se o usuário da linha é
+visível para quem consulta (com alguma loja em comum, sem loja nenhuma e não Master, ou o próprio). O Master e os
+usuários só de outras lojas ficam de fora, inclusive o login e a sessão deles (README da API › decisão 207).
 
 ---
 

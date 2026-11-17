@@ -14,6 +14,7 @@ import {
   CONTRATOS_EVENTOS,
   jcs,
   MAXIMO_IDS_EVENTOS_STATUS,
+  NUMERO_VENDA_MAXIMO,
   respostaEventosStatusSchema,
   respostaHeartbeatSchema,
   respostaPushSchema,
@@ -27,6 +28,7 @@ import {
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { INICIO_FAIXA_RENUMERACAO } from '../../src/sync/handlers/vendas.js';
+import { MARGEM_NUMERACAO_CAIXA_PADRAO } from '../../src/sync/numeracao.js';
 import {
   conectar,
   consultar,
@@ -869,7 +871,7 @@ describe('Aplicar com novo número (SYNC 11.2, 13.1)', () => {
     });
   });
 
-  it('só para NUMERO_VENDA_DUPLICADO', async () => {
+  it('só para NUMERO_VENDA_DUPLICADO e NUMERO_VENDA_IMPLAUSIVEL', async () => {
     const p = await novoPonto();
     const ab = abertura(p, { hashErrado: true });
     await pushOk(p, [ab]);
@@ -877,6 +879,147 @@ describe('Aplicar com novo número (SYNC 11.2, 13.1)', () => {
     const r = await acao(linha.id, 'aplicar-novo-numero');
     expect(r.status).toBe(422);
     expect((await linhaRecebida(ab.evento_id)).tentativas).toBe(1);
+  });
+});
+
+describe('número da venda fora da sequência do caixa (SYNC 11.2, 13.1; README da API › decisão 212)', () => {
+  const numeracaoDoCaixa = async (p: Ponto) =>
+    (
+      await consultar<{ ultimo_numero: string }>(
+        emp.nomeBanco,
+        "select ultimo_numero::text from numeracoes where caixa_id = $1 and tipo = 'venda' and excluido_em is null",
+        [p.caixa],
+      )
+    )[0]?.ultimo_numero;
+
+  it('acima da margem vai à fila sem mexer na numeração; "Aplicar com novo número" grava na faixa e não a avança', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    expect((await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 1 }))]))[0]!.status).toBe(
+      'aplicado',
+    );
+    const alta = venda(p, { numero: NUMERO_VENDA_MAXIMO });
+    const evAlta = evento(p, 'venda.finalizada', alta);
+    const [r] = await pushOk(p, [evAlta]);
+    expect(r).toMatchObject({ status: 'rejeitado', erro: { codigo: 'NUMERO_VENDA_IMPLAUSIVEL' } });
+    expect(await numeracaoDoCaixa(p)).toBe('1');
+    expect(
+      await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [alta.vendas.id]),
+    ).toHaveLength(0);
+    expect(await linhaRecebida(evAlta.evento_id)).toMatchObject({
+      status: 'erro',
+      erro_codigo: 'NUMERO_VENDA_IMPLAUSIVEL',
+    });
+
+    // Reprocessar dá o mesmo; "Aplicar com novo número" grava na faixa da renumeração e a numeração fica em 1.
+    expect((await acao((await linhaDaFila(p, evAlta.evento_id)).id, 'reprocessar')).body).toMatchObject({
+      status: 'erro',
+      erroCodigo: 'NUMERO_VENDA_IMPLAUSIVEL',
+    });
+    const novo = await acao((await linhaDaFila(p, evAlta.evento_id)).id, 'aplicar-novo-numero');
+    expect(novo.status, JSON.stringify(novo.body)).toBe(200);
+    expect(novo.body).toMatchObject({ status: 'aplicado' });
+    const [gravada] = await consultar<{ numero: string; observacao: string }>(
+      emp.nomeBanco,
+      'select numero::text, observacao from vendas where id = $1',
+      [alta.vendas.id],
+    );
+    expect(gravada!.numero).toBe(String(INICIO_FAIXA_RENUMERACAO + 1));
+    expect(gravada!.observacao).toContain('fora da sequência do caixa');
+    expect(await numeracaoDoCaixa(p)).toBe('1');
+    // No limite da margem a venda entra e a numeração avança, como sempre.
+    const limite = 1 + MARGEM_NUMERACAO_CAIXA_PADRAO;
+    expect((await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: limite }))]))[0]).toMatchObject(
+      {
+        status: 'aplicado',
+      },
+    );
+    expect(await numeracaoDoCaixa(p)).toBe(String(limite));
+  });
+
+  it('a venda cancelada em andamento (forma B) também; o número acima do que cabe na exibição é PAYLOAD_INVALIDO', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    const b = venda(p, { numero: MARGEM_NUMERACAO_CAIXA_PADRAO + 1 });
+    const emAndamento = {
+      ...b,
+      vendas: {
+        ...b.vendas,
+        status: 'cancelada',
+        finalizada_em: null,
+        cancelada_em: agora(),
+        cancelada_por_id: operador,
+        motivo_cancelamento: 'Cliente desistiu antes de pagar',
+        cancelamento_origem: 'pdv',
+      },
+    };
+    const gigante = venda(p, { numero: NUMERO_VENDA_MAXIMO + 1 });
+    gigante.vendas.numero_exibicao = 'L01-C01-X';
+    const evB = evento(p, 'venda.cancelada', emAndamento);
+    const [rb, rg] = await pushOk(p, [evB, evento(p, 'venda.finalizada', gigante)]);
+    expect(rb).toMatchObject({ status: 'rejeitado', erro: { codigo: 'NUMERO_VENDA_IMPLAUSIVEL' } });
+    expect(rg).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    expect(await numeracaoDoCaixa(p)).toBe('0');
+    // "Aplicar com novo número" grava a cancelada na faixa e o número do PDV não entra na numeração do caixa.
+    const novo = await acao((await linhaDaFila(p, evB.evento_id)).id, 'aplicar-novo-numero');
+    expect(novo.status, JSON.stringify(novo.body)).toBe(200);
+    expect(novo.body).toMatchObject({ status: 'aplicado' });
+    const [gravada] = await consultar<{ status: string; numero: string; observacao: string }>(
+      emp.nomeBanco,
+      'select status, numero::text, observacao from vendas where id = $1',
+      [b.vendas.id],
+    );
+    expect(gravada).toMatchObject({ status: 'cancelada', numero: String(INICIO_FAIXA_RENUMERACAO + 1) });
+    expect(gravada!.observacao).toContain('fora da sequência do caixa');
+    expect(await numeracaoDoCaixa(p)).toBe('0');
+  });
+
+  it('a renumeração é exata: sem número livre que caiba na exibição, recusa sem gravar nada', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    const v1 = venda(p, { numero: 4 });
+    await pushOk(p, [evento(p, 'venda.finalizada', v1)]);
+    // Uma venda já gravada no fim do espaço do caixa (acima do que o contrato aceita hoje, de antes do limite).
+    await consultar(
+      emp.nomeBanco,
+      `set session_replication_role = replica;
+       update vendas set numero = 9007199254740991 where id = '${v1.vendas.id}';
+       set session_replication_role = origin;`,
+    );
+    const v2 = venda(p, { numero: 2 });
+    await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 2 }))]);
+    const ev2 = evento(p, 'venda.finalizada', v2);
+    expect((await pushOk(p, [ev2]))[0]).toMatchObject({ erro: { codigo: 'NUMERO_VENDA_DUPLICADO' } });
+    const r = await acao((await linhaDaFila(p, ev2.evento_id)).id, 'aplicar-novo-numero');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'erro', erroCodigo: 'RENUMERACAO_SEM_NUMERO' });
+    expect(await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [v2.vendas.id])).toHaveLength(
+      0,
+    );
+    // O código próprio não oferece a ação de novo (ela falharia sempre).
+    const deNovo = await acao((await linhaDaFila(p, ev2.evento_id)).id, 'aplicar-novo-numero');
+    expect(deNovo.status).toBe(422);
+  });
+
+  it('a renumeração cujo número exibido passaria de 20 caracteres recusa sem gravar nada', async () => {
+    const p = await novoPonto();
+    await pushOk(p, [abertura(p)]);
+    await pushOk(p, [evento(p, 'venda.finalizada', venda(p, { numero: 2 }))]);
+    // 18 caracteres, aceitos pelo contrato; com os 7 dígitos da faixa (9000001) ficaria com 24.
+    const longa = venda(p, { numero: 2 });
+    longa.vendas.numero_exibicao = 'LOJA-CENTRO-CX02-2';
+    const ev = evento(p, 'venda.finalizada', longa);
+    expect((await pushOk(p, [ev]))[0]).toMatchObject({ erro: { codigo: 'NUMERO_VENDA_DUPLICADO' } });
+    const r = await acao((await linhaDaFila(p, ev.evento_id)).id, 'aplicar-novo-numero');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ status: 'erro', erroCodigo: 'RENUMERACAO_SEM_NUMERO' });
+    expect(await linhaRecebida(ev.evento_id)).toMatchObject({
+      status: 'erro',
+      erro_codigo: 'RENUMERACAO_SEM_NUMERO',
+    });
+    expect(
+      await consultar(emp.nomeBanco, 'select 1 from vendas where id = $1', [longa.vendas.id]),
+    ).toHaveLength(0);
   });
 });
 
@@ -1071,6 +1214,121 @@ describe('Reprocessar todos com este código (SYNC 11.4)', () => {
     const detalhe = (await amb.http().get(`/api/terminais/${p.terminal}`).set(bearer()))
       .body as TerminalDetalhe;
     expect(detalhe.historico.map((h) => h.titulo)).toContain('Reprocessamento de eventos');
+  });
+
+  /**
+   * O pedido entra na fila sem ir ao trabalhador (o `agendar` fica parado neste trecho) e a tarefa roda quando o teste
+   * manda: assim dá para mudar o acesso de quem pediu, ou mandar eventos novos, entre o pedido e a execução.
+   */
+  async function pedirLoteSemExecutar(p: Ponto, tk: string, quantidade: number): Promise<string> {
+    const tarefas = amb.servicos.tarefas;
+    const agendar = tarefas.agendar.bind(tarefas);
+    tarefas.agendar = async () => undefined;
+    try {
+      const ag = await amb
+        .http()
+        .post('/api/eventos-recebidos/reprocessar-lote')
+        .set(bearer(tk))
+        .send({ terminalId: p.terminal, codigo: 'PAYLOAD_INVALIDO' });
+      expect(ag.status, JSON.stringify(ag.body)).toBe(202);
+      expect(ag.body.quantidade).toBe(quantidade);
+      return ag.body.tarefaId as string;
+    } finally {
+      tarefas.agendar = agendar;
+    }
+  }
+
+  async function executarTarefa(id: string) {
+    await amb.servicos.tarefas.executar(emp.empresaId, id);
+    const [t] = await consultar<{ status: string; erro: string | null; resultado: Payload | null }>(
+      emp.nomeBanco,
+      'select status, erro, resultado from tarefas where id = $1',
+      [id],
+    );
+    return t!;
+  }
+
+  /** Gerente não Master da loja, com `terminais.gerenciar` concedido. */
+  async function gerenteDaLoja(p: Ponto): Promise<{ id: string; token: string }> {
+    const login = `gerente_lote_${p.numero}`;
+    const id = await criarUsuario(emp.nomeBanco, { login, perfil: 'gerente', lojas: [loja] });
+    await consultar(
+      emp.nomeBanco,
+      `insert into usuarios_permissoes (usuario_id, permissao, efeito) values ($1, 'terminais.gerenciar', 'conceder')`,
+      [id],
+    );
+    return { id, token: await amb.entrar(emp.codigo, login, SENHA_TESTE) };
+  }
+
+  const reprocessadosEmLote = async (ids: string[]) =>
+    consultar(
+      emp.nomeBanco,
+      `select 1 from auditoria where acao = 'evento_reprocessado' and evento_id = any($1::uuid[])`,
+      [ids],
+    );
+
+  it.each([
+    {
+      caso: 'desativado',
+      revogar: (u: string) => [`update usuarios set ativo = false where id = '${u}'`],
+      erro: 'Usuário inativo ou excluído.',
+    },
+    {
+      caso: 'sem terminais.gerenciar',
+      revogar: (u: string) => [
+        `update usuarios_permissoes set efeito = 'negar' where usuario_id = '${u}' and permissao = 'terminais.gerenciar'`,
+      ],
+      erro: 'O usuário não tem mais a permissão de gerenciar terminais.',
+    },
+    {
+      caso: 'sem a loja do terminal',
+      revogar: (u: string) => [
+        `delete from usuarios_lojas where usuario_id = '${u}'`,
+        `update usuarios set permissoes_versao = permissoes_versao + 1 where id = '${u}'`,
+      ],
+      erro: 'O usuário não tem mais acesso à loja deste terminal.',
+    },
+  ])(
+    'quem pediu e ficou $caso antes da execução: a tarefa falha sem aplicar nada',
+    async ({ revogar, erro }) => {
+      const p = await novoPonto();
+      const vazio = { registros: [], logins: [] };
+      const e1 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+      const e2 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+      await pushOk(p, [e1, e2]);
+      const gerente = await gerenteDaLoja(p);
+      const tarefaId = await pedirLoteSemExecutar(p, gerente.token, 2);
+      for (const comando of revogar(gerente.id)) await consultar(emp.nomeBanco, comando);
+      expect(await executarTarefa(tarefaId)).toMatchObject({ status: 'falhou', erro, resultado: null });
+      expect((await linhaRecebida(e1.evento_id)).status).toBe('erro');
+      expect((await linhaRecebida(e2.evento_id)).status).toBe('erro');
+      expect(await reprocessadosEmLote([e1.evento_id, e2.evento_id])).toEqual([]);
+    },
+  );
+
+  it('com o acesso mantido, aplica só os eventos que já tinham chegado no pedido', async () => {
+    const p = await novoPonto();
+    const vazio = { registros: [], logins: [] };
+    const e1 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    const e2 = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    await pushOk(p, [e1, e2]);
+    const gerente = await gerenteDaLoja(p);
+    const tarefaId = await pedirLoteSemExecutar(p, gerente.token, 2);
+    // Chega depois do pedido, com o mesmo código: fica para outra decisão.
+    const depois = evento(p, 'auditoria.registros', vazio, { hashErrado: true });
+    await pushOk(p, [depois]);
+    const t = await executarTarefa(tarefaId);
+    expect(t.status, t.erro ?? '').toBe('concluida');
+    expect(t.resultado).toMatchObject({ total: 2, aplicados: 2, ignorados: 0 });
+    expect((await linhaRecebida(e1.evento_id)).status).toBe('aplicado');
+    expect((await linhaRecebida(e2.evento_id)).status).toBe('aplicado');
+    expect((await linhaRecebida(depois.evento_id)).status).toBe('erro');
+    const [aud] = await consultar<{ usuario_id: string }>(
+      emp.nomeBanco,
+      `select usuario_id from auditoria where acao = 'evento_reprocessado' and evento_id = $1`,
+      [e1.evento_id],
+    );
+    expect(aud?.usuario_id).toBe(gerente.id);
   });
 });
 

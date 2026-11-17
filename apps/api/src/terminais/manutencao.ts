@@ -19,10 +19,13 @@
  *    terminal `ativo`/`desativando`: o fluxo `acesso` não leva a data ao caixa, só `ativo` já calculado
  *    (`sync/fluxos.ts`), e a linha precisa de versão nova para o `false` descer. Um toque por usuário: depois dele `atualizado_em` já é do dia da demissão.
  *
+ * 7. apaga as tentativas de ativação com mais de 30 dias (MD 2.6; `AtivacaoTerminais.purgarTentativas`).
+ *
  * Uma execução por vez (trava consultiva de sessão no controle); uma empresa com erro não impede as outras.
  */
 import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { AuditoriaService } from '../auditoria/auditoria.service.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { hojeNaEmpresa, inicioDoDiaNaEmpresa } from '../comum/fuso.js';
 import type { BancoControle } from '../database/controle/conexao.js';
 import { terminaisPdv } from '../database/controle/schema.js';
@@ -65,6 +68,7 @@ export interface ResumoManutencao {
   alertasForcaBrutaResolvidos: number;
   alertasRelogioResolvidos: number;
   usuariosDemitidosTocados: number;
+  tentativasAtivacaoPurgadas: number;
   falhas: Array<{ empresaId: string; erro: string }>;
 }
 
@@ -90,6 +94,7 @@ export class ManutencaoTerminais {
       alertasForcaBrutaResolvidos: 0,
       alertasRelogioResolvidos: 0,
       usuariosDemitidosTocados: 0,
+      tentativasAtivacaoPurgadas: 0,
       falhas: [],
     };
     const trava = await this.controle.pool.connect();
@@ -163,7 +168,7 @@ export class ManutencaoTerminais {
         ),
       );
     const porEmpresa = new Map<string, (typeof aReconciliar)[number][]>();
-    for (const t of aReconciliar) porEmpresa.set(t.empresaId, [...(porEmpresa.get(t.empresaId) ?? []), t]);
+    for (const t of aReconciliar) agruparEm(porEmpresa, t.empresaId, t);
     // Alerta da D20 pode estar aberto em qualquer empresa que já tirou terminal do caixa, por mais antigo que seja.
     const comTerminalFora = await this.controle.db
       .selectDistinct({ empresaId: terminaisPdv.empresaId })
@@ -250,6 +255,8 @@ export class ManutencaoTerminais {
         resumo.falhas.push({ empresaId, erro: (e as Error).message });
       }
     }
+
+    resumo.tentativasAtivacaoPurgadas = await this.ativacao.purgarTentativas();
   }
 
   /** Roda no banco da empresa; `null` quando ela não está acessível agora (excluída, em manutenção, migrando). */

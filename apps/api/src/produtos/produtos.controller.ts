@@ -53,13 +53,19 @@ import { descricaoGravacaoProduto } from '../auditoria/diferenca-produto.js';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { conflitoVersao, escaparLike, ordemDaQuery, ref } from '../comum/cadastro.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { ErroApi } from '../comum/erros.js';
-import { arquivoExportacao, garantirPodeExportar, type ColunaExportacao } from '../comum/exportacao.js';
+import {
+  arquivoExportacao,
+  comVagaExportacao,
+  garantirPodeExportar,
+  type ColunaExportacao,
+} from '../comum/exportacao.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
-import { lojaPermitida } from '../autorizacao/lojas.js';
+import { daEmpresaOuLojaViva, garantirSemLojaOculta, lojaPermitida } from '../autorizacao/lojas.js';
 import {
   lojas,
   marcas,
@@ -113,6 +119,8 @@ import {
   vincularImagensProduto,
   type ProdutoAntes,
 } from './gravacao.js';
+import { mudancasDePreco } from './trava-preco.js';
+import { CorpoGrande } from '../comum/corpo-json.js';
 
 const LOCALIZACAO = 'Produtos › Cadastro de produtos';
 
@@ -295,29 +303,32 @@ export class ProdutosController {
     garantirPodeExportar(sessao, 'produtos');
     const q = validar(filtroProdutosSchema.extend(exportacaoQuerySchema.shape), query);
     garantirOrdemCusto(q, sessao);
-    const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
-      const onde = condicoes(q, await tiposSemSuporte(tx, q));
-      const [total] = await tx.select({ n: count() }).from(produtos).where(onde);
-      if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
-        throw new ErroApi(
-          'REGRA_NEGOCIO',
-          `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
-        );
-      }
-      const linhas = (await consultaResumo(tx)
-        .where(onde)
-        .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', produtos.codigo))) as ProdutoResumo[];
-      const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
-      await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
-        acao: 'exportar',
-        entidade: 'produtos',
-        localizacao: LOCALIZACAO,
-        descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
-        depois: { formato, filtros, linhas: linhas.length },
+    // A vaga do usuário e da empresa antes de ler as linhas (decisão 204).
+    return comVagaExportacao(sessao, async () => {
+      const linhas = await this.s.tenancy.cx().transacao(async (tx) => {
+        const onde = condicoes(q, await tiposSemSuporte(tx, q));
+        const [total] = await tx.select({ n: count() }).from(produtos).where(onde);
+        if ((total?.n ?? 0) > LIMITE_EXPORTACAO) {
+          throw new ErroApi(
+            'REGRA_NEGOCIO',
+            `A exportação passa de ${LIMITE_EXPORTACAO.toLocaleString('pt-BR')} linhas. Refine os filtros.`,
+          );
+        }
+        const linhas = (await consultaResumo(tx)
+          .where(onde)
+          .orderBy(...ordemDaQuery(q, colunasOrdenacao, 'nome:asc', produtos.codigo))) as ProdutoResumo[];
+        const { formato, pagina: _p, tamanho: _t, ...filtros } = q;
+        await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+          acao: 'exportar',
+          entidade: 'produtos',
+          localizacao: LOCALIZACAO,
+          descricao: `Exportação ${formato.toUpperCase()} com ${linhas.length} linha(s)`,
+          depois: { formato, filtros, linhas: linhas.length },
+        });
+        return linhas;
       });
-      return linhas;
+      return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
     });
-    return arquivoExportacao(q.formato, 'Produtos', colunasExportacao(verCusto(sessao)), linhas);
   }
 
   /**
@@ -618,6 +629,7 @@ export class ProdutosController {
 
   @Permissao('produtos.criar')
   @Post()
+  @CorpoGrande()
   @HttpCode(201)
   async criar(
     @Body() corpo: unknown,
@@ -638,6 +650,7 @@ export class ProdutosController {
 
   @Permissao('produtos.editar')
   @Put(':id')
+  @CorpoGrande()
   async alterar(
     @Param('id') idBruto: string,
     @Body() corpo: unknown,
@@ -678,6 +691,34 @@ export class ProdutosController {
           .where(and(eq(produtos.id, id), isNull(produtos.excluidoEm)))
           .for('update');
         if (!linha) throw ErroApi.naoEncontrado('Produto não encontrado.');
+        // Os dados de loja (preço, estoque mínimo, faixas) saem com o produto: com linha viva de loja fora das
+        // permitidas, só quem tem acesso a ela exclui (decisão 207; a gravação as preserva, decisão 88).
+        // As linhas de loja excluída não contam (`daEmpresaOuLojaViva`).
+        const daLoja = await tx
+          .select({ lojaId: produtosLojas.lojaId })
+          .from(produtosLojas)
+          .where(
+            and(
+              eq(produtosLojas.produtoId, id),
+              isNull(produtosLojas.excluidoEm),
+              daEmpresaOuLojaViva(produtosLojas.lojaId),
+            ),
+          );
+        const faixas = await tx
+          .select({ lojaId: produtosPrecosQuantidade.lojaId })
+          .from(produtosPrecosQuantidade)
+          .where(
+            and(
+              eq(produtosPrecosQuantidade.produtoId, id),
+              isNull(produtosPrecosQuantidade.excluidoEm),
+              daEmpresaOuLojaViva(produtosPrecosQuantidade.lojaId),
+            ),
+          );
+        garantirSemLojaOculta(
+          sessao,
+          [...daLoja, ...faixas].map((l) => l.lojaId),
+          'O produto tem preço, estoque mínimo ou faixa de lojas fora das suas lojas permitidas: só quem tem acesso a elas pode excluí-lo.',
+        );
         if (await saldoNaoZero(tx, id)) {
           throw new ErroApi(
             'REGRA_NEGOCIO',
@@ -869,7 +910,7 @@ async function auditarVinculosMovidos(
     sql`select codigo, nome from produtos where id = ${produtoId}`,
   );
   const porProduto = new Map<string, VinculoFornecedorMovido[]>();
-  for (const m of movidos) porProduto.set(m.produtoId, [...(porProduto.get(m.produtoId) ?? []), m]);
+  for (const m of movidos) agruparEm(porProduto, m.produtoId, m);
   for (const [outro, deste] of porProduto) {
     const codigos = deste.map((m) => `"${m.codigoFornecedor}"`).join(', ');
     const vinculo =
@@ -962,7 +1003,12 @@ function garantirCriarInversa(sessao: SessaoErp, d: CriarProduto): void {
 
 /**
  * Configurações › Geral › "Altera Preço do Produto no ERP" = Não (`geral.altera_preco_produto_erp`): mudar preço
- * exige `produtos.alterar_preco` (ERP 8.2.1).
+ * exige `produtos.alterar_preco` (ERP 8.2.1 e 9.1; decisões 68 e 208). O que é preço está num arquivo só
+ * (`trava-preco.ts`): os preços do produto e as condições deles, o grupo de preço, o preço digitado no caixa, o preço e
+ * o fator dos códigos de barras, o preço e o acréscimo gelado de cada loja (inclusive a linha retirada), as faixas, o
+ * preço adicional dos complementos e o acréscimo das alternativas do combo, também pela opção excluída e recriada.
+ * Vale para todo caminho que grava pelo `atualizarProduto` (formulário, importação, cadastro em massa, correção de
+ * NCM).
  */
 async function garantirAlterarPreco(
   tx: DbEmpresa,
@@ -972,39 +1018,43 @@ async function garantirAlterarPreco(
 ): Promise<void> {
   if (sessao.permissoes.has('produtos.alterar_preco')) return;
   if ((await lerConfiguracao<boolean>(tx, 'geral.altera_preco_produto_erp')) !== false) return;
-  const n = (v: string | null | undefined) => (v === null || v === undefined ? null : Number(v));
-  const a = precosDe({ ...antes, precoCusto: undefined });
-  const b = precosDe({ ...d, precoCusto: undefined });
-  const mudouProduto = (Object.keys(b) as (keyof typeof b)[]).some((k) => n(a[k]) !== n(b[k]));
-  const lojasAntes = new Map(antes.lojas.map((l) => [l.lojaId, n(l.precoVenda)]));
-  const mudouLoja = d.lojas.some((l) => (lojasAntes.get(l.lojaId) ?? null) !== n(l.precoVenda));
-  const chaveFaixa = (f: {
-    lojaId: string | null;
-    quantidadeInicial: string;
-    quantidadeFinal: string | null;
-    preco: string;
-  }) => `${f.lojaId}:${n(f.quantidadeInicial)}:${n(f.quantidadeFinal)}:${n(f.preco)}`;
-  // Só as faixas que o usuário vê entram na comparação (as de outras lojas não vêm e são preservadas).
-  const faixaVisivel = (f: { lojaId: string | null }) =>
-    f.lojaId === null || sessao.lojas === null || sessao.lojas.includes(f.lojaId);
-  const mudouFaixa =
-    antes.precosQuantidade.filter(faixaVisivel).map(chaveFaixa).sort().join('|') !==
-    d.precosQuantidade.map(chaveFaixa).sort().join('|');
-  // O preço adicional dos complementos (F2-B51) é preço cobrado do cliente na venda: muda quando o complemento casado
-  // (o mesmo casamento de `gravarComplementos`: o grupo pelo id entre os do produto, o complemento pelo id entre os do
-  // grupo) vem com outro preço, ou quando o complemento novo vem com preço. Repetir o preço de agora não conta; a lista
-  // ausente mantém os gravados (planilha, cadastro em massa, ERP antigo).
-  const minusculo = (v: string | null) => v?.toLowerCase() ?? null;
-  const mudouComplemento = (d.gruposComplementos ?? []).some((g) => {
-    const grupo = antes.gruposComplementos.find((x) => x.id === minusculo(g.id));
-    return g.complementos.some((c) => {
-      const a = grupo?.complementos.find((x) => x.id === minusculo(c.id));
-      return a ? n(a.precoAdicional) !== n(c.precoAdicional) : n(c.precoAdicional)! > 0;
-    });
+  const ativas = await tx
+    .select({ id: lojas.id })
+    .from(lojas)
+    .where(and(eq(lojas.ativa, true), isNull(lojas.excluidoEm)));
+  const lojasAtivas = new Set(ativas.map((l) => l.id));
+  // As opções excluídas logicamente deste produto, da mais nova para a mais antiga: a que volta (recriada noutro
+  // salvamento) só volta sem preço quando a última dela não tinha preço (decisão 208).
+  const { rows: codigosBarras } = await tx.execute<{ codigo: string; preco: string | null }>(sql`
+    select codigo, preco::text as preco from produtos_codigos_barras
+     where produto_id = ${antes.id} and variacao_id is null and excluido_em is not null
+     order by excluido_em desc, id`);
+  const { rows: complementos } = await tx.execute<{
+    produtoId: string | null;
+    descricao: string | null;
+    precoAdicional: string;
+  }>(sql`
+    select c.produto_id as "produtoId", c.descricao, c.preco_adicional::text as "precoAdicional"
+      from produtos_complementos c
+      join produtos_grupos_complementos g on g.id = c.grupo_id
+     where g.produto_id = ${antes.id} and (c.excluido_em is not null or g.excluido_em is not null)
+     order by greatest(c.excluido_em, g.excluido_em) desc, c.id`);
+  const { rows: alternativas } = await tx.execute<{
+    produtoId: string;
+    variacaoId: string | null;
+    acrescimo: string;
+  }>(sql`
+    select a.produto_id as "produtoId", a.variacao_id as "variacaoId", a.acrescimo::text as acrescimo
+      from produtos_componentes_alternativas a
+      join produtos_componentes pc on pc.id = a.componente_id
+     where pc.produto_id = ${antes.id} and pc.tipo = 'kit' and (a.excluido_em is not null or pc.excluido_em is not null)
+     order by greatest(a.excluido_em, pc.excluido_em) desc, a.id`);
+  const mudou = mudancasDePreco(antes, d, {
+    lojaVisivel: (lojaId) => sessao.lojas === null || sessao.lojas.includes(lojaId),
+    lojaAtiva: (lojaId) => lojasAtivas.has(lojaId),
+    excluidas: { codigosBarras, complementos, alternativas },
   });
-  if (mudouProduto || mudouLoja || mudouFaixa || mudouComplemento) {
-    throw ErroApi.semPermissao('Alterar preço no ERP exige "Produtos: Alterar preço".');
-  }
+  if (mudou.length) throw ErroApi.semPermissao('Alterar preço no ERP exige "Produtos: Alterar preço".');
 }
 
 /**

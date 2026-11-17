@@ -18,14 +18,7 @@ public partial class DescritorAuditoriaTests
     [Fact]
     public void Toda_acao_gravada_hoje_tem_frase()
     {
-        var raiz = Path.Combine(ChavesTerminalTests.PastaPdv(), "src");
-        var gravadas = Directory.EnumerateFiles(raiz, "*.cs", SearchOption.AllDirectories)
-            .Where(a => !a.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                        && !a.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                        && !a.Contains($"{Path.DirectorySeparatorChar}Migracoes{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-            .Select(File.ReadAllText)
-            .SelectMany(texto => Gravacoes().SelectMany(r => r.Matches(texto)).Select(m => m.Groups["a"].Value))
-            .ToHashSet(StringComparer.Ordinal);
+        var gravadas = AcoesGravadasNoCodigo();
 
         // A varredura acha os jeitos de gravar que existem (o registro da venda e do caixa, o RegistrarAuditoriaAsync, a
         // entidade montada à mão, a constante, o helper do caixa e o SQL da restauração): se um deles deixar de ser achado,
@@ -196,6 +189,43 @@ public partial class DescritorAuditoriaTests
         Assert.DoesNotContain("dinheiro_estimado", DescritorAuditoria.CamposExibiveis);
         Assert.Empty(DescritorAuditoria.CamposExibiveis.Intersect(ChavesConfiguracaoTerminal.Internas));
     }
+
+    /// <summary>
+    /// As ações que só o servidor grava (<c>ACOES_AUDITORIA_SO_SERVIDOR</c> de <c>packages/shared/src/enums.ts</c>; README da API
+    /// › decisão 211): a API recusa o lote <c>auditoria.registros</c> inteiro que traga uma delas (<c>PAYLOAD_INVALIDO</c>),
+    /// com os registros e os logins que vão junto. Nenhuma ação que o código grava hoje pode estar na lista.
+    /// </summary>
+    [Fact]
+    public void Nenhuma_acao_gravada_e_reservada_ao_servidor()
+    {
+        var enums = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "shared", "enums.ts"));
+        var inicio = enums.IndexOf("export const ACOES_AUDITORIA_SO_SERVIDOR = [", StringComparison.Ordinal);
+        Assert.True(inicio >= 0, "ACOES_AUDITORIA_SO_SERVIDOR");
+        var fim = enums.IndexOf("] as const", inicio, StringComparison.Ordinal);
+        var soServidor = TextoTs().Matches(enums[inicio..fim]).Select(m => m.Groups[1].Value).ToHashSet(StringComparer.Ordinal);
+        // A leitura não pode ficar cega: a lista tem a revogação e só ações do catálogo (o PDV conhece todas).
+        Assert.Contains("terminal_revogado", soServidor);
+        Assert.All(soServidor, a => Assert.Contains(a, CatalogosNuvem.AcoesAuditoria));
+
+        var reservadas = AcoesGravadasNoCodigo().Where(soServidor.Contains).Order(StringComparer.Ordinal).ToList();
+        Assert.Empty(reservadas);
+    }
+
+    /// <summary>A varredura do código do PDV: as ações que ele grava hoje no <c>log_auditoria_local</c>.</summary>
+    private static HashSet<string> AcoesGravadasNoCodigo()
+    {
+        var raiz = Path.Combine(ChavesTerminalTests.PastaPdv(), "src");
+        return Directory.EnumerateFiles(raiz, "*.cs", SearchOption.AllDirectories)
+            .Where(a => !a.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                        && !a.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                        && !a.Contains($"{Path.DirectorySeparatorChar}Migracoes{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .Select(File.ReadAllText)
+            .SelectMany(texto => Gravacoes().SelectMany(r => r.Matches(texto)).Select(m => m.Groups["a"].Value))
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    [GeneratedRegex("'([a-z_]+)'")]
+    private static partial Regex TextoTs();
 
     private static IEnumerable<Regex> Gravacoes() =>
     [

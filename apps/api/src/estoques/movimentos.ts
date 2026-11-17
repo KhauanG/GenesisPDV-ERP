@@ -40,10 +40,12 @@ import {
   saidaAoCustoInformado,
   type LoteDisponivel,
   type ModoLoteBaixaSemInformar,
+  type SaldoAposMovimento,
   type Valor,
 } from '@genesis/shared';
 import { sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
+import { ErroApi } from '../comum/erros.js';
 import { uuidv5 } from '../comum/uuid-v5.js';
 import { lerConfiguracao } from '../configuracoes/valores.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -184,6 +186,70 @@ export class ErroLoteInvalido extends Error {
 }
 
 /**
+ * Limites do motor (README da API › decisão 210): o saldo de uma linha (`saldos_estoque`) ou de um lote
+ * (`saldos_lote`) fica até `LIMITE_SALDO_ESTOQUE` em módulo — uma casa inteira abaixo do `numeric(15,3)`, para que o
+ * "Definir" de qualquer linha (a diferença até o contado) e os movimentos seguintes ainda caibam nas colunas — e o
+ * custo do movimento (`custo_unitario`, `custo_medio_posterior`: `numeric(15,4)`; `custo_total`: `numeric(15,2)`)
+ * cabe na coluna. O lançamento que passaria disso é recusado com `ErroLimiteEstoque` antes de qualquer gravação: no
+ * ERP, 422 com a mensagem; no push do PDV, a rejeição daquele evento (`LIMITE_ESTOQUE`, SYNC 11.2), sem parar o lote
+ * nem virar `ERRO_INTERNO`. O lançamento que **aproxima** de zero uma linha que já estava acima do limite (dado de
+ * antes desta regra) passa: é o caminho do conserto. A isenção é só do saldo: o custo do movimento tem de caber na
+ * coluna de qualquer jeito (não há como gravá-lo), então o "Definir" de uma linha enorme com custo médio alto (a
+ * diferença × o custo passa de `numeric(15,2)`) é recusado, e a linha se acerta em partes (Entradas ou Saídas de
+ * acerto menores, cada uma com o custo dentro da coluna) antes do "Definir". O replay do razão (`recalcular.ts`) não
+ * usa esta conferência: refaz o que está gravado.
+ */
+export const LIMITE_SALDO_ESTOQUE = '99999999999.999';
+/** Maior valor de `numeric(15,4)` (custo do movimento e custo médio). */
+const MAXIMO_CUSTO_ESTOQUE = '99999999999.9999';
+/** Maior valor de `numeric(15,2)` (custo total do movimento; também os totais do item do acerto). */
+export const MAXIMO_CUSTO_TOTAL_ESTOQUE = '9999999999999.99';
+
+/** O lançamento deixaria a linha de saldo, o lote ou o custo do movimento fora dos limites do motor (acima). */
+export class ErroLimiteEstoque extends ErroApi {
+  constructor(
+    mensagem: string,
+    readonly chave: ChaveSaldo & { loteId?: string | null },
+  ) {
+    super('REGRA_NEGOCIO', mensagem, {
+      detalhes: {
+        estoqueId: chave.estoqueId,
+        produtoId: chave.produtoId,
+        variacaoId: chave.variacaoId,
+        tipoEstoqueId: chave.tipoEstoqueId,
+        ...(chave.loteId ? { loteId: chave.loteId } : {}),
+      },
+    });
+    this.name = 'ErroLimiteEstoque';
+  }
+}
+
+/** O saldo depois do movimento passa do limite, afastando-se de zero (o que se aproxima de zero passa). */
+function saldoForaDoLimite(anterior: Valor, posterior: Valor): boolean {
+  const p = dec(posterior).abs();
+  return p.gt(LIMITE_SALDO_ESTOQUE) && p.gt(dec(anterior).abs());
+}
+
+const LIMITE_SALDO_TEXTO = '99.999.999.999,999';
+
+function conferirLimitesMovimento(m: NovoMovimento, r: SaldoAposMovimento): void {
+  if (saldoForaDoLimite(r.saldoAnterior, r.saldoPosterior))
+    throw new ErroLimiteEstoque(
+      `O lançamento deixaria o saldo de um produto fora do limite do sistema (até ${LIMITE_SALDO_TEXTO} para mais ou para menos): confira as quantidades.`,
+      m,
+    );
+  if (
+    dec(r.custoTotal).abs().gt(MAXIMO_CUSTO_TOTAL_ESTOQUE) ||
+    dec(r.custoUnitario).abs().gt(MAXIMO_CUSTO_ESTOQUE) ||
+    dec(r.custoMedioPosterior).abs().gt(MAXIMO_CUSTO_ESTOQUE)
+  )
+    throw new ErroLimiteEstoque(
+      'O custo do lançamento passa do limite do sistema: confira as quantidades e os custos (um saldo muito grande se acerta em partes, com Entradas ou Saídas de acerto menores).',
+      m,
+    );
+}
+
+/**
  * Folga da regra de data: o documento do ERP monta as linhas com `new Date()` e só depois as lança, às vezes depois
  * de esperar a trava de uma linha de saldo, então a data é um pouco anterior ao instante da conferência. Um minuto
  * cobre essa espera sem abrir espaço para um lançamento retroativo de verdade. O documento que lança linha a linha
@@ -306,6 +372,7 @@ function calcularMovimento(saldo: SaldoTravado, m: NovoMovimento): MovimentoCalc
     estorno: Boolean(m.estornoDeId),
     saidaAoCusto: saidaAoCustoInformado(m),
   });
+  conferirLimitesMovimento(m, r);
   saldo.quantidade = r.saldoPosterior;
   saldo.custoMedio = r.custoMedioPosterior;
   return {
@@ -579,7 +646,8 @@ export interface ResultadoDocumento {
  * `INSERT` para todos os movimentos e um `UPDATE` para todas as linhas de saldo. Roda
  * **antes** do `INSERT` do documento ("saída lançada antes do documento"): `documento_id` não tem FK, e o custo de
  * cada item (`custoPorItem`) já sai daqui para o `INSERT` de `itens_venda`/`vendas`, sem `UPDATE` em documento
- * imutável. Nunca recusa saldo negativo (15.1: a nuvem não recusa venda); quem chama decide o alerta. Os ids
+ * imutável. Nunca recusa saldo negativo (15.1: a nuvem não recusa venda); quem chama decide o alerta. Recusa só o
+ * que passaria dos limites do motor (`ErroLimiteEstoque`, antes de qualquer gravação). Os ids
  * entram em minúsculas (`normalizarIds`) e os comandos vão em blocos de `LINHAS_POR_COMANDO` (`porComando` só muda
  * nos testes, para cruzar os blocos com poucos produtos). A regra de data (`conferirDataMovimentos`) vale antes de
  * qualquer trava: o documento do ERP no passado sem `retroativoPermitido` não chega a lançar nada.
@@ -615,7 +683,13 @@ export async function lancarDocumento(
         const c = calcularMovimento(saldo, l);
         if (l.loteId) {
           const lote = lotes.get(chaveLoteTexto(l))!;
-          lote.quantidade = decTexto(dec(lote.quantidade).plus(c.quantidade), 3);
+          const depois = decTexto(dec(lote.quantidade).plus(c.quantidade), 3);
+          if (saldoForaDoLimite(lote.quantidade, depois))
+            throw new ErroLimiteEstoque(
+              `O lançamento deixaria o saldo de um lote fora do limite do sistema (até ${LIMITE_SALDO_TEXTO} para mais ou para menos): confira as quantidades.`,
+              l,
+            );
+          lote.quantidade = depois;
         }
         return c;
       }),

@@ -102,4 +102,30 @@ describe('analisarClientes: "Sem alteração" e "O que muda" (decisão 103, F2-B
     expect(JSON.stringify(mudada)).not.toContain('Rua Exemplo, 100');
     expect(mudada.dados.cpfCnpj).toBe('52998224725');
   });
+
+  it('sem "Pessoas: Ver" a descrição é só o que veio na planilha, nunca o nome do cadastro achado (decisão 198)', () => {
+    const ref: ReferenciasClientes = {
+      ...REF,
+      porDocumento: new Map([['52998224725', { id: MARIA, nome: ATUAL.nome }]]),
+      porCodigo: new Map([[7, { id: MARIA, nome: ATUAL.nome }]]),
+    };
+    const so = (cabecalho: string, valor: string | number, verPessoas: boolean) => {
+      const mapa = mapearColunas([cabecalho], 'clientes');
+      return analisarClientes([{ numero: 2, valores: [valor] }], mapa.indices, ref, {
+        editarCredito: true,
+        verPessoas,
+      })[0]!;
+    };
+    const porDoc = so('CPF/CNPJ', '529.982.247-25', false);
+    expect(porDoc.acao).toBe('atualizar');
+    expect(porDoc.descricao).toBe('529.982.247-25');
+    const porCodigo = so('Código', 7, false);
+    expect(porCodigo.descricao).toBe('7');
+    const porId = so('Id (UUID)', MARIA, false);
+    expect(porId.descricao).toBe(MARIA);
+    for (const l of [porDoc, porCodigo, porId]) expect(JSON.stringify(l)).not.toContain(ATUAL.nome);
+    // A gravação ainda acha o cadastro (o id não sai da prévia: `paraPrevia`); com "Pessoas: Ver", o nome aparece.
+    expect(porDoc.registroId).toBe(MARIA);
+    expect(so('CPF/CNPJ', '529.982.247-25', true).descricao).toBe(ATUAL.nome);
+  });
 });

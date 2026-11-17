@@ -1,5 +1,6 @@
 import {
   aceitaNovoNumero,
+  CODIGO_NUMERO_VENDA_IMPLAUSIVEL,
   JUSTIFICATIVA_DESCARTE_MIN,
   type EventoComErro,
   type ResultadoReprocessamento,
@@ -64,8 +65,9 @@ export function mensagemReprocessamento(r: ResultadoReprocessamento): string {
 /**
  * Aba "Eventos com erro" (ERP 12.5; SYNC 11.4), a fila de decisão: lista paginada com filtro por situação e código, o
  * resumo do agregado e, com `terminais.gerenciar`, as ações Reprocessar, Aplicar com novo número (só
- * `NUMERO_VENDA_DUPLICADO`), Descartar (justificativa e, nos tipos críticos, o número digitado) e Reprocessar todos
- * com o código (tarefa em segundo plano). O resultado volta ao PDV no heartbeat.
+ * `NUMERO_VENDA_DUPLICADO` e `NUMERO_VENDA_IMPLAUSIVEL`), Descartar (justificativa e, nos tipos críticos, o número
+ * digitado) e Reprocessar todos com o código (tarefa em segundo plano; no `NUMERO_VENDA_IMPLAUSIVEL` o diálogo avisa
+ * que não resolve). O resultado volta ao PDV no heartbeat.
  */
 export function EventosComErro({
   terminalId,
@@ -112,9 +114,9 @@ export function EventosComErro({
       title: `Aplicar com novo número o evento nº ${e.sequencia}`,
       children: (
         <Text size="sm">
-          O número desta venda já foi usado por outra venda do caixa. A nuvem grava a venda com o próximo
-          número livre da faixa de renumeração do caixa e guarda o número original na observação e na
-          auditoria. O cupom impresso continua com o número do caixa.
+          {e.erroCodigo === CODIGO_NUMERO_VENDA_IMPLAUSIVEL
+            ? 'O número desta venda está muito acima da numeração do caixa. A nuvem grava a venda com o próximo número livre da faixa de renumeração do caixa, sem avançar a numeração dele, e guarda o número original na observação e na auditoria. O cupom impresso continua com o número do caixa. As próximas vendas deste terminal também caem aqui, porque ele continua contando a partir desse número: para normalizar o caixa, use "Substituir terminal", que recomeça a numeração do PDV a partir da que a nuvem conhece.'
+            : 'O número desta venda já foi usado por outra venda do caixa. A nuvem grava a venda com o próximo número livre da faixa de renumeração do caixa e guarda o número original na observação e na auditoria. O cupom impresso continua com o número do caixa.'}
         </Text>
       ),
       labels: { confirm: 'Aplicar com novo número', cancel: 'Cancelar' },
@@ -128,6 +130,8 @@ export function EventosComErro({
         <Text size="sm">
           {quantidade} evento(s) com erro {codigo} deste terminal são reaplicados em segundo plano, em ordem
           (ex.: depois de publicar uma correção). Acompanhe pelo ícone Tarefas.
+          {codigo === CODIGO_NUMERO_VENDA_IMPLAUSIVEL &&
+            ' Reprocessar não resolve este código: o número continua acima da numeração do caixa. Use "Aplicar com novo número" em cada venda e "Substituir terminal" para normalizar o caixa.'}
         </Text>
       ),
       labels: { confirm: 'Reprocessar todos', cancel: 'Cancelar' },

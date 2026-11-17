@@ -46,6 +46,7 @@ import {
 import { concederEstoqueAoCriador, garantirEstoquePermitido } from '../estoques/permitidos.js';
 import { ressincronizarFluxosDaLoja } from '../sync/comandos.js';
 import type { Servicos } from '../servicos.js';
+import { cancelarCodigosPendentes } from '../terminais/codigos-pendentes.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { fluxosAfetados } from './fluxos-afetados.js';
 import { garantirMunicipio } from './municipio.js';
@@ -387,6 +388,8 @@ export class LojasController {
           .update(caixas)
           .set({ excluidoEm: agora, atualizadoPorId: sessao.usuarioId })
           .where(and(eq(caixas.lojaId, lojaId), isNull(caixas.excluidoEm)));
+        // Os códigos de ativação pendentes dos caixas da loja deixam de valer (a ativação também confere).
+        await cancelarCodigosPendentes(this.s, tx, sessao, req, { lojaId }, 'loja excluída');
         await tx
           .update(numeracoes)
           .set({ excluidoEm: agora })

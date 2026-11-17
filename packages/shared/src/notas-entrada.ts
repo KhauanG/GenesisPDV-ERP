@@ -67,10 +67,19 @@ export type ModoAssinaturaInvalida = (typeof MODOS_ASSINATURA_INVALIDA)[number];
  * Tetos do parser (contra XML-bomba; o processo é de todas as empresas). A SEFAZ recusa a NF-e acima de 500 KB
  * (rejeição 214), então o `nfeProc` real nunca passa de 1 MiB; a profundidade real é de uns 8 níveis; o layout 4.00
  * aceita até 990 itens, 120 duplicatas, 5.000 volumes e 500 lotes (`rastro`) por item.
+ *
+ * A estrutura também tem teto (README da API › decisão 203), contada no texto antes de qualquer parser, porque o
+ * custo da leitura e da conferência da assinatura cresce com o número de nós, não com os bytes: `elementosEAtributos`
+ * (uma NF-e de 990 itens com todos os grupos tem uns 43 mil elementos e mil atributos, em ~880 KB), as declarações de
+ * namespace (`xmlns`, `xmlns:p`; a nota real tem umas 5) e os comentários e instruções de processamento (a nota real
+ * não tem; a declaração `<?xml …?>` do início não conta).
  */
 export const LIMITES_XML_NFE = {
   bytes: 1024 * 1024,
   profundidade: 24,
+  elementosEAtributos: 60_000,
+  declaracoesNamespace: 1_000,
+  comentariosEInstrucoes: 100,
   itens: 990,
   duplicatas: 120,
   volumes: 5000,
@@ -83,6 +92,7 @@ export const MOTIVOS_RECUSA_NFE = {
   XML_COM_DTD: 'O XML tem declaração DOCTYPE ou ENTITY, que uma NF-e não tem.',
   XML_MALFORMADO: 'O arquivo não é um XML válido.',
   XML_PROFUNDO_DEMAIS: 'O XML tem elementos aninhados demais para uma NF-e.',
+  XML_COMPLEXO_DEMAIS: 'O XML tem elementos, atributos ou comentários demais para uma NF-e.',
   NAO_E_NFE: 'O XML não é de uma NF-e (falta o grupo NFe/infNFe).',
   NFE_INVALIDA: 'A NF-e tem um campo fora do layout.',
   MODELO_NAO_ACEITO: 'Só a NF-e modelo 55 é aceita: NFC-e (modelo 65) não entra como nota de entrada.',

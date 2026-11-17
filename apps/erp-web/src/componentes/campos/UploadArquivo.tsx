@@ -15,6 +15,7 @@ import { Button, Center, FileButton, Group, Image, Input, Paper, Stack, Text } f
 import { IconPhoto, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type DragEvent } from 'react';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 
@@ -74,7 +75,9 @@ export function useMiniaturaArquivo(id: string | null) {
   const arquivo = useQuery({
     queryKey: ['arquivos', id, 'pdv_256'],
     queryFn: async () =>
-      comoDataUrl((await apiErp.baixar(`/arquivos/${id}/conteudo${query({ variante: 'pdv_256' })}`)).blob),
+      comoDataUrl(
+        (await apiErp.baixar(`/arquivos/${segmento(id)}/conteudo${query({ variante: 'pdv_256' })}`)).blob,
+      ),
     enabled: !!id,
     staleTime: Infinity,
   });

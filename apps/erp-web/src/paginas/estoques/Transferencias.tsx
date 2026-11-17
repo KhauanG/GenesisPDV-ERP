@@ -51,6 +51,7 @@ import {
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao, query } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
@@ -636,7 +637,7 @@ export function FormularioTransferencia() {
     try {
       const d = c.novo
         ? await apiErp.post<TransferenciaDetalhe>('/transferencias', corpo)
-        : await apiErp.put<TransferenciaDetalhe>(`/transferencias/${id}`, corpo);
+        : await apiErp.put<TransferenciaDetalhe>(`/transferencias/${segmento(id)}`, corpo);
       queryClient.setQueryData(['transferencias', d.id], d);
       return d;
     } catch (e) {
@@ -742,7 +743,7 @@ export function FormularioTransferencia() {
     setProcessando(true);
     setErrosModal(null);
     try {
-      const d = await apiErp.post<TransferenciaDetalhe>(`/transferencias/${id}/receber`, corpo);
+      const d = await apiErp.post<TransferenciaDetalhe>(`/transferencias/${segmento(id)}/receber`, corpo);
       setConferencia(null);
       depoisDaAcao(d, mensagem(d));
     } catch (e) {
@@ -799,7 +800,10 @@ export function FormularioTransferencia() {
     setProcessando(true);
     setErrosModal(null);
     try {
-      const d = await apiErp.post<TransferenciaDetalhe>(`/transferencias/${id}/tratar-divergencia`, corpo);
+      const d = await apiErp.post<TransferenciaDetalhe>(
+        `/transferencias/${segmento(id)}/tratar-divergencia`,
+        corpo,
+      );
       setTratamento(null);
       depoisDaAcao(
         d,
@@ -820,7 +824,7 @@ export function FormularioTransferencia() {
   async function cancelar() {
     setProcessando(true);
     try {
-      const d = await apiErp.post<TransferenciaDetalhe>(`/transferencias/${id}/cancelar`, {
+      const d = await apiErp.post<TransferenciaDetalhe>(`/transferencias/${segmento(id)}/cancelar`, {
         versao: t!.versao,
         motivo: motivoCancelamento,
       });
@@ -845,7 +849,7 @@ export function FormularioTransferencia() {
     if (!nfe) return;
     setProcessando(true);
     try {
-      const d = await apiErp.put<TransferenciaDetalhe>(`/transferencias/${id}/nfe-externa`, {
+      const d = await apiErp.put<TransferenciaDetalhe>(`/transferencias/${segmento(id)}/nfe-externa`, {
         versao: t!.versao,
         nfeExternaChave: nfe.chave,
         nfeExternaNumero: nfe.numero,

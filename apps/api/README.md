@@ -148,6 +148,7 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `TRUST_PROXY`                                                                                     | `false` (dev/teste)                                             | Proxies confiáveis à frente da API (número de saltos, `false` ou IPs/CIDRs). Obrigatória em homologação/produção: define o IP usado no limite de taxa e na auditoria                                                                 |
 | `LOGIN_MAX_TENTATIVAS` / `LOGIN_BLOQUEIO_MINUTOS`                                                 | 5 / 15                                                          | ERP 4.1 (login, senha atual na troca e painel)                                                                                                                                                                                       |
 | `LOGIN_LIMITE_POR_MINUTO` / `LOGIN_LIMITE_POR_CONTA_MINUTO`                                       | 20 / 10                                                         | Limites por IP e por conta (código+login; e-mail no painel; usuário na troca de senha)                                                                                                                                               |
+| `CORPO_JSON_LIMITE_KB` / `CORPO_JSON_LIMITE_GRANDE_KB` / `CORPO_JSON_LIMITE_LOTE_KB` | 100 / 4096 / 9216 | Corpo JSON por requisição, nos bytes recebidos e nos descomprimidos (decisão 199): o padrão em toda rota (inclusive sem login), o grande só nas rotas autenticadas marcadas com `@CorpoGrande`, o do lote só no `POST /sync/push`; acima, 413 |
 | `SESSAO_INATIVIDADE_MINUTOS` / `SESSAO_ADMIN_INATIVIDADE_MINUTOS` / `REFRESH_TOLERANCIA_SEGUNDOS` | 60 / 30 / 20                                                    | Inatividade pela última requisição real; janela em que o mesmo refresh simultâneo responde 409 sem derrubar a sessão                                                                                                                 |
 | `POOL_CACHE_MAXIMO` / `POOL_OCIOSO_MS`                                                            | 50 / 300000                                                     | Cache de pools por empresa (pool em uso nunca é fechado)                                                                                                                                                                             |
 | `DASHBOARD_CACHE_MS` | 60000 | Cache do `GET /dashboard` por empresa × loja × mês × o que o usuário enxerga (ERP 6); 0 desliga (testes e e2e) |
@@ -158,11 +159,15 @@ Todas estão em `.env.example` com comentário. As essenciais:
 | `FILA_TRABALHADOR`                                                                                | `true`                                                          | Esta instância executa a fila (tarefas e e-mails); `false` só enfileira                                                                                                                                                              |
 | `VERIFICACAO_RAZAO_CRON` | vazia (desligada) | Cron (UTC, 5 campos) da verificação periódica do razão de estoque: só confere e abre o alerta `RAZAO_SALDO_DIVERGENTE`; corrigir é o `db:recalcular-saldos --corrigir`. Cron inválido recusa a subida; esvaziar desliga e remove o agendamento já gravado no pg-boss (decisão 147) |
 | `ARGON2_CONCORRENCIA` / `PLANILHA_CONCORRENCIA` | 4 / 2 | Semáforos do processo: hashes argon2 e leituras de planilha simultâneos (decisão 93) |
+| `ARGON2_ESPERA_MAXIMA_S` / `ARGON2_FILA_MAXIMA` | 20 / 16 | Espera máxima na fila do argon2 (login e gestão) e quantos hashes fora do login podem esperar ao mesmo tempo; acima, 503 `SISTEMA_OCUPADO` com `Retry-After`. Os hashes fora do login usam no máximo `ARGON2_CONCORRENCIA` − 1 vagas: sobra uma para o login (decisão 204) |
 | `EXPORTACAO_CONCORRENCIA` / `EXPORTACOES_PENDENTES_POR_USUARIO` | 2 / 2 | Gerações de arquivo de exportação simultâneas no processo (listagens, relatório da importação e a exportação de relatório em tarefa; mínimo 2, para sempre sobrar vaga a quem baixa na hora) e exportações em tarefa na fila ou executando por usuário, 422 acima (decisões 93 e 177) |
+| `EXPORTACOES_SIMULTANEAS_USUARIO` / `EXPORTACOES_SIMULTANEAS_EMPRESA` | 1 / 3 | Exportações na hora em andamento por usuário e por empresa, conferidas antes de ler as linhas; 429 `LIMITE_TAXA` com `Retry-After` acima (decisão 204) |
 | `ARMAZENAMENTO_INATIVIDADE_MS` | 120000 | Inatividade máxima da conexão de um pedido ao armazenamento: sem nenhum byte indo ou vindo, o pedido falha e o SDK repete (3 tentativas); conexão: 10 s (decisão 177) |
 | `IMAGENS_CONCORRENCIA` / `IMAGENS_LIMITE_PIXELS` | 1 / 36000000 | Imagens decodificadas ao mesmo tempo no processo (o sharp, uma thread do libvips cada) e o teto de pixels (largura × altura) aceito no envio, conferido pelo cabeçalho antes de decodificar (decisão 189) |
 | `ARQUIVOS_ENVIOS_SIMULTANEOS` / `ARQUIVOS_ENVIOS_SIMULTANEOS_USUARIO` / `ARQUIVOS_ENVIOS_POR_MINUTO` | 4 / 2 / 30 | Envios de arquivo (`POST /api/arquivos`) sendo processados ao mesmo tempo no processo (a vaga é pega com o corpo já lido; o seguinte espera), ao mesmo tempo por usuário (contados desde antes da leitura, 429 acima) e por usuário por minuto, 429 acima (decisão 189) |
-| `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisão 93) |
+| `HASH_LIMITE_POR_MINUTO` / `IMPORTACAO_PREVIAS_POR_MINUTO` | 10 / 10 | Por usuário e por minuto (criar usuário, redefinir a senha de outro, PIN, senha do cliente, senha de liberação; prévias de importação), 429 acima (decisões 93 e 204) |
+| `IMPORTACOES_PENDENTES_POR_USUARIO` | 2 | Importações de planilha (produtos e clientes juntas) na fila ou executando por usuário (a parada na fila há mais de 5 min não conta); a mesma planilha não vira outra tarefa enquanto a anterior dela está pendente (a que está na fila é agendada de novo); 422 `REGRA_NEGOCIO` acima, sem criar a tarefa (decisão 209) |
+| `NUMERACAO_MARGEM_CAIXA` | 100000 | Quanto acima do último número de venda (ou de vale) conhecido do caixa (`numeracoes`) o número de uma venda do PDV e o contador de venda e vale informado pelo terminal ainda valem: a venda acima vai a `erro` `NUMERO_VENDA_IMPLAUSIVEL`, o contador acima fica fora da base da ativação e do `GET /sync/estado` (decisão 212) |
 | `MONITOR_TOKEN_SHA256` | vazio (rota fechada) | SHA-256 (hex) do token do `GET /api/saude/detalhada`; só o hash fica no ambiente (decisão 140) |
 | `MONITOR_LIMITE_POR_MINUTO` | 30 | Consultas ao `/api/saude/detalhada` por IP por minuto, contando as recusadas; 429 acima |
 | `GENESIS_VERSAO` / `BACKUP_ESTADO_CHAVE` | `desenvolvimento` / `backups/estado.json` | Versão no painel (a imagem define com o commit) e o estado do último backup no bucket (gravado pelo `genesis-backup`) |
@@ -430,7 +435,7 @@ Divergências e lacunas encontradas nos documentos (precedência ADR > MD > SYNC
     na 0003); o catálogo único é `ACOES_AUDITORIA` em `@genesis/shared` (MD 3.1.7 + ERP 17.1 + `segredo_entregue`,
     `token_anterior_reutilizado` do MD 1.10/2.4) e a API recusa ação fora dele — inclusive as que chegam do PDV em
     `auditoria.registros`. `GET /api/auditoria`: linhas com `loja_id` só das lojas permitidas (as sem loja, para todos
-    com `auditoria.ver`); filtros de período (padrão: hoje, no fuso `America/Sao_Paulo`, para a consulta tocar só a
+    com `auditoria.ver`, menos as de usuário, login e sessão, que seguem a decisão 92 — decisão 207); filtros de período (padrão: hoje, no fuso `America/Sao_Paulo`, para a consulta tocar só a
     partição do mês — o histórico de um registro, com `registro_id`, não tem período padrão), usuário, entidade, ação,
     origem, loja e texto. Partições de 3 meses atrás a 12 meses à frente na
     migração; `db:particoes`/pós-migração mantêm 12 à frente; não há partição "default" (linha fora da faixa falha
@@ -743,7 +748,8 @@ insert, update` nas tabelas com `versao` (C/D/P/R), `+ delete` nas L, só `selec
 68. **Permissões de custo e preço**: sem `produtos.ver_custo` custo, custo médio e markup voltam `null` (listagem,
     detalhe, busca, saldos), o custo enviado é ignorado e ordenar por custo é 403. Com `geral.altera_preco_produto_erp
     = false`, alterar preço do produto, da loja, das faixas ou o preço adicional dos complementos (F2-B51, decisão
-    194) exige `produtos.alterar_preco` (403); na criação o preço é livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
+    194) exige `produtos.alterar_preco` (403); a lista completa do que é preço está na decisão 208. Na criação o preço
+    é livre (é obrigatório). Preço de venda > 0 exceto matéria-prima.
 69. **Troca de tipo com movimento** (ERP 8.2.1): só entre Simples, Matéria-prima e Serviço, e Serviço só sem saldo.
     **Exclusão** (ERP 8.2 "Regras"): bloqueada com saldo ≠ 0 ou se o produto é padrão/alternativa ativa de combo ou
     insumo de ficha técnica de produto não excluído; exclui logicamente as filhas junto.
@@ -866,7 +872,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
 88. **Linhas de outras lojas no produto e no mix** (ERP 8.2.9, 8.2.10, 8.10). O detalhe (`GET /produtos/:id`,
     `GET /grupos-preco-quantidade/:id` e o resumo da listagem) **não mostra** `produtos_lojas` nem faixas de lojas fora
     das permitidas; a gravação as **preserva** (só remove o que é da loja permitida ou sem loja) e enviá-las dá 403.
-    Mudar o grupo para o modo "por produto" (que apaga todas as faixas) com faixa oculta → 403. A regra de alterar
+    Mudar o grupo para o modo "por produto" (que apaga todas as faixas) com faixa oculta → 403; excluir o grupo ou o
+    produto com linha de loja oculta também (decisão 207). A regra de alterar
     preço compara só as faixas visíveis. Testes: "o detalhe esconde a loja 2…" e "mix: faixa da loja 2…".
 89. **Estoques permitidos** (ERP 2.1 "Estoques permitidos"). `usuarios_estoques` segue a regra das lojas
     (`resolverLojas`): o editor só concede/retira estoques que enxerga (`estoqueVisivel`; estoque fora dos estoques
@@ -893,7 +900,8 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
 92. **Usuários são dados da loja** (LGPD; ERP 11.1). Para quem tem lojas restritas, `GET /usuarios`, `/exportar`,
     `GET /usuarios/:id` e `/:id/permissoes` mostram só os usuários com alguma loja em comum, os sem loja (não Master) e
     o próprio; Master e usuários só de outras lojas ficam ocultos (404 no detalhe). As gravações já exigiam o alvo
-    subordinado. Teste: "restrito à loja 1 não lista…".
+    subordinado. Teste: "restrito à loja 1 não lista…". A auditoria de usuário, login e sessão segue a mesma regra
+    (decisão 207).
 93. **Limites de recurso do processo** (o processo é de todas as empresas). Semáforo global para o argon2
     (`ARGON2_CONCORRENCIA`, 4: o PIN usa 64 MiB) e para a leitura de planilha (`PLANILHA_CONCORRENCIA`, 2); limite por
     usuário e por minuto nas rotas que geram hash fora do login (`PUT /usuarios/:id/pin`, senha do cliente em
@@ -906,7 +914,9 @@ Política adotada e o teste que cobre cada caso (revisão de segurança da Fase 
     armazenamento vem do conteúdo (`formatoPlanilha`), nunca do `Content-Type` do cliente; o multer limita campos e
     partes; o erro da biblioteca vai para o log e o usuário recebe uma mensagem genérica. A leitura em `worker_thread`
     com `resourceLimits` não foi adotada: o teto de descompactação já limita a memória e o executor roda o mesmo código
-    em TS (dev/teste) e JS (build). Testes: "zip-bomba…" e "PIN: limite de hashes…".
+    em TS (dev/teste) e JS (build). Testes: "zip-bomba…" e "PIN: limite de hashes…". Desde o PR-15 o
+    `readSheet` não descompacta mais nada: recebe um zip montado com as entradas já descompactadas e conferidas, e o
+    percurso comum exige a estrutura de um zip só (decisão 197).
 94. **Dinheiro e quantidade em decimal** (ADR-05). `@genesis/shared` exporta `Dec` (`decimal.js` com `ROUND_HALF_UP`,
     o `MidpointRounding.AwayFromZero` do PDV) e `dec`/`decTexto`/`decNumero`; as funções de `precos.ts` (margem,
     markup, "Calcular", resumo do combo, combos montáveis, Simular) e `estoque.ts` (custo médio, diferença do
@@ -1105,22 +1115,20 @@ Bloco B1 do plano da 1B (contratos compartilhados e correções de base) e as de
      (conferido também na API, 422 em `confirmacaoCaixa`); `revogado` com data, autor e motivo
      (`revogado_imediato`/`perdido_roubado`), o caixa fica livre (`caixas.terminal_id → terminal_anterior_id`, como na
      desativação confirmada e na carência vencida) e auditoria `terminal_revogado`. Todo destino `revogado` roda com
-     `travaVersao` (libera `caixas`, que tem `fn_versao`; MD 1.5). `perdido` anula, na mesma transação,
-     `usuarios.senha_pdv_hash` de quem acessa a loja (master ou `usuarios_lojas`) e `pessoas.senha_hash` das pessoas
-     cuja senha desce para a loja: a mesma condição da projeção do fluxo `pessoas` (`pessoaRelevante` +
-     `senhaClienteDesce` de `sync/fluxos.ts`: relevante, exigência de senha ligada na loja, limite > 0, não
-     bloqueada), como pede a ERP 12.4 ("as que desceram para aquele terminal"); quem não atende hoje não tem hash no
-     PDV da loja. Auditoria `senha_redefinida` por registro; o `fn_versao` faz o `null` descer nos fluxos
+     `travaVersao` (libera `caixas`, que tem `fn_versao`; MD 1.5). `perdido` anula, na mesma transação, as
+     credenciais que o computador pode guardar: o PIN do PDV (`usuarios.senha_pdv_hash`) de quem acessa ou já acessou
+     a loja e de quem é ou já foi Master, e a senha de cliente (`pessoas.senha_hash`) de quem já foi relevante para a
+     loja (decisão 211). Auditoria `senha_redefinida` por registro; o `fn_versao` faz o `null` descer nos fluxos
      `acesso`/`pessoas` dos outros terminais. `perdido` também vale num terminal **já revogado** por outro motivo
      (furto descoberto depois, ou outra revogação que ganhou a corrida): o controle passa a `perdido_roubado` e a
      empresa só anula e audita (menos `falha_ativacao`, que nunca recebeu dados → 422; e nunca 200 sem anular).
-     `aplicarEstadoNaEmpresa` decide o que falta pelas auditorias `terminal_revogado` (`depois.status`/`motivo`), não
-     só pelo status: a etapa da empresa da ativação passa os anteriores revogados por ela (a revogação que só ficou
-     no controle é completada ali, com anulação, auditoria e alerta) e a desativação confirmada do heartbeat grava a
-     própria auditoria (motivo `MOTIVOS_REVOGACAO.confirmada`, empresa antes do controle, com `travaVersao`).
-     Repetir a mesma revogação só refaz a etapa da empresa; outro modo num terminal já revogado → 422.
-     "Não reconheço" (troca de hardware) é a revogação imediata com observação. O `sync.test.ts` deixou de revogar
-     por SQL.
+     `aplicarEstadoNaEmpresa` decide o que falta pelas auditorias `terminal_revogado` gravadas pelo servidor (sem
+     `evento_id`, decisão 211; `depois.status`/`motivo`), não só pelo status: a etapa da empresa da ativação passa os
+     anteriores revogados por ela (a revogação que só ficou no controle é completada ali, com anulação, auditoria e
+     alerta) e a desativação confirmada do heartbeat grava a própria auditoria (motivo `MOTIVOS_REVOGACAO.confirmada`,
+     empresa antes do controle, com `travaVersao`). Repetir a mesma revogação só refaz a etapa da empresa; outro modo
+     num terminal já revogado → 422. "Não reconheço" (troca de hardware) é a revogação imediata com observação. O
+     `sync.test.ts` deixou de revogar por SQL.
 115. **D20 no código**: a numeração continua passando ao substituto na hora (`decidirNumeracao` não olha os eventos) e
      o terminal que sai do caixa com eventos em `erro`/`retido` gera o alerta crítico
      `TERMINAL_DESATIVADO_COM_EVENTOS` (um por terminal enquanto aberto, com as contagens), na revogação (3 modos e
@@ -3591,7 +3599,9 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        e casas máximas; o que passa das casas é recusado, nunca arredondado) e completados até as casas da coluna;
        datas existem; textos respeitam o tamanho do layout; tetos de 990 itens, 120 duplicatas, 5.000 volumes e 500
        lotes por item; grupo repetido onde o layout tem um só (duas `infNFe`, dois `protNFe`, dois grupos de ICMS) e
-       `nItem` repetido são recusados — a leitura nunca escolhe um deles. O resultado é a `NfeLida` do shared.
+       `nItem` repetido são recusados — a leitura nunca escolhe um deles. O resultado é a `NfeLida` do shared. Desde o
+       PR-15, também o teto de estrutura (elementos e atributos, declarações de namespace, comentários), contado no
+       texto antes do `XMLValidator` (decisão 203).
      - **Validações** (`validarNfe`, puras, e `lerEValidarXmlNfe`, com o contexto do banco: as lojas não excluídas,
        a nota viva com a mesma chave e a chave da assinatura). **Sempre recusa**, nesta ordem e com o motivo do shared
        (`MOTIVOS_RECUSA_NFE`): modelo ≠ 55 (a NFC-e); **nota de homologação** (tpAmb 2: sem valor fiscal, não estava
@@ -3666,8 +3676,9 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `tipoEstoqueId`. **Antes do multer** (o interceptor `LimiteEnvioNfe`, porque o processo é de todas as empresas
        e do `/sync`): o `Content-Length`, o limite de envios por minuto, **um envio por vez de cada usuário**
        (`NFE_ENVIOS_SIMULTANEOS_USUARIO`, padrão 1; o segundo simultâneo é 429 `LIMITE_TAXA`) e a vaga do semáforo do
-       processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3: o seguinte espera a vaga sem o corpo lido), liberada quando a
-       resposta termina; os erros do multer (mais de 100 arquivos, arquivo acima do teto) voltam como 422 no campo
+       processo (`NFE_ENVIOS_SIMULTANEOS`, padrão 3), liberada quando a resposta termina — desde o PR-15 a vaga do
+       processo é pega com o corpo já lido (`VagaEnvioNfe`), há o limite de envios simultâneos da empresa e o prazo de
+       leitura (decisão 202); os erros do multer (mais de 100 arquivos, arquivo acima do teto) voltam como 422 no campo
        `arquivos`, com a mensagem da tela. O "20 MB" das mensagens vem do shared (`TETO_UPLOAD_NFE_TEXTO`). O `.zip`
        (pela extensão ou pelo conteúdo) é aberto com os limites de zip-bomba da decisão 163 (`extrairXmlsDoZip`), que
        valem também **somados para o envio inteiro** (`OrcamentoZipNfe`: 1.000 entradas e 100 MiB descompactados para
@@ -5645,7 +5656,7 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `requestTimeout` de 300 s do Node, ou os 60 s do `readTimeout` do Traefik) prendiam as 4 vagas e deixavam os
        envios de todas as outras empresas na fila, sem resposta. Agora o envio lento segura só a vaga do próprio
        usuário; quem espera o semáforo espera só o processamento dos outros, que tem fim. O envio da NF-e (decisão 164)
-       tem o mesmo desenho antigo e fica como está (fora do bloco; o corpo dele vai a 20 MB).
+       ficou com o desenho antigo neste bloco e passou a seguir o mesmo desenho no PR-15 (decisão 202).
      - **O tipo é o do conteúdo** (`detectarTipoArquivo`, os magic bytes: PNG pela assinatura de 8 bytes, JPEG por
        `FF D8 FF`, WebP pelo `RIFF….WEBP`, PDF por `%PDF-`), nunca a extensão nem o `Content-Type` do cliente; fora
        dos tipos do destino, 415 `TIPO_NAO_SUPORTADO`. **SVG nunca** (é documento com script, não imagem: o ERP 9.1
@@ -6138,6 +6149,866 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        registrar a execução, a **Definição de pronto da Fase 2 fica aberta** no roadmap, com o teste automático que já
        prova cada item citado. Também ficam com o dono: a ida e volta com a planilha real (F2-B40), a lista oficial do
        CEST (F2-B41) e a auditoria completa de segurança antes das outras lojas (D64).
+
+### Segurança – PR-15 (D64/D69) (API)
+
+197. **Planilha `.xlsx`: o leitor só recebe o que foi conferido, e o zip é um só** (PR-15, SEG-B01; ERP 8.6;
+     `src/comum/zip.ts`, `src/importacao/planilha.ts`). O `read-excel-file` percorre o `.xlsx` pelos cabeçalhos
+     locais, na ordem do arquivo, e descompacta o que acha lá; a conferência dos limites (`percorrerZip`) é pelo
+     diretório central. As duas leituras passam a ver **o mesmo** e o leitor deixa de descompactar:
+     - **Caminho escolhido: (a), com o (b) como estrutura comum.** O `conferirZip` descompacta, uma vez e com o teto do
+       tamanho declarado, só as entradas que o leitor usa (as `.xml` e `.xml.rels`, o filtro dele; pastas e imagens
+       ficam de fora sem descompactar) e devolve o conteúdo; o `lerXlsx` entrega ao `readSheet` um zip novo
+       (`zipConferido`), em fluxo, com essas entradas **guardadas sem compressão** (método 0), com o tamanho e o CRC
+       certos e sem descritor de dados. O leitor só copia bytes que já estão dentro dos limites; uma entrada que a
+       conferência não viu não chega até ele. Vale para a prévia e para a releitura da confirmação (a tarefa chama o
+       mesmo `lerPlanilha`). A memória não dobra: cada entrada sai da lista quando é entregue ao leitor, e a
+       descompactação, que antes acontecia duas vezes (na conferência e no leitor), acontece uma.
+     - **Um zip só, sem bytes de fora** (no `percorrerZip`, para a planilha e para o `.zip` de NF-e): o fim fecha o
+       arquivo (só o comentário que ele declara depois dele) e é de um disco só; o diretório central vai do início que
+       o fim declara até o fim, com o tamanho declarado; cada entrada central aponta para um cabeçalho local com o
+       mesmo nome (os bytes), o mesmo método e as mesmas flags de criptografia e de descritor (0x01, 0x08), e os
+       tamanhos iguais — ou zerados, com a flag 0x08, e então o descritor de dados (com ou sem assinatura) repete o CRC
+       e os tamanhos do diretório central; e as entradas, ordenadas pelo cabeçalho local, cobrem o arquivo do byte 0
+       até o diretório central, uma atrás da outra: nada antes, entre, por cima de outra (duas entradas centrais no
+       mesmo cabeçalho) nem fora do diretório central. Fora disso, `corrompido` ("O arquivo .xlsx está corrompido.";
+       `ZIP_CORROMPIDO` na NF-e). Tudo isso antes de descompactar qualquer entrada (o percurso confere a estrutura
+       inteira e só depois chama quem percorre).
+     - **Arquivo pequeno com cabeçalhos ZIP64 continua aceito** (correção da revisão do bloco): quem grava com o ZIP64
+       sempre ligado (Python `zipfile` com `force_zip64`, Info-ZIP lendo da entrada padrão, bibliotecas que geram o
+       zip em fluxo) põe 0xFFFFFFFF nos dois tamanhos do cabeçalho local e os de verdade no extra 0x0001 dele, e às
+       vezes o registro de fim ZIP64 (`PK\x06\x06`) e o localizador (`PK\x06\x07`) entre o diretório central e o
+       fim; o `.zip` de NF-e assim era lido antes do bloco. Agora: os 0xFFFFFFFF do cabeçalho local valem só nos dois
+       campos juntos e com o extra 0x0001 trazendo os tamanhos (8 bytes cada) iguais aos do diretório central (ou
+       zerados, com a flag 0x08); com esse extra, o descritor de dados tem os tamanhos de 8 bytes, iguais aos do
+       diretório central; entre o diretório central e o fim só cabe esse par, sem dados extensíveis, de um disco só e
+       com o mesmo número de entradas, início e tamanho do diretório central que o fim declara (o localizador
+       apontando para o registro). O ZIP64 de verdade (0xFFFFFFFF/0xFFFF no diretório central ou no fim) continua
+       recusado como `grande_demais`.
+     - **Descritor de dados continua aceito.** O `write-excel-file` (o nosso modelo e as exportações pequenas) e o
+       `WorkbookWriter` do exceljs (as exportações em tarefa) gravam em fluxo, com a flag 0x08 em todas as entradas: a
+       alternativa de recusar essa flag quebraria a importação das nossas próprias planilhas. Por isso o leitor não
+       recebe mais o arquivo original, e a flag só é aceita com o descritor batendo com o diretório central.
+     - **Taxa do arquivo inteiro**: além da taxa por entrada (acima de `taxaAPartirDeBytes`), a soma descompactada
+       acima de `taxaAPartirDeBytes` não pode passar de `taxa` × a soma compactada (`grande_demais`): muitas entradas
+       pequenas e muito comprimidas não somam o que uma grande não pode. Os limites de sempre (planilha: 100 entradas,
+       120 MiB por entrada, 150 MiB, taxa 100 acima de 1 MiB; NF-e: 1.000 entradas, 1 MiB por XML, 100 MiB, taxa 100
+       acima de 64 KiB) não mudam.
+     - Sem migração, sem mudança de contrato nem de PDV. Testes: `src/comum/zip.spec.ts` (cada regra da estrutura,
+       o zip normal com e sem descritor, o zip vazio, a taxa do arquivo inteiro; o cabeçalho local com o extra ZIP64,
+       com e sem descritor, e o registro de fim ZIP64 aceitos, e o extra, o descritor de 8 bytes ou o registro de fim
+       ZIP64 divergentes recusados), `src/importacao/planilha.spec.ts`
+       (a planilha gravada em fluxo e a regravada lidas igual; a entrada só no cabeçalho local, antes do diretório
+       central, recusada; o arquivo só com cabeçalho local
+       e o fim sem entradas recusado antes de descompactar; o cabeçalho local com outro tamanho recusado),
+       `src/entradas/notas-entrada.spec.ts` (a taxa do `.zip` de NF-e inteiro) e a integração
+       `importacao-dashboard.test.ts` ("xlsx fora da estrutura de um zip só → 422 antes de descompactar, na prévia e
+       na releitura da confirmação": o objeto trocado no armazenamento depois da prévia faz a tarefa falhar com a mesma
+       mensagem; a API continua saudável). O `montarZip` dos testes ganhou o `descritor` e as peças `entradaSoLocal`,
+       `inserirAntesDoCentral` e `fimSemEntradas`, e o `zip64` e o `comFimZip64` para as variantes ZIP64.
+
+198. **Importação de clientes sem `pessoas.ver`: a prévia não mostra quem já existe** (PR-15, SEG-B01; ERP 8.6;
+     `src/importacao/clientes.ts`, `src/importacao/importacao.ts`, `src/pessoas/pessoas.controller.ts`). Completa a
+     minimização da revisão do PR-9 (decisão 186, D63: sem `pessoas.ver` a linha não é comparada):
+     - a **Descrição** da linha é só o que veio na planilha — o nome, o CPF/CNPJ como foi digitado, o código ou o id —,
+       nunca o nome do cadastro achado pelo documento, pelo código ou pelo id; vale para a prévia e para o relatório
+       do resultado da tarefa (que usa a mesma descrição);
+     - o **`registroId`** sai `null` na prévia de clientes de quem não tem `pessoas.ver` (`paraPrevia`); a análise
+       continua guardando o id para a gravação da tarefa, que acha o cadastro de novo pela planilha. A ação
+       ("Atualizar") continua indicada, como a D63 aceitou;
+     - **variante corrigida junto**: o 409 do CPF/CNPJ repetido (`garantirDocumentoUnico`, usado pelo `POST /pessoas`,
+       pelo `PUT /pessoas/:id` e pela gravação da importação, cujo erro vai para o relatório) trazia o código, o nome e
+       o id da outra pessoa; sem `pessoas.ver` passa a dizer só "Já existe uma pessoa com este documento." (campo
+       `cpfCnpj`: "Já cadastrado"), sem `detalhes`. Com `pessoas.ver` nada muda (o link "abrir cadastro" do ERP usa os
+       `detalhes`, opcionais lá).
+     - A importação de produtos não muda: o catálogo não é dado pessoal e o custo já segue `produtos.ver_custo`.
+       Testes: `clientes.spec.ts` (a descrição pelo CPF/CNPJ, pelo código e pelo id sem `pessoas.ver`, e o nome com
+       ela) e a integração "sem "Pessoas: Ver" a prévia (também em .xlsx) e o 409 do documento não mostram o nome nem o
+       id de quem já existe" (perfil personalizado com `pessoas.importar`, `pessoas.editar` e `pessoas.criar`).
+
+199. **Corpo JSON: limite pequeno em toda rota, o grande só depois da autenticação, e sem formulário** (PR-15, SEG-B02;
+     SYNC 2.1, 19.2; ERP 1.8; `src/comum/corpo-json.ts`, `src/app.ts`, `src/app.module.ts`, `src/sync/sync.controller.ts`,
+     `src/config/configuracao.ts`). Antes, um parser JSON de 9 MiB (o tamanho do lote do PDV), com descompressão, valia
+     para toda rota, inclusive as sem login e as inexistentes, e lia o corpo antes de qualquer guard; o parser de
+     formulário do Nest também estava ligado. Agora:
+     - **Sem os parsers do Nest** (`bodyParser: false`). Quem lê o corpo é o `CorpoJsonGuard`, o **último guard global**
+       (depois do `AutenticacaoGuard` e do `PermissaoGuard`, antes dos guards da rota — o `LimiteTaxaGuard` lê o login do
+       corpo). Rota inexistente não lê corpo nenhum.
+     - **Três faixas, configuráveis** (KiB): `CORPO_JSON_LIMITE_KB` = 100 em toda rota, inclusive as sem login (login,
+       refresh, esqueci/redefinir senha, painel, `/sync/ativar`); `CORPO_JSON_LIMITE_GRANDE_KB` = 4.096 só nas rotas
+       autenticadas marcadas com `@CorpoGrande()` — e então lido já com a sessão e a permissão conferidas;
+       `CORPO_JSON_LIMITE_LOTE_KB` = 9.216 só no `POST /sync/push`.
+     - **O limite vale para os bytes recebidos e para os descomprimidos**, e a leitura para no limite: `Content-Length`
+       acima dele volta 413 sem ler nada; o corpo em partes (o PDV manda assim, sem `Content-Length`) volta 413 no byte
+       seguinte; o comprimido que passa do limite ao descomprimir para ali, sem descomprimir o resto, e o comprimido que
+       não descomprime nada é cortado pelos bytes recebidos. O `JSON.parse` só roda no que coube.
+     - **Compressão só no lote do PDV** (`gzip`, `deflate`, `br`, como a SYNC 2.1 prevê). Nas outras rotas, e para
+       codificação desconhecida (antes 500), 415 `TIPO_NAO_SUPORTADO`. O PDV 0.12.0 manda o lote sem compressão
+       (`JsonContent` do .NET, em partes, `charset=utf-8`) e continua igual.
+     - **Só JSON em UTF-8** (`application/json` ou `+json`; `charset` ausente, `utf-8` ou `utf8`). Formulário
+       (`application/x-www-form-urlencoded`), texto e outro conjunto de caracteres com corpo: 415, sem chegar ao
+       handler — um formulário de outro site não chega ao login. Multipart fica para o multer das 5 rotas de envio de
+       arquivo (nas outras o corpo não é lido e a validação recusa); corpo sem `Content-Type` não é lido. Vazio com
+       JSON vira `{}`, JSON malformado ou valor solto no topo, 422 `VALIDACAO` "Requisição inválida." (como antes).
+     - **As rotas do PDV que autenticam o terminal no handler leem o corpo depois** do token e do hardware conferidos
+       (`@CorpoJson({ ..., adiado: true })` + `lerCorpoJson`): o push (faixa do lote, com compressão), o heartbeat
+       (faixa grande: até 100 resultados de comando e 500 confirmações, ~65 KiB no máximo de hoje) e a renovação do
+       token (padrão). Sem token válido, 401 `TOKEN_INVALIDO` sem ler o lote; acima do limite, o mesmo 413
+       `LOTE_GRANDE_DEMAIS` de sempre (o PDV divide o lote ao meio).
+     - **O terminal é conferido de novo depois de o corpo chegar** (`AutenticacaoTerminal.conferirDeNovo`, antes do
+       `push.receber`, do `heartbeat.receber` e do `token.renovar`): como a autenticação agora vem antes da leitura, a
+       revogação (imediata ou como perdido/roubado), a exclusão ou a troca do token feitas enquanto o lote ainda chegava
+       devolvem 401 `TERMINAL_REVOGADO`/`TOKEN_INVALIDO` sem gravar nada. Vale o mesmo critério da autenticação: o
+       token atual ou o anterior ainda no prazo (a renovação feita no meio do envio não derruba o lote).
+     - **Prazo de leitura**: `CORPO_JSON_PRAZO_LEITURA_S` = 60 (o mesmo prazo com que o PDV desiste do push), contado
+       do início da leitura, em toda rota. O corpo que não chega inteiro nele volta 408 `TEMPO_ESGOTADO` (no
+       `/sync/*`, 400 `REQUISICAO_INVALIDA`; o PDV trata como qualquer falha do push e reenvia) e a conexão fecha mesmo
+       com o terminal ou a sessão conferidos: o envio lento não segura a requisição autenticada até o `requestTimeout`
+       do Node (300 s). Nas rotas `@CorpoGrande` do ERP a sessão não é conferida de novo depois do corpo: a janela fica
+       limitada a esse prazo.
+     - **Depois da recusa**: com o terminal, a sessão do ERP ou a do painel conferidos, o resto do corpo é descartado sem
+       guardar e a conexão continua utilizável (o navegador e o PDV recebem o 413/415, não uma conexão cortada no meio
+       do envio); sem login, a resposta leva `Connection: close` e o resto não é recebido.
+     - **Rotas com `@CorpoGrande()`** (o maior corpo legítimo de cada uma passa ou chega perto dos 100 KiB, medido pelo
+       contrato com as listas no máximo): produto (criar/alterar: lojas, tributação por UF, complementos — até ~3,3 MiB
+       com tudo no máximo), acerto (criar/alterar: 5.000 itens, ~0,9 MiB como o ERP monta, ~1,7 MiB no pior caso),
+       recebimento (criar/alterar/estornar), nota de entrada (`PUT :id/itens` e estornar), transferência
+       (criar/alterar: 990 itens, ~0,2–0,3 MiB; receber; tratar divergência), cadastro em massa, grupo de preço
+       (criar/alterar: até 2.000 produtos), pessoa (criar/alterar), perfil (criar/alterar) e as permissões do usuário
+       (`PUT /usuarios/:id/permissoes`, até 1.000 ajustes). Todas as outras ficam abaixo de ~45 KiB no pior caso.
+     - Códigos novos no contrato (`@genesis/shared`): `CORPO_GRANDE` (413) e `TEMPO_ESGOTADO` (408); o
+       `TIPO_NAO_SUPORTADO` (415) passa a valer também para o corpo. No `/sync/*` viram `LOTE_GRANDE_DEMAIS` e
+       `REQUISICAO_INVALIDA`.
+     - Sem migração, sem mudança no PDV nem no ERP (o ERP já manda JSON sem compressão). Testes:
+       `src/comum/corpo-json.spec.ts` (servidor HTTP local: formatos, limite pelo `Content-Length` e em partes, o
+       limite exato, compressão aceita e recusada, o comprimido acima do limite e o fluxo válido que não descomprime
+       nada, a conexão mantida no terminal, o prazo de leitura com 408 e a conexão fechada) e a integração `test/integracao/corpo-json.test.ts` (gzip nas rotas sem login → 415
+       sem interpretar; 100 KiB+ → 413 pelo `Content-Length` e em partes; formulário e texto no login → 415 sem cookie;
+       rota autenticada sem token → 401 sem ler; acerto de 5.000 itens lido até a recusa de negócio do estoque, o mesmo
+       tamanho noutra rota → 413; o push de ~570 KiB em partes e com gzip aplicado, sem token → 401 sem descomprimir,
+       acima do lote → 413 `LOTE_GRANDE_DEMAIS` e o lote seguinte aceito; heartbeat e renovação do token sem token
+       válido → 401 sem interpretar ~3 MiB; heartbeat 200; o terminal revogado no meio do envio do lote → 401
+       `TERMINAL_REVOGADO` sem nenhum evento gravado).
+
+202. **Envio de NF-e: a vaga do processo depois da leitura, o limite da empresa e o prazo de leitura do multipart**
+     (PR-15, SEG-B03; ERP 13.4; decisões 164 e 189; `src/entradas/notas-entrada.controller.ts`,
+     `src/comum/prazo-envio.ts`, `src/config/configuracao.ts`). O `POST /notas-entrada/importar` passa a ter o desenho do
+     envio de imagens (decisão 189): o que custa à rede fica com quem envia, e a vaga do processo cobre só o trabalho do
+     servidor.
+     - **Antes da leitura** (`LimiteEnvioNfe`): o `Content-Length` (20 MB + folga), o limite por minuto do usuário, um
+       envio por vez de cada usuário (`NFE_ENVIOS_SIMULTANEOS_USUARIO`, 1) e, novo, **até 3 envios ao mesmo tempo da
+       empresa** (`NFE_ENVIOS_SIMULTANEOS_EMPRESA`, 3; o quarto, 429 `LIMITE_TAXA` "Há outros envios de NF-e da empresa
+       em andamento…" com `Retry-After: 5`). Os dois contadores voltam quando a resposta termina. O da empresa é o que
+       limita a memória da leitura (cada envio lê até 20 MB para a memória do multer) agora que a vaga do processo não
+       vem mais antes dela: muitos usuários da mesma empresa não somam mais de 3 × 20 MB.
+     - **Depois da leitura** (`VagaEnvioNfe`, listado depois do multer, como o `VagaEnvioArquivo`): a vaga do semáforo
+       do processo (`NFE_ENVIOS_SIMULTANEOS`, 3), liberada quando a resposta termina. Quem espera por ela espera só o
+       processamento dos outros envios (a leitura dos XML e dos `.zip`, a gravação), que tem fim; um envio que ainda está
+       chegando segura só a vaga do usuário e a da empresa dele.
+     - **Prazo de leitura do multipart** (`PrazoLeituraEnvio`, o primeiro interceptor da rota;
+       `ENVIO_ARQUIVO_PRAZO_LEITURA_S` = 60, de 5 a 300, o mesmo `readTimeout` do proxy de produção): o arquivo que não
+       chega inteiro no prazo, contado de quando a rota começa a ler (depois do login e da permissão), volta 408
+       `TEMPO_ESGOTADO` ("O envio do arquivo demorou além do prazo. Tente de novo.") com `Connection: close`; a leitura
+       para, o multer descarta o que juntou quando a conexão fecha e os contadores voltam na hora, em vez de esperar o
+       `requestTimeout` de 300 s do Node. Com o corpo já lido o prazo não corta nada (o processamento tem o tempo dele).
+     - **Variantes**: o mesmo prazo vale para as outras 4 rotas de envio em multipart — `POST /arquivos` (imagens), as
+       prévias da importação de produtos e de clientes e o `POST /acertos/:id/importar-contagem` —, onde o envio lento
+       segurava o contador do usuário até o `requestTimeout`. Nenhuma delas pega vaga do processo antes da leitura (o
+       semáforo da planilha, o de imagens e o de envios de arquivo são pegos com o corpo lido). Os limites de envios
+       simultâneos por empresa das outras rotas ficam como estão (o de imagens é de 2 MB por envio e 2 por usuário).
+     - **A vaga nunca fica presa** (`comVaga`, em `src/comum/limites-processo.ts`, usado pelo `VagaEnvioNfe` e pelo
+       `VagaEnvioArquivo`): a resposta cancelada enquanto ainda espera a vaga na fila devolve a vaga que chegar depois,
+       em vez de ela ficar com ninguém para soltar. É uma defesa para quem vier a cancelar no futuro: hoje nada cancela
+       quem está nessa fila (o prazo de leitura só corta a leitura do corpo, e quem espera a vaga já leu o corpo inteiro;
+       a desconexão do cliente não cancela a resposta). Um envio na fila fica até ser processado, e o que limita essa
+       fila (e a memória dos corpos já lidos nela) é o limite por empresa (`NFE_ENVIOS_SIMULTANEOS_EMPRESA`) com o de
+       um envio por usuário, não o prazo.
+     - Sem mudança de contrato (o 408 `TEMPO_ESGOTADO` já existe, decisão 199; o ERP mostra a mensagem), sem migração e
+       sem PDV. Testes: `src/comum/limites-processo.spec.ts` (o `comVaga` solta a vaga no fim, cancelado na fila e
+       cancelado com a vaga na mão), `src/comum/prazo-envio.spec.ts` (o prazo vencido com o corpo chegando: 408 com
+       `Connection: close`, a rota encerrada e a leitura parada; com o corpo lido, nada é cortado; as 5 rotas com o prazo
+       como o primeiro interceptor; na NF-e, a vaga do processo depois do multer) e a integração
+       `test/integracao/notas-entrada.test.ts` › "vagas, prazo de leitura e estrutura do XML (PR-15)" (três usuários com
+       envios lentos e o envio de outra empresa processado na hora; o quarto envio simultâneo da empresa 429 e o da
+       outra empresa 200; o envio que não chega no prazo, 408 com a conexão fechada, e o mesmo usuário envia de novo em
+       seguida).
+
+203. **XML de NF-e: teto de estrutura antes do parser e da assinatura** (PR-15, SEG-B03; ERP 13.4; decisão 163;
+     `src/entradas/xml/parser.ts`, `LIMITES_XML_NFE` e `MOTIVOS_RECUSA_NFE` do shared). A leitura (`XMLValidator`,
+     `fast-xml-parser`) e a conferência da assinatura (`@xmldom/xmldom`, `xml-crypto`) são síncronas, e o tamanho de
+     cada parte da estrutura do XML fica limitado a uma folga sobre o que uma nota real usa. O `textoXmlNfe`, antes de
+     qualquer parser, conta numa passada pelo texto
+     (`conferirEstruturaXml`) e recusa com o motivo novo **`XML_COMPLEXO_DEMAIS`** ("O XML tem elementos, atributos ou
+     comentários demais para uma NF-e.", com o teto que passou no detalhe):
+     - **elementos e atributos: até 60.000** (`LIMITES_XML_NFE.elementosEAtributos`). Medido com as fixtures: uma NF-e
+       de 990 itens montada com os itens mais completos da biblioteca (ICMS-ST, IPI, `rastro`, `infAdProd`) tem de 39 a
+       43 mil elementos e ~1.000 atributos em 845–880 KB (acima dos 500 KB que a SEFAZ aceita, então a nota real
+       máxima tem menos); o teto deixa ~40% de folga, e o pior arquivo dentro dele custa o mesmo que essa nota
+       (~2 s na máquina de desenvolvimento, quase tudo na assinatura);
+     - **declarações de namespace: até 1.000** (`xmlns` e `xmlns:p`; a nota real tem umas 5), com teto próprio, abaixo
+       do de elementos e atributos;
+     - **comentários e instruções de processamento: até 100** (a nota real não tem; a declaração `<?xml …?>` do início
+       não conta), também com teto próprio.
+     - A contagem é um teto do que o parser monta para qualquer XML bem formado: cada marca de abertura é um elemento,
+       cada `=` fora das aspas dentro dela é um atributo; o conteúdo de comentário, CDATA e instrução não é marcação e não
+       conta. Cada caractere é visto uma vez, e a contagem para no primeiro teto que passa.
+     - **Vale para o envio direto e para o lote em tarefa** (os dois passam por `lerEValidarXmlNfe` → `lerXmlNfe` →
+       `textoXmlNfe`), em qualquer modo da assinatura (D50). O resultado por arquivo mostra a recusa e os outros arquivos
+       do envio seguem.
+     - **Fora do bloco, registrado**: rodar a leitura e a assinatura num `worker_threads` com orçamento de tempo. Com o
+       teto, o pior arquivo custa o que custa a maior NF-e legítima (que já rodava no laço), cada arquivo é dividido em
+       dois trechos (a leitura e a assinatura, com a consulta ao banco entre eles) e o lote em tarefa cede o laço entre
+       um XML e outro; o trabalhador separado exigiria outro ponto de entrada no build (`tsc`) e nos testes (que rodam
+       o TypeScript direto), e fica para quando a medição em produção pedir.
+     - Contrato: o motivo novo entra em `MOTIVOS_RECUSA_NFE` (a API e o ERP saem juntos; o ERP mostra a mensagem do
+       resultado). Sem migração e sem PDV. Testes: `src/entradas/xml/parser.spec.ts` › "teto de estrutura antes de
+       qualquer parser" (um elemento acima do teto recusado rápido, com a mensagem; o teto de elementos
+       e atributos juntos, com a nota lida logo abaixo dele; o que não é marcação não conta; a contagem linear em
+       qualquer formato de marca; os tetos de namespace e de comentários e instruções; a NF-e de 990 itens aceita, com a
+       assinatura válida) e a integração "o XML com elementos demais é recusado no envio direto" e "… dentro do .zip é
+       recusado também na tarefa do lote grande".
+
+204. **Hash de senha e exportação na hora: admissão antes do trabalho caro** (PR-15, SEG-B04; ERP 3.5, 4.1, 11.2;
+     decisões 93 e 177; `src/seguranca/senhas.ts`, `src/comum/limites-processo.ts`, `src/comum/exportacao.ts`,
+     `src/usuarios/usuarios.controller.ts`, `src/pessoas/pessoas.controller.ts`,
+     `src/formas-pagamento/formas-pagamento.controller.ts`, `src/tarefas/exportar-relatorio.ts`). O argon2 e a geração de arquivo
+     usam filas do processo, que é de todas as empresas; o que um usuário põe nelas fica limitado antes de custar.
+     - **Toda rota que gera hash fora do login tem o limite por usuário** (`garantirLimiteHash`,
+       `HASH_LIMITE_POR_MINUTO`, 10 por minuto, 429): entram nele `POST /usuarios` (criar) e
+       `POST /usuarios/:id/redefinir-senha`, junto do PIN, da senha do cliente e da senha de liberação, que já tinham.
+       Nas duas, as **checagens baratas vêm antes** do limite e do hash, numa leitura fora da transação: ao criar,
+       login/código/CPF repetidos (409), cidade, perfil, lojas e estoques (estoque inexistente ou excluído, 422;
+       fora dos estoques permitidos ao editor, 403; `conferirEstoques`); ao redefinir, o alvo existe (404), só um
+       Master redefine a senha de outro Master e quem não é Master só a de quem tem acesso contido no dele (403). O
+       mesmo vale para a pessoa com `senha` (o PIN de 64 MiB): no `POST /pessoas`, referências (422) e documento
+       repetido (409); no `PUT /pessoas/:id`, também a pessoa existe (404), a versão (409) e o crédito sem
+       `pessoas.editar_credito` (403; `conferirAlteracao`); e para a forma de pagamento com `senhaLiberacao`: no
+       `POST /formas-pagamento`, as referências (422); no `PUT /formas-pagamento/:id`, também a forma existe e é
+       visível (404/403) e a versão (409). O pedido recusado por elas não gasta argon2 nem o limite. A transação
+       confere tudo de novo com a linha travada. Sem senha nova, essas rotas não leem nada a mais (não há hash a
+       proteger). As outras rotas que calculam argon2 foram conferidas: a troca da própria senha e o resgate por e-mail têm o
+       limite por IP e por conta (`LimiteTaxaGuard`), e o resgate confere o token antes; o painel (criar empresa, o CLI
+       `admin:criar`) é só do administrador da plataforma e cria um banco a cada pedido.
+     - **Duas filas no argon2** (`criarFilasArgon2`): a verificação da senha (login do ERP e do painel, troca de senha)
+       entra direto no semáforo geral (`ARGON2_CONCORRENCIA`, 4); os hashes fora do login passam antes por um semáforo
+       de `ARGON2_CONCORRENCIA − 1` vagas, então nunca ocupam (calculando ou esperando) mais que isso do geral e
+       **sobra sempre uma vaga para o login**: quem entra espera no máximo uma rodada desses hashes, por mais que
+       estejam na fila. Com `ARGON2_CONCORRENCIA` = 1 não há o que reservar.
+     - **A fila do semáforo tem limite** (`Semaforo` com `OpcoesSemaforo`): no argon2, prazo de espera
+       (`ARGON2_ESPERA_MAXIMA_S`, 20 s) nas duas filas e tamanho máximo na dos hashes fora do login
+       (`ARGON2_FILA_MAXIMA`, 16). Passou, **503 `SISTEMA_OCUPADO`** com `Retry-After: 5` ("O sistema está conferindo
+       muitas senhas agora. Nada foi feito…") sem ter calculado nada. No login, o 503 sobe igual com ou sem usuário e
+       não conta como senha errada (não bloqueia a conta); o hash fictício que iguala o tempo do login inexistente
+       não fica guardado com erro. Os outros semáforos continuam sem limite de fila: a fila deles já é limitada por
+       quem entra (os contadores de envios por usuário e por empresa, decisões 189 e 202; a fila das tarefas).
+     - **Exportação na hora com admissão** (`comVagaExportacao`, com o contador `entrarEmAndamento`): conferida antes de
+       ler as linhas em `GET /produtos/exportar`, `/pessoas/exportar`, `/usuarios/exportar` e na exportação de relatório
+       que baixa na hora (`/relatorios/:relatorio/exportar` e `/produtos/exportacao`). Cada usuário tem
+       **1 em andamento** (`EXPORTACOES_SIMULTANEAS_USUARIO`) e cada empresa **3** (`EXPORTACOES_SIMULTANEAS_EMPRESA`);
+       acima, 429 `LIMITE_TAXA` com `Retry-After: 5` na hora ("Já há uma exportação sua em andamento…" / "Há outras
+       exportações da empresa em andamento…"), sem ler nada. Os contadores voltam quando o arquivo fica pronto ou a
+       exportação falha. Uma empresa não segura mais que 3 conjuntos de linhas na memória esperando a vaga do
+       `semaforoExportacao`, e a fila dele fica limitada por isso. A exportação em tarefa tem o teto próprio
+       (`EXPORTACOES_PENDENTES_POR_USUARIO`, decisão 177) e não entra nesta conta.
+     - Sem mudança de contrato (`LIMITE_TAXA` e `SISTEMA_OCUPADO` já existiam; o ERP mostra a mensagem), sem migração
+       e sem PDV (o PDV não usa essas rotas). Testes: `src/comum/limites-processo.spec.ts` (fila cheia → 503 na hora
+       e quem esperava segue; espera vencida → 503 sem levar vaga, e quem foi acordado antes do prazo não é recusado;
+       sem opções, 200 esperando por uma hora sem recusa; `entrarEmAndamento` por chave), `src/seguranca/senhas.spec.ts`
+       › "filas do argon2" (com seis hashes de gestão, só `concorrência − 1` calculam e o login entra na hora; a fila
+       da gestão cheia → 503 sem calcular; com concorrência 1, a vaga dividida), `src/seguranca/senhas-fila.spec.ts`
+       (o `verificarSenha` do módulo, com uma vaga só e a vaga ocupada: com e sem hash rejeita com `SISTEMA_OCUPADO`
+       em vez de devolver `false`; depois da rejeição do hash fictício a chamada seguinte calcula de novo; hash
+       inválido é `false`), a integração `test/integracao/login-argon2-ocupado.test.ts` (com a vaga do argon2
+       ocupada, o login com senha errada, certa e de usuário inexistente volta 503 com `Retry-After`, sem mexer em
+       `tentativas_falhas`/`bloqueado_ate` nem gravar `login_negado` ou `historico_logins`; com a vaga livre, a errada
+       conta e a certa entra) e `test/integracao/usuarios.test.ts` › "hash de senha…" (404, 409 e 422 repetidos,
+       inclusive o estoque inexistente, não gastam o limite, e a quarta senha gerada com limite 3 é 429, também ao
+       criar, sem gravar nada; o 403 de quem não pode redefinir e o de criar com estoque fora dos seus também não
+       gastam), "hash de senha fora do cadastro de usuários…" (404 e 409 repetidos no `PUT` da pessoa com PIN e da
+       forma com senha, o 409 do documento repetido ao criar a pessoa com PIN e o 422 da loja inexistente ao criar a
+       forma com senha não gastam o limite 1; o PIN certo sai e a senha seguinte é 429) e "exportação na hora…" (com
+       as vagas do processo ocupadas e uma exportação do usuário na fila, a segunda dele em `/usuarios/exportar`, no
+       relatório do catálogo `/produtos/exportacao` e nas listagens `/produtos/exportar` e `/pessoas/exportar` volta
+       429 com `Retry-After: 5`, e a terceira da empresa com limite 2 também; a de outra empresa segue; tudo baixa
+       200 quando as vagas abrem, e a admissão volta).
+
+205. **Ativação do terminal: a repetição presa às chaves da requisição e o caixa conferido no resgate** (PR-15,
+     SEG-B05; SYNC 3.3 e 3.4; ERP 10.3.10 e 12.3; decisões 106 e 112; `src/sync/ativacao.ts`,
+     `src/terminais/codigos-pendentes.ts`, `src/lojas/caixas.controller.ts`, `src/lojas/lojas.controller.ts`).
+     - **A repetição só recupera a resposta para a mesma requisição da mesma máquina.** Além do
+       `requisicao_ativacao_id` e do `id_hardware` (que aparecem na auditoria e no detalhe do terminal, então não
+       provam nada sozinhos), a repetição exige a mesma `chave_publica_terminal` (algoritmo e bytes gravados no 1º
+       commit em `terminais_pdv`) e a mesma `chave_backup_publica`, pelo resumo SHA-256 que o 1º commit passou a
+       gravar em `auditoria_plataforma.depois` de `terminal_ativacao_iniciada` (`chave_backup_publica_sha256`; sem
+       coluna nova nem migração: os ids da repetição já eram lidos dali). O PDV repete com o mesmo par de chaves da
+       tentativa (`ServicoAtivacao`, em memória até o 201 conferido), então a repetição legítima depois de uma queda de
+       rede continua igual. Ids iguais com outra chave → `CODIGO_INVALIDO` genérico (conta como código errado).
+     - **Depois do uso, não há repetição.** Com o token entregue já usado numa chamada (`token_atual_usado_em`) ou
+       renovado (`token_hash_anterior`), a resposta evidentemente não se perdeu: `CODIGO_USADO`, como fora da janela
+       de 15 min (o PDV já mostra "gere outro código no ERP"). Trocar a máquina de um caixa ocupado continua sendo
+       "Substituir terminal", que exige `terminais.revogar` (decisão 106).
+     - **Toda reemissão fica auditada e é condicional.** A troca do segredo é um `update` preso ao `token_hash` lido,
+       ainda sem uso e sem renovação, com `status` `provisionando`/`ativo`; na mesma transação grava
+       `auditoria_plataforma` `terminal_ativacao_repetida` (emissão anterior e nova, status, `requisicao_ativacao_id`,
+       `id_hardware`, `X-Requisicao-Id` e IP; sem "token" nos nomes das chaves, como na renovação). Uma chamada
+       autenticada entre a leitura e a troca vence: `CODIGO_USADO`.
+     - **Ativação em andamento na troca de versão**: a ativação iniciada antes desta versão não tem o resumo da chave
+       de backup, e a repetição dela (só nos 15 min seguintes à implantação) é recusada. O `provisionando` é
+       compensado pela manutenção (decisão 113) e o código volta a `pendente`, então a próxima tentativa do mesmo PDV
+       ativa normalmente; a que já tinha ficado `ativo` sem o PDV receber a resposta pede "Substituir terminal" no ERP.
+     - **O caixa precisa continuar vivo e ativo no resgate** (`caixaAceitaTerminal`, a mesma regra de
+       `caixasParaAtivacao`: da loja do código, não excluído, `ativo`, não é o caixa 0). O passo 5 da ativação lê o
+       caixa junto da loja, antes do 1º commit; a etapa da empresa relê caixa e loja sob a trava do caixa (`for update`,
+       a mesma linha que a exclusão e a edição do caixa travam). Loja e caixa têm respostas separadas, iguais às do
+       passo 5: loja excluída, inativa ou que deixou de ser ponto de venda → 403 `LOJA_INATIVA` (a compensação devolve
+       o código a `pendente`: inativar a loja não cancela códigos, e reativá-la os faz valer de novo); caixa excluído
+       ou inativo → `CODIGO_INVALIDO` com a causa na mensagem. O motivo nulo e a mensagem com a causa valem para o
+       código que ainda está `pendente` quando o caixa já não aceita terminal (mudança direta no banco, ou a corrida
+       com a exclusão/inativação); quem chega lá conhece o código, e a falha não alimenta o bloqueio (decisão 112). O
+       código que o ERP já cancelou responde o `CODIGO_INVALIDO` genérico e conta como os outros cancelados (SYNC 3.3
+       item 3). O PDV 0.12.0 já mostra "gere outro no ERP", sem código novo no protocolo.
+     - **A compensação confere o caixa** (`compensar`, usada por `concluir` e pela manutenção do `provisionando`
+       esquecido): com o caixa excluído ou inativado (ou a loja excluída), o código que ela devolveria a `pendente`
+       fica `cancelado`. Cobre também a ativação em andamento quando o ERP inativou o caixa (o código estava `usado` e
+       o cancelamento do ERP não o alcançou) e a queda da API entre os commits. O caixa é lido com `for share` e a
+       transação do controle commita antes de soltá-lo, então a edição do caixa ou vem antes (a leitura já o vê
+       inativo) ou depois (e acha o código `pendente` para cancelar). Sem a empresa (excluída), volta a `pendente`
+       como antes; com o banco da empresa fora do ar, a compensação falha inteira e a manutenção a refaz.
+     - **Na repetição, a conferência vem antes da troca do segredo, e a etapa gravada vem antes da conferência.**
+       `repetir` relê loja e caixa no banco da empresa depois de conferir ids, chaves e uso do token e antes do
+       `update` condicional: a recusa (`LOJA_INATIVA` ou o `CODIGO_INVALIDO` do caixa, motivo nulo) não deixa no
+       terminal um hash que ninguém recebeu, não grava `terminal_ativacao_repetida` e não compensa — o token entregue
+       continua valendo, e um `provisionando` fica para a manutenção, que conclui se a etapa da empresa já está
+       gravada. Na etapa da empresa, a auditoria `terminal_ativado` do terminal é lida antes da conferência do ciclo
+       de vida: a etapa já commitada devolve a decisão gravada (idempotente, como antes deste bloco), e uma
+       inativação posterior nunca leva `concluir` a compensar no controle uma substituição que a empresa já aplicou.
+     - **Excluir ou inativar o caixa, ou excluir a loja, cancela os códigos pendentes** (`cancelarCodigosPendentes`):
+       `ativacoes_pdv` `pendente` do caixa (ou de todos os caixas da loja) vira `cancelado` com quem cancelou, e cada um
+       grava `auditoria` `cancelar` (`ativacoes_pdv`) na transação do caixa. O `update` no controle roda dentro da
+       transação da empresa, com o caixa travado: se ela não commitar, o código fica cancelado mesmo assim (basta gerar
+       outro). A transação da empresa é repetida no deadlock e no erro de serialização, e na repetição o `update` não
+       acha mais nada `pendente`: os códigos que a requisição já cancelou ficam guardados por requisição e alvo
+       (`WeakMap` presa ao objeto da requisição, sem coluna nova), e a tentativa que commita audita todos.
+       `gerarCodigo` também recusa caixa inativo (422 `REGRA_NEGOCIO`), como já recusava o excluído e o caixa 0.
+     - Sem migração, sem contrato novo e sem mudança no PDV. Testes: `test/integracao/ativacao-repeticao.test.ts`
+       (repetição legítima com o mesmo id e as mesmas chaves → 201, token novo que funciona, o anterior 401, a chave de
+       backup abre com a da tentativa e uma linha `terminal_ativacao_repetida`; outra chave do terminal ou outra chave
+       de backup → 422 `CODIGO_INVALIDO` e o token entregue continua valendo; depois de um `GET /sync/estado` com o
+       token → 422 `CODIGO_USADO`, token intacto, sem reemissão auditada; depois da renovação do token (uso zerado,
+       `token_hash_anterior` preenchido) → 422 `CODIGO_USADO` e o token renovado vale; excluir e inativar o caixa pelo
+       ERP cancelam o código pendente, com a auditoria, e o resgate é 422 sem terminal no caixa; código novo para
+       caixa inativo → 422; código ainda `pendente` de caixa excluído ou inativado direto no banco → 422 com
+       `motivo_falha` nulo, sem terminal nem `caixas.terminal_id`; a repetição depois de inativar o caixa → 422 sem
+       reemissão, terminal `ativo` e o token entregue 200; etapa da empresa gravada com o controle ainda
+       `provisionando` e o caixa inativado → a repetição é 422 sem compensar (terminal `provisionando`, código
+       `usado`) e a manutenção conclui; a mesma etapa rodada de novo depois de inativar o caixa devolve a decisão
+       gravada (201); caixa inativado entre o passo 5 e a etapa → 422, terminal `revogado` (`falha_ativacao`) e código
+       `cancelado`; loja inativada no mesmo ponto → 403 `LOJA_INATIVA`, código `pendente`, e o código ativa depois de
+       reativar a loja; `provisionando` esquecido (etapa e compensação caíram) com o caixa inativado pelo ERP → a
+       manutenção compensa e o código fica `cancelado`; a transação da empresa repetida por deadlock depois do
+       cancelamento → uma auditoria `cancelar`; excluir a loja cancela os códigos dos caixas dela; a regra
+       `caixaAceitaTerminal`) e as suítes de sempre
+       (`sync.test.ts`, `terminais.test.ts`, `estrutura.test.ts`, `token.test.ts`, `recuperar.test.ts`).
+
+206. **Link de redefinição de senha preso à credencial e ao e-mail; o logout encerra a família da sessão** (PR-15,
+     SEG-B06; ERP 4.2, 4.3, 4.4 e 11.2; MD 3.3.6; decisões 16 e 204; `src/auth/redefinicao-senha.ts`,
+     `src/auth/auth.service.ts`, `src/usuarios/usuarios.controller.ts`, `src/plataforma/admin-auth.service.ts`,
+     `src/database/seed/seed-empresa.ts`; README do ERP › decisão 82).
+     - **Toda troca de senha e toda mudança do vínculo de recuperação invalidam os links pendentes**
+       (`invalidarRedefinicoesPendentes`): na mesma transação, com a linha de `usuarios` travada, os
+       `redefinicoes_senha` do usuário ainda sem uso ficam com `usado_em` e as `mensagens_enviadas`
+       `redefinicao_senha` ainda `pendente` viram `cancelada`. Vale na troca da própria senha (`/auth/trocar-senha`),
+       na senha provisória gerada pelo administrador (`/usuarios/:id/redefinir-senha`), no próprio resgate (os links
+       irmãos), no "tentar novamente" do provisionamento que gera outra senha provisória do administrador, na edição do
+       usuário que muda e-mail, ativo, totem ou demissão (`mudouVinculoRecuperacao`; editar só o telefone, por exemplo,
+       mantém o link) e na exclusão do usuário.
+     - **A senha provisória do administrador conta como troca de senha**: grava `senha_alterada_em` (como a troca e o
+       resgate). Os três caminhos gravam `now()` do banco, a mesma base do `criado_em` dos links.
+     - **O resgate recusa o link criado antes da última troca de senha** mesmo que ele não tenha sido marcado (gravação
+       concorrente, rotina antiga): a comparação `criado_em > senha_alterada_em` é feita no `update` de uso único, no
+       banco (precisão do `timestamptz`), depois de travar o usuário; antes do argon2 a mesma conferência em memória
+       recusa o caso óbvio. O resgate também exige o usuário que pode recuperar a senha (`podeRecuperarSenha`: ativo,
+       não excluído, não totem, não demitido; as mesmas regras do pedido) e responde o mesmo 422 "Link inválido ou
+       expirado" nos casos novos.
+     - **O envio relê o usuário** (trabalhador da fila `mensagem`): com o destino da mensagem diferente do e-mail atual,
+       o usuário que não pode mais recuperar a senha ou o pedido feito antes da última troca de senha, a mensagem vira
+       `cancelada` e nenhum link é gerado (a nova tentativa do pg-boss depois de uma troca de e-mail não manda nada ao
+       endereço antigo). Se a mensagem já teve tentativa, os links pendentes do usuário também deixam de valer: o SMTP
+       pode ter entregado o link ao endereço anterior e respondido com erro, e o resgate não confere o e-mail. Essa
+       releitura é defesa própria, para a mudança que não passa pela invalidação (gravação concorrente, rotina antiga,
+       importação). **Vale só o link mais novo**: cada envio invalida os links anteriores ainda pendentes do
+       usuário (a nova tentativa e o pedido repetido depois da janela de 2 min); o e-mail anterior passa a dar "Link
+       inválido ou expirado. Peça outro." A mensagem cancelada durante o envio continua `cancelada` (o `enviada` só
+       vale sobre `pendente`).
+     - **Ordem das travas**, a mesma em todos os caminhos: `usuarios` → `mensagens_enviadas` → `redefinicoes_senha` (o
+       trabalhador trava o usuário antes da mensagem; o resgate, antes do link). Sem impasse entre a troca de senha, a
+       edição do usuário, o resgate e o envio.
+     - **O logout encerra a família da sessão**, no ERP e na plataforma: a linha do cookie apresentado é lida aberta ou
+       já rotacionada, com `for update` (a mesma trava do refresh), e todas as sessões abertas da mesma `familia_id`
+       são encerradas com `logout`. O logout que chega durante a rotação do mesmo cookie espera por ela e encerra a
+       sucessora; o logout com o cookie de antes de uma rotação (outra aba, renovação agendada) também. Sem família
+       aberta, nada a auditar (como antes). O ERP passa a só mostrar a saída com o 2xx do logout e a serializar o
+       logout com a renovação (README do ERP › decisão 82).
+     - Sem migração (as colunas já existiam), sem contrato novo e sem mudança no PDV (a senha do ERP e os links não
+       descem ao caixa; `senha_alterada_em` já desce no espelho de `usuarios` e o PDV não a usa). Testes:
+       `test/integracao/redefinicao-senha.test.ts` (o link de controle vale uma vez; troca de e-mail pelo
+       administrador, senha provisória gerada pelo administrador — com `senha_alterada_em` —, troca da própria senha,
+       inativação, exclusão e o "tentar novamente" do provisionamento invalidam o link (422 e nenhum pendente); editar
+       outro campo mantém o link; o envio do pedido mais novo invalida o anterior; o resgate invalida o irmão gravado
+       fora do envio; o link anterior à `senha_alterada_em` gravada direto no banco é recusado; o usuário inativado
+       direto no banco não resgata; a nova tentativa do envio depois da troca de e-mail não manda nada, cancela a
+       mensagem e não deixa link; a nova tentativa do envio depois do e-mail trocado, do usuário inativado ou da
+       `senha_alterada_em` gravada direto no banco (sem a invalidação), com a primeira tentativa entregue e respondida
+       com erro, é cancelada pelo próprio envio, não manda nada e o link entregue passa a dar 422; a troca de senha
+       gravada enquanto o resgate espera a linha do usuário (travada por outra conexão, depois do argon2) é recusada
+       pela comparação no `update` de uso único; a mensagem cancelada durante o envio continua `cancelada`; a nova
+       tentativa sem mudança deixa só o link novo, que vale; o pedido anterior a uma senha provisória não gera link), `auth.test.ts` (logout com o cookie de antes da rotação encerra a sucessora;
+       o logout que chega durante a rotação, com a linha travada por outra conexão, espera e encerra a sucessora) e
+       `plataforma.test.ts` (o logout com o cookie de antes da rotação, na plataforma).
+
+207. **Escopo de loja dentro da empresa: auditoria de usuário, preço da loja nos dados de compra e exclusões com linha
+     de loja oculta** (PR-15, SEG-B07; ERP 2.1, 8.2, 8.10, 11.1 e 17.3; decisões 15, 87, 88 e 92;
+     `src/auditoria/auditoria.controller.ts`, `src/entradas/recebimentos.ts`, `src/produtos/grupos-preco.controller.ts`,
+     `src/produtos/produtos.controller.ts`, `src/autorizacao/lojas.ts`).
+     - **Auditoria de usuário, login e sessão segue a decisão 92**: para quem tem lojas restritas, as linhas de
+       `usuarios`, `login` e `sessoes_usuario` (`ENTIDADES_AUDITORIA_DE_USUARIO`) só saem de `GET /api/auditoria` se o
+       usuário da linha é visível (`usuarioVisivel`: alguma loja em comum, sem loja e não Master, ou o próprio), com ou
+       sem `loja_id` na linha. O usuário da linha é o `registro_id` (em `usuarios` e `login` é o id do usuário) ou, sem
+       ele, quem fez a ação (a exportação da lista de usuários); em `sessoes_usuario` o `registro_id` é a sessão e vale o
+       dono dela (`usuario_id`). O login negado de um login inexistente (sem usuário nenhum) fica só para quem vê todas
+       as lojas. A visibilidade é a de hoje (as lojas atuais do usuário, como na lista de usuários): o histórico de quem
+       passou a ter uma loja em comum aparece inteiro. As outras linhas sem loja continuam para todos com `auditoria.ver` (decisão 15), com a redação pela
+       visão do leitor (`redigirParaVisao`); a condição vale na página e no total. Quem vê todas as lojas não muda.
+     - **Dados de compra só com o preço de loja permitida**: `dadosCompraProdutos` (`GET /recebimentos/dados-produtos` e
+       `/notas-entrada/dados-produtos`) usa a `lojaId` pedida só se ela está entre as lojas permitidas
+       (`lojaPermitida`); fora delas, `precoVendaLoja` sai `null`, como o saldo de estoque não visível. A tela só oferece
+       as lojas permitidas, então o uso normal não muda.
+     - **Excluir o registro da empresa que leva linhas de uma loja exige acesso a todas elas**
+       (`garantirSemLojaOculta`): `DELETE /grupos-preco-quantidade/:id` com faixa viva de loja fora das permitidas → 403
+       antes de desvincular ou excluir qualquer coisa (a mesma regra da troca para o modo "por produto", decisão 88), e
+       `DELETE /produtos/:id` com linha viva de `produtos_lojas` (preço, estoque mínimo, ST retido, ativo na loja) ou faixa
+       de `produtos_precos_quantidade` de loja fora das permitidas → 403 (a gravação já as preservava; inativar o
+       produto continua possível). Linhas sem loja seguem a decisão 87 (da empresa). As linhas de **loja excluída** não
+       contam (`daEmpresaOuLojaViva`): a exclusão da loja não apaga os preços, o estoque mínimo nem as faixas dela, e
+       `sessao.lojas` nunca traz loja excluída, então a loja apagada seria para sempre uma "loja oculta" que nenhum
+       restrito tem (e que nem o detalhe mostraria). Conferidas também as outras rotas
+       que recebem uma loja (`lojaId`/`loja`) ou excluem um pai com filhos por loja: formas de pagamento, restrições de
+       horário, configurações, terminais e caixas, prontidão, envio de arquivos, histórico de preços, importação,
+       exportação, cadastro em massa, sugestão de reposição, listagens de recebimentos e NF-e (filtro sobre o que já é
+       visível) já conferiam; nenhuma outra precisou de mudança.
+     - Sem migração, sem contrato novo e sem mudança no PDV (nada disso desce ao caixa nem muda o protocolo). Testes
+       (`test/integracao/revisao-acesso.test.ts`): o administrador restrito à loja 1 não vê pela auditoria o cadastro do
+       usuário só da loja 2 nem o do Master (página e total vazios), nem o login e a sessão do Master, e o filtro por
+       quem fez traz só a linha do usuário da loja 1 (o Master vê tudo); vê o próprio login e o usuário da própria loja;
+       os dados de compra pelas duas rotas dão o preço da loja 1 e `null` para a loja 2 (o Master vê o da loja 2);
+       excluir o mix com faixa da loja 2 → 403, com o grupo e as faixas intactos, e sem ela → 204; excluir o produto com
+       preço ou faixa da loja 2 → 403 e o produto intacto, e o só com a loja 1 e faixa geral → 204; com preço, estoque
+       mínimo e faixas de uma loja 3 que depois é excluída (as linhas continuam vivas), o restrito exclui o produto e o
+       mix (204). Na auditoria, a sessão vale pelo dono dela (a do próprio leitor e a do usuário da loja 1 aparecem, com
+       `registro_id` de sessão); a linha de login do Master com a loja 1 preenchida e o login negado de um login
+       inexistente não aparecem para o restrito, e o Master vê as duas. As consultas do teste passam um período
+       explícito (`de` = ontem, calculado antes de gravar), para não depender do "hoje" do relógio.
+
+208. **Trava "Altera Preço do Produto no ERP": todo campo que decide o preço cobrado, numa lista só** (PR-15, SEG-B08;
+     ERP 8.2.1, 8.2.2, 8.2.3, 8.2.10, 8.2.16, 8.2.17 e 9.1; PDV 10.4 e 11.3; decisões 68 e 194;
+     `src/produtos/trava-preco.ts`, `src/produtos/produtos.controller.ts`, `src/produtos/gravacao.ts`).
+     - **A lista** (`trava-preco.ts`, função pura `mudancasDePreco`, chamada por `garantirAlterarPreco` dentro do
+       `atualizarProduto`, que lê também as opções excluídas logicamente do produto): com `geral.altera_preco_produto_erp = false`, quem não tem `produtos.alterar_preco` recebe
+       403 `SEM_PERMISSAO` ("Alterar preço no ERP exige …") quando o corpo muda qualquer um destes, e grava normalmente
+       quando só repete o gravado:
+       - do produto (`CAMPOS_PRECO_PRODUTO`): venda, atacado e a quantidade mínima dele, promocional e a vigência
+         (início e fim, comparados no minuto, como o formulário mostra), parcelado, menu digital, iFood, o grupo de
+         preço por quantidade (o mix dá o preço das faixas dele) e o preço digitado no caixa ("Solicita preço PDV" e
+         "Genérico");
+       - do código de barras (regra própria, escrita em `mudancasDePreco`; o caixa cobra `preço ÷ fator` ao bipar o
+         código à venda com preço, o menor candidato vence, e o preço do produto × o fator no código sem preço): no
+         código gravado com preço, o preço (inclusive no principal, e o preço retirado), o fator (à venda) e o código,
+         à venda ou não (o preço do código fora da venda é o que vale quando ele volta); e o código que **entra** na
+         venda (novo, recriado sem o id, com outro número, ou que volta a ser usado na venda) pela regra da opção que
+         entra, abaixo, com a chave = o número do código e o valor = o preço e o fator. Tirar o código ou o "usa na
+         venda" tira o código da venda e não conta; o fator e o número do código sem preço só mudam a embalagem;
+       - da loja (`CAMPOS_PRECO_LOJA`): o preço próprio e o acréscimo da versão gelada, na linha enviada (nova ou
+         casada) e na linha com preço de loja visível e ativa que sai do corpo (a gravação a exclui e a loja passa ao
+         preço geral; as lojas inativas ficam fora, porque o formulário só lista as ativas);
+       - as faixas de preço por quantidade visíveis (como antes);
+       - o preço adicional do complemento e o acréscimo da alternativa do combo: na opção casada pelo id, o valor
+         gravado (ativa ou inativa) e, com valor, a chave dela (o produto e a variação, ou a descrição livre); e a
+         opção que **entra** na venda (nova, recriada sem o id, com outra chave ou reativada) pela regra abaixo, com o
+         valor 0 = sem preço. Inativar ou tirar a opção não conta.
+     - **A opção que entra na venda** (código de barras, complemento, alternativa do combo; classe `OpcoesDaVenda`)
+       só passa (a) com o valor de uma opção da **mesma chave que sai da venda no mesmo salvamento** (excluir e
+       recriar não troca o preço; só o valor da que sai vale, não o da mesma opção noutro grupo ou noutra posição),
+       ou (b) sem nada igual saindo, **sem preço e quando a chave não tem preço em lugar nenhum**: nem na opção que
+       fica à venda (o mesmo complemento de graça num grupo novo, ao lado do de 4,00, é o cliente escolhendo o de
+       graça), nem na inativa ou fora da venda, nem na **última excluída** dela (lida do banco, a mais nova por
+       `excluido_em`, inclusive a do grupo ou da posição excluídos). Assim a opção que tem ou já teve preço só entra
+       com a permissão, inclusive de graça e em qualquer número de salvamentos (tirar num e recriar noutro, inativar
+       num e reativar noutro); a reativação da opção com preço também conta. O que fica mais estrito que antes: quem
+       não tem a permissão não recria nem reativa, nem com o mesmo valor, a opção que teve preço (salvo trocando-a no
+       mesmo salvamento), e não acrescenta com preço a mesma opção noutro grupo; quem tem a permissão grava como
+       sempre.
+     - **Vale em todo caminho que grava pelo `atualizarProduto`**: o formulário (PUT), a importação de planilha com
+       atualização, o cadastro em massa (Atualização) e a correção de NCM pelo relatório. O recebimento e a NF-e de
+       entrada já respeitavam a trava pelo `podeAlterarPrecoNaEntrada` (F2-B15 e F2-B21). Os grupos de
+       preço por quantidade (faixas e membros, ERP 8.10) têm permissão própria (`grupos_preco.editar`, que o
+       Estoquista não tem) e ficam fora da chave, como sempre. Na criação o preço continua livre (decisão 68).
+     - **A alternativa do combo casa só entre as gravadas da própria posição** (`gravarFilhas`), como os códigos, as
+       lojas e as faixas: o id de uma alternativa de outra posição ou de outro produto vira uma alternativa nova desta
+       posição, e a de lá não é alterada (antes a gravação atualizava a linha pelo id sozinho).
+     - Sem migração, sem contrato novo e sem mudança no PDV (o caixa recebe o que a nuvem grava, sem protocolo novo).
+       Testes: `src/produtos/trava-preco.spec.ts` (cada campo da lista apontado, e os campos de preço do contrato
+       — `criarProdutoSchema` e `produtoLojaSchema`, pelo nome — todos na lista: o campo novo que ficou fora derruba o
+       teste; repetir o gravado com outra escrita do número, a data no minuto e o id em maiúsculas não conta; o que sai
+       da venda e o fator e o número do código sem preço não contam; o código excluído e recriado com o mesmo número
+       sem preço, com outro fator ou outro preço conta, e com o mesmo preço e fator não; o código sem preço que fica
+       com o número do fardo retirado conta; o que volta para a venda conta; a opção recriada com outro valor conta e
+       com o da que sai não; a mesma opção noutro grupo ou posição não dá o preço; a reativação com preço conta; a
+       opção excluída noutro salvamento só volta sem preço se a última exclusão dela não tinha preço),
+       `test/integracao/produtos.test.ts` (com o perfil Estoquista e a chave desligada, um caso por campo — preço do
+       código principal, preço, preço retirado e fator da embalagem, a embalagem excluída e recriada sem preço, o
+       código sem preço com o número da embalagem retirada, código novo com preço, acréscimo gelado, linha da loja
+       retirada, quantidade mínima do atacado, fim da promoção, grupo de preço, "Solicita preço PDV", acréscimo da
+       alternativa e a alternativa recriada — com 403 e nada gravado; o que não é preço, repetir o gravado, o código
+       novo sem preço, tirar o código da venda e a alternativa nova sem acréscimo com 200; a alternativa e a embalagem
+       tiradas num salvamento e recriadas noutro → 403; a mesma mudança do preço do código e do acréscimo gelado é 403
+       sem `produtos.alterar_preco` e grava com ela; a linha da loja com preço que o formulário não manda é 403 com a
+       loja ativa e 200 com ela inativa ou excluída; o id de uma alternativa de outro combo não altera a de lá) e
+       `test/integracao/produto-complementos.test.ts` (o mesmo complemento de graça num grupo novo → 403; o grupo
+       apagado num salvamento e o complemento recriado de graça noutro → 403).
+
+209. **Importação de planilha: análise linear no EAN repetido, laço cedido e confirmação com teto** (PR-15, SEG-B14;
+     ERP 8.6; decisões 93, 150 e 177; `src/comum/colecoes.ts`, `src/importacao/produtos.ts`,
+     `src/importacao/clientes.ts`, `src/importacao/importacao.ts`). O processo da API atende todas as empresas no mesmo
+     laço de eventos, e a fila de tarefas roda uma por vez: a análise de uma planilha de uma empresa não pode segurar
+     as requisições nem as tarefas das outras.
+     - **Custo linear por EAN.** O agrupamento das referências (`porEan`, `categoriasPorNome`) acrescenta na lista da
+       chave (`agruparEm`), sem copiar a lista acumulada a cada linha. A análise calcula o resumo de cada EAN uma vez
+       (`resumirEan`: quantas entradas, quantas sem código interno, a primeira, a primeira sem código interno, a
+       primeira de outro produto e o conjunto dos ids) e cada linha consulta o resumo em tempo constante, no lugar do
+       `filter`/`find`/`some` sobre todos os produtos do EAN. O resultado é o mesmo de antes: conta cada entrada da
+       lista (o mesmo produto pode vir duas vezes, no código do produto e no da variação), o produto achado pelo EAN é
+       o mesmo, e as mensagens ("EAN … está em N produtos", "já está no produto …", "Conferir código") também. A
+       consulta dos produtos do EAN continua sem `LIMIT`: custa o que a empresa tem cadastrado (linear), e a
+       conferência "o produto achado pelo código tem este EAN?" precisa da lista inteira.
+     - **Unidades.** A unidade da planilha é achada por um índice montado uma vez por análise
+       (`indiceUnidadesPlanilha` no shared; o `resolverUnidadePlanilha` usa o mesmo índice), e a sigla do "O que
+       muda" por um mapa id → sigla por lista de unidades, sem percorrer as unidades a cada linha.
+     - **O laço é cedido.** A análise de produtos e de clientes é um gerador que analisa uma linha quando pedida:
+       `analisarProdutos`/`analisarClientes` coletam tudo de uma vez (os testes e quem já tem as linhas na mão), e a
+       prévia e a tarefa usam `analisarProdutosCedendo`/`analisarClientesCedendo`, que devolvem a vez ao laço
+       (`setImmediate`) a cada `ITENS_POR_CESSAO` (2.000) linhas. A worker thread ficou de fora: o trabalho já é
+       linear, e o laço cedido basta para as outras requisições seguirem.
+     - **"Definir" da importação.** Cada produto entra uma vez no acerto, a primeira linha dele, por um conjunto (antes
+       um `findIndex` por linha).
+     - **Confirmação com teto** (`conferirPendentes`, na transação da confirmação, sob uma trava por usuário até o fim
+       dela): a mesma planilha (`parametros.arquivoId`) não vira outra tarefa enquanto a confirmação anterior dela está
+       pendente. `executando` → 422 "Esta planilha já está sendo importada…" (`detalhes.arquivoId`); terminada (ou
+       marcada interrompida pela decisão 150), a planilha pode ser confirmada de novo. `na_fila` → a confirmação
+       devolve a mesma tarefa, com as opções e a loja desta confirmação (o `update` leva `status = 'na_fila'`: se o
+       job a começou no meio, vale o 422), e a agenda de novo depois do commit. É o caminho de recuperação da tarefa
+       `na_fila` sem job, que nada mais tira da fila (a varredura da decisão 150 só trata `executando` e não existe
+       cancelamento): o envio à fila (`agendar`, no banco de controle) que falhou depois do commit (500 no ERP), ou o
+       job esgotado nas retentativas antes de começar a tarefa. O job a mais, quando o anterior existia, só acha a
+       tarefa já começada e sai sem fazer nada (`executar` começa só a `na_fila`; a fila `standard` não deduplica por
+       `singletonKey`). Cada usuário tem até `IMPORTACOES_PENDENTES_POR_USUARIO` (2) importações pendentes, de produtos
+       e de clientes juntas (422 "Você já tem 2 importação(ões) em andamento…", `detalhes.pendentes` e `limite`), como
+       o teto das exportações em tarefa (decisão 177); a `na_fila` parada há mais de `MINUTOS_TAREFA_ATRASADA` (5 min,
+       o mesmo atraso que a prontidão aponta; contado do `atualizado_em`, que o reagendamento renova) não conta, para
+       a tarefa sem job não prender o usuário. A prévia já tinha o limite por minuto (`IMPORTACAO_PREVIAS_POR_MINUTO`).
+       O teto das exportações (decisão 177) tem o mesmo ponto cego na `na_fila` sem job, sem a trava da mesma planilha
+       (lá basta pedir de novo); ficou como está.
+     - **O mesmo padrão no resto do código.** O agrupamento por cópia da lista acumulada foi trocado por `agruparEm`
+       nos vínculos de fornecedor movidos (NF-e e produto), nas permissões por perfil da prontidão, nas filas do
+       migrador, na reconciliação dos terminais, na saúde detalhada e, no ERP, no catálogo do editor de permissões
+       (um `push` local); a deduplicação por `findIndex(...) === i` saiu também da cópia dos vínculos de fornecedor no
+       "Duplicar" do produto no ERP (`paginas/produtos/valores.ts`, um conjunto dos fornecedores já copiados). Um teste
+       varre o código de produção da API, do shared e do ERP e recusa os dois padrões, linha a linha (a expressão da
+       deduplicação aceita o callback com parênteses, `findIndex((x) => …) === i`, e o próprio teste confere que ela
+       reconhece as formas reais).
+     - Sem migração, sem contrato novo e sem mudança no PDV. Testes: `src/importacao/analise-linear.spec.ts` (o
+       resultado de uma planilha com EAN em vários produtos, com e sem código interno, entrada repetida, produto
+       achado pelo código com e sem o EAN, igual ao de antes da mudança; o número de leituras das listas de produtos do
+       EAN e de unidades em duas escalas, 500 e 3.000, cresce como a escala; a análise cedendo deixa rodar outra tarefa
+       no meio e dá o mesmo resultado da direta, em produtos e em clientes), `src/comum/colecoes.spec.ts` (o
+       agrupamento, a coleta cedendo e a varredura do padrão), `packages/shared/src/importacao.spec.ts` (o índice de
+       unidades, com valores esperados: a sigla vence a descrição, que vence o sinônimo; sinônimo sem a sigla na
+       empresa e texto vazio → nada) e `test/integracao/importacao-dashboard.test.ts` (a mesma planilha com a
+       confirmação anterior executando → 422 e nenhuma tarefa nova; duas importações pendentes do usuário → 422;
+       paradas na fila há mais de 5 min, não contam; o envio à fila falha depois do commit → 500 e a tarefa fica na
+       fila; a nova confirmação devolve a mesma tarefa, sem criar outra, e ela conclui).
+210. **Estoque: o documento só lança em estoque vivo e ativo; quantidades e saldos com teto** (PR-15, SEG-B09; ERP 13.2;
+     SYNC 7.3, 11.2 e 15.1; decisões 148, 151 e 165; `src/estoques/acertos.ts`, `src/estoques/movimentos.ts`,
+     `src/entradas/entrada.ts`, `src/sync/erros.ts`, `src/sync/push.ts`, `packages/shared/src/sync/eventos.ts` e
+     `contratos.ts`).
+     - **Estoque do documento.** O rascunho confere o estoque ao ser gravado, e inativar (saldo zero) ou excluir (sem
+       movimentos) o estoque não olha os rascunhos que apontam para ele. `exigirEstoqueAtivo` confere de novo, na
+       transação de quem lança: no início de `efetivarAcerto` (vale para todo acerto: a tela, o "Ajustar" do produto e
+       do relatório, o "Definir" da importação de planilha — a parte que achar o estoque inativado falha e a mensagem
+       da tarefa diz quais partes já entraram —, o cadastro em massa e a perda da transferência), no estorno do acerto
+       e no estorno da entrada (recebimento e NF-e). Estoque inativo → 422 `REGRA_NEGOCIO` em `campos.estoqueId`
+       ("reative o estoque antes de efetivar/estornar"); excluído → 422 ("não dá mais para …"). A movimentação do
+       recebimento e da NF-e já conferia (`exigirDestinoAtivoEntrada`), e o envio da transferência também
+       (`exigirEstoquesAtivosNoEnvio`); o recebimento da transferência não precisa: o estoque com transferência em
+       trânsito ou com divergência não se inativa, e o usado em transferência não se exclui. A `fn_trava_versao` que
+       abre as duas transações serializa o lançamento com o PUT e o DELETE do estoque, então não há corrida entre a
+       conferência e a inativação. O rascunho num estoque excluído fica como está (só pode ser excluído), e a exclusão
+       do estoque continua não olhando os rascunhos. A venda do caixa não passa por aqui: o estoque do contexto
+       inativo ou excluído já baixa no estoque da loja (SYNC 10.2).
+     - **Quantidades do contrato do PDV.** A quantidade de estoque de uma linha do PDV vai até 9.999.999,999
+       (`QUANTIDADE_MAXIMA_LINHA_PDV`, 7 casas inteiras): o item da venda (o caixa limita a 9.999,999 já com o fator da
+       embalagem; o casco cobrado é o cheio × a quantidade de cascos do produto, até 999, e fica abaixo do teto) e a
+       devolução avulsa de cascos (o caixa limita a 9.999). Acima, `PAYLOAD_INVALIDO` naquele evento (o lote segue).
+       O PDV 0.12.0 produz abaixo desse teto e não muda. A baixa de insumo da ficha (`componentes_estoque`) ficou com
+       o tamanho da coluna (`numeric(15,3)`): o PDV a calcula como `Arred3(item × ficha × (1 + perda))` sem teto
+       próprio, e o cadastro aceita a ficha até 999.999.999.999 e a perda até 100%, então nenhum teto menor sai do que
+       o caixa produz (uma ficha de 50.000 ml × 2.500 unidades = 125.000.000 é venda legítima, e um teto no contrato
+       a mandaria para `PAYLOAD_INVALIDO`, que o Reprocessar não conserta porque o payload não muda). Quem segura o
+       tamanho dela é o motor (`LIMITE_ESTOQUE`, que tem conserto). As quantidades que não lançam estoque (a do
+       combo, a de referência do preço, a do complemento) também ficaram com o tamanho da coluna.
+     - **Limites do motor.** O saldo de cada linha (`saldos_estoque`) e de cada lote (`saldos_lote`) fica até
+       `LIMITE_SALDO_ESTOQUE` = 99.999.999.999,999 em módulo — uma casa inteira abaixo do `numeric(15,3)`, para que o
+       "Definir" de qualquer linha (a diferença até o contado) e os movimentos seguintes ainda caibam nas colunas —, e o
+       custo do movimento (`custo_unitario` e `custo_medio_posterior` em `numeric(15,4)`, `custo_total` em
+       `numeric(15,2)`) cabe na coluna. `calcularMovimento` confere cada movimento e `lancarDocumento` o lote, antes de
+       qualquer gravação, e o que passaria disso lança `ErroLimiteEstoque` (um `ErroApi` `REGRA_NEGOCIO`, com o
+       estoque, o produto, a variação, o tipo e o lote nos `detalhes`, em camelCase como nas outras rotas do ERP): no
+       ERP, 422 com a mensagem ("fora do limite do sistema: confira as quantidades"); no push, `traduzirErroBanco` o
+       traduz para `LIMITE_ESTOQUE` (código novo da SYNC 11.2, permanente), com a linha em `resultado.detalhes` nos
+       nomes do protocolo (`estoque_id`, `produto_id`, `variacao_id`, `tipo_estoque_id`, `lote_id`; SYNC 2.3): o
+       evento fica `erro` na primeira tentativa, o lote segue e os outros terminais também, cada evento que passaria
+       do limite rejeitado por si. O lançamento que **aproxima** de zero uma linha que já estava acima do limite (dado
+       de antes desta regra) passa: é o caminho do conserto pelo "Definir", e depois o **Reprocessar** (ou o lote por
+       código) da fila de decisão aplica as vendas. A isenção é só do saldo: o custo do movimento tem de caber na
+       coluna de qualquer jeito (não há como gravá-lo). Por isso o "Definir" de uma linha enorme com custo médio alto
+       (a diferença × o custo passa de `numeric(15,2)`, ex.: −9,9e10 a R$ 200 = 1,98e13) é recusado — já no rascunho,
+       onde o valor do item (`total_custo`/`total_venda`, também `numeric(15,2)`) passa a ser conferido em
+       `gravarItensRascunho` com 422 no item ("um saldo muito grande se acerta em partes", no lugar do 22003
+       genérico), e no motor se a linha mudou depois do rascunho — e a linha se acerta em partes: Entradas ou Saídas
+       de acerto menores, cada uma com o custo dentro da coluna (não pede `produtos.ver_custo`: valem ao custo médio),
+       e o "Definir" do resto. A tolerância ao negativo
+       (SYNC 15.1) continua: a regra é de tamanho, não de sinal. O replay do razão (`recalcular.ts`) usa a conta pura do
+       shared, sem esta conferência: refaz o que está gravado.
+     - **Erros do banco e do JCS no push.** A classe 22 do PostgreSQL (o valor que não cabe na coluna: 22003, 22001,
+       22P02, 22008…) que escapa do handler vira `PAYLOAD_INVALIDO` daquele evento (antes, falha não classificada: duas
+       tentativas parando o lote e depois `ERRO_INTERNO`); nas tabelas do protocolo continua falha não classificada.
+       O hash do payload (`hashDoPayload`) devolve `null` quando o JCS não serializa o valor (um número que o JSON lê
+       como `Infinity`): o evento é rejeitado como o de hash divergente, com `hash_recalculado` nulo, e o lote segue
+       (antes, a exceção derrubava o lote inteiro com 500). O envelope recusa o payload com mais de 32 níveis de
+       objeto/lista (`PROFUNDIDADE_MAXIMA_PAYLOAD`, conferido sem recursão; o maior do PDV tem uns 5): o JCS e a
+       gravação em `jsonb` percorrem o payload recursivamente, e o aninhamento fundo os estourava (500); agora é o 400
+       `REQUISICAO_INVALIDA` do envelope fora do contrato.
+     - Sem migração e sem mudança no PDV; o protocolo ganha só o código `LIMITE_ESTOQUE`, que o PDV 0.12.0 trata como
+       qualquer rejeição (fica na quarentena dos eventos rejeitados). Testes: `test/integracao/estoque.test.ts` (o
+       rascunho do gerente que continua com o estoque inativado → 422 sem saldo nem movimento, e efetiva depois de
+       reativado; estoque excluído → 422 sem movimento; o estorno de acerto num estoque inativado → 422 até reativar),
+       `test/integracao/recebimento-movimentar.test.ts` (o estorno do recebimento num depósito inativado depois de
+       zerado → 422 antes de lançar), `test/integracao/venda-eventos.test.ts` (o item de 999.999.999.999,999 →
+       `PAYLOAD_INVALIDO` e a venda seguinte do lote entra, a de 9.999,999 entra; no ERP a Saída que passaria do limite
+       → 422; com a linha perto do limite, a venda de dois terminais que passaria dele → `LIMITE_ESTOQUE` com
+       `tentativas` 1 e os detalhes em snake_case, e a seguinte do lote entra, a que cabe entra, e o "Definir" conserta;
+       a linha em −9,9e10 com custo de R$ 200: o "Definir" para 0 → 422 no item sem gravar, a Entrada parcial e o
+       "Definir" do resto zeram; a venda de produto com estoque e custo de R$ 99.999.999.999 × 1.000 → `LIMITE_ESTOQUE`
+       do custo; o custo de referência do serviço que não cabe em `numeric(15,2)` → `PAYLOAD_INVALIDO` sem
+       `ERRO_INTERNO`; o `1e400` no payload → só aquele evento rejeitado; cem mil níveis → 400),
+       `src/estoques/movimentos.spec.ts` (no banco falso: o custo total acima de `numeric(15,2)` na entrada e na saída
+       ao custo médio → `ErroLimiteEstoque` sem gravar, logo abaixo passa; o lote perto do limite com a linha perto de
+       zero → recusa com o `loteId`; a linha e o lote já acima do limite: o que aproxima de zero passa, mesmo ainda
+       acima, o que afasta é recusado), `src/sync/erros.spec.ts` (a classe 22, o `ErroLimiteEstoque` com os detalhes em
+       snake_case e o `hashDoPayload`), `packages/shared/src/sync/eventos.spec.ts` (os tetos das quantidades; a baixa
+       de insumo de 125.000.000 passa e só a acima da coluna é recusada) e `contratos.spec.ts` (a profundidade do
+       payload).
+
+211. **Modo "perdido/roubado": só o servidor registra a revogação, e a anulação cobre o que o computador pode guardar**
+     (PR-15, SEG-B10; SYNC 4.3 item 6 e 9.22; ERP 12.4; revê a decisão 114; `src/terminais/revogacao.ts`,
+     `src/sync/eventos.ts`, `src/sync/ativacao.ts`, `src/sync/handlers/cancelamento.ts`,
+     `packages/shared/src/enums.ts`).
+     - **Ações de auditoria só do servidor.** `ACOES_AUDITORIA_SO_SERVIDOR` (shared) lista as ações do catálogo que
+       só a API grava: `terminal_revogado`, `token_anterior_reutilizado`, `evento_descartado`, `evento_reprocessado`,
+       `lacuna_substituida`, `permissoes_alteradas`, `pix_recebedor_alterado` e `recalcular_saldos`. O PDV não gera
+       nenhuma delas (o `terminal_ativado` dele continua aceito; a fixture do que o PDV grava é conferida no
+       `contratos.spec.ts`, e o código do PDV no `DescritorAuditoriaTests`, que cruza as ações que o caixa grava com a
+       lista lida do `enums.ts`), e o lote `auditoria.registros` que traz alguma é recusado como a ação fora do
+       catálogo: `PAYLOAD_INVALIDO` só naquele evento, com as ações em `detalhes.acoes`; os outros eventos do lote seguem.
+       `ACOES_AUDITORIA` (e o espelho `CatalogosNuvem` do PDV) não muda.
+     - **Quem lê a auditoria como estado do servidor só aceita a linha do servidor.** A revogação (`revogacoesAuditadas`)
+       conta só os `terminal_revogado` sem `evento_id` — os do ERP, da manutenção, da ativação e da desativação
+       confirmada do heartbeat nunca vêm de um evento; as linhas do lote de auditoria de um terminal sempre trazem o
+       dele —, inclusive diante de linhas antigas do lote de auditoria: só a revogação do servidor decide o que o modo
+       perdido ainda tem de anular. Variantes do mesmo padrão: a etapa da empresa da ativação reusa a decisão gravada
+       só pelo `terminal_ativado` da própria etapa (entidade `terminais`, sem `evento_id`; o do PDV é `terminal`, com o
+       evento) e o cancelamento duplo (SYNC 10.4) só reconhece o `cancelar` com `cancelamento_duplo` gravado pelo
+       handler, preso a um evento `venda.cancelada` em `eventos_recebidos` (que não tem purga); o `cancelar` que chega
+       no lote de auditoria fica na auditoria e não decide nada.
+     - **A anulação é pelo que pode ter descido, não pela projeção de hoje.** O terminal revogado não puxa mais nada, e
+       o `pdv.db` dele fica com os hashes do último pull (o PDV só troca a linha espelhada por uma versão nova), além
+       dos backups da mesma máquina, que podem ser de ativações anteriores do caixa. Por isso a anulação cobre quem já
+       teve acesso à loja ou já foi relevante para ela, sem depender da condição de hoje do fluxo nem de data.
+       `anularCredenciaisDaLoja` anula: o **PIN do PDV de quem a projeção do fluxo `acesso` pode ter mandado à loja**
+       (o hash só desce para o Master e para quem tem `usuarios_lojas` da loja): os Masters de hoje, quem tem ou teve
+       linha em `usuarios_lojas` da loja (viva ou excluída) e quem a auditoria do servidor mostra como Master em algum
+       momento (entidade `usuarios`, sem `evento_id`, `master` verdadeiro no `antes` ou no `depois`: a criação, a edição
+       e o `permissoes_alteradas` gravam o campo, e a `auditoria` é só de inserção), inclusive o usuário excluído (a
+       restauração devolveria o hash); e a **senha de cliente de toda pessoa que já foi relevante para a loja** (linha
+       de `pessoas_relevancia_loja` da loja ou de todas as lojas, viva ou excluída, também a da pessoa excluída), sem o
+       filtro de crediário e exigência (`senhaClienteDesce`). Quem só teve acesso a outras lojas (e nunca foi Master)
+       e quem nunca foi relevante para a loja nunca tiveram a credencial naquele computador e a mantêm: o operador de
+       uma loja, com `terminais.revogar` e o escopo da loja do terminal, não para o login do PDV das outras lojas
+       (anular o PIN da empresa inteira, a recomendação inicial do plano do bloco, daria a ele esse efeito sobre
+       usuários que ele nem enxerga no ERP). Cada credencial anulada continua com a auditoria `senha_redefinida`; o ERP
+       avisa no diálogo quem recadastra o PIN (README do ERP › decisão 83).
+     - Sem migração, protocolo novo nem mudança de comportamento no PDV: o PDV 0.12.0 não envia as ações reservadas,
+       e o `null` desce como antes pelos fluxos `acesso` e `pessoas`. Testes: `test/integracao/terminais.test.ts` (o lote de auditoria
+       com `terminal_revogado` → `PAYLOAD_INVALIDO`; com a linha "do terminal" gravada direto no banco, o perdido
+       depois do imediato anula o PIN; as edições de rotina antes da marcação — tirar o usuário da loja, rebaixar o
+       Master pelo ERP, excluir o usuário, bloquear o crediário, a relevância excluída, a pessoa de todas as lojas — e
+       tudo é anulado, menos o PIN de quem só teve acesso a outra loja, mesmo com uma linha "Master" do lote de um
+       terminal, e a senha da pessoa só de outra loja), `test/integracao/ativacao-repeticao.test.ts` (o
+       `terminal_ativado` com `evento_id` não vale como decisão gravada: o caixa inativado é conferido e a ativação
+       recusada), `test/integracao/cancelamento-vasilhame-eventos.test.ts` (o `cancelar` com `cancelamento_duplo` no
+       lote de auditoria não impede o cancelamento duplo real de gravar a gaveta e o alerta) e
+       `packages/shared/src/sync/contratos.spec.ts` (as ações reservadas estão no catálogo e fora da fixture do que o
+       PDV grava) e, no PDV, `DescritorAuditoriaTests.Nenhuma_acao_gravada_e_reservada_ao_servidor` (só teste, sem
+       subir a versão).
+212. **Numeração e estoque do caixa: o que o terminal afirma só vale dentro do que a nuvem conhece** (PR-15,
+     SEG-B15; SYNC 10.2, 11.2, 13.1, 13.3 e 21.1; ERP 12.5; `src/sync/numeracao.ts`, `src/sync/ativacao.ts`,
+     `src/sync/heartbeat.ts`, `src/sync/handlers/vendas.ts`, `src/sync/handlers/cancelamento.ts`,
+     `packages/shared/src/sync/contratos.ts`, `eventos.ts` e `terminais.ts`).
+     - **Limite do número.** `NUMERO_VENDA_MAXIMO` (shared) = 999.999.999.999: os 12 dígitos que cabem no número
+       exibido de 20 caracteres (`L01-C01-` + 12; a loja vai de 1 a 99). Vale para `vendas.numero` dos eventos de venda
+       (finalizada e cancelada; acima, `PAYLOAD_INVALIDO` só daquele evento) e para `venda_ultimo_numero` do
+       heartbeat. O de vale tem limite próprio, `VALE_NUMERO_MAXIMO` = 9.999.999: os 7 dígitos que o código do vale
+       guarda do sequencial (`VC` + loja 2 + caixa 2 + sequencial 7 + DV, `ck_vales_codigo`; SYNC 13.4), acima dos quais
+       nenhum vale válido existe. Os dois contadores do heartbeat vão de 0 ao limite; fora, 400
+       `REQUISICAO_INVALIDA`. O PDV 0.12.0 conta de 1 em 1 a partir da base da ativação e nunca chega perto disso.
+     - **Margem do caixa** (`NUMERACAO_MARGEM_CAIXA`, padrão 100.000; `margemNumeracaoCaixa`, `dentroDaMargem`). O
+       "conhecido" é o último número da numeração viva do caixa em `numeracoes` (cada venda e venda cancelada em
+       andamento aplicada o avança, com `greatest`, e cada ativação grava a base com o salto). A margem cobre o que o
+       caixa vende sem conseguir enviar — offline, lacuna, os saltos de +1000 da restauração do backup — com folga de
+       anos. É um valor técnico (sem efeito na operação normal da loja), configurável no ambiente.
+     - **Venda acima da margem.** A conferência do documento de venda (`conferirDocumentoVenda`, também a da venda
+       cancelada em andamento) recusa o número acima de `conhecido + margem` com o código novo
+       `NUMERO_VENDA_IMPLAUSIVEL` (`resultado.detalhes`: `numero`, `ultimo_numero_conhecido`, `margem`), sem gravar
+       nada e sem mexer em `numeracoes`: o evento vai à fila de decisão como o `NUMERO_VENDA_DUPLICADO`. O PDV trata o
+       código como qualquer rejeição (o `codigo` do resultado é texto livre para ele). "Aplicar com novo número"
+       (`aceitaNovoNumero` no shared) passa a valer também para ele: a venda vai para a faixa de renumeração, a
+       observação diz "número fora da sequência do caixa" e o número do PDV **não** entra em `numeracoes`
+       (`Renumeracao.original.avancaNumeracao`), na venda e na cancelada em andamento. Reprocessar (um ou o lote) dá
+       sempre o mesmo erro: a numeração do caixa não avança com o número alto, e o problema não se resolve sozinho. As
+       vendas seguintes do mesmo terminal também caem no código, porque o PDV continua contando a partir do número
+       alto. O caminho é aplicar com novo número as que estão na fila e **substituir o terminal** para normalizar o
+       caixa: a ativação descarta o contador acima da margem (abaixo) e o PDV recomeça da base da nuvem. O ERP diz
+       isso no diálogo da ação e no do lote (decisão 84 do ERP).
+     - **Renumeração exata.** `renumerarVenda` conta o próximo número da faixa em `bigint`; se ele passar do limite do
+       número ou o número exibido passar de 20 caracteres, recusa com o código próprio `RENUMERACAO_SEM_NUMERO`
+       (`CODIGO_RENUMERACAO_SEM_NUMERO` no shared; `resultado.detalhes` com o próximo número e o limite ou a exibição),
+       sem gravar nada (antes, acima de 2^53 dois números vizinhos viravam o mesmo `Number` e a gravação colidia; e a
+       exibição era cortada em 20). Código próprio para o `aceitaNovoNumero` não oferecer de novo a ação, que falharia
+       sempre, e para o diálogo não falar de número acima da numeração do caixa; "Reprocessar" refaz a conferência
+       original.
+     - **Contadores do heartbeat.** `terminais.venda_ultimo_numero` e `vale_ultimo_numero` guardam o maior já informado
+       (`greatest`): um heartbeat menor (backup antigo restaurado, ordem de chegada) não baixa o contador. Na ativação
+       (`decidirNumeracao`), o que o terminal anterior informou — heartbeat ou desativação confirmada — só entra na
+       base de venda e de vale até `conhecido + margem`; acima, fica de fora (a base é o conhecido, mais o salto de
+       segurança quando cabe) e vai para a auditoria `terminal_ativado` em `contadores_descartados` (`{ venda, vale }`,
+       o maior descartado de cada tipo). O `GET /sync/estado` devolve ao próprio terminal o maior entre `numeracoes` e o
+       que ele mesmo informou, este também só dentro de `conhecido + margem`: como o `greatest` não deixa o contador
+       baixar, um heartbeat anômalo acima da margem (sequência local corrompida, bug, token mal usado) levaria a
+       restauração do PDV (`RegraRestauracao`) a saltar a sequência para fora da do caixa de vez, e toda venda seguinte
+       cairia em `NUMERO_VENDA_IMPLAUSIVEL`.
+     - **Estoque do contexto preso à loja** (`escolherEstoque`, usado pela venda e pela devolução avulsa de cascos).
+       `contexto.estoque_id` só é aceito quando está ativo e vivo e é o `lojas.estoque_id` atual da loja do terminal ou
+       um estoque que a loja já teve e que hoje não é o estoque de outra loja viva; fora disso (o de outra loja, mesmo
+       um que esta já teve e o cadastro passou para outra; um depósito; um que a loja nunca usou), o movimento
+       vai para o estoque atual da loja com o `ESTOQUE_CONTEXTO_INVALIDO` de sempre (mensagem: "excluído ou
+       desativado, ou não é nem foi o estoque desta loja"). O histórico vem da auditoria, sem tabela nova: a troca do
+       estoque da loja só acontece pelo cadastro da loja no ERP (`POST`/`PUT /api/lojas`), que grava a linha inteira em
+       `antes`/`depois` (`estoqueId`); a consulta olha as linhas `criar`/`editar` de `lojas` daquela loja sem
+       `evento_id` (a do lote de auditoria de um terminal sempre traz o dele, como na decisão 211), pelo índice
+       `ix_auditoria_entidade_registro_id`, e só roda quando o contexto não é o estoque atual (depois de uma troca). O
+       cadastro só recusa o estoque vinculado agora a outra loja (`garantirEstoqueLivre`), então o estoque trocado fica
+       livre e pode ir para outra loja: a consulta também confere que ele não é hoje o `lojas.estoque_id` de outra loja
+       viva, senão o terminal desta movimentaria o saldo daquela sem alerta. A venda feita offline antes da troca e
+       enviada depois dela baixa, nesse caso, no estoque atual da loja, com o alerta, como a regra pede. A
+       auditoria é só de inserção e fica 5 anos. Derivar dos movimentos foi descartado: as linhas que o PDV já gravou
+       com outro estoque também contariam. Variantes conferidas: o único outro uso do `contexto.estoque_id` é a
+       devolução avulsa de cascos (mesma função); o cancelamento estorna nos estoques dos movimentos da venda.
+     - **Fora do bloco.** A ação auditada no ERP para baixar a numeração de venda de um caixa (quando nenhuma venda
+       está acima do valor novo) ficou como pendência: com os limites acima nenhum número novo passa da margem, e o
+       caixa cuja numeração já estivesse alta continua com o caminho de excluir e recriar o caixa. A numeração NFC-e
+       (fiscal) fica para a fase fiscal.
+     - Sem migração. Protocolo: só os códigos novos `NUMERO_VENDA_IMPLAUSIVEL` e `RENUMERACAO_SEM_NUMERO` (o PDV
+       0.12.0 não muda: mostra a rejeição como as outras). Testes: `test/integracao/sync.test.ts` (o heartbeat fora do
+       limite é 400, inclusive o vale com 8 dígitos; o menor não baixa o contador; o `GET /sync/estado` ignora o
+       contador acima da margem; o contador acima da margem fica de fora da base da ativação, com a auditoria, e o de
+       dentro vale), `test/integracao/fila-decisao.test.ts` (acima da margem → fila, numeração intacta, reprocessar
+       repete, aplicar com novo número grava na faixa sem avançar; no limite entra; a forma B também, e aplicada com
+       novo número grava a cancelada na faixa sem avançar; o número acima do limite é `PAYLOAD_INVALIDO`; a
+       renumeração sem número que caiba ou com a exibição longa demais recusa com `RENUMERACAO_SEM_NUMERO` sem gravar e
+       sem oferecer a ação de novo), `test/integracao/venda-eventos.test.ts` (estoque atual e o que a loja já teve
+       valem; o de outra loja, o depósito, o inativo e o excluído caem no da loja com o alerta; o que a loja já teve e
+       o cadastro passou para outra loja também; a linha "de terminal" na auditoria não conta), `test/integracao/cancelamento-vasilhame-eventos.test.ts`
+       (a devolução de cascos com o estoque de outra loja), `packages/shared/src/sync/contratos.spec.ts` e
+       `eventos.spec.ts` (os limites no contrato) e, no ERP, `Terminais.test.tsx` (decisão 84 do ERP).
+213. **Tarefas da fila de eventos conferem o acesso do momento; tentativas de ativação com índices e retenção**
+     (PR-15, SEG-B16; SYNC 3.1, 3.3, 8.6 e 11.4; ERP 3.6; MD 2.6; `src/terminais/fila-decisao.ts`,
+     `src/sync/ativacao.ts`, `src/terminais/manutencao.ts`, `src/database/controle/schema.ts`, migração do controle
+     `0006_indices_tentativas_ativacao`).
+     - **"Reprocessar todos com este código" (`reprocessar_eventos`).** O executor faz o que os outros executores de
+       tarefa já faziam (importação, NF-e em lote, exportação; `sessaoDaTarefa`): refaz a sessão de quem pediu com o
+       acesso do momento e exige que ele continue ativo e não excluído, com `terminais.gerenciar` e com a loja atual do
+       terminal (`lojaPermitida`). Faltando algo, a tarefa termina `falhou` com a mensagem ("Usuário inativo ou
+       excluído.", "O usuário não tem mais a permissão de gerenciar terminais.", "O usuário não tem mais acesso à loja
+       deste terminal.") antes de tocar em qualquer evento: os eventos continuam em `erro`, para outra pessoa decidir.
+       A auditoria de cada evento reaplicado usa o usuário da sessão refeita. O lote vale para os `erro` do código
+       recebidos até a criação da tarefa, pela hora gravada da chegada (`eventos_recebidos.criado_em` até o
+       `criado_em` da própria linha da tarefa, comparado no banco, sem o arredondamento do `Date`): o evento que o push
+       trouxe depois do pedido fica para outro pedido. Não é exatamente o conjunto contado no pedido, e o texto não
+       promete isso: o evento que já tinha chegado e só caiu no código depois da contagem também entra (um retido
+       reaplicado junto do bloqueador, um Reprocessar individual que mudou o código, o placeholder da lacuna trocado —
+       a linha guarda a hora do começo do push — ou a transação de um push que começou antes do pedido e terminou
+       depois da contagem). A `quantidade` da auditoria do pedido é a contagem daquele momento, e o `total` do
+       resultado da tarefa é o que ela de fato percorreu. O impacto é só de escopo: cada evento passa pela
+       `precondicao` (`comCodigo`) sob a trava, com o acesso de quem pediu conferido na execução. Os retidos que
+       dependiam de um evento do lote seguem com ele, como no Reprocessar da tela (sem isso ficariam retidos à espera
+       de quem já foi aplicado). Guardar a lista de ids no pedido foi descartado (não tem limite de tamanho), e o
+       `max(sequencia_terminal)` contado também: não fecharia o caso do evento antigo que muda de código depois.
+     - **Variante: a continuação da lacuna recuperada (`reprocessar_apos_lacuna`).** A tarefa nasce no push, em nome de
+       quem liberou a recuperação no caixa; o executor agora repete a conferência do push (`conferirLiberacaoLacuna`:
+       ativo, `pdv.config.fiscal` e a loja do terminal) com o acesso do momento e, faltando algo, falha sem aplicar
+       nada (os eventos ficam na fila de decisão do ERP, onde quem tem `terminais.gerenciar` decide). A seleção dos
+       eventos continua valendo para o momento da execução, **sem** o limite pela hora da tarefa do lote do ERP: a
+       continuação reaplica eventos do próprio PDV, não uma escolha humana, e reaplica um a um (`reaplicar`, que não
+       solta dependentes). Com o limite, o retido que chega depois de a tarefa nascer e depende de um `erro` da lacuna
+       (o fechamento da mesma sessão no push seguinte, o cancelamento da venda ainda em `SESSAO_INEXISTENTE`) ficaria
+       de fora; o bloqueador seria aplicado e o retido ficaria preso sem alerta (o retido não abre `EVENTO_COM_ERRO`).
+       Incluir esses retidos não alarga o que a liberação autoriza: `causadoPorLacuna` reconfere sob a trava, e o
+       retido cujo bloqueador ainda está pendente volta a ficar retido. As demais tarefas diferidas (importação de
+       planilha, NF-e em lote e exportação de relatório) já reautorizavam e não mudaram.
+     - **`tentativas_ativacao`.** Dois índices novos, conforme o plano das consultas reais: `(codigo_empresa,
+       criado_em)` para o bloqueio do código da empresa (`verificarBloqueios`, `estadoBloqueio`) e `(criado_em)` para as
+       janelas sem IP nem código (o limite global de 10 min, as empresas com falhas que a manutenção olha) e para a
+       purga; o de `(ip, criado_em)` continua servindo o bloqueio por IP. Índice comum em `criado_em`, não parcial em
+       `not sucesso`: um só serve também a purga, que apaga sucessos e falhas, e as linhas de sucesso são poucas. A
+       manutenção dos terminais (a cada 5 min) apaga as linhas com mais de 30 dias (`RETENCAO_TENTATIVAS_DIAS`, a
+       retenção que o MD 2.6 já previa; nenhuma janela de bloqueio ou alerta passa de 7 dias), em comandos de até 5.000
+       linhas e até 20 por execução (`purgarTentativas`; o resumo da manutenção conta em
+       `tentativasAtivacaoPurgadas`). O pedido de um IP já bloqueado continua recebendo `429 IP_BLOQUEADO`, mas grava
+       no máximo uma linha `ip_bloqueado` por IP na janela de 30 min (o registro de que o IP foi barrado; as repetições
+       só faziam a tabela crescer). Essa linha não conta nos limites por IP e por código (que só somam os
+       `MOTIVOS_FORCA_BRUTA`), mas conta como uma falha no limite global da plataforma (mais de 500 falhas em 10 min,
+       que soma toda falha). Efeito registrado: antes, cada repetição de um IP já bloqueado somava no global, e um só
+       IP insistindo ligava o atraso de 3 s para as falhas de todas as empresas; agora soma uma por IP e janela. É o
+       desejado: o IP já barrado não chega a testar código nenhum, e o global continua pegando o volume espalhado por
+       muitos IPs (cada IP bloqueado soma a sua linha, mais as falhas de código errado que deram o bloqueio).
+     - Migração só do controle (dois `CREATE INDEX`); nada no banco da empresa nem no protocolo; o PDV 0.12.0 não muda.
+       Testes: `test/integracao/fila-decisao.test.ts` (quem pediu o lote e ficou desativado, sem `terminais.gerenciar`
+       ou sem a loja antes da execução → `falhou`, eventos em `erro` e sem auditoria de reprocessamento; com o acesso
+       mantido, o evento que chegou depois do pedido fica de fora e a auditoria é do usuário da sessão),
+       `test/integracao/lacunas.test.ts` (quem liberou a recuperação e foi desativado antes da tarefa → `falhou`, a
+       venda continua em `erro`; o retido que chegou num push depois de a tarefa nascer, preso à venda em `erro` da
+       lacuna, é aplicado pela tarefa logo depois dela), `test/integracao/sync.test.ts` (o IP bloqueado repetindo grava um só `ip_bloqueado`) e
+       `test/integracao/terminais.test.ts` (a manutenção apaga o que passou de 30 dias e mantém o resto; o plano das
+       consultas usa os índices novos).
 
 ### Operação – tarefas em segundo plano (API)
 

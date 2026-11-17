@@ -4,6 +4,7 @@ import { IconPrinter } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router';
+import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
 import { formatarDecimal } from '../../componentes/grade/decimal';
 import { formatarData, formatarDataHora } from '../../util/formato';
@@ -23,7 +24,7 @@ export function EspelhoRecebimento() {
   const [params] = useSearchParams();
   const doc = useQuery({
     queryKey: ['recebimentos', id],
-    queryFn: () => apiErp.get<RecebimentoDetalhe>(`/recebimentos/${id}`),
+    queryFn: () => apiErp.get<RecebimentoDetalhe>(`/recebimentos/${segmento(id)}`),
     enabled: !!id,
   });
   const impresso = useRef(false);

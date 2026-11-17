@@ -28,6 +28,7 @@ import {
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { SessaoErp } from '../auth/auth.service.js';
 import { garantirLoja } from '../autorizacao/lojas.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { ErroApi } from '../comum/erros.js';
 import { hojeNaEmpresa } from '../comum/fuso.js';
 import { lerConfiguracoes } from '../configuracoes/valores.js';
@@ -35,6 +36,7 @@ import type { BancoControle } from '../database/controle/conexao.js';
 import { FILAS } from '../infra/fila.js';
 import { backupsEmpresas, empresas } from '../database/controle/schema.js';
 import { ncmVigente } from '../produtos/ncm.js';
+import { MINUTOS_TAREFA_ATRASADA } from '../tarefas/tarefas.js';
 import type { TerminaisErp } from '../terminais/terminais.service.js';
 import type { DbEmpresa, Tenancy } from '../tenancy/tenancy.js';
 import { diaOperacionalAtual } from '../vendas/consultas.js';
@@ -49,7 +51,7 @@ const FILAS_DA_PLATAFORMA = [
 /** Backup lógico mais velho que isto (o diário roda uma vez por dia, com folga) vira aviso. */
 export const HORAS_BACKUP_RECENTE = 26;
 /** Tarefa na fila (da empresa ou do pg-boss) que devia ter começado há mais que isto está atrasada. */
-export const MINUTOS_TAREFA_ATRASADA = 5;
+export { MINUTOS_TAREFA_ATRASADA };
 
 const CHAVES = [
   'geral.ativa',
@@ -789,8 +791,7 @@ export class ProntidaoLojas {
       select usuario_id, permissao, efeito from usuarios_permissoes
        where excluido_em is null and permissao like 'pdv.%'`);
     const doPerfil = new Map<string, string[]>();
-    for (const r of perfisPerm.rows)
-      doPerfil.set(r.perfil_id, [...(doPerfil.get(r.perfil_id) ?? []), r.permissao]);
+    for (const r of perfisPerm.rows) agruparEm(doPerfil, r.perfil_id, r.permissao);
     const ajustes = new Map<string, { conceder: string[]; negar: string[] }>();
     for (const r of ajustesPerm.rows) {
       const a = ajustes.get(r.usuario_id) ?? { conceder: [], negar: [] };

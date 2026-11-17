@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Outlet, type RouteObject } from 'react-router';
-import { ExigePermissao, RotaProtegida } from './auth/RotaProtegida';
+import { codigoEmpresaValido } from './api/caminho';
+import { ExigeIdValido, ExigePermissao, RotaProtegida } from './auth/RotaProtegida';
 import { ProvedorSessao } from './auth/sessao';
 import { Layout } from './layout/Layout';
 import { ITENS_MENU, podeAbrirExportacao } from './menu';
@@ -65,6 +66,11 @@ import { NovaEmpresa } from './plataforma/NovaEmpresa';
 import { Planos } from './plataforma/Planos';
 import { ProvedorSessaoPlataforma } from './plataforma/sessao';
 
+/** Tela de um registro: o `:id` da rota só chega a ela quando é um id de registro (README do ERP › decisão 85). */
+function comId(elemento: ReactNode, inicio: string): ReactNode {
+  return <ExigeIdValido inicio={inicio}>{elemento}</ExigeIdValido>;
+}
+
 /** Listagem + "Novo" + formulário (`:id/:aba?`) de um cadastro, cada rota com a permissão própria (ERP 2.2). */
 function cadastro(
   rota: string,
@@ -81,7 +87,7 @@ function cadastro(
     },
     {
       path: `${rota}/:id/:aba?`,
-      element: <ExigePermissao permissao={permissaoVer}>{formulario}</ExigePermissao>,
+      element: <ExigePermissao permissao={permissaoVer}>{comId(formulario, rota)}</ExigePermissao>,
     },
   ];
 }
@@ -97,7 +103,10 @@ function cadastroVerEditar(
   return [
     { path: rota, element: <ExigePermissao permissao={ver}>{lista}</ExigePermissao> },
     { path: `${rota}/novo`, element: <ExigePermissao permissao={editar}>{formulario}</ExigePermissao> },
-    { path: `${rota}/:id`, element: <ExigePermissao permissao={ver}>{formulario}</ExigePermissao> },
+    {
+      path: `${rota}/:id`,
+      element: <ExigePermissao permissao={ver}>{comId(formulario, rota)}</ExigePermissao>,
+    },
   ];
 }
 
@@ -111,7 +120,10 @@ function consulta(
 ): RouteObject[] {
   return [
     { path: rota, element: <ExigePermissao permissao={permissao}>{lista}</ExigePermissao> },
-    { path: `${rota}/${sufixo}`, element: <ExigePermissao permissao={permissao}>{detalhe}</ExigePermissao> },
+    {
+      path: `${rota}/${sufixo}`,
+      element: <ExigePermissao permissao={permissao}>{comId(detalhe, rota)}</ExigePermissao>,
+    },
   ];
 }
 
@@ -144,7 +156,14 @@ export const rotas: RouteObject[] = [
           { index: true, element: <Empresas /> },
           { path: 'empresas', element: <Empresas /> },
           { path: 'empresas/nova', element: <NovaEmpresa /> },
-          { path: 'empresas/:codigo', element: <DetalheEmpresa /> },
+          {
+            path: 'empresas/:codigo',
+            element: (
+              <ExigeIdValido parametro="codigo" valido={codigoEmpresaValido} inicio="/plataforma/empresas">
+                <DetalheEmpresa />
+              </ExigeIdValido>
+            ),
+          },
           { path: 'planos', element: <Planos /> },
           { path: 'migracoes', element: <Migracoes /> },
           { path: '*', element: <NaoEncontrado inicio="/plataforma/empresas" /> },
@@ -190,7 +209,7 @@ export const rotas: RouteObject[] = [
                 path: '/cadastros/usuarios/:id/:aba?',
                 element: (
                   <ExigePermissao permissao="usuarios.ver">
-                    <FormularioUsuario />
+                    {comId(<FormularioUsuario />, '/cadastros/usuarios')}
                   </ExigePermissao>
                 ),
               },
@@ -220,7 +239,7 @@ export const rotas: RouteObject[] = [
                     permissao="marcas.ver"
                     acesso={(pode) => pode('marcas.ver') && pode('produtos.ver')}
                   >
-                    <FichaMarcaImpressao />
+                    {comId(<FichaMarcaImpressao />, '/produtos/marcas')}
                   </ExigePermissao>
                 ),
               },
@@ -286,7 +305,7 @@ export const rotas: RouteObject[] = [
                 path: '/cadastros/pdvs/:id',
                 element: (
                   <ExigePermissao permissao="terminais.ver">
-                    <DetalheTerminal />
+                    {comId(<DetalheTerminal />, '/cadastros/pdvs')}
                   </ExigePermissao>
                 ),
               },
@@ -319,7 +338,7 @@ export const rotas: RouteObject[] = [
                 path: '/estoque/recebimentos/:id/espelho',
                 element: (
                   <ExigePermissao permissao="recebimentos.ver">
-                    <EspelhoRecebimento />
+                    {comId(<EspelhoRecebimento />, '/estoque/recebimentos')}
                   </ExigePermissao>
                 ),
               },
@@ -344,7 +363,7 @@ export const rotas: RouteObject[] = [
                 path: '/estoque/transferencias/:id/romaneio',
                 element: (
                   <ExigePermissao permissao="transferencias.ver">
-                    <RomaneioTransferenciaImpressao />
+                    {comId(<RomaneioTransferenciaImpressao />, '/estoque/transferencias')}
                   </ExigePermissao>
                 ),
               },

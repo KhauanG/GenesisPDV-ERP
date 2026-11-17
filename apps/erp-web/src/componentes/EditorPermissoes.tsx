@@ -51,7 +51,9 @@ export function dividirCatalogo(): { menus: LinhaMenu[]; gerais: Map<string, Def
       linha.acoes[acao] = p;
       menus.set(recurso, linha);
     } else {
-      gerais.set(p.grupo, [...(gerais.get(p.grupo) ?? []), p]);
+      const grupo = gerais.get(p.grupo);
+      if (grupo) grupo.push(p);
+      else gerais.set(p.grupo, [p]);
     }
   }
   return { menus: [...menus.values()], gerais };

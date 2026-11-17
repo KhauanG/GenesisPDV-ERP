@@ -7,7 +7,7 @@
 import { setTimeout as esperar } from 'node:timers/promises';
 import writeXlsxFile from 'write-excel-file/node';
 import { mesOperacionalEm } from '@genesis/shared';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   consultar,
   criarAmbiente,
@@ -360,6 +360,100 @@ describe('importação de produtos (ERP 8.6)', () => {
     ]);
   });
 
+  it('confirmar: a mesma planilha não vira outra tarefa enquanto está pendente, e cada usuário tem um teto de importações pendentes', async () => {
+    const [{ id: usuarioId }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "select id from usuarios where login = 'admin'",
+    )) as [{ id: string }];
+    const previa = await amb
+      .http()
+      .post('/api/importacoes/produtos/previa')
+      .set(bearer(admin))
+      .field('lojaId', lojaId)
+      .attach(
+        'arquivo',
+        Buffer.from('Ref. Interna;Produto;Venda;NCM\nTETO1;PRODUTO TESTE TETO;;22030000\n'),
+        'teto.csv',
+      );
+    expect(previa.status, JSON.stringify(previa.body)).toBe(200);
+    const arquivoId: string = previa.body.arquivoId;
+    const confirmar = () =>
+      amb.http().post('/api/importacoes/produtos/confirmar').set(bearer(admin)).send({ arquivoId, lojaId });
+    const tarefasDaPlanilha = async () =>
+      (
+        await consultar<{ n: number }>(
+          emp.nomeBanco,
+          `select count(*)::int as n from tarefas where parametros->>'arquivoId' = $1`,
+          [arquivoId],
+        )
+      )[0]!.n;
+    const fila = (tipo: string, arquivo: string) =>
+      consultar(
+        emp.nomeBanco,
+        `insert into tarefas (tipo, status, parametros, usuario_id) values ($1, 'na_fila', $2, $3)`,
+        [tipo, JSON.stringify({ arquivoId: arquivo, opcoes: {}, teste: 'teto' }), usuarioId],
+      );
+    const pendentesDeTeste = "parametros->>'teste' = 'teto'";
+    try {
+      // Uma confirmação desta planilha executando: a repetida é recusada e nada é criado.
+      await consultar(
+        emp.nomeBanco,
+        `insert into tarefas (tipo, status, parametros, usuario_id) values ('importacao_produtos', 'executando', $1, $2)`,
+        [JSON.stringify({ arquivoId, opcoes: {}, teste: 'teto' }), usuarioId],
+      );
+      const antes = await tarefasDaPlanilha();
+      const repetida = await confirmar();
+      expect(repetida.status, JSON.stringify(repetida.body)).toBe(422);
+      expect(repetida.body).toMatchObject({ codigo: 'REGRA_NEGOCIO', detalhes: { arquivoId } });
+      expect(repetida.body.mensagem).toContain('já está sendo importada');
+      expect(await tarefasDaPlanilha()).toBe(antes);
+      await consultar(emp.nomeBanco, `update tarefas set status = 'concluida' where ${pendentesDeTeste}`);
+
+      // Duas importações de outras planilhas (de produtos e de clientes) na fila: o teto (2) recusa a terceira.
+      await fila('importacao_produtos', '0190f1a0-0000-7000-8000-00000000aa01');
+      await fila('importacao_clientes', '0190f1a0-0000-7000-8000-00000000aa02');
+      const teto = await confirmar();
+      expect(teto.status, JSON.stringify(teto.body)).toBe(422);
+      expect(teto.body).toMatchObject({ codigo: 'REGRA_NEGOCIO', detalhes: { pendentes: 2, limite: 2 } });
+      expect(await tarefasDaPlanilha()).toBe(antes);
+
+      // As duas paradas na fila há mais de MINUTOS_TAREFA_ATRASADA (o job delas pode ter se perdido) não contam mais.
+      // O envio à fila desta confirmação falha depois do commit: a tarefa fica na fila, sem job (500 no ERP).
+      await consultar(
+        emp.nomeBanco,
+        `update tarefas set atualizado_em = now() - interval '10 minutes' where ${pendentesDeTeste}`,
+      );
+      const agendar = vi
+        .spyOn(amb.servicos.tarefas, 'agendar')
+        .mockRejectedValueOnce(new Error('fila indisponível (teste)'));
+      try {
+        const semFila = await confirmar();
+        expect(semFila.status, JSON.stringify(semFila.body)).toBe(500);
+      } finally {
+        agendar.mockRestore();
+      }
+      expect(await tarefasDaPlanilha()).toBe(antes + 1);
+      const [orfa] = await consultar<{ id: string; status: string }>(
+        emp.nomeBanco,
+        `select id, status from tarefas where parametros->>'arquivoId' = $1 and status <> 'concluida'`,
+        [arquivoId],
+      );
+      expect(orfa).toMatchObject({ status: 'na_fila' });
+
+      // A nova confirmação da mesma planilha reaproveita a tarefa na fila (sem criar outra) e a agenda de novo; ela
+      // conclui (a linha sem preço não cria nada, para não mudar os cards do dashboard abaixo).
+      const c = await confirmar();
+      expect(c.status, JSON.stringify(c.body)).toBe(202);
+      expect(c.body.tarefaId).toBe(orfa!.id);
+      expect(await tarefasDaPlanilha()).toBe(antes + 1);
+      const t = await aguardarTarefa(c.body.tarefaId);
+      expect(t.status, t.erro).toBe('concluida');
+      expect(t.resultado).toMatchObject({ criados: 0, comErro: 1 });
+    } finally {
+      await consultar(emp.nomeBanco, `delete from tarefas where ${pendentesDeTeste}`);
+    }
+  });
+
   it('erros do arquivo e permissões', async () => {
     const semColuna = await amb
       .http()
@@ -455,6 +549,65 @@ describe('importação de clientes (ERP 8.6)', () => {
     // Os achados pelo CPF/CNPJ, iguais ao cadastro, não são gravados (decisão 103); o sem documento volta como novo.
     const p2 = await previa();
     expect(p2.resumo).toMatchObject({ criar: 1, atualizar: 0, sem_alteracao: 2 });
+  });
+
+  it('sem "Pessoas: Ver" a prévia (também em .xlsx) e o 409 do documento não mostram o nome nem o id de quem já existe', async () => {
+    const perfil = await amb
+      .http()
+      .post('/api/perfis')
+      .set(bearer(admin))
+      .send({
+        nome: 'Importador sem ver',
+        permissoes: ['pessoas.importar', 'pessoas.editar', 'pessoas.criar'],
+      });
+    expect(perfil.status, JSON.stringify(perfil.body)).toBe(201);
+    const uid = await criarUsuario(emp.nomeBanco, {
+      login: 'importador',
+      perfil: 'vendedor',
+      lojas: [lojaId],
+    });
+    await consultar(emp.nomeBanco, 'update usuarios set perfil_id = $1 where id = $2', [perfil.body.id, uid]);
+    const importador = await amb.entrar(emp.codigo, 'importador', SENHA_TESTE);
+    const [maria] = await consultar<{ id: string; codigo: number }>(
+      emp.nomeBanco,
+      "select id, codigo from pessoas where cpf_cnpj = '52998224725'",
+    );
+    const xlsx = await writeXlsxFile([[{ value: 'CPF/CNPJ' }], [{ value: '529.982.247-25' }]]).toBuffer();
+    const previa = (token: string) =>
+      amb
+        .http()
+        .post('/api/importacoes/clientes/previa')
+        .set(bearer(token))
+        .attach('arquivo', xlsx, 'clientes.xlsx');
+    const sem = await previa(importador);
+    expect(sem.status, JSON.stringify(sem.body)).toBe(200);
+    expect(sem.body.linhas).toEqual([
+      expect.objectContaining({ acao: 'atualizar', descricao: '529.982.247-25', registroId: null }),
+    ]);
+    expect(JSON.stringify(sem.body)).not.toContain('MARIA');
+    expect(JSON.stringify(sem.body)).not.toContain(maria!.id);
+    // Com "Pessoas: Ver" (o admin) a mesma prévia mostra quem foi achado.
+    const com = await previa(admin);
+    expect(com.body.linhas).toEqual([
+      expect.objectContaining({ descricao: 'MARIA DA SILVA', registroId: maria!.id }),
+    ]);
+    // O CPF/CNPJ repetido no cadastro: o 409 só diz que já existe (a gravação da importação usa a mesma regra).
+    const repetido = { tipo: 'PF', nome: 'OUTRA PESSOA', cpfCnpj: '52998224725', categorias: ['cliente'] };
+    const r409 = await amb.http().post('/api/pessoas').set(bearer(importador)).send(repetido);
+    expect(r409.status, JSON.stringify(r409.body)).toBe(409);
+    expect(r409.body.mensagem).toBe('Já existe uma pessoa com este documento.');
+    // Nem o código, o nome ou o id da outra pessoa: sem `detalhes` e o campo só com "Já cadastrado" (decisão 198).
+    expect(r409.body.detalhes).toBeUndefined();
+    expect(r409.body.campos).toEqual({ cpfCnpj: ['Já cadastrado'] });
+    expect(JSON.stringify(r409.body)).not.toContain('MARIA');
+    expect(JSON.stringify(r409.body)).not.toContain(maria!.id);
+    const admin409 = await amb.http().post('/api/pessoas').set(bearer(admin)).send(repetido);
+    expect(admin409.status).toBe(409);
+    expect(admin409.body.detalhes).toEqual({
+      pessoaId: maria!.id,
+      codigo: maria!.codigo,
+      nome: 'MARIA DA SILVA',
+    });
   });
 });
 
@@ -578,6 +731,44 @@ describe('importação: limites, permissões e combo (revisão da Fase 1)', () =
       'Não foi possível ler a planilha: salve de novo como .xlsx ou .csv e envie outra vez.',
     );
     expect((await amb.http().get('/api/saude').set(bearer(admin))).status).toBeLessThan(500);
+  });
+
+  it('xlsx fora da estrutura de um zip só → 422 antes de descompactar, na prévia e na releitura da confirmação', async () => {
+    const { entradaSoLocal, fimSemEntradas, inserirAntesDoCentral } =
+      await import('../fixtures/nfe/montar-zip.js');
+    // Só o cabeçalho local (gravado em fluxo) e o fim sem entradas: nada no diretório central a conferir.
+    const soLocal = entradaSoLocal('xl/worksheets/sheet1.xml', Buffer.alloc(16 * 1024 * 1024), true);
+    const r1 = await previa(admin, Buffer.concat([soLocal, fimSemEntradas(soLocal.length)]), 'so-local.xlsx');
+    expect(r1.status).toBe(422);
+    expect(r1.body.mensagem).toBe('O arquivo .xlsx está corrompido.');
+    // Uma planilha normal com uma entrada a mais, só no cabeçalho local, antes do diretório central.
+    const normal = await writeXlsxFile([[{ value: 'Nome' }], [{ value: 'CERV TESTE' }]]).toBuffer();
+    const comExtra = inserirAntesDoCentral(
+      normal,
+      entradaSoLocal('xl/worksheets/sheet1.xml', Buffer.from('<worksheet/>'), true),
+    );
+    const r2 = await previa(admin, comExtra, 'com-extra.xlsx');
+    expect(r2.status).toBe(422);
+    expect(r2.body.mensagem).toBe('O arquivo .xlsx está corrompido.');
+    expect((await amb.http().get('/api/saude').set(bearer(admin))).status).toBeLessThan(500);
+    // A confirmação lê o arquivo guardado de novo, com a mesma conferência: o objeto trocado depois da prévia falha.
+    const ok = await previa(admin, normal, 'normal.xlsx');
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const [arq] = await consultar<{ chave_armazenamento: string }>(
+      emp.nomeBanco,
+      'select chave_armazenamento from arquivos where id = $1',
+      [ok.body.arquivoId],
+    );
+    await amb.servicos.armazenamento.gravar(arq!.chave_armazenamento, comExtra, 'application/octet-stream');
+    const c = await amb
+      .http()
+      .post('/api/importacoes/produtos/confirmar')
+      .set(bearer(admin))
+      .send({ arquivoId: ok.body.arquivoId, lojaId });
+    expect(c.status, JSON.stringify(c.body)).toBe(202);
+    const t = await aguardarTarefa(c.body.tarefaId);
+    expect(t.status).toBe('falhou');
+    expect(t.erro).toContain('O arquivo .xlsx está corrompido.');
   });
 
   it('Estoquista: sem marcas.criar/categorias.editar não cria marca nem categoria; sem acertos não atualiza estoque; sem criar/editar a linha vira erro', async () => {

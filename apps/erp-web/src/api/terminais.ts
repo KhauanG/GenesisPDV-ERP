@@ -17,6 +17,7 @@ import type {
 } from '@genesis/shared';
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { segmento } from './caminho';
 import { usePode } from '../auth/permissoes';
 import { apiErp } from './clientes';
 import { query } from './http';
@@ -60,7 +61,7 @@ export function useAtivacoesPendentes() {
 export function useTerminal(id: string | undefined) {
   return useQuery({
     queryKey: ['terminais', 'detalhe', id],
-    queryFn: () => apiErp.get<TerminalDetalhe>(`/terminais/${id}`),
+    queryFn: () => apiErp.get<TerminalDetalhe>(`/terminais/${segmento(id)}`),
     enabled: !!id,
     refetchInterval: ATUALIZACAO_TERMINAIS_MS,
   });
@@ -80,7 +81,7 @@ export function useEventosComErro(id: string | undefined, filtro: FiltroFila) {
     queryKey: ['terminais', 'eventos-erro', id, filtro],
     queryFn: () =>
       apiErp.get<ListagemEventosComErro>(
-        `/terminais/${id}/eventos-erro${query({
+        `/terminais/${segmento(id)}/eventos-erro${query({
           pagina: filtro.pagina,
           tamanho: TAMANHO_PAGINA_FILA,
           status: filtro.status,
@@ -102,17 +103,17 @@ export function useAcoesFila() {
   return {
     reprocessar: useMutation({
       mutationFn: (id: string) =>
-        apiErp.post<ResultadoReprocessamento>(`/eventos-recebidos/${id}/reprocessar`),
+        apiErp.post<ResultadoReprocessamento>(`/eventos-recebidos/${segmento(id)}/reprocessar`),
       onSettled: atualizar,
     }),
     aplicarNovoNumero: useMutation({
       mutationFn: (id: string) =>
-        apiErp.post<ResultadoReprocessamento>(`/eventos-recebidos/${id}/aplicar-novo-numero`),
+        apiErp.post<ResultadoReprocessamento>(`/eventos-recebidos/${segmento(id)}/aplicar-novo-numero`),
       onSettled: atualizar,
     }),
     descartar: useMutation({
       mutationFn: ({ id, ...corpo }: DescartarEventoEntrada & { id: string }) =>
-        apiErp.post<ResultadoDescarte>(`/eventos-recebidos/${id}/descartar`, corpo),
+        apiErp.post<ResultadoDescarte>(`/eventos-recebidos/${segmento(id)}/descartar`, corpo),
       // Também no 409 (outra pessoa resolveu antes): a lista volta sem a linha velha.
       onSettled: atualizar,
     }),
@@ -154,7 +155,7 @@ export function useAcoesTerminais() {
       onSuccess: atualizar,
     }),
     cancelarCodigo: useMutation({
-      mutationFn: (id: string) => apiErp.del(`/terminais/ativacoes/${id}`),
+      mutationFn: (id: string) => apiErp.del(`/terminais/ativacoes/${segmento(id)}`),
       onSuccess: ok('Código de ativação cancelado'),
       onError: erro,
     }),
@@ -165,7 +166,7 @@ export function useAcoesTerminais() {
     }),
     renomear: useMutation({
       mutationFn: ({ id, descricao }: { id: string; descricao: string | null }) =>
-        apiErp.patch<TerminalDetalhe>(`/terminais/${id}`, { descricao }),
+        apiErp.patch<TerminalDetalhe>(`/terminais/${segmento(id)}`, { descricao }),
       onSuccess: ok('Descrição alterada'),
       onError: erro,
     }),
@@ -178,25 +179,25 @@ export function useAcoesTerminais() {
         modo: ModoRevogacao;
         confirmacaoCaixa?: number;
         observacao?: string | null;
-      }) => apiErp.post<ResultadoRevogacao>(`/terminais/${id}/revogar`, corpo),
+      }) => apiErp.post<ResultadoRevogacao>(`/terminais/${segmento(id)}/revogar`, corpo),
       onSuccess: atualizar,
     }),
     ressincronizar: useMutation({
       mutationFn: ({ id, fluxo }: { id: string; fluxo: string | null }) =>
-        apiErp.post(`/terminais/${id}/ressincronizar`, fluxo ? { fluxo } : {}),
+        apiErp.post(`/terminais/${segmento(id)}/ressincronizar`, fluxo ? { fluxo } : {}),
       onSuccess: ok('Comando enviado: o PDV ressincroniza no próximo contato'),
       onError: erro,
     }),
     mensagem: useMutation({
       mutationFn: ({ id, texto }: { id: string; texto: string }) =>
-        apiErp.post(`/terminais/${id}/mensagem`, { texto }),
+        apiErp.post(`/terminais/${segmento(id)}/mensagem`, { texto }),
       onSuccess: ok('Mensagem enviada: aparece no PDV no próximo contato'),
       onError: erro,
     }),
     /** Manda o id pendente que a tela mostrou; 409 (outra máquina chamou depois) recarrega o detalhe com o novo. */
     confirmarHardware: useMutation({
       mutationFn: ({ id, idHardwarePendente }: { id: string; idHardwarePendente: string }) =>
-        apiErp.post<TerminalDetalhe>(`/terminais/${id}/hardware/confirmar`, { idHardwarePendente }),
+        apiErp.post<TerminalDetalhe>(`/terminais/${segmento(id)}/hardware/confirmar`, { idHardwarePendente }),
       onSuccess: ok('Troca de hardware confirmada'),
       onError: (e: unknown) => {
         atualizar();
@@ -205,7 +206,9 @@ export function useAcoesTerminais() {
     }),
     resolverAlerta: useMutation({
       mutationFn: ({ id, alertaId, resolucao }: { id: string; alertaId: string; resolucao: string }) =>
-        apiErp.post<TerminalDetalhe>(`/terminais/${id}/alertas/${alertaId}/resolver`, { resolucao }),
+        apiErp.post<TerminalDetalhe>(`/terminais/${segmento(id)}/alertas/${segmento(alertaId)}/resolver`, {
+          resolucao,
+        }),
       onSuccess: ok('Alerta resolvido'),
       onError: erro,
     }),

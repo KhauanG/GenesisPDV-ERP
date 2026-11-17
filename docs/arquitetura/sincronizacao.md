@@ -163,7 +163,7 @@ online, 4.1), `GET /cep/{cep}`. Todo endpoint online que altera estado exige `X-
 | Item | Regra |
 |---|---|
 | Protocolo | HTTPS, TLS 1.2 ou 1.3 (1.3 preferido); HTTP/2 quando disponível, com keep-alive |
-| Corpo | JSON UTF-8. Requisições de push e respostas de pull/push com `gzip` (`Content-Encoding: gzip` no push; `Accept-Encoding: gzip, br` no pull) |
+| Corpo | JSON UTF-8 (`application/json`). Requisições de push e respostas de pull/push com `gzip` (`Content-Encoding: gzip` no push; `Accept-Encoding: gzip, br` no pull). Só o push aceita corpo comprimido (`gzip`, `deflate`, `br`); nas outras rotas, `400 REQUISICAO_INVALIDA`. O corpo das rotas autenticadas pelo token é lido depois de autenticar o terminal, e o terminal é conferido de novo quando o corpo termina de chegar (revogado no meio do envio: `401 TERMINAL_REVOGADO`, nada gravado); o corpo que não chega inteiro em 60 s (`CORPO_JSON_PRAZO_LEITURA_S`) volta `400 REQUISICAO_INVALIDA` e a conexão fecha (README da API › decisão 199) |
 | Tempo limite (PDV) | Conexão 5 s; pull 30 s; push 60 s; heartbeat 10 s; ativação 30 s |
 | Proxy | Respeita o proxy do sistema ou o proxy configurado no assistente de ativação (PDV 5.3) |
 
@@ -231,7 +231,7 @@ escala com `zod` (`/^-?\d{1,13}\.\d{2}$/` para dinheiro etc.) e recusa número J
 | 409 | `TERMINAL_CLONADO` | `X-Genesis-Id-Hardware` diverge do registrado e há sinais de duas instâncias | Bloqueia vendas; suporte decide (20.5) | não |
 | 409 | `HARDWARE_ALTERADO` | `X-Genesis-Id-Hardware` diverge do registrado (sem sinais de clone) e a troca ainda não foi aprovada no ERP (20.5) | Bloqueia vendas; mantém o outbox; continua só heartbeat, `GET /sync/estado` e pull **sem segredos**; mostra "Hardware alterado — aguardando aprovação no ERP" | não (exige aprovação) |
 | 413 | `LOTE_GRANDE_DEMAIS` | Lote acima dos limites (19.2) | Divide o lote ao meio e reenvia | sim |
-| 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só repetição legítima tardia), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
+| 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só a repetição da mesma requisição: tardia ou com o token já usado), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
 | 422 | `LIBERACAO_INVALIDA` | `autorizado_por_id` de `declarar_lacuna`/`recuperar_lacuna` não é usuário ativo da empresa com `pdv.config.fiscal` e acesso à loja do terminal (8.6); nada do lote é processado | Mensagem na tela; outro supervisor libera | não |
 | 426 | `PROTOCOLO_NAO_SUPORTADO` | `X-Genesis-Protocolo` abaixo do mínimo da API | Força atualização do app; o push dos pendentes continua permitido enquanto o protocolo estiver na janela de suporte (17.2) | não |
 | 429 | `LIMITE_TAXA` | Limite por terminal/empresa (20.3) | Respeita `Retry-After` | sim |
@@ -257,7 +257,7 @@ Regras do ERP 12.3 e do modelo 2.5, consolidadas:
 | Uso | Único; `status`: `pendente` → `usado` / `expirado` / `cancelado` |
 | Limite do plano | `terminais_pdv` provisionando + ativos + desativando + `ativacoes_pdv` pendentes ≤ `coalesce(empresas.limite_terminais, planos.limite_terminais)`; validado ao gerar e ao ativar |
 | Substituição | Caixa com terminal ativo exige "Substituir terminal": grava `ativacoes_pdv.substitui_terminal_id`. Com ou sem substituição, a numeração do terminal novo é decidida contra o **último terminal que ocupou o caixa** (`caixas.terminal_anterior_id`, qualquer status — 13.3) |
-| Força bruta | Três limites, todos contados em `tentativas_ativacao`: (1) **por IP**: 5 falhas em 10 min → `IP_BLOQUEADO` por 30 min; (2) **por `codigo_empresa`** (contado pelo valor informado, exista ou não a empresa, para a resposta não revelar existência): 20 falhas em 1 h → `ATIVACAO_BLOQUEADA` para aquele código por 1 h, alerta `ATIVACAO_FORCA_BRUTA` no ERP da empresa (quando existe) e ação "Liberar ativações" (permissão `terminais.ativar`, auditada: grava `empresas.ativacoes_liberadas_em` e as falhas anteriores deixam de contar); (3) **global da plataforma**: mais de 500 falhas em 10 min somando todas as empresas → toda resposta de falha passa a ter atraso fixo de 3 s e a plataforma recebe alerta. A resposta de código errado é genérica: `CODIGO_INVALIDO` para todo código que não esteja `pendente`, exceto a repetição da mesma ativação (mesmo `requisicao_ativacao_id` e `id_hardware`, 3.4), que recebe `CODIGO_USADO` quando já fora da janela de repetição |
+| Força bruta | Três limites, todos contados em `tentativas_ativacao`: (1) **por IP**: 5 falhas em 10 min → `IP_BLOQUEADO` por 30 min; (2) **por `codigo_empresa`** (contado pelo valor informado, exista ou não a empresa, para a resposta não revelar existência): 20 falhas em 1 h → `ATIVACAO_BLOQUEADA` para aquele código por 1 h, alerta `ATIVACAO_FORCA_BRUTA` no ERP da empresa (quando existe) e ação "Liberar ativações" (permissão `terminais.ativar`, auditada: grava `empresas.ativacoes_liberadas_em` e as falhas anteriores deixam de contar); (3) **global da plataforma**: mais de 500 falhas em 10 min somando todas as empresas (toda falha, inclusive a linha `ip_bloqueado`, que é uma por IP e janela do bloqueio, 3.3) → toda resposta de falha passa a ter atraso fixo de 3 s e a plataforma recebe alerta. A resposta de código errado é genérica: `CODIGO_INVALIDO` para todo código que não esteja `pendente`, exceto a repetição da mesma ativação (mesmo `requisicao_ativacao_id`, `id_hardware` e chaves públicas, 3.4), que recebe `CODIGO_USADO` quando já fora da janela de repetição ou com o token entregue já usado |
 
 ### 3.2 `POST /sync/ativar`
 
@@ -339,15 +339,23 @@ Resposta `201`:
 |---|---|---|
 | 1 | IP não bloqueado; `codigo_empresa` informado sem bloqueio de ativação; atraso global aplicado se o limite da plataforma estourou (3.1) | 429 `IP_BLOQUEADO` / 429 `ATIVACAO_BLOQUEADA` |
 | 2 | `empresas.codigo` existe e `status = 'ativa'` | 422 `CODIGO_INVALIDO` (genérico, grava `motivo_falha = 'empresa_inativa'`) |
-| 3 | `ativacoes_pdv` com `codigo_hash` e `status = 'pendente'` existe (`select … for update`). Código `usado` cuja ativação tem o mesmo `requisicao_ativacao_id` e `id_hardware` → repetição (3.4) | 422 `CODIGO_INVALIDO` para todo código inexistente, `usado`, `cancelado` ou `expirado` por status (grava `motivo_falha` real em `tentativas_ativacao`); `CODIGO_USADO` só para a repetição legítima fora da janela de 15 min |
+| 3 | `ativacoes_pdv` com `codigo_hash` e `status = 'pendente'` existe (`select … for update`). Código `usado` cuja ativação tem o mesmo `requisicao_ativacao_id`, o mesmo `id_hardware` e as mesmas chaves públicas (do terminal e de backup) → repetição (3.4) | 422 `CODIGO_INVALIDO` para todo código inexistente, `usado`, `cancelado` ou `expirado` por status (grava `motivo_falha` real em `tentativas_ativacao`); `CODIGO_USADO` só para a repetição da mesma requisição fora da janela de 15 min ou depois que o token entregue já foi usado |
 | 4 | `expira_em > now()` | 422 `CODIGO_EXPIRADO` |
-| 5 | `pdv.usa_pdv` da empresa/loja e `lojas.ativa`, `lojas.usa_pdv`, `lojas.tipo = 'ponto_venda'` | 403 `PDV_DESABILITADO` / `LOJA_INATIVA` |
+| 5 | `pdv.usa_pdv` da empresa/loja e `lojas.ativa`, `lojas.usa_pdv`, `lojas.tipo = 'ponto_venda'`; o caixa do código continua da loja, não excluído, `ativo` e não é o caixa 0 (loja e caixa conferidos de novo na repetição, antes da troca do segredo, e sob a trava do caixa na etapa da empresa, 3.4) | 403 `PDV_DESABILITADO` / `LOJA_INATIVA` (o código continua `pendente`); caixa excluído ou inativo com o código ainda `pendente` → 422 `CODIGO_INVALIDO` (mensagem com a causa, `motivo_falha` nulo: quem chega aqui conhece o código). O código que o ERP já cancelou cai no item 3 |
 | 6 | Limite do plano (contando este) | 422 `LIMITE_PLANO` |
 | 7 | Caixa sem terminal `provisionando`/`ativo`, ou ativação com `substitui_terminal_id` igual ao terminal ativo do caixa | 422 `CAIXA_OCUPADO` |
 | 8 | `versao_app` ≥ versão mínima publicada para a plataforma | 426 `PROTOCOLO_NAO_SUPORTADO` (com link do instalador) |
 
+Excluir ou inativar o caixa no ERP (ou excluir a loja) cancela os códigos pendentes dele (`ativacoes_pdv.status =
+'cancelado'`, com `auditoria` `cancelar` de cada um); o código também não é gerado para caixa inativo. Inativar a loja
+não cancela: o resgate responde `LOJA_INATIVA` e o código volta a valer quando a loja é reativada. O código que estava
+`usado` por uma ativação em andamento quando o caixa saiu fica `cancelado` na compensação (3.4).
+
 Toda tentativa grava `tentativas_ativacao` (sucesso ou `motivo_falha`, com `codigo_empresa` informado e IP), que alimenta os três
-limites de 3.1. `CODIGO_EXPIRADO` (status `pendente` com `expira_em` vencido) continua específico: um código vencido é
+limites de 3.1; o pedido de um IP já bloqueado grava no máximo uma linha `ip_bloqueado` por IP na janela do bloqueio
+(30 min), que não conta nos limites por IP e por código e conta como uma falha no global (que soma toda falha): as
+repetições do IP já bloqueado deixaram de somar no global, que conta uma por IP e janela. As linhas ficam 30 dias (MD 2.6; a manutenção dos terminais apaga as mais
+antigas; README da API › decisão 213). `CODIGO_EXPIRADO` (status `pendente` com `expira_em` vencido) continua específico: um código vencido é
 inútil para o atacante e a mensagem ajuda o usuário legítimo.
 
 ### 3.4 Transação da ativação na nuvem
@@ -369,7 +377,7 @@ sequenceDiagram
   A->>C: COMMIT
   A->>E: BEGIN<br/>INSERT terminais (mesmo id) ON CONFLICT (id) DO NOTHING<br/>UPDATE caixas SET terminal_anterior_id = terminal_id, terminal_id = novo<br/>  WHERE id = caixa AND terminal_id IS DISTINCT FROM novo<br/>ajusta numeracoes (13.3) só se ainda não ajustadas para este terminal<br/>auditoria 'terminal_ativado' (chave de idempotência = terminal_id), COMMIT
   alt falha controlada no banco da empresa
-    A->>C: compensação: terminais_pdv.status 'revogado' (motivo 'falha_ativacao'),<br/>se substituição: antigo volta a 'ativo' (sem carência nem substituido_por) se ainda apontar para o novo,<br/>ativacoes_pdv volta a 'pendente' (se não expirou)
+    A->>C: compensação: terminais_pdv.status 'revogado' (motivo 'falha_ativacao'),<br/>se substituição: antigo volta a 'ativo' (sem carência nem substituido_por) se ainda apontar para o novo,<br/>ativacoes_pdv volta a 'pendente' (se não expirou),<br/>ou 'cancelado' se o caixa foi excluído/inativado (ou a loja excluída)
     A-->>P: 503 MANUTENCAO (tentar de novo)
   else sucesso
     A->>C: UPDATE terminais_pdv SET status 'ativo' WHERE id = novo AND status = 'provisionando', COMMIT
@@ -383,21 +391,34 @@ sequenceDiagram
 |---|---|
 | Ocupação do caixa | `uq_terminais_pdv_caixa_ativo` passa a valer para `status in ('provisionando','ativo')`: um terminal em provisionamento já ocupa o caixa. O 1º commit trava por caixa (`pg_advisory_xact_lock`) antes de ler os ocupantes: de duas ativações simultâneas do mesmo caixa, a segunda recebe `422 CAIXA_OCUPADO` |
 | Token de terminal `provisionando` | Qualquer chamada `/sync/*` → `503 MANUTENCAO` (`Retry-After: 30`). Na prática o PDV só recebe o token depois do `ativo`, mas a regra protege contra a repetição concorrente |
-| Etapa da empresa idempotente | `insert … on conflict (id) do nothing` em `terminais`; `update caixas` condicional (só troca `terminal_id` se ainda não for o novo, e só então grava `terminal_anterior_id`); o ajuste de `numeracoes` é calculado uma vez e gravado em `auditoria` `terminal_ativado` — a repetição reusa os valores gravados em vez de recalcular |
+| Etapa da empresa idempotente | `insert … on conflict (id) do nothing` em `terminais`; `update caixas` condicional (só troca `terminal_id` se ainda não for o novo, e só então grava `terminal_anterior_id`); o ajuste de `numeracoes` é calculado uma vez e gravado em `auditoria` `terminal_ativado` — a repetição reusa os valores gravados em vez de recalcular (só a linha da própria etapa, sem `evento_id`: o `terminal_ativado` que o PDV envia no lote de auditoria não conta) |
 | API caiu entre os commits | `terminais_pdv` fica `provisionando`. A repetição da ativação (abaixo) ou o reconciliador concluem |
 | Substituição em andamento | Entre o 1º commit (antigo `desativando`, `substituido_por_terminal_id` = novo) e a etapa da empresa do novo, o antigo continua sendo o terminal do caixa: heartbeat, `GET /sync/estado` e pull o tratam como `ativo` (sem comando `revogar`, sem confirmar desativação, `status_terminal: "ativo"`), e "Revogar – aceitar pendências" no ERP é recusado (422). A compensação devolve o antigo a `ativo` e cancela os `revogar` pendentes/entregues dele. Motivo: o PDV só avança o estado local; um `desativando` entregue na janela o deixaria preso se a ativação do novo fosse compensada |
 | 3º commit sem efeito | Se o `update … status = 'ativo'` não alterar a linha (a manutenção compensou ou o ERP revogou enquanto a etapa rodava), a API relê: já `ativo` → `201`; senão `503 MANUTENCAO` sem token (o código compensado voltou a `pendente` e a nova tentativa do PDV ativa) |
 | Reconciliador | Tarefa periódica (`tarefas` da plataforma, a cada 5 min) procura `terminais_pdv.status = 'provisionando'` com `ativado_em` há mais de 20 min (a janela de repetição de 15 min mais a margem da etapa da empresa; as duas medidas pelo relógio do banco): tenta a etapa da empresa (idempotente) e, com sucesso, passa a `ativo`; com falha permanente (empresa cancelada, caixa ocupado por outro terminal), compensa como acima. O PDV que não recebeu a resposta repete a ativação e recebe o resultado (`201`) ou `CODIGO_INVALIDO` (compensado e código vencido) |
 
 **Resposta perdida ou API caída** (rede caiu ou processo morreu depois do primeiro commit): o assistente repete com o
-mesmo `requisicao_ativacao_id`. A API encontra `ativacoes_pdv` `usado` cujo `terminal_id` tem o mesmo `id_hardware` e
-foi ativado há menos de 15 min com esse `requisicao_ativacao_id` (guardado em `auditoria.depois` da ativação) e:
+mesmo `requisicao_ativacao_id` **e as mesmas chaves públicas** (o PDV guarda o par de chaves da tentativa em memória e
+o reusa em toda repetição). A repetição só recupera a resposta para a mesma requisição da mesma máquina: a API encontra
+`ativacoes_pdv` `usado` cujo `terminal_id` tem o mesmo `id_hardware`, foi ativado há menos de 15 min com esse
+`requisicao_ativacao_id` (guardado em `auditoria_plataforma.depois` de `terminal_ativacao_iniciada`, junto do resumo
+SHA-256 de `chave_backup_publica`) e tem a mesma `chave_publica_terminal` (algoritmo e bytes de
+`terminais_pdv.chave_publica_terminal`) e a mesma `chave_backup_publica`; e o token já entregue **ainda não foi usado**
+(`token_atual_usado_em` nulo e sem renovação). Então:
 
 - terminal `provisionando` → **reexecuta a etapa da empresa** (idempotente), passa a `ativo`, gera novo segredo
   (substitui `token_hash`) e devolve a resposta completa;
 - terminal `ativo` → gera **novo segredo** (substitui `token_hash`) e devolve a mesma resposta com o token novo.
 
-Fora dessas condições → `CODIGO_USADO` (repetição legítima tardia) ou `CODIGO_INVALIDO` (3.3).
+A troca do segredo é condicional (o mesmo `token_hash` lido, ainda sem uso) e grava `auditoria_plataforma`
+`terminal_ativacao_repetida` (emissão anterior e nova, `requisicao_ativacao_id`, `id_hardware`, IP) na mesma transação:
+toda reemissão fica registrada. Ids iguais com outra chave → `CODIGO_INVALIDO` (3.3); a mesma requisição fora da janela
+ou com o token entregue já usado → `CODIGO_USADO` (a resposta não se perdeu: para outra máquina ou nova instalação,
+"Substituir terminal" no ERP). A repetição confere loja e caixa (3.3 item 5) **antes** da troca do segredo: a recusa
+não troca o token entregue, não grava reemissão e não compensa (se a etapa da empresa já tinha commitado, a
+manutenção conclui o `provisionando`; senão, compensa). A etapa da empresa reconhece a etapa já gravada
+(`terminal_ativado`) antes de conferir o ciclo de vida: a ativação que já aconteceu no banco da empresa nunca é
+compensada no controle por uma inativação posterior.
 
 ### 3.5 Estado local criado na ativação
 
@@ -589,14 +610,24 @@ Por isso, além do algoritmo:
    demais clientes não têm hash no PDV.
 5. Pasta de dados com ACL restrita (3.6); backups cifrados (PDV 32.5); banco local cifrado (modelo 4).
 6. Ação no ERP **"Terminal perdido/roubado"** = revogar imediatamente + invalidar PINs (`senha_pdv_hash = null`) de
-   todos os usuários com acesso à loja até redefinição + invalidar as senhas de cliente de crediário da loja
-   (`pessoas.senha_hash = null` das pessoas com crediário que desceram para aquele terminal, com aviso para
+   quem acessa ou já acessou a loja e de quem é ou já foi Master até redefinição + invalidar as senhas de cliente de
+   crediário da loja (`pessoas.senha_hash = null` das pessoas que já foram relevantes para a loja, com aviso para
    redefinição no próximo atendimento). Como a senha do ERP não desce, ela não precisa ser trocada. A ação vale
    também para um terminal **já revogado** por outro motivo (o furto descoberto depois da revogação imediata, da
    carência vencida ou da desativação confirmada, porque o banco local fica na máquina): o motivo passa a
-   `perdido_roubado` e só a anulação acontece. "Desceram" = a mesma condição da projeção do fluxo `pessoas` (item 4)
-   na loja do terminal; a revogação que só ficou no controle é completada pela manutenção ou pela etapa da empresa
-   da ativação do próximo terminal do caixa, com a mesma anulação e auditoria.
+   `perdido_roubado` e só a anulação acontece. A anulação é pelo que o computador **pode guardar**, não pelo que
+   desceria hoje: o terminal revogado não puxa mais nada, o `pdv.db` fica com os hashes do último pull (inclusive os
+   de quem saiu da loja, deixou de ser Master ou teve o crediário bloqueado depois dele) e a máquina pode ter backups
+   de ativações anteriores do caixa. Por isso são anulados o **PIN de quem o fluxo `acesso` pode ter mandado à loja**
+   (o hash só desce para o Master e para quem tem acesso à loja: os Masters de hoje, quem tem ou teve vínculo em
+   `usuarios_lojas` com a loja e quem a auditoria do servidor mostra como Master em algum momento, inclusive os
+   excluídos) e a **senha de cliente de toda pessoa que já foi relevante para a loja** (vínculo em
+   `pessoas_relevancia_loja` com a loja ou com todas, vivo ou excluído), sem a condição de hoje do item 4; quem só
+   teve acesso a outras lojas e quem nunca foi da loja mantêm a credencial. O ERP avisa no diálogo quem recadastra o
+   PIN. O que a função considera já feito vem só das auditorias `terminal_revogado` gravadas pelo servidor (sem
+   `evento_id`; o push recusa essa ação no lote de auditoria do terminal, 9.22). A revogação que só ficou no controle
+   é completada pela manutenção ou pela etapa da empresa da ativação do próximo terminal do caixa, com a mesma
+   anulação e auditoria.
 7. Defasagem: PIN trocado/usuário desativado no ERP só vale no PDV depois do pull do fluxo `acesso` (PDV 7.3).
    O SSE prioriza esse fluxo (18.1) e `pdv.dias_max_offline` limita o pior caso.
 
@@ -680,7 +711,7 @@ Verificações do PDV (ao receber):
 | Situação | Ação |
 |---|---|
 | `sequencias_locais.evento` < `sequencia_terminal.ultima_recebida` | **Regressão** (banco restaurado/antigo): bloqueia vendas e executa a recuperação 22.1 (reidratação pelo `GET /sync/recuperar` e salto; Fase 1C, C17) |
-| `sequencias_locais.evento` < `informado_pelo_terminal.ultima_sequencia_gerada`, ou `venda`/`nfce:<s>:<a>`/`vale` locais < `numeracoes` (que já incluem o informado por heartbeat) | **Perda provável**: o terminal gerou eventos/números que não estão nem no banco local nem na nuvem. Bloqueia a numeração normal e aplica 22.1 (salto obrigatório); a nuvem abre "Perdas prováveis" (22.4) |
+| `sequencias_locais.evento` < `informado_pelo_terminal.ultima_sequencia_gerada`, ou `venda`/`nfce:<s>:<a>`/`vale` locais < `numeracoes` (que já incluem o informado por heartbeat; o de venda e vale só até `numeracoes.ultimo_numero` + a margem `NUMERACAO_MARGEM_CAIXA` da 13.1, como na ativação, 13.3; README da API › decisão 212) | **Perda provável**: o terminal gerou eventos/números que não estão nem no banco local nem na nuvem. Bloqueia a numeração normal e aplica 22.1 (salto obrigatório); a nuvem abre "Perdas prováveis" (22.4) |
 | `identidade_terminal.restaurado_em` preenchido e ainda não resolvido | Aplica a regra de restauração 22.1 (salto obrigatório, salvo prova de que nada se perdeu) |
 | `sessao_caixa_aberta` na nuvem que não existe localmente (e não há `caixa.fechado` local pendente) | Banco local perdeu dados: recuperação 22.1 (a sessão volta pelos eventos) |
 | Sessão aberta local que a nuvem não conhece | Normal se o `caixa.aberto` ainda está no outbox; senão alerta no status de sync |
@@ -1158,8 +1189,8 @@ stateDiagram-v2
 | `relogio_regrediu` | booleano | 12.3 | `true` quando o `ocorrido_em` calculado ficou mais de 2 min antes do `ocorrido_em` do evento anterior e o PDV **não** aplicou a monotonicidade (omitido = `false`) |
 | `usuario_id` | UUID | operador | Quem executou (o supervisor que liberou fica no payload: `autorizado_por_id`) |
 | `contexto` | objeto | estado local | `{loja_id, caixa_id, numero_caixa, estoque_id, sessao_caixa_id, versao_app, versao_schema_local}` — `estoque_id` é o `lojas.estoque_id` vigente no PDV no momento do fato (usado para baixar estoque, 10.2) |
-| `payload` | objeto | `eventos_saida.payload` | Documento completo (seção 9) |
-| `payload_sha256` | hex 64 | `eventos_saida.payload_sha256` | SHA-256 do JCS de `payload` |
+| `payload` | objeto | `eventos_saida.payload` | Documento completo (seção 9). Aninha no máximo 32 níveis de objeto/lista (`PROFUNDIDADE_MAXIMA_PAYLOAD`; o maior do PDV tem uns 5): acima disso o envelope é inválido (400 `REQUISICAO_INVALIDA`, como qualquer envelope fora do contrato), conferido sem recursão antes do JCS e da gravação em `jsonb` |
+| `payload_sha256` | hex 64 | `eventos_saida.payload_sha256` | SHA-256 do JCS de `payload`. O payload que o JCS não serializa (um número que o JSON lê como `Infinity`) não tem hash: o evento é rejeitado com `PAYLOAD_INVALIDO` (`resultado.detalhes.hash_recalculado` nulo) e o lote segue |
 
 Gravados pela nuvem em `eventos_recebidos`: `criado_em` (= **recebido_em**), `loja_id` (do token), `status`,
 `tentativas`, `versao_nuvem`, `versao_nuvem_fim`, `resultado`, `aplicado_em`, `resolucao_entregue_em`, além das
@@ -1579,6 +1610,10 @@ sequenceDiagram
   `REFERENCIA_INEXISTENTE` e `DEPENDENCIA_DESCARTADA` —, com a auditoria `evento_reprocessado` (`modo = 'lacuna'`); o
   resultado chega ao PDV pelo heartbeat. Os outros códigos (o `PAYLOAD_INVALIDO` do hash divergente, por exemplo)
   ficam para a decisão na fila do ERP (11.4). Em tarefa para a resposta do push não esperar centenas de reaplicações.
+  Ao rodar, a tarefa repete a conferência de quem liberou (ativo, `pdv.config.fiscal` e a loja do terminal) com o
+  acesso do momento: faltando algo, falha sem aplicar nada e os eventos ficam na fila do ERP. A seleção vale para o
+  momento da execução (sem o limite pela hora da tarefa do lote de 11.4): o retido que chega num push depois de a
+  tarefa nascer, preso a um `erro` da lacuna, é reaplicado depois do bloqueador (README da API › decisão 213).
 - **No PDV**: no `fora_de_ordem`, as sequências de `proxima_sequencia_esperada` até a anterior à da frente que o caixa
   ainda tem (`confirmado`/`rejeitado` com payload) voltam a `pendente` e sobem na hora; o que não existe mais é a
   lacuna, de a esperada até a anterior à primeira que o caixa tem. A lacuna a declarar bloqueia as vendas **novas**
@@ -3122,6 +3157,12 @@ Agregado `auditoria` (id = id do lote). Enviado a cada 5 min ou 200 registros; n
 
 A nuvem grava `auditoria` (`origem = 'pdv'`, `terminal_id`, `loja_id`, `evento_id`, mesmo `id` do registro local) e
 `historico_logins` (`origem = 'pdv'`). Registro com `id` já existente → ignorado (idempotente por `pk_auditoria`).
+Ação fora de `ACOES_AUDITORIA`, ou uma das que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da
+revogação `terminal_revogado`, `token_anterior_reutilizado`, as decisões da fila `evento_descartado` e
+`evento_reprocessado`, `lacuna_substituida` e as alterações feitas só no ERP), recusa o evento (`PAYLOAD_INVALIDO`,
+com as ações em `detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria
+como estado do servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do
+10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal.
 
 ### 9.23 `terminal.configuracao_alterada`
 
@@ -3248,7 +3289,7 @@ Agregado `movimento_vasilhame`; `agregado_id` = `id` do movimento. Devolução *
 |---|---|
 | `destino` | `entrada` (Fase 1: só a entrada dos vazios no estoque `vasilhame_vazio` da loja, `VASILHAME_DEVOLVIDO` com `documento_tipo = 'vasilhame'`; `pessoa_id` opcional, `vale_id` nulo; decisão técnica T2 da Fase 1C, confirmada pelo dono), `baixa_comodato` (Fase 3: cliente identificado com saldo em `saldos_vasilhame_pessoas`) ou `vale` (Fase 3: crédito pelo valor do casco como vale, 16.11: `vales` + `movimentos_vale` `emissao` no mesmo payload, `vale_id` preenchido). Na Fase 1C o handler recusa `baixa_comodato` e `vale` (erro permanente). O desconto na venda atual não usa este evento: vai como `devolvidos` no `vasilhames` da venda, com o valor no `desconto_total` de origem `cliente` (9.7; C11c) |
 | Baixa de comodato maior que o saldo da nuvem | Aplica até zerar, alerta `VASILHAME_COMODATO_DIVERGENTE`; o excedente entra como devolução sem comodato |
-| Estoque (destino `entrada`, Fase 1C) | `VASILHAME_DEVOLVIDO` de `quantidade` no `vasilhame_vazio` do `contexto.estoque_id` (se ainda válido; senão o da loja, com `ESTOQUE_CONTEXTO_INVALIDO`, como a venda, 10.2), ao custo médio da linha ou ao de referência do casco, `data_movimento = ocorrido_em`; `documento_id = documento_item_id` = o `id` do movimento (o documento tem uma linha só; decisão técnica T26 da Fase 1C). Casco que não controla estoque grava só o movimento; entrada anterior a um "Definir" ganha a compensação (15.3). `produto_vasilhame_id` de produto que não é casco (`tipo` diferente de `vasilhame`, modelo 3.12.6) → `PAYLOAD_INVALIDO`, como no bloco `vasilhames` do `venda.finalizada`. Reenvio igual → `ja_existia`; outro conteúdo com o mesmo `id` → `AGREGADO_DIVERGENTE` |
+| Estoque (destino `entrada`, Fase 1C) | `VASILHAME_DEVOLVIDO` de `quantidade` no `vasilhame_vazio` do `contexto.estoque_id` (se ainda válido e da loja do terminal; senão o da loja, com `ESTOQUE_CONTEXTO_INVALIDO`, como a venda, 10.2), ao custo médio da linha ou ao de referência do casco, `data_movimento = ocorrido_em`; `documento_id = documento_item_id` = o `id` do movimento (o documento tem uma linha só; decisão técnica T26 da Fase 1C). Casco que não controla estoque grava só o movimento; entrada anterior a um "Definir" ganha a compensação (15.3). `produto_vasilhame_id` de produto que não é casco (`tipo` diferente de `vasilhame`, modelo 3.12.6) → `PAYLOAD_INVALIDO`, como no bloco `vasilhames` do `venda.finalizada`. Reenvio igual → `ja_existia`; outro conteúdo com o mesmo `id` → `AGREGADO_DIVERGENTE` |
 
 ---
 
@@ -3314,7 +3355,7 @@ Regras do estoque:
 
 | Item | Regra |
 |---|---|
-| Estoque | `contexto.estoque_id` do envelope se ainda for um estoque válido da empresa; senão `lojas.estoque_id` atual (alerta `ESTOQUE_CONTEXTO_INVALIDO`) |
+| Estoque | `contexto.estoque_id` do envelope se ainda for um estoque válido (ativo e vivo) **da loja do terminal**: o `lojas.estoque_id` atual ou um que a loja já teve e que hoje não é o estoque de outra loja viva (a troca, só pelo cadastro da loja no ERP, fica na `auditoria` da loja com o vínculo de antes e o de depois; vale só a linha do servidor, sem `evento_id`). Senão — excluído, inativo, de outra loja (mesmo um que esta já teve e o cadastro passou para outra), um depósito, um que a loja nunca usou — `lojas.estoque_id` atual (alerta `ESTOQUE_CONTEXTO_INVALIDO`; README da API › decisão 212) |
 | Tipo de estoque | `tipos_estoque` com `padrao = true` (Disponível) |
 | Quem baixa | Item não cancelado com `produtos.controla_estoque = true` (valor **atual** da nuvem) e tipo diferente de `kit`, `produzido` e `servico`; `componentes_estoque` quando houver (ficha técnica de produto produzido, como `BAIXA_INSUMO` no lugar do item; o legado `origem = 'kit'` também; os componentes do combo já são itens); insumo que não controla estoque não baixa; complemento com `produtos_complementos.baixa_estoque` (`documento_item_id` = id do `itens_venda_complementos`; a tabela entra com os complementos, depois da 1C). Casco cobrado (`vasilhame_item_origem_id`): `VASILHAME_VENDIDO` no tipo padrão; `vasilhames[].devolvidos`: `VASILHAME_DEVOLVIDO` no `vasilhame_vazio`, ao custo médio da linha; `emprestados > 0` (comodato) → `PAYLOAD_INVALIDO` até a Fase 3 |
 | Quantidade | `−itens_venda.quantidade` (unidade base); `unidade_documento`/`fator` do `codigo_barras_id` lido |
@@ -3376,7 +3417,7 @@ regra acima entra com o vendedor (Fase 3). O financeiro desta seção é da Fase
 | TEF/PIX desfeitos | `tef_cancelado` → a transação de origem (`pagamentos_venda.tef_transacao_id`) passa a `cancelada`; `pix_devolvido_api`/`pix_devolucao_manual` → a cobrança de origem (`pix_cobranca_id`) passa a `devolvida`, com `valor_devolvido` e `devolvida_em`; `devolvido_em_dinheiro` não mexe nelas (O22) |
 | TEF/PIX pendentes | `tef_estorno_pendente`/`pix_devolucao_pendente` → alerta `ESTORNO_PENDENTE` (aviso, um por venda; nome da decisão técnica T25 da Fase 1C; ERP mostra pendência, PDV 13.3) |
 | Comissão | Relatórios ignoram vendas `cancelada`; nada é reescrito |
-| Corrida com o ERP | Venda já cancelada no ERP (`cancelamento_origem = 'erp'`) → o handler **não repete** os estornos lógicos que o ERP já fez (estoque, financeiro, vale, `saldos_credito_pessoas`), mas **aplica do payload do PDV tudo o que é físico**, porque aconteceu no mundo real: `movimentos_caixa` `estorno_venda` (dinheiro que saiu da gaveta), `transacoes_tef` de cancelamento, `pagamentos_venda.estorno` (informativo, devolução PIX incluída) e `documentos_fiscais_eventos` (cancelamento 110111 homologado), todos com idempotência por `id`. As colunas de cancelamento da venda continuam as do ERP; o cancelamento do PDV fica em `auditoria`. Gera `alertas` `CANCELAMENTO_DUPLO` (aviso) com os dois registros (quem, quando, motivo, e o que o PDV devolveu fisicamente), para o financeiro conferir se houve devolução em duplicidade ao cliente. Um segundo `venda.cancelada` do caixa para a mesma venda é conferido com o registro da auditoria, como no caminho do caixa: o mesmo cancelamento (colunas, estornos e os mesmos `estorno_venda`) → `ja_existia`; outro → `AGREGADO_DIVERGENTE` (outro `estorno_venda` seria uma saída de gaveta em dobro, que o alerta deduplicado não acusaria) |
+| Corrida com o ERP | Venda já cancelada no ERP (`cancelamento_origem = 'erp'`) → o handler **não repete** os estornos lógicos que o ERP já fez (estoque, financeiro, vale, `saldos_credito_pessoas`), mas **aplica do payload do PDV tudo o que é físico**, porque aconteceu no mundo real: `movimentos_caixa` `estorno_venda` (dinheiro que saiu da gaveta), `transacoes_tef` de cancelamento, `pagamentos_venda.estorno` (informativo, devolução PIX incluída) e `documentos_fiscais_eventos` (cancelamento 110111 homologado), todos com idempotência por `id`. As colunas de cancelamento da venda continuam as do ERP; o cancelamento do PDV fica em `auditoria`. Gera `alertas` `CANCELAMENTO_DUPLO` (aviso) com os dois registros (quem, quando, motivo, e o que o PDV devolveu fisicamente), para o financeiro conferir se houve devolução em duplicidade ao cliente. Um segundo `venda.cancelada` do caixa para a mesma venda é conferido com o registro da auditoria que o handler gravou (preso ao evento `venda.cancelada`; um `cancelar` vindo no `auditoria.registros` não conta, 9.22), como no caminho do caixa: o mesmo cancelamento (colunas, estornos e os mesmos `estorno_venda`) → `ja_existia`; outro → `AGREGADO_DIVERGENTE` (outro `estorno_venda` seria uma saída de gaveta em dobro, que o alerta deduplicado não acusaria) |
 | Prevenção no ERP | Antes de cancelar uma venda de PDV, o ERP consulta `terminais`: se o terminal informou no último heartbeat a venda em `vendas_cancelamento_pendente` (21.1), o ERP **bloqueia** ("o caixa já cancelou esta venda; aguarde a sincronização"); se o terminal está offline ou com `eventos_pendentes > 0`, o ERP **avisa** ("o caixa está offline com N eventos pendentes; um cancelamento feito lá ainda pode chegar") e exige confirmação |
 
 ### 10.5 Fiscal
@@ -3419,6 +3460,9 @@ regra acima entra com o vendedor (Fase 3). O financeiro desta seção é da Fase
 | `AGREGADO_DIVERGENTE` | permanente | O agregado já existe com conteúdo diferente (ex.: fechamento diferente para a mesma sessão) | Comparar os dois documentos; **Descartar** o errado |
 | `EVENTO_DIVERGENTE` | permanente | Mesmo `evento_id`, `payload_sha256` diferente | Suporte (corrupção) |
 | `NUMERO_VENDA_DUPLICADO` | permanente | `uq_vendas_numero` com outra venda (13.1) | Ação **Aplicar com novo número**: a nuvem grava a venda com `numero` = próximo livre da **faixa de renumeração** do caixa (a partir de 9.000.001, T27 da 1C: o próximo logo acima do último usado é a próxima venda do terminal ativo e colidiria de novo) e guarda o original em `auditoria`/`observacao` e no `resultado` |
+| `NUMERO_VENDA_IMPLAUSIVEL` | permanente | `vendas.numero` da venda (ou da cancelada em andamento) acima de `numeracoes.ultimo_numero` do caixa + a margem `NUMERACAO_MARGEM_CAIXA` (padrão 100.000; `resultado.detalhes`: `numero`, `ultimo_numero_conhecido`, `margem`); `numeracoes` não muda (13.1; README da API › decisão 212) | **Aplicar com novo número** em cada venda da fila: grava na faixa de renumeração, como no duplicado, sem avançar a numeração do caixa. Reprocessar (um ou o lote) não resolve, e as vendas seguintes do mesmo terminal também caem neste código, porque o PDV continua contando a partir do número alto: para normalizar o caixa, **substituir o terminal** (a ativação descarta o contador acima da margem, 13.3, e o PDV recomeça da base da nuvem) |
+| `RENUMERACAO_SEM_NUMERO` | permanente | "Aplicar com novo número" sem número que caiba: a faixa de renumeração do caixa passou do limite do número da venda (`resultado.detalhes`: `proximo_numero`, `numero_maximo`) ou o número exibido renumerado passaria de 20 caracteres (`proximo_numero`, `numero_exibicao`); nada é gravado (README da API › decisão 212) | Suporte; não aceita "Aplicar com novo número" de novo (falharia sempre). **Reprocessar** refaz a conferência original; **Descartar** com justificativa se a venda não puder ser gravada |
+| `LIMITE_ESTOQUE` | permanente | O lançamento do evento deixaria o saldo de uma linha (ou de um lote) acima de 99.999.999.999,999 em módulo, ou o custo do movimento acima da coluna (README da API › decisão 210). O lançamento que aproxima de zero uma linha já acima do limite passa (a isenção é só do saldo: o custo tem de caber) | Conferir a linha (`resultado.detalhes`: `estoque_id`, `produto_id`, `variacao_id`, `tipo_estoque_id` e, no lote, `lote_id`), corrigir no ERP pelo "Definir" (a linha enorme com custo alto, cuja diferença × o custo não cabe, em partes: Entradas ou Saídas de acerto menores antes do "Definir") e **Reprocessar** |
 | `NUMERO_FISCAL_DUPLICADO` | permanente | Mesmo número/série/ambiente com outra chave | Contador + suporte (risco fiscal) |
 | `CHAVE_INVALIDA`, `XML_DIVERGENTE` | permanente | Chave/XML não conferem | Suporte |
 | `FAIXA_COM_NUMERO_AUTORIZADO` | permanente | Inutilização de número autorizado | Contador |
@@ -3444,6 +3488,7 @@ inteira (CPF, nome, telefone…), e `resultado` continua na linha depois que o `
 | `23505` em outra unicidade (chave primária ou chave de negócio da camada 2 de 8.4) | `AGREGADO_DIVERGENTE`. O mesmo conteúdo já gravado não chega aqui: o handler confere antes e responde `ja_existia` |
 | `23503` (chave estrangeira) | `REFERENCIA_INEXISTENTE`. O `cliente_id` passa por `pessoas_aliases` antes |
 | `23514` (CHECK, inclusive partição de `auditoria` inexistente para a data) | `PAYLOAD_INVALIDO` |
+| Classe `22` (valor que não cabe na coluna: `22003` numérico acima da precisão, `22001` texto longo, `22P02`, `22008`…) | `PAYLOAD_INVALIDO`: a rejeição daquele evento, sem as duas tentativas que param o lote |
 | `40P01`, `40001` | `CONCORRENCIA_BANCO` (transitório) |
 | Classe `08`, `57P01`–`57P03`; sem SQLSTATE, a conexão perdida no driver (`ECONNRESET`, `ECONNREFUSED`, `ETIMEDOUT`, `EPIPE`, "Connection terminated") | `BANCO_INDISPONIVEL` (transitório) |
 | Restrição de `eventos_recebidos` ou `entidades_evento`, ou qualquer outro erro | Exceção não classificada (8.3): corrida ou bug do próprio push |
@@ -3493,7 +3538,7 @@ O resultado volta ao PDV no próximo heartbeat (`eventos_resolvidos`), que tira 
 | Reprocessar | `tentativas + 1`, o envelope da linha (`envelope` + colunas, T1) e a aplicação comum (`aplicarEvento`); o `payload_sha256` não é conferido de novo (o hash divergente é diagnóstico do serializador). Erro de regra ou exceção → `erro` gravado em transação nova (a exceção já vira `ERRO_INTERNO`); transitório (`SCHEMA_DESCONHECIDO`, banco) → 409, nada muda. Aplicado → os retidos dependentes, em ordem (8.5). Auditoria `evento_reprocessado` por evento reaplicado (T9) |
 | Descartar | Justificativa de 15 a 500 caracteres. Confirmação (T28): o número exibido da venda (do payload; na forma A do cancelamento, o da venda gravada) ou, no evento de caixa e no payload ilegível, a **sequência do evento**; confere sem maiúsculas e espaços, e o número da venda também só pelos dígitos do fim. Os retidos dependentes → `erro` `DEPENDENCIA_DESCARTADA`, cada um com o seu `EVENTO_COM_ERRO`. Alerta crítico `EVENTO_DESCARTADO` (`evento_descartado:<evento_id>`); auditoria `evento_descartado` |
 | Aplicar com novo número | Só o `erro` `NUMERO_VENDA_DUPLICADO` de `venda.*` (o `venda.finalizada` e a forma B do `venda.cancelada`). A venda vai para a faixa de renumeração do caixa (T27, 13.1), sob a trava 7300001; `numeracoes` avança com o número do PDV. O `resultado` (`numero_original`, `numero`, `numero_exibicao`…) desce em `eventos_resolvidos`; o PDV guarda a venda com o número dele (o cupom já saiu) |
-| Reprocessar todos com este código | Tarefa em segundo plano (`tarefas`, ERP 3.6), por terminal: os `erro` do código em ordem de sequência, cada um como o Reprocessar; o resultado da tarefa conta aplicados, retidos, erros, os já resolvidos ou tirados do código (`ignorados`), os transitórios do banco que persistiram depois de 3 tentativas (`adiados`, continuam em `erro`) e os dependentes aplicados. O pedido é auditado (`evento_reprocessado`, `modo: 'lote_agendado'`, no histórico do terminal), e a tarefa guarda o nome, o IP, o user agent e a requisição de quem pediu para a auditoria de cada evento |
+| Reprocessar todos com este código | Tarefa em segundo plano (`tarefas`, ERP 3.6), por terminal: os `erro` do código em ordem de sequência, cada um como o Reprocessar; o resultado da tarefa conta aplicados, retidos, erros, os já resolvidos ou tirados do código (`ignorados`), os transitórios do banco que persistiram depois de 3 tentativas (`adiados`, continuam em `erro`) e os dependentes aplicados. O pedido é auditado (`evento_reprocessado`, `modo: 'lote_agendado'`, no histórico do terminal), e a tarefa guarda o nome, o IP, o user agent e a requisição de quem pediu para a auditoria de cada evento. Ao rodar, a tarefa confere de novo quem pediu com o acesso do momento (ativo, `terminais.gerenciar` e a loja atual do terminal) e, faltando algo, falha sem aplicar nada; o lote vale para os `erro` do código recebidos até a criação da tarefa, pela hora gravada da chegada — não é exatamente o conjunto contado no pedido (o evento que já tinha chegado e só caiu no código depois da contagem também entra; a `quantidade` da auditoria do pedido é a contagem daquele momento e o `total` do resultado, o que a tarefa percorreu; README da API › decisão 213) |
 | Alertas na tela | O `EVENTO_DESCARTADO` (um a um) e o `EVENTO_COM_ERRO` (somado por terminal: "Caixa 02: N eventos com erro", com o id e a mensagem do mais recente) aparecem no detalhe e na listagem de terminais, com o terminal tirado de `dados.terminal_id`; o `EVENTO_DESCARTADO` fica até alguém com `terminais.gerenciar` marcar "Ciente" (`POST /api/terminais/:id/alertas/:alertaId/resolver`, auditado como `conferir`). O painel de alertas críticos do Dashboard entra no C14 (O11) |
 
 ### 11.5 O que o PDV mostra
@@ -3638,7 +3683,8 @@ O atraso de entrega `recebido_em − ocorrido_em` é métrica de observabilidade
 | Alocação | `sequencias_locais['venda'] + 1` na mesma transação que cria a venda (primeiro item, PDV 4.3); nunca reaproveitado (venda cancelada mantém o número e sobe como `venda.cancelada`, 9.9 B) |
 | Unicidade na nuvem | `uq_vendas_numero (loja_id, numero_caixa, numero)` |
 | Exibição | `L{lojas.codigo:00}-C{numero_caixa:00}-{numero:000000}` (modelo 3.11.2) |
-| Registro na nuvem | `numeracoes.ultimo_numero = greatest(ultimo_numero, numero)` a cada `venda.*`; o heartbeat também informa `venda_ultimo_numero` |
+| Registro na nuvem | `numeracoes.ultimo_numero = greatest(ultimo_numero, numero)` a cada `venda.*`; o heartbeat também informa `venda_ultimo_numero` (gravado com `greatest` em `terminais`) |
+| Limites | `numero` de 1 a 999.999.999.999 (12 dígitos, o que cabe no número exibido de 20 caracteres; acima, `PAYLOAD_INVALIDO`). A venda (e a cancelada em andamento, 9.9 B) cujo número passa de `numeracoes.ultimo_numero` do caixa + a margem (`NUMERACAO_MARGEM_CAIXA`, padrão 100.000) vai a `erro` `NUMERO_VENDA_IMPLAUSIVEL` sem mexer em `numeracoes`; "Aplicar com novo número" (11.2) grava na faixa de renumeração e a numeração do caixa não avança (README da API › decisão 212) |
 
 **Por que não colide**: só existe **um terminal ativo por caixa** (`uq_terminais_pdv_caixa_ativo`,
 `uq_terminais_caixa_ativo`) e cada caixa tem sua faixa de números independente (o número da loja é composto com o
@@ -3646,8 +3692,8 @@ número do caixa). Os riscos são três, e cada um tem tratamento:
 
 | Risco | Tratamento |
 |---|---|
-| **Novo terminal num caixa que já teve terminal** (substituição, ou "Revogar imediatamente" seguido de código novo comum) com o anterior podendo ter vendas não enviadas | Decidido contra o **último terminal que ocupou o caixa** (`caixas.terminal_anterior_id`, qualquer status), com ou sem `substitui_terminal_id` (13.3). O novo começa em `base + 1`, com `base = greatest(numeracoes.ultimo_numero, terminais.venda_ultimo_numero do anterior)`. Sem a **confirmação de desativação** do anterior (`estado_local = 'desativando_confirmado'`, 3.8), aplica-se **salto de segurança**: `base + 1000` (configurável na plataforma). O ERP mostra "Números 000501–001500 do Caixa 02 reservados ao terminal antigo" e a ativação grava `auditoria` |
-| **Backup restaurado / banco antigo** | Toda restauração aplica salto de +1000 (22.1), salvo prova de que nada se perdeu; o handshake (5) também detecta `sequencias_locais['venda']` < `numeracoes.ultimo_numero` (que já inclui o informado por heartbeat) |
+| **Novo terminal num caixa que já teve terminal** (substituição, ou "Revogar imediatamente" seguido de código novo comum) com o anterior podendo ter vendas não enviadas | Decidido contra o **último terminal que ocupou o caixa** (`caixas.terminal_anterior_id`, qualquer status), com ou sem `substitui_terminal_id` (13.3). O novo começa em `base + 1`, com `base = greatest(numeracoes.ultimo_numero, terminais.venda_ultimo_numero do anterior)` — o informado pelo anterior só até `numeracoes.ultimo_numero` + a margem (13.3). Sem a **confirmação de desativação** do anterior (`estado_local = 'desativando_confirmado'`, 3.8), aplica-se **salto de segurança**: `base + 1000` (configurável na plataforma). O ERP mostra "Números 000501–001500 do Caixa 02 reservados ao terminal antigo" e a ativação grava `auditoria` |
+| **Backup restaurado / banco antigo** | Toda restauração aplica salto de +1000 (22.1), salvo prova de que nada se perdeu; o handshake (5) também detecta `sequencias_locais['venda']` < `numeracoes.ultimo_numero` (que já inclui o informado por heartbeat, dentro da margem da linha "Limites") |
 | **Colisão mesmo assim** (antigo vendeu mais de 1000 vendas offline) | `erro` `NUMERO_VENDA_DUPLICADO` → ação "Aplicar com novo número" (11.2): a venda vai para a faixa de renumeração do caixa (`numero` a partir de 9.000.001, T27 da 1C), que nenhum terminal alcança contando, e fica fora de `numeracoes`. Venda não fiscal: o número é só referência interna; nada se perde |
 
 ### 13.2 Número e série da NFC-e (por caixa)
@@ -3696,7 +3742,7 @@ flowchart TD
 | Regra | Detalhe |
 |---|---|
 | Confirmação explícita | Só conta o heartbeat com `estado_local = 'desativando_confirmado'` (21.1), enviado pelo terminal **depois** de gravar localmente que parou de vender (3.8), trazendo `ultima_sequencia_gerada`, `venda_ultimo_numero`, `nfce_ultimo_numero` (por série/ambiente) e `vale_ultimo_numero`. A nuvem a aceita só se recebeu todos os eventos até `ultima_sequencia_gerada` e grava em `terminais` (`desativacao_confirmada_em` + os números finais) |
-| Base | `base = greatest(numeracoes.ultimo_numero, números finais confirmados, terminais.*_ultimo_numero do último heartbeat)` por tipo |
+| Base | `base = greatest(numeracoes.ultimo_numero, números finais confirmados, terminais.*_ultimo_numero do último heartbeat)` por tipo (venda e vale). O que o terminal anterior informou (heartbeat ou desativação confirmada) só entra até `numeracoes.ultimo_numero` + a margem `NUMERACAO_MARGEM_CAIXA` (padrão 100.000, a mesma da 13.1); acima dela fica de fora da base e vai para a auditoria `terminal_ativado` em `contadores_descartados` (README da API › decisão 212) |
 | Sem confirmação | Série NFC-e nova **obrigatória** e salto de **+1000** em venda e em vale, mesmo que o último heartbeat do antigo parecesse "em dia" |
 | Decisão no ERP | O ERP decide entre "série atual" e "série nova" **ao gerar o código** (com ou sem substituição), mostrando o estado do último terminal do caixa. Sem confirmação, só "série nova" é oferecida |
 | Revalidação na ativação | A API revalida no momento da ativação; se o código foi gerado para "série atual" e a confirmação deixou de valer (ex.: chegou evento do antigo depois dela), a ativação falha com `CAIXA_OCUPADO` e a mensagem "gere novo código com série nova" |
@@ -3707,7 +3753,8 @@ flowchart TD
 `VC` + `lojas.codigo` (2 dígitos) + `numero_caixa` (2) + `sequencias_locais['vale']` (7) + DV Luhn (1) — 12 dígitos
 após `VC`, conforme `ck_vales_codigo (^VC[0-9]{12}$)`. Exemplo: loja 1, caixa 2, sequencial 8 → `VC010200000080`.
 Único sem consultar a nuvem pelo mesmo motivo do número da venda. Um terminal novo no caixa herda
-`numeracoes.vale.ultimo_numero` (ou o `vale_ultimo_numero` confirmado/informado pelo anterior, o maior) e aplica
+`numeracoes.vale.ultimo_numero` (ou o `vale_ultimo_numero` confirmado/informado pelo anterior, o maior, este só até
+`numeracoes` + a margem `NUMERACAO_MARGEM_CAIXA` da 13.3) e aplica
 **salto de +1000** sempre que o último terminal do caixa não confirmou a desativação (13.3), com ou sem substituição;
 o mesmo salto vale depois de qualquer restauração de backup (22.1). Sem isso, um vale emitido offline pelo terminal
 antigo e o primeiro vale do novo teriam o mesmo código (violação de `uq_vales_codigo`). Vales emitidos no ERP usam o
@@ -3837,6 +3884,18 @@ sequenceDiagram
   vale com `pdv.bloqueio_estoque_offline = true` (padrão desligado, PDV 29.1).
 - Documentos do ERP (acerto de saída, transferência) não podem deixar saldo negativo, salvo
   `estoque.permite_negativo_erp` (ERP 13.1.1) — a assimetria é proposital: o ERP pode esperar, o caixa não.
+- **Limites do sistema** (README da API › decisão 210): a tolerância é ao negativo, não a qualquer tamanho. A
+  quantidade de estoque de uma linha do PDV no contrato vai até 9.999.999,999 (item da venda e devolução de cascos;
+  o caixa limita o item a 9.999,999 e a devolução a 9.999); acima, `PAYLOAD_INVALIDO`. A baixa de insumo da ficha
+  (`componentes_estoque`) fica com o tamanho da coluna: o PDV a calcula sem teto (o item × a ficha, que o cadastro
+  aceita até 999.999.999.999, × 1 + a perda), e quem a segura é o motor. O motor de estoque mantém cada linha de
+  saldo e de lote até 99.999.999.999,999 em módulo (uma casa abaixo do `numeric(15,3)`, para o "Definir" e os
+  movimentos seguintes ainda caberem) e o custo do movimento dentro das colunas: o lançamento que passaria disso, de
+  qualquer terminal ou do ERP, é recusado antes de gravar (no push, `LIMITE_ESTOQUE` só naquele evento, 11.2; no ERP,
+  422), e o que aproxima de zero uma linha já acima passa (só o saldo: o custo tem de caber, e a linha enorme com
+  custo alto se acerta em partes antes do "Definir"). O PDV 0.12.0 não muda: as linhas que ele produz ficam abaixo
+  do teto do contrato, a baixa de insumo não tem teto menor que a coluna, e ele trata o código como qualquer
+  rejeição.
 - **Lote da venda** (Fase 2, F2-B6; roadmap D48; README da API › decisão 151): o PDV-1 não informa o lote, e a nuvem
   divide a saída do item de produto com lote de saldo positivo no estoque da loja em um movimento por lote, em FEFO,
   com a sobra sem lote (`estoque.lote_baixa_sem_informar`, padrão `fefo`); o `saldos_lote` atualizado desce no fluxo
@@ -3985,7 +4044,7 @@ desce ao PDV. Só o saldo desce.
 | Usuário desativado/sem loja durante a sessão | Termina a venda atual e força logout (PDV 30.3) | Aceita eventos assinados por ele com `ocorrido_em` anterior ao pull; posteriores (relógio corrigido) → alerta `OPERADOR_INATIVO` |
 | Permissão removida | Vale na próxima verificação após o pull (não interrompe diálogo aberto) | — |
 | Flag de configuração alterada | Aplicada na próxima venda (PDV 30.3) | — |
-| `lojas.estoque_id` alterado | Comando `ressincronizar_fluxo {estoque}`; vendas já feitas sobem com `contexto.estoque_id` antigo | Usa o estoque do contexto (10.2) |
+| `lojas.estoque_id` alterado | Comando `ressincronizar_fluxo {estoque}`; vendas já feitas sobem com `contexto.estoque_id` antigo | Usa o estoque do contexto, que foi da loja (10.2) |
 | Limite de crédito reduzido no ERP | Vale após o pull | Venda feita com o limite antigo é aplicada; alerta se excedeu |
 | Vale cancelado no ERP e usado offline | Aceito (não sabia) | Aplica + `VALE_INVALIDO_UTILIZADO` |
 | Orçamento editado/cancelado no ERP depois de importado no caixa | Mantém o importado; online, a reserva (`POST /orcamentos/{id}/reservar`) impede edição no ERP enquanto válida | `orcamento.convertido` de orçamento cancelado → aplica + alerta |
@@ -4231,9 +4290,10 @@ de 10 MB/dia: cabe em 4G de contingência (PDV 32.7).
 | Linhas por página de pull | padrão 500, máximo 2000 | API usa o máximo |
 | Bytes por página de pull | 4 MiB sem compressão | API corta a página (sempre ≥ 1 linha) |
 | Eventos por lote de push | 50 | `413 LOTE_GRANDE_DEMAIS` |
-| Bytes por lote de push | 8 MiB sem compressão | `413` → PDV divide o lote ao meio |
+| Bytes por lote de push | 8 MiB sem compressão (a API aceita até 9 MiB, `CORPO_JSON_LIMITE_LOTE_KB`, contados nos bytes recebidos e nos descomprimidos, e lê o lote só depois de autenticar o terminal) | `413 LOTE_GRANDE_DEMAIS` → PDV divide o lote ao meio |
 | Bytes por evento | 2 MiB | Não há divisão de evento: o PDV impede na origem (venda limitada a 990 itens; o XML de NFC-e é bem menor); se acontecer, `PAYLOAD_INVALIDO` |
-| Heartbeat | 16 KiB | `413` |
+| Heartbeat | 16 KiB típico; até ~65 KiB com 100 resultados de comando e 500 confirmações (a API aceita até o limite grande, 4 MiB, lido depois de autenticar o terminal) | `413` |
+| Ativação e outras rotas | 100 KiB (`CORPO_JSON_LIMITE_KB`), sem compressão | `413` / `400 REQUISICAO_INVALIDA` |
 | Conexão SSE | 1 por terminal | A nova encerra a anterior |
 
 ### 19.3 Recuperação de longo período offline
@@ -4404,6 +4464,7 @@ lá). Intervalo: 30 s sem SSE, 60 s com SSE (18.2). Requisição:
 | Campo novo da requisição | Regra |
 |---|---|
 | `estado_local` | `ativo`, `desativando` ou `desativando_confirmado`. `desativando_confirmado` só é enviado depois que o PDV gravou localmente que parou de vender (3.8), com `eventos_pendentes = 0`, `nfce_contingencia_pendentes = 0`, `inutilizacoes_pendentes = 0`; nesse heartbeat `ultima_sequencia_gerada`, `venda_ultimo_numero`, `nfce_ultimo_numero` e `vale_ultimo_numero` são os **números finais** do terminal. A nuvem confere que recebeu tudo até eles e grava `terminais.desativacao_confirmada_em` + os números (13.3) |
+| `venda_ultimo_numero`, `vale_ultimo_numero` | Inteiros a partir de 0: o de venda até 999.999.999.999 (o que cabe no número exibido da venda, 13.1); o de vale até 9.999.999 (os 7 dígitos do sequencial no código do vale, 13.4); fora disso, 400 `REQUISICAO_INVALIDA`. `terminais` guarda o **maior** já informado (`greatest`: um heartbeat menor, como o de um backup antigo restaurado, não baixa o contador), e tanto a ativação seguinte do caixa (13.3) quanto o `numeracoes` do `GET /sync/estado` (5) só o consideram até o que a nuvem conhece + a margem (README da API › decisão 212) |
 | `vendas_cancelamento_pendente` | Ids de vendas com `venda.cancelada` gravado no outbox e ainda não confirmado (no máximo 50); usado pelo ERP para não cancelar a mesma venda (10.4) |
 | `reservas_vale_em_uso` | `pagamento_venda_id` dos pagamentos com vale gravados localmente cujo `venda.finalizada` ainda não foi confirmado (no máximo 50). A nuvem marca `em_uso_desde` e estende `expira_em` das `reservas_vale` ativas correspondentes, como `PUT /vales/{id}/reservas/{pagamento_venda_id}/em-uso` (14.4, modelo 3.13.2) |
 | `eventos_resolvidos_ack` | `evento_id` dos itens de `eventos_resolvidos` que o PDV já aplicou localmente (inclusive os que já estavam aplicados: repetição). A nuvem grava `eventos_recebidos.resolucao_entregue_em` e para de reenviá-los |
@@ -4599,6 +4660,11 @@ sequenceDiagram
   backup de saída — na restauração automática depois de um `integrity_check` falho.
 - **Token**: a restauração mantém o token do banco em uso (o do backup pode já ter sido rotacionado; usá-lo de novo
   seria o "token anterior reutilizado" da 3.7).
+- **O que só avança** (PR-15, SEG-B13; README do PDV › decisão 92): o `identidade_terminal.status` restaurado é o mais
+  restritivo entre o do arquivo e o do banco em uso (`ativo → desativando → revogado`, 3.8), também na restauração
+  automática (pela leitura direta da linha da identidade): o backup de antes da ordem de desativação não volta o caixa
+  a `ativo`, e a reserva de número de venda e a abertura do caixa continuam recusadas offline. A
+  `estado_conexao.maior_hora_vista` fica a maior das duas (PDV 30.5).
 - **Fora da 1C**: `PERDA_PROVAVEL` e a aba "Perdas prováveis" (22.4), a NFC-e, a custódia da chave de backup e a
   importação de terminal antigo (22.3), o "modo restaurado" com supervisor para o +500 da NFC-e.
 
@@ -4751,7 +4817,7 @@ plataforma `db:pos-restauracao --empresa <codigo>`):
 | 24a | "Revogar imediatamente" e depois código **novo comum** para o mesmo caixa | O novo começa com série NFC-e nova e salto de +1000 em venda e vale | Decisão contra `caixas.terminal_anterior_id`, sem confirmação de desativação do antigo | 13.3 |
 | 24b | Antigo "em dia" no último heartbeat, mas fica offline e continua vendendo sem saber que foi substituído | — | Sem `desativando_confirmado`, o novo terminal recebe série nova e saltos; o antigo, ao voltar, envia suas vendas sem colidir | 13.3 |
 | 25 | Terminal revogado "aceitando pendências" | Para de vender, fecha o caixa, envia tudo, transmite contingências | `revogado` quando o heartbeat informa 0 pendentes ou na carência | 3.8 |
-| 26 | Terminal revogado imediatamente (roubo) | Bloqueia tudo, mantém o banco | 401 em tudo; "Terminal perdido/roubado" invalida PINs dos usuários da loja e as senhas de crediário que desceram (a senha do ERP nunca esteve no PDV); o próximo terminal do caixa recebe série nova e saltos | 3.8, 4.3, 13.3 |
+| 26 | Terminal revogado imediatamente (roubo) | Bloqueia tudo, mantém o banco | 401 em tudo; "Terminal perdido/roubado" invalida os PINs de quem já teve acesso à loja (e dos Masters, atuais e antigos) e as senhas de crediário de quem já foi da loja (a senha do ERP nunca esteve no PDV); o próximo terminal do caixa recebe série nova e saltos | 3.8, 4.3, 13.3 |
 | 27 | Token vazado | — | Revogar + reativar; uso do token anterior após rotação gera alerta; uso de outra máquina → `HARDWARE_ALTERADO`, sem segredos | 3.7, 20.5 |
 | 27a | Resposta da renovação de token perdida (uma ou duas vezes seguidas) | Tenta `token.pendente` primeiro; `401` → volta ao atual e repete com o mesmo `requisicao_id` | Repetição sem efeito; nunca fica sem token válido | 3.7 |
 | 27b | Token usado de outra máquina (ou placa-mãe trocada) | Bloqueia vendas; "Hardware alterado — aguardando aprovação"; outbox mantido | `409 HARDWARE_ALTERADO`; pull sem segredos; "Confirmar troca de hardware" no ERP | 20.5 |

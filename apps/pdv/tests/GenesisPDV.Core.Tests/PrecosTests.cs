@@ -323,6 +323,33 @@ public class PrecosTests
     }
 
     [Fact]
+    public void Quantidade_aceita_e_a_mesma_regra_da_alteracao()
+    {
+        // README do PDV › decisão 88: o ServicoVenda decide pelo QuantidadeAceita se a redução pede o controle de cancelar
+        // item; ele aceita exatamente o que o AlterarQuantidade aceita (o fator só vale acima de 1).
+        var venda = VendaPreco();
+        var fardo = venda.AdicionarItem(Fardo(Brahma(), Guid.NewGuid(), 12m, 37.90m), 2m, "17891149103109", Agora);
+        var unidade = venda.AdicionarItem(Lido(Brahma()), 3m, "7891149103102", Agora);
+        var pesado = venda.AdicionarItem(Lido(Produto("QUEIJO COALHO KG", 19.99m, unidade: "KG")), 2m, "0050", Agora);
+        Assert.True(pesado.Fracionavel);
+        Assert.Null(pesado.Embalagem);
+        (ItemVenda Item, decimal Quantidade, bool Aceita)[] casos =
+        [
+            (fardo, 12m, true), (fardo, 13m, false), (fardo, 0m, false),
+            (unidade, 1m, true), (unidade, 1.5m, false), (unidade, 10_000m, false),
+            (pesado, 1.5m, true), (pesado, 0.001m, true), (pesado, 1.0005m, false), (pesado, -1m, false),
+        ];
+        foreach (var (item, quantidade, aceita) in casos)
+        {
+            Assert.Equal(aceita, Venda.QuantidadeAceita(item, quantidade));
+        }
+
+        // Do lado do Core: a fração do pesado sem embalagem é aceita (e é ela que o controle precisa ver).
+        venda.AlterarQuantidade(pesado.Sequencia, 0.001m, 0m);
+        Assert.Equal(0.001m, pesado.Quantidade);
+    }
+
+    [Fact]
     public void Fardo_altera_e_cancela_em_multiplos_do_fator_e_mais_soma_um_fardo()
     {
         var venda = VendaPreco();

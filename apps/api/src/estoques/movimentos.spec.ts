@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   conferirDataMovimentos,
   ErroDataRetroativa,
+  ErroLimiteEstoque,
   FOLGA_RETROATIVO_MS,
   itemDerivadoDocumento,
   lancarDocumento,
@@ -248,9 +249,147 @@ describe('regra de data dos documentos do ERP (F2-B4; ERP 13.1.5)', () => {
   });
 });
 
+const LA = '0190a000-0000-7000-8000-0000000000d1';
+const LB = '0190a000-0000-7000-8000-0000000000d2';
+
+/**
+ * Banco falso para um documento de uma linha de saldo (produto A, `saldo` com `custoMedio`) com os lotes LA (vence
+ * antes) e LB nas quantidades de `lotes`: responde cada comando pelo texto e registra a ordem deles.
+ */
+function bancoFalso({
+  saldo = '14.000',
+  custoMedio = '2.0000',
+  lotes = ['6.000', '8.000'],
+  soLote = null as 'LA' | 'LB' | null,
+} = {}) {
+  const log: string[] = [];
+  const cliente = {
+    query(q: string | { text: string }) {
+      const texto = typeof q === 'string' ? q : q.text;
+      log.push(texto);
+      const linhas = (rows: unknown[]) => Promise.resolve({ rows, rowCount: rows.length, fields: [] });
+      if (/from saldos_estoque s[\s\S]*for update/.test(texto))
+        return linhas([{ ordem: 0, id: 'saldo-a', quantidade: saldo, custo_medio: custoMedio }]);
+      if (texto.includes('from produtos_lotes where id = any'))
+        return linhas([LA, LB].map((id) => ({ id, produto_id: A, variacao_id: null, estoque_id: null })));
+      if (texto.includes('join saldos_lote l'))
+        return linhas([
+          { ordem: 0, lote_id: LA, quantidade: lotes[0], validade: '2026-12-01' },
+          { ordem: 0, lote_id: LB, quantidade: lotes[1], validade: '2027-01-10' },
+        ]);
+      if (/from saldos_lote s[\s\S]*for update/.test(texto)) {
+        const a = { id: 'lote-a', quantidade: lotes[0] };
+        const b = { id: 'lote-b', quantidade: lotes[1] };
+        // O documento que só mexe num lote trava só a linha dele.
+        if (soLote) return linhas([{ ordem: 0, ...(soLote === 'LA' ? a : b) }]);
+        return linhas([
+          { ordem: 0, ...a },
+          { ordem: 1, ...b },
+        ]);
+      }
+      return linhas([]);
+    },
+  };
+  return { tx: drizzle(cliente as never) as unknown as DbEmpresa, log };
+}
+
+/** Algum comando gravou movimento ou saldo (a recusa do limite vem antes de qualquer gravação). */
+const gravou = (log: readonly string[]) =>
+  log.some(
+    (t) =>
+      t.includes('insert into movimentos_estoque') ||
+      t.includes('update saldos_estoque') ||
+      t.includes('update saldos_lote'),
+  );
+
+describe('limites do motor de estoque (README da API › decisão 210)', () => {
+  /** Linha do PDV (com o evento: sem a regra de data do ERP). */
+  const doPdv = (extra: Partial<NovoMovimento>) =>
+    linha({ tipoMovimento: 'VENDA_PDV', eventoId: '0190a000-0000-7000-8000-0000000000e9', ...extra });
+  const recusa = async (p: Promise<unknown>) => {
+    const e = await p.then(
+      () => null,
+      (erro: unknown) => erro,
+    );
+    expect(e).toBeInstanceOf(ErroLimiteEstoque);
+    return e as ErroLimiteEstoque;
+  };
+
+  it('custo total acima de numeric(15,2) → ErroLimiteEstoque com a mensagem do custo, nada gravado', async () => {
+    const { tx, log } = bancoFalso({ saldo: '0.000', custoMedio: '0.0000', lotes: ['0.000', '0.000'] });
+    // 999.999.999 × R$ 99.999 ≈ 1e14 > 9.999.999.999.999,99 (o saldo cabe: a recusa é só do custo).
+    const e = await recusa(
+      lancarDocumento(tx, [
+        doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '999999999', custoUnitario: '99999' }),
+      ]),
+    );
+    expect(e.message).toMatch(/custo do lançamento passa do limite do sistema/);
+    expect(e.extras.detalhes).toMatchObject({ estoqueId: E, produtoId: A, tipoEstoqueId: T });
+    expect(gravou(log)).toBe(false);
+    // Logo abaixo do limite (99.999.999 × R$ 99.999 ≈ 1e13 − 1e8), passa.
+    const ok = bancoFalso({ saldo: '0.000', custoMedio: '0.0000', lotes: ['0.000', '0.000'] });
+    const r = await lancarDocumento(ok.tx, [
+      doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '99999999', custoUnitario: '99999' }),
+    ]);
+    expect(r.movimentos[0]!.custoTotal).toBe('9999899900001.00');
+    // A saída com custo médio alto também: 1.000 × R$ 99.999.999.999 = 1e14.
+    const saida = bancoFalso({ saldo: '0.000', custoMedio: '99999999999.0000', lotes: ['0.000', '0.000'] });
+    const s = await recusa(lancarDocumento(saida.tx, [doPdv({ quantidade: '-1000' })]));
+    expect(s.message).toMatch(/custo do lançamento/);
+    expect(gravou(saida.log)).toBe(false);
+  });
+
+  it('o saldo do lote passa do limite com a linha longe dele → ErroLimiteEstoque com o loteId, nada gravado', async () => {
+    // A linha perto de zero: o lote LA muito positivo e a sobra sem lote muito negativa.
+    const { tx, log } = bancoFalso({ saldo: '0.000', lotes: ['99999999990.000', '0.000'], soLote: 'LA' });
+    const e = await recusa(
+      lancarDocumento(tx, [doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '20', loteId: LA })]),
+    );
+    expect(e.message).toMatch(/saldo de um lote fora do limite/);
+    expect(e.extras.detalhes).toMatchObject({ produtoId: A, loteId: LA });
+    expect(gravou(log)).toBe(false);
+    // A mesma entrada no outro lote (longe do limite) passa.
+    const ok = bancoFalso({ saldo: '0.000', lotes: ['99999999990.000', '0.000'], soLote: 'LB' });
+    const r = await lancarDocumento(ok.tx, [
+      doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '20', loteId: LB }),
+    ]);
+    expect(r.movimentos).toHaveLength(1);
+  });
+
+  it('linha já acima do limite (dado antigo): o que aproxima de zero passa, mesmo ainda acima; o que afasta é recusado', async () => {
+    const acima = { saldo: '-500000000000.000', custoMedio: '0.0100', lotes: ['0.000', '0.000'] };
+    // Entrada que reduz o módulo e ainda fica acima do limite (−400.000.000.000): passa.
+    const entrada = bancoFalso(acima);
+    const r = await lancarDocumento(entrada.tx, [
+      doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '100000000000' }),
+    ]);
+    expect(r.movimentos[0]!.saldoPosterior).toBe('-400000000000.000');
+    expect(r.negativos).toHaveLength(1);
+    // Saída que aumenta o módulo: recusada, nada gravado.
+    const saida = bancoFalso(acima);
+    const e = await recusa(lancarDocumento(saida.tx, [doPdv({ quantidade: '-1' })]));
+    expect(e.message).toMatch(/saldo de um produto fora do limite/);
+    expect(gravou(saida.log)).toBe(false);
+    // O mesmo vale para o lote acima do limite: a saída dele que aproxima de zero passa, a entrada que afasta não.
+    const doLote = bancoFalso({
+      saldo: '500000000000.000',
+      lotes: ['500000000000.000', '0.000'],
+      soLote: 'LA',
+    });
+    const rl = await lancarDocumento(doLote.tx, [doPdv({ quantidade: '-100000000000', loteId: LA })]);
+    expect(rl.movimentos[0]!.saldoPosterior).toBe('400000000000.000');
+    // (a linha perto de zero, com a sobra sem lote negativa: só o lote se afasta)
+    const afasta = bancoFalso({ saldo: '0.000', lotes: ['500000000000.000', '0.000'], soLote: 'LA' });
+    const el = await recusa(
+      lancarDocumento(afasta.tx, [doPdv({ tipoMovimento: 'ACERTO_ENTRADA', quantidade: '1', loteId: LA })]),
+    );
+    expect(el.message).toMatch(/saldo de um lote fora do limite/);
+    expect(el.extras.detalhes).toMatchObject({ loteId: LA });
+    expect(gravou(afasta.log)).toBe(false);
+  });
+});
+
 describe('lote no documento (F2-B6; README da API › decisão 151)', () => {
-  const LA = '0190a000-0000-7000-8000-0000000000d1';
-  const LB = '0190a000-0000-7000-8000-0000000000d2';
   /** Linha da venda do PDV (com o evento: a hora do fato vale, sem a regra de data do ERP). */
   const venda = (extra: Partial<NovoMovimento>) =>
     linha({ tipoMovimento: 'VENDA_PDV', eventoId: '0190a000-0000-7000-8000-0000000000e9', ...extra });
@@ -258,32 +397,7 @@ describe('lote no documento (F2-B6; README da API › decisão 151)', () => {
    * Banco falso para um documento de uma linha de saldo (produto A) com os lotes LA (vence antes, 6) e LB (8):
    * responde cada comando pelo texto e registra a ordem deles.
    */
-  function bancoComLotes() {
-    const log: string[] = [];
-    const cliente = {
-      query(q: string | { text: string }) {
-        const texto = typeof q === 'string' ? q : q.text;
-        log.push(texto);
-        const linhas = (rows: unknown[]) => Promise.resolve({ rows, rowCount: rows.length, fields: [] });
-        if (/from saldos_estoque s[\s\S]*for update/.test(texto))
-          return linhas([{ ordem: 0, id: 'saldo-a', quantidade: '14.000', custo_medio: '2.0000' }]);
-        if (texto.includes('from produtos_lotes where id = any'))
-          return linhas([LA, LB].map((id) => ({ id, produto_id: A, variacao_id: null, estoque_id: null })));
-        if (texto.includes('join saldos_lote l'))
-          return linhas([
-            { ordem: 0, lote_id: LA, quantidade: '6.000', validade: '2026-12-01' },
-            { ordem: 0, lote_id: LB, quantidade: '8.000', validade: '2027-01-10' },
-          ]);
-        if (/from saldos_lote s[\s\S]*for update/.test(texto))
-          return linhas([
-            { ordem: 0, id: 'lote-a', quantidade: '6.000' },
-            { ordem: 1, id: 'lote-b', quantidade: '8.000' },
-          ]);
-        return linhas([]);
-      },
-    };
-    return { tx: drizzle(cliente as never) as unknown as DbEmpresa, log };
-  }
+  const bancoComLotes = () => bancoFalso();
 
   it('a saída sem lote antes da linha com o lote informado não consome esse lote (o lote informado é reservado antes)', async () => {
     const { tx } = bancoComLotes();

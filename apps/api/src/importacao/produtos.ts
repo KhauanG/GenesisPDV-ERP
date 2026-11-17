@@ -9,6 +9,7 @@
 import {
   criarProdutoSchema,
   dec,
+  indiceUnidadesPlanilha,
   lerBalancaPlanilha,
   lerBooleanoPlanilha,
   lerCodigoPlanilha,
@@ -22,7 +23,6 @@ import {
   motivoTipoProdutoBloqueado,
   nomesParecidos,
   precoCampo,
-  resolverUnidadePlanilha,
   ROTULOS_TIPO_PRODUTO,
   TIPOS_PRODUTO,
   validarGtin,
@@ -36,6 +36,7 @@ import {
   type TipoProduto,
 } from '@genesis/shared';
 import { sql } from 'drizzle-orm';
+import { agruparEm, coletarCedendo } from '../comum/colecoes.js';
 import { ErroApi } from '../comum/erros.js';
 import { tiposHabilitados } from '../produtos/gravacao.js';
 import { NCM_VIGENTE_SQL } from '../produtos/ncm.js';
@@ -137,6 +138,7 @@ export type EstadoProduto = {
 };
 
 type Achado = { id: string; nome: string; tipo: string; codigo: number };
+type AchadoEan = Achado & { codigo_interno: string | null };
 
 export interface ReferenciasProdutos {
   unidades: Array<{ id: string; sigla: string; descricao: string; permiteFracao: boolean }>;
@@ -156,7 +158,7 @@ export interface ReferenciasProdutos {
   /** Códigos (interno, de barras ou número, minúsculos) dos componentes citados na coluna `composicao` que existem. */
   codigosComponentes: Set<string>;
   /** EAN → produtos que já o têm. */
-  porEan: Map<string, Array<Achado & { codigo_interno: string | null }>>;
+  porEan: Map<string, AchadoEan[]>;
   /** Estado atual dos produtos que a planilha pode atualizar. */
   atuais: Map<string, EstadoProduto>;
   /** Tipos que a planilha pode criar ou para os quais pode trocar (F2-B1; `tiposHabilitados`). */
@@ -262,8 +264,10 @@ export async function carregarReferencias(
        where cb.excluido_em is null and cb.codigo = any(${arr(eans)}::text[])
        order by cb.principal desc, p.codigo`),
   ]);
+  // Agrupado sem copiar a lista a cada linha (decisão 209): milhares de produtos no mesmo EAN custam o mesmo que
+  // milhares de EANs.
   const porEan: ReferenciasProdutos['porEan'] = new Map();
-  for (const r of pean.rows) porEan.set(r.ean, [...(porEan.get(r.ean) ?? []), r]);
+  for (const r of pean.rows) agruparEm(porEan, r.ean, r);
   const unidades = un.rows.map((u) => ({
     id: u.id,
     sigla: u.sigla,
@@ -271,8 +275,7 @@ export async function carregarReferencias(
     permiteFracao: u.permite_fracao,
   }));
   const categoriasPorNome = new Map<string, string[]>();
-  for (const c of cat.rows)
-    categoriasPorNome.set(chaveNome(c.nome), [...(categoriasPorNome.get(chaveNome(c.nome)) ?? []), c.id]);
+  for (const c of cat.rows) agruparEm(categoriasPorNome, chaveNome(c.nome), c.id);
   const candidatos = [
     ...pid.rows.map((p) => p.id),
     ...pcod.rows.filter((p) => !p.excluido).map((p) => p.id),
@@ -455,8 +458,68 @@ const ROTULO_CAMPO: Partial<Record<keyof CriarProdutoEntrada, string>> = {
   codigoInterno: 'Código interno',
 };
 
-/** Analisa as linhas (sem gravar). `eansNaPlanilha` acumula os EANs para achar duplicados dentro da própria planilha. */
-export function analisarProdutos(
+type ParametrosAnaliseProdutos = Parameters<typeof linhasAnalisadasProdutos>;
+
+/** Analisa as linhas (sem gravar), de uma vez. */
+export function analisarProdutos(...parametros: ParametrosAnaliseProdutos): LinhaProduto[] {
+  return [...linhasAnalisadasProdutos(...parametros)];
+}
+
+/**
+ * A mesma análise, cedendo o laço de eventos a cada `ITENS_POR_CESSAO` linhas (decisão 209): é a que a prévia e a
+ * tarefa usam, para que a planilha grande de uma empresa não segure as requisições das outras no mesmo processo.
+ */
+export function analisarProdutosCedendo(...parametros: ParametrosAnaliseProdutos): Promise<LinhaProduto[]> {
+  return coletarCedendo(linhasAnalisadasProdutos(...parametros));
+}
+
+/**
+ * O que a análise precisa de um EAN, calculado uma vez por EAN (decisão 209): as contas por linha (quantos produtos
+ * têm o EAN, quantos sem código interno, qual é o primeiro diferente do produto achado, se o produto achado o tem)
+ * ficam constantes, em vez de percorrer a lista inteira de produtos do EAN a cada linha. Conta cada entrada da lista,
+ * como antes (o mesmo produto pode vir duas vezes: o código no produto e na variação).
+ */
+interface ResumoEan {
+  total: number;
+  semInterno: number;
+  primeiro: AchadoEan | null;
+  primeiroSemInterno: AchadoEan | null;
+  /** A primeira entrada de outro produto que não o `primeiro`. */
+  segundo: AchadoEan | null;
+  ids: Set<string>;
+}
+
+function resumirEan(lista: readonly AchadoEan[]): ResumoEan {
+  const r: ResumoEan = {
+    total: 0,
+    semInterno: 0,
+    primeiro: null,
+    primeiroSemInterno: null,
+    segundo: null,
+    ids: new Set(),
+  };
+  for (const p of lista) {
+    r.total++;
+    r.ids.add(p.id);
+    if (!r.primeiro) r.primeiro = p;
+    else if (!r.segundo && p.id !== r.primeiro.id) r.segundo = p;
+    if (!p.codigo_interno) {
+      r.semInterno++;
+      r.primeiroSemInterno ??= p;
+    }
+  }
+  return r;
+}
+
+/** A primeira entrada do EAN que não é o produto `id` (o `find((p) => p.id !== id)` de antes, constante). */
+const outroDoEan = (r: ResumoEan | undefined, id: string | undefined): AchadoEan | null =>
+  !r?.primeiro ? null : r.primeiro.id !== id ? r.primeiro : r.segundo;
+
+/**
+ * Analisa as linhas uma a uma, quando pedidas. `eansNaPlanilha` acumula os EANs para achar duplicados dentro da
+ * própria planilha.
+ */
+function* linhasAnalisadasProdutos(
   linhas: readonly LinhaPlanilha[],
   indices: Record<string, number>,
   ref: ReferenciasProdutos,
@@ -467,7 +530,7 @@ export function analisarProdutos(
     verCusto: true,
     estoqueNegativo: true,
   },
-): LinhaProduto[] {
+): Generator<LinhaProduto, void, undefined> {
   // Códigos que a própria planilha cria (componentes do combo cadastrados na mesma carga).
   const codigosDaPlanilha = new Set<string>();
   for (const l of linhas) {
@@ -495,7 +558,20 @@ export function analisarProdutos(
   }
   // Produto existente → linha que ficou com ele: duas linhas no mesmo produto se sobrescreveriam.
   const produtosNaPlanilha = new Map<string, number>();
-  return linhas.map((l): LinhaProduto => {
+  const resumos = new Map<string, ResumoEan>();
+  const resumoDoEan = (ean: string | null): ResumoEan | undefined => {
+    if (!ean) return undefined;
+    let r = resumos.get(ean);
+    if (!r) {
+      const lista = ref.porEan.get(ean);
+      if (!lista) return undefined;
+      r = resumirEan(lista);
+      resumos.set(ean, r);
+    }
+    return r;
+  };
+  const unidadePlanilha = indiceUnidadesPlanilha(ref.unidades);
+  const analisarLinha = (l: LinhaPlanilha): LinhaProduto => {
     const cel = (chave: string): Celula | undefined => (tem(chave) ? l.valores[indices[chave]!] : undefined);
     const erros: string[] = [];
     const avisos: OcorrenciaImportacao[] = [];
@@ -561,12 +637,13 @@ export function analisarProdutos(
     // Pelo EAN só quando a linha não traz código interno ou o produto achado não tem um (com códigos internos
     // diferentes é outro produto com o EAN duplicado, comum no Nuvem3).
     if (!existente && !erros.length && eanBruto) {
-      const comEan = (ref.porEan.get(eanBruto) ?? []).filter((p) => !interno || !p.codigo_interno);
-      if (comEan.length === 1) {
-        existente = comEan[0]!;
+      const r = resumoDoEan(eanBruto);
+      const comEan = (interno ? r?.semInterno : r?.total) ?? 0;
+      if (comEan === 1) {
+        existente = interno ? r!.primeiroSemInterno! : r!.primeiro!;
         via = 'ean';
-      } else if (comEan.length > 1)
-        erros.push(`EAN ${eanBruto} está em ${comEan.length} produtos: informe o Id ou o código interno`);
+      } else if (comEan > 1)
+        erros.push(`EAN ${eanBruto} está em ${comEan} produtos: informe o Id ou o código interno`);
     }
     if (existente && !erros.length) {
       const dono = pelaChave.get(existente.id);
@@ -591,9 +668,9 @@ export function analisarProdutos(
         `Código ${codigo} da planilha ≠ código ${existente.codigo} do produto achado pelo ${via === 'id' ? 'Id' : via === 'ean' ? 'EAN' : 'código interno'} (${existente.nome}); o código do cadastro é mantido`,
       );
     if (existente && via === 'codigo') {
-      const doEan = eanBruto ? (ref.porEan.get(eanBruto) ?? []) : [];
-      const outro = doEan.find((p) => p.id !== existente!.id);
-      if (outro && !doEan.some((p) => p.id === existente!.id))
+      const doEan = resumoDoEan(eanBruto);
+      const outro = outroDoEan(doEan, existente.id);
+      if (outro && !doEan!.ids.has(existente.id))
         aviso(
           'codigo_conflito',
           'ean',
@@ -702,7 +779,7 @@ export function analisarProdutos(
     // Unidade: sigla, descrição ou nome por extenso do Nuvem3 ("Unidade", "Conjunto", "Pacote").
     const unidadeTexto = texto(cel('unidade'));
     if (unidadeTexto) {
-      const un = resolverUnidadePlanilha(unidadeTexto, ref.unidades);
+      const un = unidadePlanilha(unidadeTexto);
       if (!un) erros.push(`Unidade "${unidadeTexto}" inexistente (Cadastros › Unidades)`);
       else {
         dados.unidadeId = un.id;
@@ -733,14 +810,10 @@ export function analisarProdutos(
           'ean',
           `EAN ${eanBruto} inválido (dígito verificador ou tamanho): gravado como código de barras interno`,
         );
-      const outros = (ref.porEan.get(eanBruto) ?? []).filter((p) => p.id !== existente?.id);
+      const outro = outroDoEan(resumoDoEan(eanBruto), existente?.id);
       const naPlanilha = eansNaPlanilha.get(eanBruto);
-      if (gtin && outros.length)
-        aviso(
-          'ean_duplicado',
-          'ean',
-          `EAN ${eanBruto} já está no produto ${outros[0]!.codigo} - ${outros[0]!.nome}`,
-        );
+      if (gtin && outro)
+        aviso('ean_duplicado', 'ean', `EAN ${eanBruto} já está no produto ${outro.codigo} - ${outro.nome}`);
       else if (gtin && naPlanilha !== undefined)
         aviso('ean_duplicado', 'ean', `EAN ${eanBruto} repetido na planilha (linha ${naPlanilha})`);
       if (naPlanilha === undefined) eansNaPlanilha.set(eanBruto, l.numero);
@@ -1019,7 +1092,8 @@ export function analisarProdutos(
         `Estoque atual negativo (${formatarQuantidade(estoqueAtual)}): o acerto "Definir" deixa o saldo negativo, como na planilha`,
       );
     return linha;
-  });
+  };
+  for (const l of linhas) yield analisarLinha(l);
 }
 
 /** Categoria existente pelo caminho; um nome só também acha a única categoria (de qualquer nível) com esse nome. */
@@ -1109,6 +1183,17 @@ const CAMPOS_COMPARADOS: Array<[CampoComparado, string, 'texto' | 'dinheiro' | '
   ['balancaTipo', 'Balança', 'texto'],
 ];
 
+/** Id → sigla das unidades das referências, montado uma vez por análise (não a cada linha que troca a unidade). */
+const siglasDasUnidades = new WeakMap<ReferenciasProdutos['unidades'], Map<string, string>>();
+function siglaDaUnidade(unidades: ReferenciasProdutos['unidades'], id: string): string | null {
+  let siglas = siglasDasUnidades.get(unidades);
+  if (!siglas) {
+    siglas = new Map(unidades.map((u) => [u.id, u.sigla]));
+    siglasDasUnidades.set(unidades, siglas);
+  }
+  return siglas.get(id) ?? null;
+}
+
 /**
  * Compara a linha com o produto gravado e **tira da linha** o que não muda (`dados`, estoque, preço da loja,
  * composição): a gravação só envia o que mudou. Decimais comparados como decimal (`2,5` = `2.50`). Sem
@@ -1163,7 +1248,7 @@ export function compararComAtual(
       delete d.unidadeId;
       delete d.permiteFracao;
     } else {
-      const sigla = (id: string) => ref.unidades.find((u) => u.id === id)?.sigla ?? null;
+      const sigla = (id: string) => siglaDaUnidade(ref.unidades, id);
       mudou('unidade', 'Unidade', sigla(atual.unidadeId), sigla(l.dados.unidadeId));
     }
   }

@@ -24,6 +24,9 @@ export async function criarAplicacao(
     ...(config.log.legivel ? { transport: { target: 'pino-pretty', options: { singleLine: true } } } : {}),
   });
   const app = await NestFactory.create<NestExpressApplication>(AppModule.registrar(servicos, logger), {
+    // Sem os parsers globais do Nest (JSON e formulário): o corpo JSON é lido pelo `CorpoJsonGuard` depois da
+    // autenticação, com o limite da rota, e formulário não é aceito (decisão 199).
+    bodyParser: false,
     bufferLogs: true,
     logger: config.log.nivel === 'silent' ? false : undefined,
   });
@@ -36,8 +39,6 @@ export async function criarAplicacao(
   );
   app.disable('x-powered-by');
   app.use(cookieParser());
-  // Lotes do push chegam a 8 MiB (SYNC 19.2), com gzip (o body-parser descomprime).
-  app.useBodyParser('json', { limit: '9mb' });
   // O protocolo do PDV fica fora do prefixo (SYNC 1.4: `/sync/*`).
   app.setGlobalPrefix('api', { exclude: ['saude', 'sync/{*caminho}'] });
   app.enableCors({ origin: config.corsOrigens, credentials: true });

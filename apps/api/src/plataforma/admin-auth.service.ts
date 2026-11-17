@@ -266,11 +266,19 @@ export class AdminAuthService {
   async logout(token: string | undefined, ip: string | null): Promise<void> {
     if (!token) return;
     await this.controle.transacao(async (tx) => {
+      // Como no ERP (decisão 206 do README): a linha do cookie, aberta ou já rotacionada, travada como no refresh, e o
+      // logout encerra a família inteira, inclusive a sucessora de uma rotação que correu junto.
+      const [apresentada] = await tx
+        .select({ familiaId: sessoesAdmin.familiaId })
+        .from(sessoesAdmin)
+        .where(eq(sessoesAdmin.refreshTokenHash, sha256Hex(token)))
+        .for('update');
+      if (!apresentada) return;
       const [s] = await tx
         .update(sessoesAdmin)
         .set({ encerradaEm: new Date(), motivoEncerramento: 'logout' })
-        .where(and(eq(sessoesAdmin.refreshTokenHash, sha256Hex(token)), isNull(sessoesAdmin.encerradaEm)))
-        .returning();
+        .where(and(eq(sessoesAdmin.familiaId, apresentada.familiaId), isNull(sessoesAdmin.encerradaEm)))
+        .returning({ adminId: sessoesAdmin.adminId });
       if (!s) return;
       await registrarAuditoriaPlataforma(tx, {
         adminId: s.adminId,

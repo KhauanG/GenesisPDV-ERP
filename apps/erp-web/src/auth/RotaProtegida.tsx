@@ -1,9 +1,10 @@
 import { Center, Loader } from '@mantine/core';
 import type { ReactNode } from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router';
+import { Navigate, Outlet, useLocation, useParams } from 'react-router';
 import { usePode, type Pode } from './permissoes';
 import { useSessao } from './sessao';
-import { SemPermissao } from '../paginas/Erros';
+import { idValido } from '../api/caminho';
+import { NaoEncontrado, SemPermissao } from '../paginas/Erros';
 
 export function Carregando() {
   return (
@@ -19,7 +20,10 @@ export function RotaProtegida() {
   const local = useLocation();
   if (estado.status === 'carregando') return <Carregando />;
   if (estado.status === 'anonimo') {
-    const semVoltar = (local.pathname === '/' && !local.search) || estado.motivo === 'saiu';
+    const semVoltar =
+      (local.pathname === '/' && !local.search) ||
+      estado.motivo === 'saiu' ||
+      estado.motivo === 'saida_pendente';
     const voltar = semVoltar ? '' : `?voltar=${encodeURIComponent(local.pathname + local.search)}`;
     return <Navigate to={`/login${voltar}`} replace state={{ motivo: estado.motivo }} />;
   }
@@ -44,4 +48,24 @@ export function ExigePermissao({
 }) {
   const pode = usePode();
   return (acesso ? acesso(pode) : pode(permissao)) ? <>{children}</> : <SemPermissao permissao={permissao} />;
+}
+
+/**
+ * Página de um registro (`:id` na rota): o parâmetro só chega à tela quando é um id de registro (UUID) — ou o formato
+ * de `valido` —, senão é "não encontrado" sem nenhuma chamada à API (README do ERP › decisão 85).
+ */
+export function ExigeIdValido({
+  parametro = 'id',
+  valido = idValido,
+  inicio,
+  children,
+}: {
+  parametro?: string;
+  valido?: (valor: string) => boolean;
+  /** Para onde o "Voltar ao início" da tela "não encontrado" leva (a listagem do cadastro). */
+  inicio?: string;
+  children: ReactNode;
+}) {
+  const valor = useParams()[parametro];
+  return valor === undefined || valido(valor) ? <>{children}</> : <NaoEncontrado inicio={inicio} />;
 }

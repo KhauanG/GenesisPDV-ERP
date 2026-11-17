@@ -197,6 +197,21 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   todas as lojas: principal pelo plugin oficial `claude-security` (catálogo da Anthropic; o dono instala na hora) e,
   como segunda opinião, a skill `cloudflare/security-audit-skill`. Nada a instalar antes. Roadmap §16, D64;
   `docs/andamento.md` › Pendências.
+  - **13/11/2026 (dono):** "Use o da cloudflare" — a auditoria do fim da Fase 2 roda com a skill
+    `cloudflare/security-audit-skill` (o repositório público dela, lido por inteiro antes do uso), no perfil
+    `standard`, com o método completo de 6 fases e o código só executado num sandbox isolado (sem rede, alvo somente
+    leitura, limites de CPU, memória e tempo). Os resultados ficam fora do repositório (que é público) até as correções.
+    O `claude-security` não foi instalado.
+- **D69 — RESPONDIDA (14/11/2026): "1A e 2A".** A auditoria completa (D64) terminou com achados confirmados e
+  pistas que dependem de checagens do dono; os detalhes ficam **fora do repositório** (público, D60) até as correções
+  estarem em produção.
+  - **(1A)** Um **PR-15 de segurança**, em blocos, cada um com a revisão completa (3 lentes), a tentativa de refutar
+    cada achado e todos os checks: primeiro o achado mais grave e os médios, depois os leves. Merge só com a liberação
+    do dono, como sempre; o texto do PR e dos commits descreve as proteções, não como explorar.
+  - **(2A)** As pontas que a auditoria deixou em aberto (os itens sem decisão final e a parte não examinada) são
+    verificadas no começo do PR-15, na área isolada de testes; os que se confirmarem são corrigidos no mesmo PR.
+  - Opções que não foram escolhidas: (1B) só os graves e médios agora; (1C) dois PRs; (2B) uma segunda auditoria
+    completa depois das correções; (2C) deixar para depois. Roadmap §16, D69.
 - **Plugins sugeridos pelo dono (caveman, claude-mem, karpathy-guidelines):** não adotados, pela recomendação — o
   caveman encurta as respostas (o contrário do que o dono pede), a memória do projeto já é o `andamento.md` e este
   arquivo (versionados; as sessões na nuvem são descartáveis e o repositório é público) e as diretrizes de código já

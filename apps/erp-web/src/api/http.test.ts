@@ -2,7 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { simularApi } from '../teste/utilidades';
 import { criarCliente, ErroRequisicao, nomeDoArquivo } from './http';
 
-const novoCliente = () => criarCliente({ base: '/api', caminhoRefresh: '/auth/refresh', nomeTrava: 't' });
+const novoCliente = () =>
+  criarCliente({
+    base: '/api',
+    caminhoRefresh: '/auth/refresh',
+    caminhoLogout: '/auth/logout',
+    nomeTrava: 't',
+    chaveSaidaPendente: 't:saida-pendente',
+  });
 const futuro = () => new Date(Date.now() + 15 * 60_000).toISOString();
 
 afterEach(() => vi.unstubAllGlobals());
@@ -139,6 +146,30 @@ describe('cliente HTTP (token em memória + refresh por cookie)', () => {
     });
     // O `baixar` de sempre continua tratando qualquer 2xx como arquivo.
     expect(await api.baixar('/relatorios/teste/exportar?formato=xlsx')).toHaveProperty('blob');
+  });
+
+  it('caminho que o navegador desviaria de rota não é enviado: vira "não encontrado" (decisão 85)', async () => {
+    const { mock } = simularApi(() => ({ corpo: { ok: true } }));
+    const api = novoCliente();
+    api.definirSessao({ tokenAcesso: 'tok', expiraEm: futuro() });
+    const id = '0193bbbb-0000-7000-8000-000000000002';
+    for (const caminho of [
+      `/perfis/../usuarios/${id}`,
+      `/perfis/%2E%2e/usuarios/${id}`,
+      `/perfis\\..\\usuarios\\${id}`,
+      `/perfis/..%2Fusuarios%2F${id}`,
+    ]) {
+      await expect(api.get(caminho), caminho).rejects.toMatchObject({
+        status: 404,
+        codigo: 'NAO_ENCONTRADO',
+      });
+      await expect(api.del(caminho), caminho).rejects.toBeInstanceOf(ErroRequisicao);
+      await expect(api.put(caminho, {}), caminho).rejects.toBeInstanceOf(ErroRequisicao);
+    }
+    expect(mock).not.toHaveBeenCalled();
+    // A consulta pode ter qualquer valor codificado; o caminho normal segue igual.
+    await expect(api.get(`/perfis/${id}?busca=..%2Fx`)).resolves.toEqual({ ok: true });
+    expect(String(mock.mock.calls[0]![0])).toBe(`/api/perfis/${id}?busca=..%2Fx`);
   });
 
   it('nomeDoArquivo: filename* tem prioridade; sem cabeçalho usa o padrão', () => {

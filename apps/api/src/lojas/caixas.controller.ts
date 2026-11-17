@@ -12,6 +12,7 @@ import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import { caixas, lojas, numeracoes } from '../database/empresa/schema/index.js';
 import type { Servicos } from '../servicos.js';
+import { cancelarCodigosPendentes } from '../terminais/codigos-pendentes.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { garantirNumeracoesLoja, numeracaoNfce, sqlUltimoNumero } from './numeracoes.js';
 
@@ -125,6 +126,9 @@ export class CaixasController {
           .where(and(eq(caixas.id, id), eq(caixas.versao, versao)))
           .returning();
         if (!depois) await conflitoVersao(tx, antes);
+        // Caixa inativado: os códigos de ativação pendentes dele deixam de valer (a ativação também confere).
+        if (antes.ativo && !depois!.ativo)
+          await cancelarCodigosPendentes(this.s, tx, sessao, req, { lojaId, caixaId: id }, 'caixa inativado');
         await garantirNumeracoesLoja(tx, lojaId);
         if (nfceNumeroInicial !== null)
           await definirInicial(tx, depois!, loja.nfceAmbiente, nfceNumeroInicial);
@@ -167,6 +171,8 @@ export class CaixasController {
           .update(caixas)
           .set({ excluidoEm: agora, atualizadoPorId: sessao.usuarioId })
           .where(eq(caixas.id, id));
+        // Os códigos de ativação pendentes do caixa excluído deixam de valer (a ativação também confere).
+        await cancelarCodigosPendentes(this.s, tx, sessao, req, { lojaId, caixaId: id }, 'caixa excluído');
         await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
           acao: 'excluir',
           entidade: 'caixas',

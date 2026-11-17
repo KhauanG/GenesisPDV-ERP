@@ -14,6 +14,7 @@ import {
   ARQUIVOS_FIXTURES_NFE_REAIS,
   fixtureNfe,
 } from '../../../test/fixtures/nfe/fixtures.js';
+import { variarFixtureNfe } from '../../../test/fixtures/nfe/gerar.js';
 import { conferirAssinaturaNfe } from './assinatura.js';
 import { lerXmlNfe, RecusaNfe } from './parser.js';
 
@@ -297,6 +298,124 @@ describe('valores exatos por fixture', () => {
     expect(n.modelo).toBe(65);
     expect(n.chave.slice(20, 22)).toBe('65');
   });
+});
+
+describe('teto de estrutura antes de qualquer parser (README da API › decisão 203)', () => {
+  const base = fixtureNfe('01-icms-st.xml');
+  /** A fixture com `extra` antes do fim do `infNFe` (elementos que o layout não tem: a leitura os ignora). */
+  const com = (extra: string) => base.replace('</infNFe>', `${extra}</infNFe>`);
+  const { elementosEAtributos, declaracoesNamespace, comentariosEInstrucoes } = LIMITES_XML_NFE;
+
+  it('elementos acima do teto são recusados na contagem, rápido', () => {
+    const xml = com('<x/>'.repeat(elementosEAtributos + 1));
+    const inicio = performance.now();
+    const r = recusa(xml);
+    // A contagem é uma passada pelo texto (milissegundos); a leitura e a assinatura levariam segundos.
+    expect(performance.now() - inicio).toBeLessThan(1_500);
+    expect(r.motivo).toBe('XML_COMPLEXO_DEMAIS');
+    expect(r.message).toBe(
+      `O XML tem elementos, atributos ou comentários demais para uma NF-e. (mais de ${elementosEAtributos.toLocaleString('pt-BR')} elementos e atributos)`,
+    );
+  });
+
+  it('o limite conta elementos e atributos juntos; abaixo dele a nota é lida', () => {
+    expect(lerXmlNfe(com('<x/>'.repeat(elementosEAtributos - 1_000))).nota.numero).toBe(12345);
+    expect(recusa(com('<x/>'.repeat(elementosEAtributos + 1))).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    // Os mesmos elementos com dois atributos cada: o triplo de nós.
+    const metade = Math.ceil(elementosEAtributos / 2);
+    expect(lerXmlNfe(com('<x/>'.repeat(metade))).nota.numero).toBe(12345);
+    expect(recusa(com('<x a="1" b=\'2\'/>'.repeat(metade))).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    // Um elemento só com atributos em quantidade.
+    const atributos = Array.from({ length: elementosEAtributos }, (_, i) => ` a${i.toString(36)}=""`).join(
+      '',
+    );
+    expect(recusa(com(`<x${atributos}/>`)).motivo).toBe('XML_COMPLEXO_DEMAIS');
+  });
+
+  it('a contagem é uma passada só, qualquer que seja o formato da marca', () => {
+    const quase = LIMITES_XML_NFE.bytes - base.length - 64;
+    for (const extra of [
+      `<x a${'='.repeat(quase)}/>`,
+      `<x ${'a '.repeat(quase / 2)}/>`,
+      `<x a="${' '.repeat(quase)}"/>`,
+      '<'.repeat(quase),
+      `<!--${'<x/>'.repeat(quase / 4)}`,
+    ]) {
+      const inicio = performance.now();
+      try {
+        lerXmlNfe(com(extra));
+      } catch {
+        // recusado por qualquer motivo: o que importa aqui é o tempo
+      }
+      expect(performance.now() - inicio).toBeLessThan(1_500);
+    }
+  });
+
+  it('o que não é marcação não conta: texto, CDATA, comentário por dentro e ">" no valor do atributo', () => {
+    const marcacao = '<x/>'.repeat(elementosEAtributos);
+    const { nota } = lerXmlNfe(
+      com(`<y a="1 > 0"><![CDATA[${marcacao}]]></y><!--${marcacao.replace(/-/g, '')}--><z>&lt;x/&gt;</z>`),
+    );
+    expect(nota.numero).toBe(12345);
+  });
+
+  it('as aspas do valor do atributo: o ">" não fecha a marca e o "=" não é atributo', () => {
+    // Depois de um valor com ">", os atributos seguintes da mesma marca continuam contando.
+    const atributos = Array.from({ length: elementosEAtributos }, (_, i) => ` b${i.toString(36)}=""`).join(
+      '',
+    );
+    expect(recusa(com(`<x a=">"${atributos}/>`)).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    expect(recusa(com(`<x a='>'${atributos}/>`)).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    // Um valor feito de "=" é um atributo só, com aspas duplas ou simples.
+    const iguais = '='.repeat(elementosEAtributos + 10);
+    expect(lerXmlNfe(com(`<x a="${iguais}"/>`)).nota.numero).toBe(12345);
+    expect(lerXmlNfe(com(`<x a='${iguais}'/>`)).nota.numero).toBe(12345);
+  });
+
+  it('declarações de namespace têm teto próprio', () => {
+    const declaracoes = (n: number, prefixo = 'p') =>
+      Array.from({ length: n }, (_, i) => ` xmlns:${prefixo}${i}="urn:teste"`).join('');
+    const umaParaCada = (n: number) => '<y xmlns="urn:teste"/>'.repeat(n);
+    // A fixture já tem as dela (nfeProc, NFe, Signature): a metade do teto no pai e a outra metade nos filhos, com folga.
+    const metade = declaracoesNamespace / 2 - 25;
+    expect(lerXmlNfe(com(`<w${declaracoes(metade)}>${umaParaCada(metade)}</w>`)).nota.numero).toBe(12345);
+    expect(recusa(com(`<w${declaracoes(declaracoesNamespace + 1)}/>`)).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    // As do pai e as dos filhos somam no mesmo teto.
+    const r = recusa(
+      com(`<w${declaracoes(declaracoesNamespace / 2)}>${umaParaCada(declaracoesNamespace / 2)}</w>`),
+    );
+    expect(r.motivo).toBe('XML_COMPLEXO_DEMAIS');
+    expect(r.detalhe).toBe(
+      `mais de ${declaracoesNamespace.toLocaleString('pt-BR')} declarações de namespace`,
+    );
+  });
+
+  it('comentários e instruções de processamento têm teto próprio; a declaração <?xml?> do início não conta', () => {
+    expect(base.startsWith('<?xml')).toBe(true);
+    expect(lerXmlNfe(com('<!-- obs -->'.repeat(comentariosEInstrucoes))).nota.numero).toBe(12345);
+    expect(recusa(com('<!-- obs -->'.repeat(comentariosEInstrucoes + 1))).motivo).toBe('XML_COMPLEXO_DEMAIS');
+    const r = recusa(
+      com('<?a?>'.repeat(comentariosEInstrucoes / 2) + '<!---->'.repeat(comentariosEInstrucoes / 2 + 1)),
+    );
+    expect(r.detalhe).toBe(`mais de ${comentariosEInstrucoes} comentários e instruções de processamento`);
+  });
+
+  it('a NF-e de 990 itens com todos os grupos continua aceita, com a assinatura válida', () => {
+    const { xml } = variarFixtureNfe('03-ipi-industria.xml', {
+      nNF: '99001',
+      cNF: '99001001',
+      nProt: '135260000099001',
+      itens: (itens) =>
+        Array.from({ length: LIMITES_XML_NFE.itens }, (_, k) => ({
+          ...itens[k % itens.length]!,
+          cProd: `P${k}`,
+          infAdProd: 'Produto de teste com a informação adicional do fornecedor',
+        })),
+    });
+    const { nota, xml: lido } = lerXmlNfe(xml);
+    expect(nota.itens).toHaveLength(LIMITES_XML_NFE.itens);
+    expect(conferirAssinaturaNfe(lido, nota)).toEqual({ situacao: 'valida', detalhe: null });
+  }, 60_000);
 });
 
 describe('recusas de segurança e de formato', () => {

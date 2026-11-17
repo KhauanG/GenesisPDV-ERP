@@ -60,6 +60,18 @@ import type { TerminalAutenticado } from './terminal.js';
 
 const log = new Logger('PushSync');
 
+/**
+ * SHA-256 do JCS do payload (SYNC 8.1); `null` quando o JCS não o serializa: `Infinity` (que o JSON não representa)
+ * ou um aninhamento fundo demais para a recursão. O JCS é uma função pura do payload: a falha é do evento, não do lote.
+ */
+export function hashDoPayload(payload: unknown): string | null {
+  try {
+    return sha256Hex(jcs(payload));
+  } catch {
+    return null;
+  }
+}
+
 /** Exceção não classificada repetida até aqui vira `erro` `ERRO_INTERNO` (evento venenoso, SYNC 8.3). */
 const TENTATIVAS_ATE_ERRO = 3;
 
@@ -218,8 +230,10 @@ export class PushSync {
     const resultados: ResultadoEvento[] = [];
     for (let i = 0; i < eventos.length; i++) {
       const ev = eventos[i]!;
-      // Fora de transação (SYNC 8.1): recálculo do JCS do payload.
-      const hashRecalculado = sha256Hex(jcs(ev.payload));
+      // Fora de transação (SYNC 8.1): recálculo do JCS do payload. O que o JCS não serializa (um número que o
+      // `JSON.parse` leu como `Infinity`, um aninhamento fundo demais) não tem hash: só aquele evento é rejeitado
+      // (`PAYLOAD_INVALIDO`), e o lote segue.
+      const hashRecalculado = hashDoPayload(ev.payload);
       const d = await emAndamento(() =>
         this.processar(
           doEvento,
@@ -321,7 +335,7 @@ export class PushSync {
     terminal: TerminalDoEvento,
     ev: EnvelopeEvento,
     primeiro: boolean,
-    hashRecalculado: string,
+    hashRecalculado: string | null,
     loteId: string,
     recuperacao: RecuperacaoLote | null,
     recebidoEm: Date,
@@ -366,7 +380,10 @@ export class PushSync {
             {
               status: 'erro',
               codigo: 'PAYLOAD_INVALIDO',
-              mensagem: 'payload_sha256 não confere com o JCS do payload',
+              mensagem:
+                hashRecalculado === null
+                  ? 'payload que o JCS não serializa (número fora da faixa ou aninhamento fundo demais)'
+                  : 'payload_sha256 não confere com o JCS do payload',
               resultado: {
                 detalhes: { hash_recebido: ev.payload_sha256, hash_recalculado: hashRecalculado },
               },

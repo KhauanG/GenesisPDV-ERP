@@ -18,7 +18,21 @@ export const CODIGOS_ERRO = {
   LIMITE_TAXA: 429,
   /** Arquivo acima do limite do destino (F2-B43; README da API › decisão 189): o envio é cortado no stream. */
   ARQUIVO_GRANDE: 413,
-  /** O conteúdo do arquivo não é de um tipo aceito pelo destino (conferido pelos magic bytes, F2-B43). */
+  /**
+   * Corpo JSON da requisição acima do limite da rota (README da API › decisão 199): o limite vale para os bytes
+   * recebidos e para os descomprimidos, e a leitura para assim que passa dele.
+   */
+  CORPO_GRANDE: 413,
+  /**
+   * O corpo JSON não chegou inteiro dentro do prazo de leitura (README da API › decisão 199,
+   * `CORPO_JSON_PRAZO_LEITURA_S`), ou o arquivo de um envio em multipart (decisão 202,
+   * `ENVIO_ARQUIVO_PRAZO_LEITURA_S`): a conexão fecha e nada é gravado.
+   */
+  TEMPO_ESGOTADO: 408,
+  /**
+   * O conteúdo do arquivo não é de um tipo aceito pelo destino (conferido pelos magic bytes, F2-B43); também o corpo
+   * da requisição em formato, conjunto de caracteres ou compressão que a rota não aceita (decisão 199).
+   */
   TIPO_NAO_SUPORTADO: 415,
   MANUTENCAO: 503,
   /**

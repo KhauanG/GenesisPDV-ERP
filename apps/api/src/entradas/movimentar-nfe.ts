@@ -39,6 +39,7 @@ import {
 import { sql } from 'drizzle-orm';
 import type { AuditoriaService, OrigemAcao } from '../auditoria/auditoria.service.js';
 import type { SessaoErp } from '../auth/auth.service.js';
+import { agruparEm } from '../comum/colecoes.js';
 import { ErroApi } from '../comum/erros.js';
 import { fornecedoresDoProduto } from '../produtos/consultas.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
@@ -296,7 +297,7 @@ export async function auditarVinculosMovidosNfe(
     return p ? `${p.codigo} - ${p.nome}` : id;
   };
   const porProduto = new Map<string, VinculoMovidoNfe[]>();
-  for (const m of movidos) porProduto.set(m.produtoId, [...(porProduto.get(m.produtoId) ?? []), m]);
+  for (const m of movidos) agruparEm(porProduto, m.produtoId, m);
   for (const [antigo, deste] of porProduto) {
     const destinos = deste.map((m) => `"${m.codigoFornecedor}" para o produto ${nomeNovo(m.produtoNovoId)}`);
     await auditoria.registrar(tx, origem, {

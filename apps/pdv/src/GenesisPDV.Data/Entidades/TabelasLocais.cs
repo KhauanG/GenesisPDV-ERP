@@ -97,11 +97,19 @@ public static class ChavesConfiguracaoTerminal
     /// </summary>
     public const string BuscaReconstruir = "busca.reconstruir_indice";
 
+    /// <summary>
+    /// Conferência do fechamento já mostrada na sessão de caixa aberta (PDV 21.2; README › decisão 89): a sessão, a
+    /// contagem mostrada e a primeira (depois da recontagem), gravadas com a auditoria <c>fechamento_conferencia</c> antes
+    /// de a tela mostrar o calculado (<c>RepositorioCaixa.RegistrarConferenciaAsync</c>). A preparação do fechamento da
+    /// mesma sessão volta a ela; o commit do fechamento a apaga. Só o que o operador digitou, nunca o calculado.
+    /// </summary>
+    public const string ConferenciaFechamento = "fechamento.conferencia";
+
     /// <summary>Todas as chaves internas: a tela de configuração local e o evento de configuração filtram por esta lista.</summary>
     public static readonly IReadOnlySet<string> Internas = new HashSet<string>(StringComparer.Ordinal)
     {
         BackupChave, ChavePrivadaTerminal, TokenPendente, ResumoAtivacao, ContaAtivacao, RestauracaoPendente, ReidratacaoPendente,
-        BuscaReconstruir,
+        BuscaReconstruir, ConferenciaFechamento,
     };
 }
 

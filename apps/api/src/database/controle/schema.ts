@@ -261,6 +261,10 @@ export const tentativasAtivacao = pgTable(
   (t) => [
     primaryKey({ name: 'pk_tentativas_ativacao', columns: [t.id] }),
     index('ix_tentativas_ativacao_ip_criado_em').on(t.ip, t.criadoEm),
+    // Bloqueio do código da empresa (`verificarBloqueios`, `estadoBloqueio`): a janela de 1 h de um código.
+    index('ix_tentativas_ativacao_codigo_empresa_criado_em').on(t.codigoEmpresa, t.criadoEm),
+    // Janelas sem IP nem código (o limite global de 10 min, as empresas com falhas da manutenção) e a purga.
+    index('ix_tentativas_ativacao_criado_em').on(t.criadoEm),
     check(
       'ck_tentativas_ativacao_motivo_falha',
       sql`motivo_falha is null or motivo_falha in ('codigo_invalido','expirado','empresa_inativa','limite_plano','ip_bloqueado')`,
