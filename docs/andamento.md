@@ -60,7 +60,7 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-12 variações | B48–B50 | **fora do plano** (D43: complementos sim, variações não) |
 | PR-13 complementos: modal | B51 | concluído (#10, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 13/11/2026 (junto com o PR-11 e o PR-14) |
 | PR-14 tributação gravada e fechamento | B52–B53 | concluído (#11, juntado em 13/11/2026 com a liberação do dono; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); implantado em 13/11/2026 (junto com o PR-11 e o PR-13) |
-| PR-15 segurança (D64/D69) | SEG-B01..B16 | concluído na branch `claude/blissful-cray-cvroui` (15/11/2026; revisão por bloco com 3 lentes; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **aguarda a liberação do dono para o merge**, depois a implantação da API e do ERP e o PDV **0.13.0** nos caixas |
+| PR-15 segurança (D64/D69) | SEG-B01..B16 | concluído (#12, juntado em 17/11/2026 com a liberação do dono; revisão por bloco com 3 lentes; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **falta implantar** a API e o ERP (migração **0006** do controle) e o PDV **0.13.0** nos caixas |
 
 ### PR-6 — blocos
 
@@ -153,9 +153,9 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 
 ## Próximo passo
 
-0. **PR-15 segurança (D64/D69), 15/11/2026:** os 16 blocos SEG-B01..B16 prontos na branch, cada um com a revisão de
-   3 lentes e todos os checks, e a revisão de segurança do PR inteiro (D63) sem achado médio ou alto. **Dono:** liberar
-   o merge; depois, **logo**, a Implantação da API e do ERP (migração **0006** do banco de controle) e o release do PDV
+0. **PR-15 segurança (D64/D69), 15/11/2026:** os 16 blocos SEG-B01..B16 juntados na `main` (#12, 17/11/2026, com a
+   liberação do dono), cada um com a revisão de 3 lentes e todos os checks, e a revisão de segurança do PR inteiro (D63)
+   sem achado médio ou alto. **Dono, logo:** a Implantação da API e do ERP (migração **0006** do banco de controle) e o release do PDV
    **0.13.0** com a Implantação `publicar_pdv`, para atualizar os caixas. O PDV 0.12.0 instalado continua sincronizando
    com a API nova.
 1. **Dono, depois da implantação do PR-6:** em Usuários › Estoques permitidos, liberar o CD **e as lojas que ele
