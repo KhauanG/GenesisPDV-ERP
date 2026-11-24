@@ -1,4 +1,4 @@
-# Operação sem o GitHub Actions — plano (OP-B1 a OP-B3)
+# Operação sem o GitHub Actions — plano (OP-B1 a OP-B5)
 
 Pedido do dono (24/11/2026): "minha cota de Actions acabou, continue o projeto, usando sandbox para testes, para não
 precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-do-dono.md`).
@@ -25,15 +25,11 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
 
 ## Perguntas ao dono
 
-- **D70-Q1 — Implantação sem o Actions.** (A) **recomendada**: o dono cola **um comando** no terminal da VPS
-  (Hostinger › VPS › Terminal); ele baixa o commit da `main` do repositório público, confere, monta as imagens na
-  própria VPS (com prioridade baixa, fora do horário de pico), e roda os mesmos `instalar.sh`/`implantar.sh` de
-  hoje. (B) esperar a cota voltar e implantar pelo Actions. Padrão até a resposta: (A) disponível, sem obrigar.
-- **D70-Q2 — Instalador do PDV sem o runner Windows.** (A) **recomendada**: a sessão monta e testa o instalador
-  (publicação `win-x64` pelo .NET no Linux + Inno Setup pelo Wine), confere o sha256 e o dono cria o GitHub Release
-  `pdv-vX.Y.Z` com o arquivo (passo a passo) ou autoriza a sessão a criá-lo; a VPS publica do release como hoje.
-  (B) montar no PC Windows do dono com o `gerar-instalador.ps1`. (C) esperar a cota. Padrão até a resposta: (A),
-  implementada só depois da resposta (OP-B3).
+- **D70-Q1 = (A) e D70-Q2 = (A) — respondidas (24/11/2026), com autonomia para a sessão:** "Eu autorizo você a fazer
+  as duas coisas de forma autonoma, usar o VPS para os comandos de terminal e tambem tudo relacionado ao release no
+  GitHub" (`docs/planos/decisoes-do-dono.md`). A sessão não alcança a VPS por SSH (só HTTPS sai da sessão) e não
+  recebe credencial da produção: por isso o OP-B4 (a VPS busca o pedido no repositório público, nunca o contrário).
+  O merge na `main` continua só com a liberação do dono; a sessão só pede a implantação de commit que já está nela.
 
 ## Blocos
 
@@ -91,10 +87,80 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
   para o dono (abrir o terminal da VPS, colar o comando, o que esperar, como voltar com `implantar.sh voltar`).
 - **Pronto:** testes acima verdes; o README tem o roteiro; nada muda no `implantacao.yml`.
 
-### OP-B3 — Instalador do PDV sem o runner Windows (depois da D70-Q2)
+### OP-B3 — Instalador do PDV sem o runner Windows, e o release pela sessão (D70-Q2 = A)
 
-- Se (A): `apps/pdv/instalador/linux-wine/gerar-instalador.sh` publica `win-x64` e compila o `GenesisPDV.iss` pelo Inno
-  Setup no Wine (versão fixada e sha256 do instalador do Inno conferido), gera o `.sha256` no formato do release, e um
-  teste confere o conteúdo do instalador (lista de arquivos, versão). O teste "instala, abre, reinstala e desinstala"
-  continua só no Windows: registrado como não coberto, com o roteiro manual de conferência no primeiro caixa.
-- Se (B): roteiro no README do PDV para o PC do dono. Se (C): nada.
+- **Objetivo:** `apps/pdv/instalador/linux-wine/gerar-instalador.sh [--versao X.Y.Z]` monta, no Linux da sessão, o
+  mesmo instalador que o `pdv-release.yml` monta no Windows (leia o workflow, o `gerar-instalador.ps1` e o
+  `GenesisPDV.iss`): `dotnet publish` `win-x64` com as mesmas opções (autocontido, `PDV_URL_API` padrão igual), e o
+  `GenesisPDV.iss` compilado pelo Inno Setup **6 (versão fixada, a mesma do script do Windows)** no Wine (`wine64`
+  do apt; o instalador do Inno baixado de `files.jrsoftware.org` com o **sha256 fixado no script e conferido** antes de
+  rodar, num prefixo do Wine próprio e descartável). Saída: `GenesisPDV-Setup-X.Y.Z.exe` e o `.exe.sha256` no mesmo
+  formato do release (confira no `pdv-release.yml` e no `implantar.sh pdv publicar`). Sem assinatura (o release atual
+  já sai sem certificado: confira com `osslsigncode verify` no `pdv-v0.13.0` publicado; se ele estiver assinado,
+  pare e registre como não coberto). Nada vai para o repositório além dos scripts (saída em pasta ignorada).
+- **Teste na sessão:** um teste confere o instalador gerado sem instalar: é um PE do Windows, a versão do arquivo é a
+  pedida, a lista de arquivos dentro dele (extraída com `innoextract` do apt) bate com a da publicação `win-x64` e com
+  a do instalador `pdv-v0.13.0` publicado (só as diferenças esperadas de versão), e o sha256 confere. O "instala, abre,
+  reinstala e desinstala" (`testar-instalador.ps1`) continua só no Windows: registrado como **não coberto**, com o
+  roteiro manual de conferência no primeiro caixa (README do PDV).
+- **Release pela sessão:** `apps/pdv/instalador/linux-wine/publicar-release.sh X.Y.Z` cria, pela API REST do GitHub
+  (`gh api`), a tag `pdv-vX.Y.Z` num commit **da `main`** (recusa se não for ancestral da `origin/main`, se a versão
+  não for a do `apps/pdv/Directory.Build.props` desse commit ou se o release já tiver arquivos, como o workflow) e o
+  release com o `.exe` e o `.exe.sha256` (upload em `uploads.github.com`), com as mesmas notas do workflow. Teste com o
+  `gh` falso (a ordem das chamadas e as recusas); nenhum release de verdade no teste.
+- **Documentação:** README do PDV (decisão nova, "Instalar na loja" com o caminho sem o Actions), `CONTRIBUTING.md`,
+  e o `verificar-local.sh` ganha o job opcional `pdv-instalador` (fora da rodada padrão se o Wine não estiver
+  instalado, com o aviso).
+- **Pronto:** o instalador da versão atual (0.13.0) gerado na sessão passa no teste acima; os testes do
+  `publicar-release.sh` verdes; nenhum release criado por este bloco.
+
+### OP-B4 — Vigia da implantação na VPS (a sessão pede, a VPS busca)
+
+- **Por quê:** o dono autorizou a sessão a implantar (D70), mas a sessão não abre conexão com a VPS e não deve ter
+  credencial dela. O vigia inverte o sentido: a **VPS** consulta o repositório **público** (só leitura, sem token) e
+  implanta o que a `main` pedir. Ninguém de fora do repositório consegue pedir: criar tag exige permissão de escrita
+  nele (as mesmas pessoas que já podem juntar na `main`).
+- **Pedido:** uma tag no repositório público com o nome `implantar/<AAAAMMDD-HHMMSS>` (implantar) ou
+  `implantar-pdv/<AAAAMMDD-HHMMSS>` (implantar e publicar o PDV do último release, o `--publicar-pdv`), apontando para
+  um commit **ancestral da `origin/main`** (o `implantar-sem-actions.sh` já recusa o resto). Pedidos antigos não
+  rodam: na instalação, o vigia marca as tags que já existem como vistas; depois, roda só o pedido mais novo ainda não
+  visto e marca os anteriores como pulados. Pedido de um commit mais velho que o atual é permitido (é a "volta").
+- **Peças (em `infra/producao/vigia/`):** `vigia-implantacao.sh` (uma rodada: `git ls-remote --tags` do repositório
+  público, escolhe o pedido, chama `implantar-sem-actions.sh [--publicar-pdv] <commit>` com a trava de sempre, grava o
+  estado em `/opt/genesis/vigia/` root 700); `genesis-vigia.service` + `genesis-vigia.timer` do systemd (a cada 2
+  minutos, `Nice`/`IOSchedulingClass=idle`, sem rede além do HTTPS de saída que a VPS já tem); `instalar-vigia.sh`
+  idempotente (instala/atualiza as unidades, marca as tags existentes como vistas, liga o timer) e
+  `--desligar`/`--estado`. Depois de cada implantação que deu certo, o vigia se atualiza com a versão dele do commit
+  implantado (só se o arquivo mudou, conferido pelo sha256; uma falha aqui não desfaz a implantação).
+- **Resultado visível para a sessão:** o único dado novo público é `https://<DOWNLOAD_DOMINIO>/implantacao/estado.json`
+  com **só** `{pedido, commit (12), resultado: recebido|em_andamento|ok|falhou|recusado, inicio, fim}` — o nome da
+  tag e o commit já são públicos no repositório; nada de log, versão de software, estado da VPS ou mensagem de erro
+  (isso fica no log do vigia na VPS, que o dono vê com `instalar-vigia.sh --estado`). Sirva pelo mesmo caminho do
+  `pdv/atual.json` (descubra como o `implantar.sh pdv publicar` grava a página de download e use o mesmo volume).
+  Registre no CLAUDE.md que este arquivo é a única saída pública da VPS, por decisão do dono (D70).
+- **Lado da sessão:** `scripts/pedir-implantacao.sh <commit> [--publicar-pdv]` confere que o commit está na
+  `origin/main`, cria a tag pela API REST (`gh api repos/<repo>/git/refs`), e acompanha o `estado.json` e o
+  `/saude` (o `no_ar_desde` muda) até `ok`/`falhou`/`recusado` ou o tempo limite, imprimindo o resultado. Teste com
+  `gh` e `curl` falsos.
+- **Teste na sessão:** shellcheck; teste de unidade do vigia com `git`, `implantar-sem-actions.sh` e `systemctl`
+  falsos (escolha do pedido, pedidos antigos ignorados, trava ocupada = tenta na próxima rodada, recusa de commit fora
+  da `main`, `implantar-pdv/` passa o `--publicar-pdv`, estado.json só com os campos permitidos, autoatualização);
+  `systemd-analyze verify` nas unidades.
+- **Documentação:** README da produção › "Vigia da implantação" com o passo a passo do dono para instalar (um
+  comando no terminal da VPS, o que esperar, como desligar e como ver o log); README da API (decisão nova);
+  CLAUDE.md (como a sessão pede a implantação e confere o resultado).
+- **Pronto:** testes verdes; o passo a passo no README; nada roda na produção até o dono instalar.
+
+### OP-B5 — Memória do container de tarefa
+
+- **Por quê:** no ensaio do OP-B2 (`testar-local.sh --sem-actions`), o `implantar.sh tarefa empresa-criar` passou dos
+  128 MB do `genesis-tarefa` (o kernel registrou "Memory cgroup out of memory"; pico de ~114 MiB numa tarefa que o
+  README dava como 82 MiB). Em produção, o "criar empresa" (ou uma migração maior) pode falhar por falta de memória.
+- **Objetivo:** medir o pico de cada comando da tarefa (`migrar-controle`, migrações de empresa, `empresa-criar`,
+  `admin-criar`, as referências) com a imagem de produção, separar o que é da sessão (o certificado extra do proxy nas
+  imagens base) do que é da aplicação, e escolher: reduzir o pico (o que carrega memória à toa) e/ou redistribuir os
+  limites **sem passar do teto de 2,5 GB somados** da decisão do dono de 03/11/2026 (ex.: tarefa 192 MB e API
+  1984 MB, o heap de 1,5 GB da API continua cabendo). O CI e o teste local já conferem a soma.
+- **Teste:** o `testar-local.sh` passa inteiro, sem ajuste, com o limite final; o pico medido fica registrado no
+  comentário do compose e no README da produção.
+- **Pronto:** ensaio `testar-local.sh --sem-actions` verde no repositório como está.

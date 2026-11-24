@@ -262,10 +262,17 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
 - **D70 — RESPONDIDA (24/11/2026):** "minha cota de Actions acabou, continue o projeto, usando sandbox para testes,
   para não precisarmos dos actions". A verificação local completa na sessão (OP-B1) passa a ser o portão no lugar da
   CI; os workflows ficam no repositório para quando a cota voltar. Plano: `docs/planos/operacao-sem-actions-plano.md`.
-  - **D70-Q1** (implantação pela VPS com um comando, OP-B2) e **D70-Q2** (instalador do PDV montado na sessão pelo
-    Wine, OP-B3): sem resposta ainda; vale a recomendação (A) de cada uma, como "padrão até a confirmação do dono".
-    A (A) da D70-Q1 está pronta desde o OP-B2 (`infra/producao/implantar-sem-actions.sh`, um comando no terminal da
-    VPS; passo a passo no README de `infra/producao` › Implantar sem o GitHub Actions): disponível, sem obrigar.
+  - **D70-Q1 = (A) e D70-Q2 = (A) — RESPONDIDAS (24/11/2026), com autonomia:** "Eu autorizo você a fazer as duas
+    coisas de forma autonoma, usar o VPS para os comandos de terminal e tambem tudo relacionado ao release no
+    GitHub". Efeito:
+    - **Implantação (D70-Q1):** pela VPS, com o `infra/producao/implantar-sem-actions.sh` (OP-B2). Como a sessão não
+      alcança a VPS por SSH (a rede da sessão só sai por HTTPS), o dono instala **uma vez** o vigia da implantação
+      (OP-B4): a VPS confere de tempos em tempos o repositório público e implanta o commit da `main` que a sessão
+      marcar com uma tag `implantar/…`. A sessão passa a poder pedir a implantação de um commit **que já está na
+      `main`** sem esperar o dono; o merge na `main` continua só com a liberação explícita do dono, PR a PR.
+    - **Release do PDV (D70-Q2):** a sessão monta o instalador pelo Wine (OP-B3), confere e cria o GitHub Release
+      `pdv-vX.Y.Z` (tag na `main`) com o `.exe` e o `.exe.sha256`, e pede a publicação na página de download pelo
+      vigia. A atualização dos caixas nas lojas continua com o dono, um caixa de cada vez.
   - **Servidor da Oracle oferecido pelo dono (24/11/2026; ARM Ampere, 2 CPU, 12 GB):** não usado agora, pela
     recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
     sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
