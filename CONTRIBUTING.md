@@ -46,7 +46,8 @@ commit.
 ## Pull requests
 
 - Título no mesmo formato do commit; descrição com o que muda, como testar e as seções dos documentos afetadas.
-- **CI verde obrigatório** (`.github/workflows/ci.yml`): formatação, lint, tipos, testes unitários, a integração da API
+- **CI verde obrigatório** (`.github/workflows/ci.yml`; sem cota do Actions, D70, vale a verificação local completa
+  no lugar dela, com a tabela no corpo do PR: [Sem o GitHub Actions](#sem-o-github-actions-d70)): formatação, lint, tipos, testes unitários, a integração da API
   no PostgreSQL 18 (o do Cloud SQL de produção, job em paralelo; desde 05/11/2026 só nele, não mais também no 16, decidido
   pelo dono, roadmap D59), conferência schema Drizzle × migrações, build, o build das imagens Docker de
   produção (API, ERP e backup) com o `docker compose config` de `infra/producao` (e a soma dos limites de memória ≤ 2,5
@@ -66,12 +67,45 @@ commit.
 ## Antes de abrir o PR
 
 Os checks locais continuam **obrigatórios antes de cada push**, mesmo com o CI filtrando por caminho: o CI é a
-segunda conferência, não a primeira, e cada rodada dele ocupa a fila e deixa um log público.
+segunda conferência, não a primeira, e cada rodada dele ocupa a fila e deixa um log público. **Enquanto não houver
+cota do Actions (D70), a verificação local completa substitui o CI** ([Sem o GitHub Actions](#sem-o-github-actions-d70)).
 
 ```bash
 pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 cd apps/pdv && dotnet format GenesisPDV.slnx && dotnet test --solution GenesisPDV.slnx
 ```
+
+## Sem o GitHub Actions (D70)
+
+**Desde 24/11/2026 (decisão do dono, D70: "minha cota de Actions acabou, continue o projeto, usando sandbox para
+testes"), o portão antes de cada PR e antes de cada merge na `main` é a verificação local completa**, rodada na sessão
+do Claude Code (ou numa máquina Linux de desenvolvimento com Docker, PostgreSQL 16, Node/pnpm e o .NET SDK do
+`apps/pdv/global.json`):
+
+```bash
+scripts/verificar-local.sh                         # ou: pnpm verificar:local
+scripts/verificar-local.sh --so ts,imagens         # só estes jobs
+scripts/verificar-local.sh --pular e2e-sync        # todos menos estes
+scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o mapa do mudancas.sh, abaixo)
+```
+
+- Reproduz, na ordem do `ci.yml` e com os mesmos comandos, todos os jobs que rodam em Linux: `ts`, a integração da
+  API no PostgreSQL 16 local **e** no 18 (container `postgres:18-alpine` numa porta livre, removido no fim mesmo com
+  falha ou `Ctrl+C`), `imagens`, o PDV no Linux (`pdv`: restore, build e testes; `pdv-formatacao`) e o `e2e-sync`,
+  mais o job local `scripts` (o `shellcheck` e o teste do próprio script). Sobe o `dockerd` e o PostgreSQL 16 se
+  faltarem. Logs em `.verificacao-local/<job>.log`.
+- No fim imprime a tabela job × resultado × tempo (também em `.verificacao-local/resumo.md`) e sai com ≠ 0 se algum
+  job falhou. **A tabela vai no corpo do PR**, e é a de uma rodada completa: cada rodada apaga os logs e o resumo da
+  anterior, e `--so`/`--pular` servem para repetir um job depois de uma correção (os outros saem como pulados). Na
+  sessão do Claude Code a rodada completa (~40 min) passa do tempo limite de um comando: rode-a em segundo plano e
+  espere o fim. Antes do merge na `main`, a rodada é repetida no branch atualizado.
+- Um job vermelho conhecido como sensível a tempo (`carga-terminais`, `Terminais.test.tsx`, o heap do
+  `recalcular-saldos`) se confere rodando o arquivo sozinho (`CLAUDE.md` › Checks); o resultado repetido vai junto na
+  descrição do PR.
+- **Não coberto até o OP-B3** (só o runner Windows faz): a impressora de teste do spooler (`SpoolerWindowsTests`), o
+  instalador do Windows e o teste dele (instala, abre, reinstala e desinstala). O resumo lembra disso em toda rodada.
+- Os workflows de `.github/workflows` ficam no repositório, sem mudança, para quando a cota voltar; nenhum é
+  disparado. Decisões técnicas do script: README da API › decisão 214.
 
 ## CI: o que roda quando
 

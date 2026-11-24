@@ -66,6 +66,17 @@ cd apps/pdv && dotnet restore GenesisPDV.slnx --locked-mode && dotnet build Gene
 dotnet format GenesisPDV.slnx --verify-no-changes --no-restore   # com o SDK do global.json (10.0.100), igual à CI
 ```
 
+**Sem cota do GitHub Actions (D70, 24/11/2026):** a verificação local completa é o portão antes de cada PR e de cada
+merge na `main`, no lugar da CI: `scripts/verificar-local.sh` (ou `pnpm verificar:local`; `--so`, `--pular`,
+`--mudancas <base>`) roda todos os jobs Linux da CI (inclusive a integração no PostgreSQL 16 e no 18, as imagens
+Docker e o e2e) e imprime a tabela job × resultado × tempo, que vai no corpo do PR. A rodada completa leva ~40 min,
+mais que o tempo limite de um comando da sessão (cada integração sozinha já passa dele, ~10–13 min): rode o script
+**inteiro, em segundo plano** (`run_in_background`), espere o aviso de fim e cole a tabela do
+`.verificacao-local/resumo.md`. Cada rodada apaga os logs e o resumo da anterior, então `--so`/`--pular` servem para
+repetir um job depois de uma correção, não para montar a tabela do PR em partes (a de uma rodada parcial mostra os
+outros jobs como pulados). O que só o Windows cobre (spooler, instalador e o teste dele) fica **não coberto** até o
+OP-B3. CONTRIBUTING.md › Sem o GitHub Actions.
+
 - Postgres local: `pg_ctlcluster 16 main start` se não estiver no ar. dotnet: `export PATH=$HOME/.dotnet:$PATH DOTNET_ROOT=$HOME/.dotnet`.
 - Testes sensíveis a tempo (`carga-terminais` p95, `Terminais.test.tsx`, heap do `recalcular-saldos`) podem falhar sob
   carga paralela: rode o arquivo sozinho antes de concluir que é defeito.
@@ -77,6 +88,9 @@ dotnet format GenesisPDV.slnx --verify-no-changes --no-restore   # com o SDK do 
   `jq -n --rawfile b corpo.md '{title:"…",head:"<branch>",base:"main",body:$b}' | gh api repos/KhauanG/GenesisPDV-ERP/pulls --input -`
 - Merge (só com a liberação do dono): `PUT repos/KhauanG/GenesisPDV-ERP/pulls/<n>/merge` com `merge_method: "merge"`
   (PRs empilhados: nunca squash).
+- **Sem cota do Actions (D70, 24/11/2026): nenhum workflow roda nem é disparado.** O `scripts/verificar-local.sh`
+  completo, verde, substitui a CI antes de cada PR e de cada merge (a tabela no corpo do PR); os workflows ficam no
+  repositório para quando a cota voltar. As regras abaixo valem para quando ela voltar.
 - **Actions (decisões do dono, 05/11 e 06/11/2026):** com o repositório público (D60), os runners padrão do GitHub
   não cobram minutos. Continua valendo, porque é bom de qualquer jeito: a CI roda **só no push da `main`** (e à mão),
   não em PR — os checks do PR rodam localmente antes de abri-lo — e só os jobs do que mudou

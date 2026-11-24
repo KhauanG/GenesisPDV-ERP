@@ -7144,6 +7144,69 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      de verdade). O que olhar na próxima queda:
      `infra/producao/README.md` › A API reiniciou sozinha.
 
+### Operação – verificação local sem o GitHub Actions (D70)
+
+214. **`scripts/verificar-local.sh`: os jobs Linux da CI na sessão, com tabela e saída ≠ 0** (OP-B1; D70, decidida
+     pelo dono em 24/11/2026; `scripts/verificar-local.sh`, `scripts/testar-verificar-local.sh`,
+     `pnpm verificar:local`; plano `docs/planos/operacao-sem-actions-plano.md`). Sem cota do Actions, o portão antes de
+     cada PR e de cada merge na `main` passa a ser o script inteiro verde (CONTRIBUTING.md › CI), com a tabela no corpo
+     do PR. Ele roda, na ordem do `ci.yml` e com os mesmos comandos, `ts`, a integração da API, `imagens`, o PDV
+     (`pdv` e `pdv-formatacao`) e o `e2e-sync`, cada job com o log em `.verificacao-local/<job>.log` (no
+     `.gitignore`); um job que falha não interrompe os seguintes (como os jobs paralelos da CI), e o resultado sai na
+     tabela e no `resumo.md`. Escolhas técnicas, sem pergunta ao dono:
+     - **Integração nos dois PostgreSQL.** A CI só roda a integração no 18 (D59); aqui ela roda também no 16 local (o
+       do `infra/docker-compose.yml` e do e2e), porque a sessão tem os dois e custa só tempo: `integracao-pg16` e
+       `integracao-pg18`, ambos com os tetos da trava do job da CI (`TETO_TRAVA_VERSAO_MS=100`,
+       `TETO_TRAVA_CARGA_MS=250`; a sessão também é compartilhada). O 18 é um container `postgres:18-alpine` (a CI
+       usa o `postgres:18`; a variante alpine traz o ICU e as extensões contrib que as migrações usam) com o nome do
+       PID, porta escolhida pelo Docker em `127.0.0.1` e `--rm`: sai no fim do job e no trap de `EXIT` (falha,
+       `Ctrl+C`, `SIGTERM`), testado com o `SIGTERM` no meio dos testes, mandado ao grupo de processos e só ao PID do
+       script (com dublês e com o Docker de verdade). Para o sinal mandado só ao script não esperar o fim de um passo
+       de ~13 min (o bash adia o trap enquanto espera um filho em primeiro plano), cada passo roda em segundo plano com
+       `wait`, que o sinal interrompe, e o trap encerra com `SIGTERM` a árvore do passo (o comando e os descendentes,
+       pelo `pgrep -P`) antes de sair; ficam no próprio shell só as funções curtas que mudam variáveis dele ou sobem
+       serviço (`garantir_docker`, `garantir_pg16`, `iniciar_pg18`, `preparar_build`). A sobra de uma verificação
+       morta sem trap (`SIGKILL`, sessão reiniciada) sai antes do container novo: o rótulo
+       `genesis.verificacao-local=1` com o PID do nome que não existe mais — nem pelo `kill -0` nem pelo `ps -p`, que
+       acha também o processo vivo de outro usuário do grupo docker (o `kill -0` falha com `EPERM` nele). As duas
+       integrações repetem o `pnpm install --frozen-lockfile` do job da CI (o postinstall recompila o
+       `packages/shared/dist` que a API importa), para o `--so integracao-*` depois de mexer no shared ou no lockfile
+       testar o código atual.
+     - **Schemas Drizzle × migrações.** Na CI o checkout é limpo e o passo reprova qualquer `git status` em
+       `apps/api/drizzle`; aqui a árvore pode ter a migração do bloco em andamento ainda sem commit. O passo compara o
+       sha256 de cada arquivo de `apps/api/drizzle` antes e depois do `db:gerar:controle`/`db:gerar:empresa`: falha
+       só se gerar mudar algo (o arquivo gerado fica na árvore, para versionar).
+     - **Imagens atrás do proxy da sessão.** Os processos dentro do build não alcançam o proxy local nem confiam no
+       certificado dele. Com `HTTPS_PROXY` no ambiente, o build usa `--network host`, o proxy nos build-args e duas
+       bases derivadas (`genesis-verificacao-base-node:local` e `-alpine:local`, a mesma imagem da produção com o
+       certificado de `VERIFICAR_CA`, ou do `NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`, em `/etc/ssl/certs` e no
+       `NODE_EXTRA_CA_CERTS`), passadas pelos `ARG IMAGEM_NODE`/`IMAGEM_ALPINE` que os Dockerfiles já tinham: nenhum
+       Dockerfile muda, e sem proxy o build é o mesmo da CI. As tags são `:verificacao-local` (nada é publicado, e a
+       imagem com o certificado da sessão nunca sai dela). O compose de produção é validado numa cópia temporária de
+       `infra/producao` (o `genesis.env` e os segredos vazios de mentira não ficam na árvore).
+     - **`--mudancas <base>`** usa o próprio `.github/scripts/mudancas.sh` (o mapa caminho → jobs continua num lugar
+       só). Como ele compara commits, a árvore de trabalho inteira, inclusive o que não foi commitado, vira um commit
+       solto (índice temporário, `git write-tree` e `git commit-tree`), sem mexer no índice, no `HEAD` nem em branch.
+       Saídas: `ts` → `ts` e as duas integrações; `pdv` → `pdv` e `pdv-formatacao`; `imagens`; `e2e` → `e2e-sync`.
+     - **Job só local, `scripts`:** o `shellcheck` de `scripts/` e `.github/scripts/` e o teste do próprio script
+       (`scripts/testar-verificar-local.sh`: raiz falsa num diretório temporário e dublês de `pnpm`, `dotnet`,
+       `docker`, `dockerd`, `shellcheck`, `pg_isready`, `psql`, `ps` e `id`; ordem e comandos, falha forçada com tabela
+       e saída 1, trap do PostgreSQL 18 com o `SIGTERM` ao grupo e só ao script, sobras, dockerd subido antes do
+       PostgreSQL 18, Drizzle, proxy, `--so`/`--pular` e `--mudancas`). Roda sempre, inclusive com `--mudancas`
+       (segundos). As rodadas do teste tiram do ambiente as variáveis que o script lê (`VERIFICACAO_LOCAL_LOGS`,
+       `VERIFICAR_PG16_URL`, `VERIFICACAO_LOCAL_MUDANCAS_SH`, `VERIFICAR_IMAGEM_PG18`, o proxy e os certificados), e o
+       teste as define sujas de propósito: chamado pelo job `scripts` de uma verificação com `VERIFICACAO_LOCAL_LOGS`,
+       ele não apaga nem reescreve os logs reais.
+     - **Serviços.** Sobe o `dockerd` (log em `.verificacao-local/servicos/`; nos jobs `integracao-pg18` e `imagens`,
+       numa sessão e num grupo de processos próprios, `setsid`, para o `Ctrl+C` ou o `SIGTERM` ao grupo da verificação
+       não derrubarem o daemon, que reinstala o tratamento do `SIGINT`) e o PostgreSQL 16 local (`integracao-pg16` e
+       `e2e-sync`; clusters fora do ar e o papel `genesis`, como o `.claude/hooks/session-start.sh`) só quando um job
+       escolhido precisa, e põe o `~/.dotnet` no `PATH` se o `dotnet` faltar. O PDV roda os testes com
+       `GENESISPDV_TETO_CONSULTA_MS=800`, como o job do Windows.
+     - **Não coberto** (só o runner Windows, até o OP-B3): a impressora de teste do spooler (`SpoolerWindowsTests`), o
+       instalador do Windows e o teste dele; o resumo lembra disso em toda rodada. Os workflows de `.github/workflows`
+       continuam no repositório, sem mudança, para quando a cota voltar.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio
