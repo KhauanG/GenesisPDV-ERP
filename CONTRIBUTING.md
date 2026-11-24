@@ -121,7 +121,13 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
 - **Implantação sem o Actions (OP-B2, D70-Q1):** o dono cola um comando no terminal da VPS e o
   `infra/producao/implantar-sem-actions.sh` refaz o workflow Implantação na própria VPS (commit da `main`, imagens
   montadas lá, `instalar.sh` e `implantar.sh`); passo a passo no README de `infra/producao` › Implantar sem o GitHub
-  Actions, decisões no README da API › decisão 215. A sessão nunca implanta: não tem acesso à VPS.
+  Actions, decisões no README da API › decisão 215. A sessão não tem acesso à VPS.
+- **Vigia da implantação (OP-B4, D70):** com o vigia instalado pelo dono (`infra/producao/vigia/instalar-vigia.sh`),
+  a sessão pede a implantação de um commit da `main` com `scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`:
+  cria a tag `implantar/<AAAAMMDD-HHMMSS>` no repositório público, a VPS a busca a cada 2 minutos e roda o
+  `implantar-sem-actions.sh`; o resultado sai só em `https://download.<domínio>/implantacao/estado.json` (numa volta
+  para um commit anterior ao OP-B4, que não serve esse arquivo, só com `--sem-estado`). README de
+  `infra/producao` › Vigia da implantação; README da API › decisão 217.
 
 ## CI: o que roda quando
 

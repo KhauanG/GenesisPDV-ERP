@@ -17,8 +17,9 @@
 #   integracao-pg16  integração da API no PostgreSQL 16 local (o do infra/docker-compose.yml; fora da CI desde a D59)
 #   integracao-pg18  integração da API no PostgreSQL 18 (container postgres:18-alpine numa porta livre, removido no
 #                    fim mesmo com falha ou Ctrl+C), com as variáveis do job integracao-pg18
-#   imagens          build das 3 imagens Docker (sem push), shellcheck, testes do backup, dos logs do implantar.sh e
-#                    do implantar-sem-actions.sh e o compose de produção (com o teto somado de 2,5 GB)
+#   imagens          build das 3 imagens Docker (sem push), shellcheck, testes do backup, dos logs do implantar.sh,
+#                    do implantar-sem-actions.sh e do vigia da implantação (com o systemd-analyze verify das
+#                    unidades) e o compose de produção (com o teto somado de 2,5 GB)
 #   pdv              PDV no Linux: restore --locked-mode, build Release e testes (os que exigem Windows ficam pulados)
 #   pdv-formatacao   dotnet format --verify-no-changes
 #   pdv-instalador   só local (OP-B3): o instalador do Windows gerado pelo Wine (apps/pdv/instalador/linux-wine/
@@ -27,7 +28,8 @@
 #                    "pulado", com o aviso
 #   e2e-sync         API local + PDV headless (apps/api/test/e2e-pdv/rodar.sh)
 #   scripts          só local: shellcheck de scripts/, .github/scripts/ e apps/pdv/instalador/linux-wine/, o teste
-#                    deste script e os testes de unidade do gerar-instalador.sh e do publicar-release.sh
+#                    deste script e os testes de unidade do gerar-instalador.sh, do publicar-release.sh e do
+#                    pedir-implantacao.sh
 #
 # Não coberto aqui (só o Windows de verdade faz: o runner, quando a cota voltar, ou o primeiro caixa): a impressora de
 # teste do spooler (SpoolerWindowsTests) e, do instalador, o que o Wine não reproduz (testar-instalador.ps1): a
@@ -445,11 +447,14 @@ job_imagens() {
   passo 'Imagem do backup' docker build "${ARGS_BUILD[@]}" "${ARGS_ALPINE[@]}" -f infra/producao/backup/Dockerfile \
     -t genesis-backup:verificacao-local infra/producao/backup || return 1
   passo 'Scripts de produção (shellcheck)' \
-    bash -c 'shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/teste/*.sh' || return 1
+    bash -c 'shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/vigia/*.sh infra/producao/teste/*.sh' ||
+    return 1
   passo 'Script do backup (testes de unidade)' bash infra/producao/backup/testar-genesis-backup.sh || return 1
   passo 'Logs do implantar.sh (testes de unidade)' bash infra/producao/teste/testar-implantar-logs.sh || return 1
   passo 'Implantação sem o Actions (testes de unidade)' bash infra/producao/teste/testar-implantar-sem-actions.sh ||
     return 1
+  passo 'Vigia da implantação (testes de unidade e systemd-analyze verify)' \
+    bash infra/producao/teste/testar-vigia-implantacao.sh || return 1
   passo 'Compose de produção válido (e dentro dos 2,5 GB somados)' compose_producao || return 1
 }
 
@@ -497,6 +502,7 @@ job_scripts() {
     return 1
   passo 'Teste do publicar-release.sh (gh falso)' bash apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh ||
     return 1
+  passo 'Teste do pedir-implantacao.sh (gh e curl falsos)' bash scripts/testar-pedir-implantacao.sh || return 1
 }
 
 # ---------------------------------------------------------------------------------------------------------------------

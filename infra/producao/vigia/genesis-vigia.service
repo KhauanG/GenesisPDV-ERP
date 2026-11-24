@@ -1,0 +1,24 @@
+# Genesis: vigia da implantação (OP-B4; D70; README de infra/producao › Vigia da implantação). Uma rodada do
+# vigia-implantacao.sh: lê as tags do repositório público e, havendo pedido novo da main, implanta pelo
+# implantar-sem-actions.sh. Instalado pelo instalar-vigia.sh em /etc/systemd/system; o genesis-vigia.timer a chama.
+[Unit]
+Description=Genesis: vigia da implantação (uma rodada)
+Documentation=https://github.com/KhauanG/GenesisPDV-ERP/blob/main/infra/producao/README.md
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/genesis/vigia/vigia-implantacao.sh
+# O docker e o git leem a configuração do root em $HOME (um serviço do sistema não recebe o HOME).
+Environment=HOME=/root
+# Prioridade baixa: a rodada é um `git ls-remote`; a montagem das imagens já roda com nice/ionice, e os containers
+# no ar não são afetados (rodam no daemon do Docker).
+Nice=10
+IOSchedulingClass=idle
+# Uma implantação leva de 5 a 15 minutos; o limite só pega uma rodada presa (o git tem o próprio limite de 5 min).
+TimeoutStartSec=3h
+# Parar o serviço (ou o limite acima) encerra o vigia, nunca a implantação que ele chamou: o implantar-sem-actions.sh
+# roda numa sessão própria (setsid), e o implantar.sh pela metade (migrações, troca de versão) seria o pior caso. A
+# rodada seguinte espera a implantação terminar e dá o pedido como falhou (README › Vigia da implantação).
+KillMode=process

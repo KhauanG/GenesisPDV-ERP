@@ -32,7 +32,9 @@
 #   7. (--publicar-pdv) implantar.sh pdv publicar (ou pdv retirar, sem release publicado);
 #   8. conferência pelas URLs públicas; depois, a limpeza das imagens antigas e o resumo.
 # Recusa sem root, com o commit fora da main, com menos de GENESIS_ESPACO_MINIMO_GB livres no disco do Docker ou do
-# /opt/genesis e com outra implantação em andamento (a trava do implantar.sh ou outra execução deste script).
+# /opt/genesis e com outra implantação em andamento (a trava do implantar.sh ou outra execução deste script). A
+# recusa pela trava sai com o código 75 (EX_TEMPFAIL: "tente de novo depois"), e as outras falhas com 1: o vigia da
+# implantação (vigia/vigia-implantacao.sh, OP-B4) deixa o pedido para a próxima rodada em vez de dá-lo por falho.
 #
 # Variáveis: GENESIS_PASTA (padrão /opt/genesis), GENESIS_ESPACO_MINIMO_GB (padrão 5), GENESIS_MANTER_IMAGENS (padrão
 # 3), GENESIS_API_URL, GENESIS_ERP_URL e GENESIS_DOWNLOAD_URL (padrão: https:// e os domínios do /opt/genesis/.env).
@@ -67,6 +69,11 @@ aviso() { printf '\033[1;33mATENÇÃO: %s\033[0m\n' "$*" >&2; }
 erro() {
   printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2
   exit 1
+}
+# A trava de outra implantação: "tente de novo depois" (o comentário do começo).
+ocupado() {
+  printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2
+  exit 75
 }
 simulado() { printf '\033[1;36m[simulação]\033[0m faria: %s\n' "$*"; }
 uso() { sed -n '7,16p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -158,9 +165,9 @@ conferir_requisitos() {
   mkdir -p "$PASTA"
   # Uma execução deste script por vez (o build leva minutos, antes de o implantar.sh pegar a trava dele).
   exec 8>"$TRAVA"
-  flock -n 8 || erro "outra implantação sem o Actions está em andamento ($TRAVA): espere ela terminar (bash $0 --acompanhar mostra)."
+  flock -n 8 || ocupado "outra implantação sem o Actions está em andamento ($TRAVA): espere ela terminar (bash $0 --acompanhar mostra)."
   trava_do_implantar_livre ||
-    erro "outra implantação está em andamento (a trava do implantar.sh, $PASTA/.implantacao.lock): espere ela terminar."
+    ocupado "outra implantação está em andamento (a trava do implantar.sh, $PASTA/.implantacao.lock): espere ela terminar."
   ok "nenhuma outra implantação em andamento"
 }
 

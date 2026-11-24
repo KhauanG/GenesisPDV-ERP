@@ -120,9 +120,11 @@ services:
     container_name: genesis-web
     # Instalador do PDV da página de download (README › Página de download do PDV): pasta do host, só leitura,
     # relativa ao /opt/genesis (o --project-directory do implantar.sh). root:101 750/640 (instalar.sh): o nginx (uid
-    # 101) só lê; quem grava é o `implantar.sh pdv publicar`, como root, fora do container.
+    # 101) só lê; quem grava é o `implantar.sh pdv publicar`, como root, fora do container. Ao lado, o estado.json do
+    # vigia da implantação (README › Vigia da implantação; OP-B4), na mesma pasta do host e com as mesmas permissões.
     volumes:
       - ./download/pdv:/srv/download/pdv:ro
+      - ./download/implantacao:/srv/download/implantacao:ro
     networks: [proxy]
     mem_limit: 128m
     memswap_limit: 128m

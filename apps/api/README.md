@@ -7284,6 +7284,47 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        dados no tmpfs contam na memória dele). Ensaio `testar-local.sh --sem-actions` verde em 24/11/2026. Nada muda
        no código da API, no ERP, no PDV, no `implantar.sh` ou nos workflows; sem migração.
 
+217. **Vigia da implantação na VPS: a sessão pede por uma tag do repositório público, a VPS busca** (OP-B4; D70-Q1 =
+     (A), com a autonomia que o dono deu à sessão em 24/11/2026, `docs/planos/decisoes-do-dono.md`; plano
+     `docs/planos/operacao-sem-actions-plano.md`; `infra/producao/vigia/`, `scripts/pedir-implantacao.sh`; README de
+     `infra/producao` › Vigia da implantação e Decisões técnicas (vigia da implantação)). A sessão não alcança a VPS
+     (só HTTPS de saída) e não recebe credencial dela; por isso a VPS consulta, a cada 2 minutos
+     (`genesis-vigia.timer` + `genesis-vigia.service` oneshot, `Nice`/`IOSchedulingClass=idle`), as tags do
+     repositório público com `git ls-remote` sem token. Pedido = tag `implantar/<AAAAMMDD-HHMMSS>` ou
+     `implantar-pdv/<…>` (o `--publicar-pdv`) num commit ancestral da `origin/main` (conferido num clone parcial
+     próprio; fora da `main` = "recusado", sem chamar nada); roda só o mais novo não visto, os anteriores ficam
+     "pulado", e as tags que existiam na instalação nunca rodam. A chamada é o `implantar-sem-actions.sh` da `main` de
+     agora (decisão 215: o script vem da `main`), que passou a sair com **75** quando recusa pela trava de outra
+     implantação (as outras falhas seguem com 1): o pedido fica "recebido" e roda na rodada seguinte, sem virar falha.
+     Depois de um "ok", o vigia se atualiza com o `vigia-implantacao.sh` do commit implantado (só se o sha256 mudou,
+     por rename; falhar não desfaz a implantação). A única saída pública da VPS (por decisão do dono, D70) é
+     `https://<DOWNLOAD_DOMINIO>/implantacao/estado.json` com só `{pedido, commit (12), resultado, inicio, fim}`,
+     numa pasta do host ao lado de `download/pdv` (root:101 750/640) montada só leitura no `genesis-web`; o log fica
+     em `/opt/genesis/vigia` (root 700), que o dono vê com `instalar-vigia.sh --estado`. A sessão cria a tag pela API
+     REST (`scripts/pedir-implantacao.sh`, que confere a `main` antes) e acompanha o `estado.json` e o `no_ar_desde`
+     do `/saude`. Escolhas técnicas, sem pergunta ao dono:
+     - **`KillMode=process`.** Parar o serviço (ou o `TimeoutStartSec=3h`) encerra só o vigia: o
+       `implantar-sem-actions.sh` roda numa sessão própria e termina; a rodada seguinte espera e dá o pedido como
+       "falhou" (interrompida). O `--desligar` só desliga o timer.
+     - **Lista dos vistos obrigatória.** Sem ela (criada pelo `instalar-vigia.sh`), o vigia não implanta nada: toda
+       tag antiga pareceria pedido novo (uma volta sem ninguém pedir). Reinstalar com o timer ligado e a lista no
+       lugar mantém os pendentes; depois do `--desligar`, ou sem a lista (mesmo com o timer ligado), as tags
+       existentes ficam como vistas, e um pedido que esperava (`recebido`) passa a `recusado` no `estado.json`, com
+       o fim.
+     - **Volta para antes do OP-B4 sem o resultado público.** O `genesis-web` de um commit anterior não tem a rota
+       nem a montagem do `estado.json` (404 depois da troca): o `scripts/pedir-implantacao.sh` confere as duas no
+       commit e o recusa sem `--sem-estado`; com ele, acompanha até a API reiniciar (sai com 2), e o resultado final
+       o dono vê com `instalar-vigia.sh --estado`. O tempo limite (sai com 3) não afirma que o pedido ainda roda (com
+       o vigia desligado, não roda).
+     - **`inicio` = quando o vigia recebeu o pedido**, mantido enquanto ele espera a trava; `fim` = `null` até o
+       resultado. Um pedido "pulado" não aparece no `estado.json` (o script da sessão o reconhece pelo pedido mais
+       novo no lugar).
+     - **Testes.** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id` e `systemctl`, `git` de verdade
+       num repositório local com as tags, `implantar-sem-actions.sh` falso; `systemd-analyze verify` das unidades;
+       no job `imagens` da CI e do `scripts/verificar-local.sh`), `scripts/testar-pedir-implantacao.sh` (`gh` e `curl`
+       falsos; job `scripts`) e a rota do `estado.json` no `testar-local.sh`. Nada roda na produção até o dono instalar
+       o vigia; nenhuma tag, release ou ref de verdade foi criada. Sem migração; API e PDV sem mudança.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

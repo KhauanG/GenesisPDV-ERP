@@ -156,6 +156,8 @@ REDE_PROXY=$REDE bash "$T/releases/$VERSAO_A/instalar.sh" >/dev/null
 [ "$(stat -c %a "$T/segredos/genesis-app.env")" = 600 ] || falha "genesis-app.env sem 600"
 [ "$(stat -c %a:%g "$T/segredos/gcp-conta-servico.json")" = 640:65532 ] || falha "chave da conta de serviço sem 640 e grupo 65532"
 [ "$(stat -c %a:%U:%g "$T/download/pdv")" = 750:root:101 ] || falha "pasta download/pdv sem root:101 750 (o nginx, uid 101, só lê)"
+[ "$(stat -c %a:%U:%g "$T/download/implantacao")" = 750:root:101 ] ||
+  falha "pasta download/implantacao sem root:101 750 (o estado.json do vigia; o nginx só lê)"
 grep -q '^CLOUDSQL_INSTANCIA=projeto-teste:southamerica-east1:genesis-teste$' "$T/.env" || falha ".env sem a instância"
 confere "segredos gerados uma vez, permissões e .env"
 
@@ -304,6 +306,25 @@ bash "$T/releases/$VERSAO_A/implantar.sh" pdv retirar >/dev/null || falha "pdv r
 pagina=$(req "$DOWNLOAD" "$(url "$DOWNLOAD" /)")
 grep -q 'pagina.js' <<<"$pagina" || falha "download: página fora do ar depois do retirar"
 confere ".sha256 de duas linhas recusado; versão menor apaga a retirada; pdv retirar volta a página para \"não publicado\""
+# Estado público do vigia da implantação (OP-B4): 404 sem pedido atendido; o estado.json gravado como o vigia grava
+# (root:101 640), servido como JSON sem cache; qualquer outro nome em /implantacao é 404.
+[ "$(req "$DOWNLOAD" -o /dev/null -w '%{http_code}' "$(url "$DOWNLOAD" /implantacao/estado.json)")" = 404 ] ||
+  falha "download: /implantacao/estado.json deveria ser 404 sem pedido atendido"
+printf '{\n  "pedido": "implantar/20261124-100000",\n  "commit": "1a2b3c4d5e6f",\n  "resultado": "ok",\n  "inicio": "2026-11-24T10:00:00Z",\n  "fim": "2026-11-24T10:09:00Z"\n}\n' \
+  >"$T/download/implantacao/estado.json"
+chgrp 101 "$T/download/implantacao/estado.json"
+chmod 640 "$T/download/implantacao/estado.json"
+touch "$T/download/implantacao/.estado.temporario"
+cabecalhos=$(req "$DOWNLOAD" -D - -o "$T/estado-baixado.json" "$(url "$DOWNLOAD" /implantacao/estado.json)")
+grep -q '"resultado": "ok"' "$T/estado-baixado.json" || falha "download: estado.json não servido: $(cat "$T/estado-baixado.json")"
+grep -qi '^content-type: application/json' <<<"$cabecalhos" && grep -qi '^cache-control: no-cache' <<<"$cabecalhos" ||
+  falha "download: estado.json sem application/json e no-cache: $cabecalhos"
+for caminho in /implantacao/.estado.temporario /implantacao/ /implantacao; do
+  [ "$(req "$DOWNLOAD" -o /dev/null -w '%{http_code}' "$(url "$DOWNLOAD" "$caminho")")" = 404 ] ||
+    falha "download: $caminho deveria ser 404"
+done
+rm -f "$T/download/implantacao/estado.json" "$T/download/implantacao/.estado.temporario"
+confere "estado do vigia: /implantacao/estado.json 404 sem pedido, servido como JSON sem cache; outros nomes em /implantacao são 404"
 sync=$(req "$API" -o /dev/null -w '%{http_code} %{content_type}' "$(url "$API" /sync/estado)")
 [[ $sync =~ ^4[0-9][0-9]\ application/json ]] || falha "api: /sync/estado sem credenciais deveria ser recusado pela API (veio: $sync)"
 [ "$(req "$ERP" -o /dev/null -w '%{http_code}' "$(url "$ERP" /sync/estado)")" = 200 ] || falha "erp: /sync não deveria ir para a API"

@@ -262,14 +262,20 @@ exec 9>"$GENESIS_PASTA/.implantacao.lock"
 flock -n 9
 rodar "$V1"
 recusa "trava do implantar.sh" "outra implantação está em andamento"
+[ "$CODIGO" = 75 ] || falha "trava do implantar.sh: deveria sair com 75 (tente de novo depois), saiu $CODIGO"
 nao_chamou '^git |^docker build ' "trava do implantar.sh"
 exec 9>&-
 exec 9>"$GENESIS_PASTA/.implantar-sem-actions.lock"
 flock -n 9
 rodar "$V1"
 recusa "outra execução" "outra implantação sem o Actions"
+[ "$CODIGO" = 75 ] || falha "outra execução: deveria sair com 75 (tente de novo depois), saiu $CODIGO"
 exec 9>&-
-confere "recusa com outra implantação em andamento (a trava do implantar.sh e a deste script)"
+echo 1000 >"$DUBLE/uid"
+rodar "$V1"
+[ "$CODIGO" = 1 ] || falha "sem root: deveria sair com 1 (só a trava sai com 75), saiu $CODIGO"
+rm -f "$DUBLE/uid"
+confere "recusa com outra implantação em andamento (a trava do implantar.sh e a deste script), com o código 75; as outras recusas com 1"
 
 # --- Commit da main -----------------------------------------------------------------------------------------------
 novo_cenario

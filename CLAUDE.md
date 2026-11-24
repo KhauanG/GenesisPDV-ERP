@@ -28,8 +28,17 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   autorizou a sessão (24/11/2026) a **implantar sozinha um commit que já está na `main`** (pelo vigia da VPS, OP-B4:
   tag `implantar/…`) e a **criar o GitHub Release do PDV** (OP-B3). Continua do dono: a liberação de cada merge na
   `main` e a atualização dos caixas nas lojas. Avise o dono antes e depois de cada implantação, com o resultado
-  conferido pelas URLs públicas. Não dispare workflows do GitHub sem necessidade (a fila e
-  o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
+  conferido pelas URLs públicas. **Como pedir:** `scripts/pedir-implantacao.sh <commit da main> [--publicar-pdv]`
+  (em segundo plano: leva de 5 a 15 min, mais até 2 min para o vigia ver) confere a `origin/main`, cria a tag
+  `implantar/<AAAAMMDD-HHMMSS>` (ou `implantar-pdv/…`) pela API REST e acompanha
+  `https://download.grupoicebeer.com.br/implantacao/estado.json` e o `no_ar_desde` do `/saude` da API até `ok`,
+  `falhou` ou `recusado` (o motivo de uma falha fica só no log do vigia, que o dono vê na VPS:
+  `bash ~/instalar-vigia.sh --estado`). **Volta para um commit anterior ao OP-B4:** o `genesis-web` dele não serve o
+  `estado.json` (404 depois da troca), então o script a recusa sem `--sem-estado`; com ele, acompanha só até a API
+  reiniciar (sai com 2) e o resultado final o dono confere na VPS. Tempo limite (sai com 3) não garante que o pedido
+  ainda vá rodar: com o vigia desligado, ele não roda; peça ao dono o `--estado`. Só depois de o dono instalar o vigia (README de `infra/producao` › Vigia da
+  implantação). Não crie tag `implantar*` à mão nem apague as que existem. Não dispare workflows do GitHub sem
+  necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
 - Nunca commitar: `.env`, `.db`, `bin/`, `obj/`, `dist/`, `publish/`, instaladores, `.pfx`, planilhas/dados reais, testes
   temporários. Sem identificador de modelo em commits, PRs ou código.
 - O repositório é **público** (D60, 06/11/2026): tudo que entra fica visível para qualquer pessoa, inclusive o
@@ -37,7 +46,9 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   XML de nota real, log de produção, IP ou credencial; fixtures e exemplos sempre inventados (CNPJ/CPF de teste,
   `<IP_DA_VPS>`, `<terminal_id>.<segredo>`). Os XMLs reais de fornecedores que o dono mandar **não** entram: ficam
   em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa (está no `.gitignore`) e o teste com eles roda só
-  localmente. Workflow não imprime saída da VPS (estado, logs, versões): isso se vê na própria VPS.
+  localmente. Workflow não imprime saída da VPS (estado, logs, versões): isso se vê na própria VPS. A **única saída
+  pública da VPS** é o `estado.json` do vigia da implantação (por decisão do dono, D70), com só
+  `{pedido, commit, resultado, inicio, fim}`: nada de log, versão, estado da VPS ou mensagem de erro nele.
 - O sistema "Hermes" é somente leitura.
 
 ## Mapa do repositório

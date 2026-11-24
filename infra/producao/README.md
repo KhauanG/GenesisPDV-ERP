@@ -49,8 +49,9 @@ e se anuncia ao Traefik por labels.
 | `instalar.sh` | Preparação da VPS, idempotente: confere pré-requisitos, gera os segredos da aplicação, acerta permissões |
 | `implantar.sh` | `implantar <versão>`, `voltar`, `estado`, `tarefa <comando>`, `backup <...>`, `token-monitor`, `pdv <atual\|publicar\|retirar>`, `logs [guardar]` |
 | `implantar-sem-actions.sh` | Implantação pela própria VPS, sem o GitHub Actions (D70): baixa o commit da `main`, monta as imagens na VPS e roda o `instalar.sh` e o `implantar.sh` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)) |
+| `vigia/` | Vigia da implantação (D70, OP-B4): `vigia-implantacao.sh` (uma rodada: a tag de pedido do repositório público → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
 | `backup/` | Imagem do `genesis-backup` (`Dockerfile`), o script `genesis-backup.sh` (agendar, agora, estado, listar, restaurar) e os testes de unidade dele (`testar-genesis-backup.sh`, sem Docker; rodam no CI) |
-| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`) e do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
+| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`), do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`) e do vigia da implantação (`testar-vigia-implantacao.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
 
 Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
 
@@ -62,6 +63,9 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
   implantar.sh        ->   releases/<versão atual>/implantar.sh
   releases/<versão>/       # arquivos desta pasta, um por versão (guarda as 5 últimas)
   fonte/                   # root 700: clone do repositório público, só do implantar-sem-actions.sh (D70)
+  vigia/                   # root 700: o vigia da implantação (OP-B4): vigia-implantacao.sh, a cópia do
+                           # implantar-sem-actions.sh, repo.git (clone parcial da main), vistos, vigia.log e
+                           # ultima-implantacao.log
   versoes/atual, anterior, historico
   logs/                    # root 700: api-<AAAAMMDDTHHMMSSZ>-<versão>.log (600), o log da API guardado antes de
                            # cada troca do container: o trecho em volta do último reinício pelo Docker (se houve)
@@ -70,6 +74,8 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
     pdv/                     # instalador do PDV da página de download, root:101 750, arquivos 640; montada só
                              # leitura no genesis-web (/srv/download/pdv): atual.json, GenesisPDV-Setup-X.Y.Z.exe
                              # e o .sha256 (o atual e o anterior)
+    implantacao/             # root:101 750: estado.json do vigia (640), montada só leitura no genesis-web
+                             # (/srv/download/implantacao): a única saída pública da VPS (D70)
     .recebendo.*/            # temporários do `implantar.sh pdv publicar` (root 700; somem no fim)
   segredos/                # root, 700
     genesis-google.env       # banco e armazenamento (gerado no Cloud Shell), 600
@@ -432,6 +438,83 @@ Rodar de novo o mesmo comando é seguro (o `instalar.sh` é idempotente e a mont
 ([Teste local da stack](#teste-local-da-stack)). Decisões em
 [Decisões técnicas (implantação sem o Actions)](#decisões-técnicas-implantação-sem-o-actions-d70-24112026).
 
+## Vigia da implantação (D70, OP-B4)
+
+O dono autorizou a sessão do Claude Code a **implantar sozinha um commit que já está na `main`** (D70, 24/11/2026),
+mas a sessão não abre conexão com a VPS e não recebe credencial nenhuma dela. O **vigia** inverte o sentido: a
+própria VPS, a cada 2 minutos, olha as tags do repositório **público** (só leitura, sem token) e, quando aparece um
+**pedido** novo, roda o mesmo `implantar-sem-actions.sh` da seção acima. O merge na `main` continua só com a
+liberação do dono; o vigia só implanta o que já entrou nela.
+
+**Quem pode pedir:** só quem tem permissão de escrita no repositório (criar tag exige isso, a mesma permissão de
+juntar na `main`). O pedido é uma tag com o nome `implantar/<AAAAMMDD-HHMMSS>` (implantar) ou
+`implantar-pdv/<AAAAMMDD-HHMMSS>` (implantar e publicar o PDV do último release, o `--publicar-pdv`), apontando para
+um commit da `main`. Commit de outro branch é **recusado** sem rodar nada. Roda só o pedido **mais novo** que o vigia
+ainda não viu; os anteriores ficam como pulados. Os pedidos que já existiam quando o vigia foi instalado nunca rodam.
+Um commit mais velho que o que está no ar é permitido (é a "volta").
+
+**Limite da volta para antes deste bloco:** a rota do `estado.json` (no nginx do `genesis-web`) e a pasta montada
+(no `docker-compose.yml`) chegaram com o OP-B4. Numa volta para um commit anterior a ele, o vigia implanta
+normalmente, mas, depois da troca de versão, o `genesis-web` antigo responde 404 no `estado.json`: o resultado
+(`ok`, `falhou`) fica só no host e no log do vigia, e a sessão não o vê até a próxima implantação de um commit com o
+bloco. Por isso o `scripts/pedir-implantacao.sh` recusa esse commit, a não ser com `--sem-estado`: aí acompanha só até
+a API reiniciar (o `no_ar_desde` do `/saude`) e sai com 2, e o dono confere o resultado com
+`bash ~/instalar-vigia.sh --estado`.
+
+**Instalar (uma vez, no terminal da VPS):**
+
+1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (já entra como `root`).
+2. Cole o comando:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/KhauanG/GenesisPDV-ERP/main/infra/producao/vigia/instalar-vigia.sh -o ~/instalar-vigia.sh && bash ~/instalar-vigia.sh
+   ```
+
+3. O que esperar: seis etapas com `==>` (menos de um minuto) e, no fim, `Vigia da implantação instalado.` O
+   script baixa a `main` do repositório público para `/opt/genesis/vigia/repo.git`, instala o vigia e o
+   `implantar-sem-actions.sh` em `/opt/genesis/vigia`, as duas unidades do systemd (`genesis-vigia.service` e
+   `genesis-vigia.timer`), marca os pedidos antigos como vistos e liga o timer. **Nada é implantado na instalação.**
+   Rodar o mesmo comando de novo atualiza o vigia para a versão da `main` (sem perder o que já foi visto).
+4. A página pública do resultado (`https://download.grupoicebeer.com.br/implantacao/estado.json`) passa a responder
+   depois da primeira implantação com este bloco (é ela que monta a pasta no `genesis-web`); até lá, 404.
+
+**Ver o que o vigia fez:** `bash ~/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a última rodada, o
+estado público e as 20 últimas linhas do log (`/opt/genesis/vigia/vigia.log`, uma linha por pedido: recebido, em
+andamento, ok, falhou, recusado, pulado). A saída completa da última implantação pedida fica em
+`/opt/genesis/vigia/ultima-implantacao.log`, e a da implantação em andamento (ou a última, com o resumo) aparece com
+`bash /opt/genesis/vigia/implantar-sem-actions.sh --acompanhar`.
+
+**Desligar:** `bash ~/instalar-vigia.sh --desligar` desliga o timer: nenhum pedido novo é atendido, e uma implantação
+que já estava em andamento termina normalmente (o comando nunca a interrompe). Para religar, o comando de instalar de
+novo; os pedidos feitos enquanto o vigia esteve desligado **não** rodam (a sessão pede de novo), e um pedido que
+estava esperando (como `recebido`) fica `recusado` no `estado.json`, com o fim (o motivo vai ao log do vigia). O
+mesmo vale se a pasta `/opt/genesis/vigia` (ou só a lista `vistos`) se perder, mesmo com o timer ligado: o vigia
+para de implantar e pede o comando de instalar, que marca todas as tags existentes como vistas (as tags ficam no
+repositório depois de atendidas; sem isso, o pedido mais novo do histórico rodaria de novo, uma volta sem ninguém
+pedir).
+
+**Como a sessão pede e confere** (`scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`, CLAUDE.md): confere que
+o commit está na `origin/main`, cria a tag pela API REST do GitHub e acompanha o `estado.json` e o `/saude` da API
+(o `no_ar_desde` muda quando a versão nova sobe) até `ok`, `falhou` ou `recusado` (sai com 0 no `ok`, 1 no
+`falhou`, `recusado` ou pulado, 2 na volta com `--sem-estado` quando a API reinicia e 3 no tempo limite de 1 hora:
+sem resultado, a implantação ainda roda, a VPS está fora ou o vigia está desligado, e o dono confere com
+`--estado`). O `estado.json` tem **só**
+`{pedido, commit (12 caracteres), resultado, inicio, fim}`: o nome da tag e o commit já são públicos no repositório;
+nenhum log, versão de software, estado da VPS ou mensagem de erro sai da VPS (isso fica no `vigia.log`, que só o
+dono vê). É a **única saída pública da VPS**, por decisão do dono (D70).
+
+**Se der errado:** um `falhou` deixa a VPS como o `implantar-sem-actions.sh` deixaria (a mensagem `ERRO:` diz em que
+etapa parou; antes da troca, a versão anterior continua no ar; a nova sem saúde volta sozinha). Se a VPS reiniciar no
+meio de uma implantação, o pedido fica como `falhou` na rodada seguinte (confira com `bash /opt/genesis/implantar.sh
+estado`). Com outra implantação em andamento (o dono pelo terminal, por exemplo), o pedido espera, como `recebido`,
+e roda na rodada seguinte à que ela terminar.
+
+**Testado sem a VPS:** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id` e `systemctl`, o `git` de
+verdade sobre um repositório local com as tags de pedido, um `implantar-sem-actions.sh` falso; o `systemd-analyze
+verify` das unidades) e `scripts/testar-pedir-implantacao.sh` (`gh` e `curl` falsos); a rota do `estado.json` no
+`testar-local.sh`. Decisões em
+[Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026).
+
 ---
 
 ## Operação no dia a dia (na VPS)
@@ -454,6 +537,7 @@ Rodar de novo o mesmo comando é seguro (o `instalar.sh` é idempotente e a mont
 | Logs do backup | `docker logs genesis-backup --tail 100` (uma linha por banco; `FALHOU` quando algo deu errado) |
 | Restaurar (um banco ao lado, ou tudo num servidor vazio) | [Backup › Restaurar](#restaurar) |
 | Gerar ou trocar o token do monitoramento | `/opt/genesis/implantar.sh token-monitor` (o anterior para de valer na hora) |
+| Ver o vigia da implantação (timer, último pedido, log) ou desligá-lo | `bash ~/instalar-vigia.sh --estado` / `bash ~/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
 | Ver o instalador do PDV publicado na página de download | `cat /opt/genesis/download/pdv/atual.json` (ou a linha "Página de download" do `implantar.sh estado`) |
 
 **A API reiniciou sozinha** (ex.: 04/11/2026, 18:05:42Z, no meio de uma importação). Primeiro a causa, depois o
@@ -1192,6 +1276,56 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   uma sessão), `GENESIS_CONFERIR_TENTATIVAS`/`GENESIS_CONFERIR_INTERVALO`. O teste de unidade usa dublês de `docker`,
   `curl`, `df`, `id`, `nice` e `ionice` e o `git` de verdade; o ensaio de ponta a ponta é o `testar-local.sh
   --sem-actions`. Decisão 215 do `apps/api/README.md`.
+
+## Decisões técnicas (vigia da implantação, OP-B4, 24/11/2026)
+
+- **A VPS busca, a sessão nunca conecta.** A sessão só sai por HTTPS e não deve ter a chave SSH nem segredo da
+  produção (plano OP › Fora do escopo). O pedido é uma tag do repositório público (escrita = as mesmas pessoas que
+  juntam na `main`); a VPS lê com `git ls-remote --tags` sem credencial (`credential.helper` vazio,
+  `GIT_TERMINAL_PROMPT=0`, limite de 5 min por comando). Nenhum workflow dispara com essas tags (o `ci.yml` só no
+  push da `main`; o `pdv-release.yml` só nas `pdv-v*`).
+- **Escolha do pedido.** Nome exato `implantar/` ou `implantar-pdv/` + `AAAAMMDD-HHMMSS` (UTC; outro nome não é
+  pedido), a data e hora do nome ordena; a tag anotada vale pelo commit dela (`^{}`). Roda só o mais novo não visto;
+  os anteriores ficam "pulado" quando ele começa. A lista `vistos` (uma linha por pedido, só acrescentada) é criada
+  pelo `instalar-vigia.sh`, que marca as tags existentes como vistas na primeira instalação, depois de um
+  `--desligar` (pedido feito com o vigia desligado não roda de surpresa) e sempre que a lista não existia, mesmo com
+  o timer ligado (a pasta do vigia apagada ou restaurada sem ela); numa reinstalação com o timer ligado e a lista no
+  lugar, os pendentes continuam valendo. Sem a lista, o vigia não implanta nada: senão, toda tag antiga pareceria
+  nova (as tags não são apagadas depois de atendidas). Um pedido que esperava a trava (`recebido`) e fica como visto
+  na reinstalação passa a `recusado` no `estado.json`, com o fim, para a sessão não esperar para sempre.
+- **Volta para antes do OP-B4.** O vigia implanta, mas o `genesis-web` daquele commit não tem a rota nem a
+  montagem do `estado.json` (404 depois da troca). O `pedir-implantacao.sh` confere as duas no commit (`git show`
+  do `genesis.conf` e do `docker-compose.yml`) antes de criar a tag e recusa sem `--sem-estado`; com ele, acompanha
+  até a API reiniciar e sai com 2 (o resultado final, o dono vê com `--estado`).
+- **Recusa antes de chamar.** O vigia confere o commit num clone parcial próprio (`vigia/repo.git`, bare, só a
+  `main`, sem tags e sem os arquivos) e dá "recusado" ao que não descende da `main`, sem chamar o script (que também
+  recusaria). Rede fora: a rodada sai com 0 e tenta na seguinte (uma linha no log, não uma a cada 2 minutos).
+- **Trava ocupada = próxima rodada.** O vigia confere livres as travas do `implantar-sem-actions.sh` e do
+  `implantar.sh` antes de começar, e o `implantar-sem-actions.sh` passou a sair com **75** (EX_TEMPFAIL) quando a
+  recusa é pela trava (as outras falhas continuam com 1): se outra implantação pegar a trava no mesmo instante, o
+  pedido volta a "recebido", sem virar falha. O vigia tem a própria trava (uma rodada por vez).
+- **O `implantar-sem-actions.sh` da `main` de agora**, copiado para `vigia/` antes de cada chamada (só se mudou),
+  pela mesma regra da implantação sem o Actions ("um commit antigo é implantado com as regras de hoje"). A chamada é
+  a de sempre (fora do terminal, log em `logs/`), com a entrada em `/dev/null` e a saída em
+  `vigia/ultima-implantacao.log`.
+- **Autoatualização** depois de cada `ok`: o `vigia-implantacao.sh` do commit implantado, só se o sha256 mudou, e
+  só se for um script bash válido; gravado por rename (a rodada em andamento continua lendo o arquivo antigo). Numa
+  volta a um commit antigo, vale o vigia daquele commit (o que está no ar; a próxima implantação da `main` traz o de
+  hoje); commit sem o vigia (anterior ao OP-B4) mantém o atual. Falhar aqui não desfaz a implantação. As unidades do
+  systemd só mudam pelo `instalar-vigia.sh`.
+- **systemd:** `genesis-vigia.service` `Type=oneshot` com `Nice=10`, `IOSchedulingClass=idle`, `HOME=/root` e
+  `TimeoutStartSec=3h`; `KillMode=process`: parar o serviço (ou o limite) encerra o vigia, nunca a implantação que
+  ele chamou (o `implantar.sh` pela metade é o pior caso); a rodada seguinte espera ela terminar e dá o pedido como
+  "falhou" (interrompida), com a versão no ar no log. `genesis-vigia.timer`: 1 minuto depois de ligado ou do boot e
+  2 minutos depois do fim de cada rodada (`OnUnitInactiveSec`), então uma rodada que implanta nunca tem outra por
+  cima. Nada escuta porta: só o HTTPS de saída que a VPS já tem.
+- **Saída pública:** `download/implantacao/estado.json` (root:101 640, pasta 750, criada pelo `instalar.sh` e pelo
+  vigia), montada só leitura no `genesis-web` ao lado do `pdv/` e servida em `/implantacao/estado.json`
+  (`application/json`, `no-cache`; qualquer outro nome em `/implantacao` é 404, como no `/pdv`), gravada por arquivo
+  novo + rename. Campos fixos, valores validados por expressão antes de escrever (sem jq na VPS). `inicio` = quando o
+  vigia recebeu o pedido; `fim` = `null` até o resultado.
+- **Testes:** os da seção acima; o `testar-local.sh` confere a rota e as permissões da pasta. Decisão 217 do
+  `apps/api/README.md`.
 
 ## Decisões técnicas (memória da tarefa, OP-B5, 24/11/2026)
 
