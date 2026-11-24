@@ -7,7 +7,8 @@
 # empresa de teste com os CLIs e confere pelo Traefik: /saude da API nos dois domínios, o ERP (SPA), o download (a
 # página e a publicação do instalador do PDV com `implantar.sh pdv publicar`), o
 # /sync roteado, o login no ERP com o cookie Secure e os limites de memória (a soma do compose de produção, com o
-# backup e o container de tarefa, dentro dos 2,5 GB, e o pico de uma tarefa, do backup e do Cloud SQL Auth Proxy).
+# backup e o container de tarefa, dentro dos 2,5 GB, o pico de cada comando da tarefa com 4 empresas, OP-B5, e o do
+# backup e do Cloud SQL Auth Proxy).
 # I1b: backup lógico (genesis-backup) para um S3 local, o token de monitoramento e o /api/saude/detalhada, e o
 # ensaio de desastre: o PostgreSQL é trocado por um vazio, tudo é restaurado do bucket, as contagens de linhas e a
 # colação conferem com as de antes, e o ERP volta a entrar.
@@ -390,7 +391,7 @@ jq -e '.status == "ok" and .banco.status == "ok" and .api.ambiente == "producao"
   falha "detalhada: $(head -c 400 <<<"$saude")"
 jq -e --arg dia "$DIA" '.ultimo_backup.status == "ok" and (.ultimo_backup.tamanho_bytes > 0) and .ultimo_backup.ultimo_sucesso_em != null' <<<"$saude" >/dev/null ||
   falha "detalhada sem o último backup: $(jq -c .ultimo_backup <<<"$saude")"
-jq -e '.memoria.limite_bytes == 2147483648 and .memoria.usada_bytes > 0 and .terminais == [] and .eventos_fila_decisao == 0' <<<"$saude" >/dev/null ||
+jq -e '.memoria.limite_bytes == 2080374784 and .memoria.usada_bytes > 0 and .terminais == [] and .eventos_fila_decisao == 0' <<<"$saude" >/dev/null ||
   falha "detalhada: memória/terminais: $(jq -c '{memoria, terminais, eventos_fila_decisao}' <<<"$saude")"
 # Memória do processo (apps/api/README.md, decisão 166): o teto do heap do V8 vem do --max-old-space-size=1536.
 jq -e '.processo.heap_limite_mb >= 1536 and .processo.heap_usado_mb > 0 and .processo.rss_mb > 0 and .processo.no_ar_segundos >= 0' <<<"$saude" >/dev/null ||
@@ -406,7 +407,7 @@ detalhada "$API" | jq -e '.status == "ok"' >/dev/null || falha "o token novo nã
 # Cada token-monitor recria a API e guarda antes o log dela (decisão 166): dois arquivos de A com o motivo no cabeçalho.
 [ "$(logs_guardados "$VERSAO_A" token-monitor | wc -l)" = 2 ] ||
   falha "o token-monitor deveria guardar o log da API antes de recriá-la (um por troca): $(ls -l "$T/logs" 2>&1)"
-confere "401 sem token; --arquivo só num arquivo novo (já existente ou link: recusa sem trocar o token); token só como hash no genesis-app.env; 200 nos dois domínios com o último backup, a memória do container (2 GiB) e a troca do token"
+confere "401 sem token; --arquivo só num arquivo novo (já existente ou link: recusa sem trocar o token); token só como hash no genesis-app.env; 200 nos dois domínios com o último backup, a memória do container (1984 MiB) e a troca do token"
 
 passo "Ensaio de desastre: PostgreSQL vazio, restauração do bucket e o ERP de volta"
 pg() { docker exec -i genesis-cloudsql-proxy psql -U postgres -v ON_ERROR_STOP=1 -Atq "$@"; }
@@ -470,19 +471,43 @@ for c in genesis-api genesis-web genesis-backup genesis-cloudsql-proxy; do
   printf '  %-24s %5d MiB\n' "$c" $((m / 1048576))
   [ "$c" = genesis-cloudsql-proxy ] || total=$((total + m))
 done
-[ $((total / 1048576)) = 2240 ] || falha "API + ERP + backup deveriam somar 2240 MiB"
-confere "API 2048 MiB + ERP 128 MiB + backup 64 MiB no ar (aqui o PostgreSQL de teste, no lugar do proxy de 192 MiB, usa 512 MiB)"
+[ $((total / 1048576)) = 2176 ] || falha "API + ERP + backup deveriam somar 2176 MiB"
+confere "API 1984 MiB + ERP 128 MiB + backup 64 MiB no ar (aqui o PostgreSQL de teste, no lugar do proxy de 192 MiB, usa 1536 MiB com os dados em tmpfs)"
 # O compose de produção sem override, com o perfil da tarefa: ela roda com a API no ar (migrações da implantação,
 # implantar.sh tarefa), então a soma de todos os limites tem de caber nos 2,5 GB.
 soma=$(GENESIS_VERSAO=$VERSAO_A docker compose --project-directory "$T" -f "$T/releases/$VERSAO_A/docker-compose.yml" \
   --profile tarefa config --format json | grep -o '"mem_limit": *"[0-9]*"' | grep -o '[0-9]*' | awk '{s += $1} END {print s / 1048576}')
 [ "$soma" -le 2560 ] || falha "limites do compose de produção, com a tarefa, somam $soma MiB (teto: 2560)"
-confere "compose de produção: API 2048 + ERP 128 + proxy 192 + backup 64 + tarefa 128 = $soma MiB (teto 2560 MiB)"
-# Pico de memória de uma tarefa (referencias: todas as empresas, referências nacionais e seed) no limite de produção.
-pico=$(compose_teste run --rm -T --entrypoint sh genesis-tarefa -c \
-  'node dist/cli/referencias.js >/dev/null || exit 1; cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes') ||
-  falha "referencias no container de tarefa (limite de 128 MiB)"
-confere "pico da tarefa referencias: $((pico / 1048576)) MiB (limite 128 MiB)"
+confere "compose de produção: API 1984 + ERP 128 + proxy 192 + backup 64 + tarefa 192 = $soma MiB (teto 2560 MiB)"
+# OP-B5: a tarefa sem o HEALTHCHECK da imagem da API (um `node` a cada 5 s, sem servidor para responder, dentro do
+# mesmo limite) e o pico de cada comando no limite de produção (192 MiB), com 4 empresas: o lote padrão das migrações
+# (MIGRACAO_LOTE) migra 4 em paralelo, o pior caso do migrar-empresas e do referencias. Estourar o limite é SIGKILL
+# (saída 137) e falha aqui. O pico é o do cgroup (o que o kernel compara com o limite), com o cache de arquivos.
+compose_teste --profile tarefa config --format json | jq -e '.services["genesis-tarefa"].healthcheck.disable == true' >/dev/null ||
+  falha "o genesis-tarefa deveria desligar o healthcheck da imagem"
+limite_tarefa=$(compose_teste --profile tarefa config --format json | jq '.services["genesis-tarefa"].mem_limit | tonumber')
+pico_tarefa() {
+  compose_teste run --rm -T --entrypoint sh genesis-tarefa -c \
+    '"$@" >/dev/null || exit 1; cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes' \
+    sh node "dist/cli/$1.js" "${@:2}"
+}
+picos=()
+medir_tarefa() {
+  local rotulo=$1 pico
+  shift
+  pico=$(pico_tarefa "$@") || falha "$rotulo no container de tarefa (limite de $((limite_tarefa / 1048576)) MiB)"
+  picos+=("$pico")
+  printf '  %-34s %4d MiB (%d %% do limite)\n' "$rotulo" $((pico / 1048576)) $((pico * 100 / limite_tarefa))
+}
+medir_tarefa migrar-controle migrar-controle
+for n in 2 3 4; do
+  medir_tarefa "empresa-criar (empresa $n de 4)" empresa-criar --razao-social "Empresa Teste Memoria $n Ltda" --cnpj 11222333000181
+done
+medir_tarefa "migrar-empresas (4 empresas)" migrar-empresas
+medir_tarefa "referencias (4 empresas)" referencias
+medir_tarefa particoes particoes
+maior=$(printf '%s\n' "${picos[@]}" | sort -n | tail -n 1)
+confere "tarefa sem healthcheck; maior pico $((maior / 1048576)) MiB de $((limite_tarefa / 1048576)) MiB (migrar-controle, empresa-criar, migrar-empresas, referencias e particoes)"
 docker inspect -f '{{.Config.User}}' genesis-api | grep -qx node || falha "API não roda como node"
 docker inspect -f '{{.Config.User}}' genesis-web | grep -qx 101 || falha "ERP não roda como 101"
 confere "API e ERP sem root"

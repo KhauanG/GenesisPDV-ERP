@@ -183,8 +183,9 @@ VPS (passo a passo e modelos em `infra/producao/README.md`):
 | `segredos/genesis-app.env` (root, 600) | `JWT_SEGREDO`, `JWT_SEGREDO_PLATAFORMA`, `CHAVE_MESTRA`, `CHAVE_MESTRA_VERSAO=1`; `SMTP_URL` quando houver; `MONITOR_TOKEN_SHA256` (I1b) | `infra/producao/instalar.sh` (openssl, uma vez; nunca troca); o hash do token, `implantar.sh token-monitor` |
 | `genesis.env` | `TRUST_PROXY=1` (o Traefik), `CORS_ORIGENS` e `ERP_URL` = `https://erp.grupoicebeer.com.br`, `COOKIE_SEGURO=true`, `EMPRESAS_ICU_LOCALE=pt-BR`, `FILA_TRABALHADOR=true`, `EMAIL_REMETENTE`, `LOG_NIVEL=info` | `infra/producao/genesis.env.exemplo` |
 
-O compose ainda define `NODE_OPTIONS=--max-old-space-size=1536` (container de 2 GB) e `PORTA=3000`. Os CLIs rodam
-compilados na mesma imagem (`node dist/cli/<comando>.js`, pelo `implantar.sh tarefa <comando>`), sem `tsx`.
+O compose ainda define `NODE_OPTIONS=--max-old-space-size=1536` (container de 1984 MB desde o OP-B5, decisão 216) e
+`PORTA=3000`. Os CLIs rodam compilados na mesma imagem (`node dist/cli/<comando>.js`, pelo `implantar.sh tarefa
+<comando>`), sem `tsx`, no `genesis-tarefa` (192 MB, heap de 128 MB, sem o healthcheck da imagem).
 
 ## Migrações
 
@@ -7252,6 +7253,34 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        local na stack de teste (build pelo script, migrações e troca pelo `implantar.sh`, URLs pelo Traefik local, a
        API com a versão do commit) e volta. Nenhuma mudança no `implantacao.yml`, na API, no ERP ou no PDV; sem
        migração.
+
+216. **Memória do container de tarefa: sem o healthcheck da imagem, 192 MB com heap de 128 MB, e a API com 1984 MB**
+     (OP-B5; plano `docs/planos/operacao-sem-actions-plano.md`; `infra/producao/docker-compose.yml`, README de
+     `infra/producao` › Decisões técnicas (memória da tarefa, OP-B5), com a tabela dos picos). No ensaio do OP-B2 o
+     `empresa-criar` passou dos 128 MB do `genesis-tarefa`. Medido comando por comando (imagem de produção,
+     PostgreSQL 18, pico do cgroup): `migrar-controle` e `particoes` ~95 MiB, `admin-criar` ~110–121, `empresa-criar`
+     ~112–120 e `migrar-empresas`/`referencias` 124–138 MiB a partir de 4 empresas (o lote de 4 migra em paralelo; o
+     pico não sobe com mais empresas). Com 128 MB, a migração da implantação estouraria com 4 empresas. Escolhas
+     técnicas, sem pergunta ao dono (o teto somado de 2,5 GB da decisão dele não muda):
+     - **O certificado do proxy da sessão não pesa.** A mesma `/app` sobre a base com o `NODE_EXTRA_CA_CERTS` e sobre
+       a `node` pura dá o mesmo pico. Os 10–15 MiB a mais vinham do `HEALTHCHECK` da imagem da API, herdado pelo
+       container de tarefa: um `node` a mais a cada 5 s no período inicial e a cada 15 s depois, dentro do mesmo
+       limite, pedindo um `/saude` que ninguém serve, em produção também. O `genesis-tarefa` desliga
+       (`healthcheck: disable: true`).
+     - **Redistribuir dentro do teto.** Tarefa 192 MB (heap 128 MB, dois terços do container) e API 1984 MB (heap de
+       1536 MB sem mudança; 448 MB fora do heap, eram 512): 1984 + 128 + 192 + 64 + 192 = 2560 MiB. No limite final, o
+       maior pico foi 137 MiB de 192, com o heap em 88 de 128 MB. O `memoria.limite_bytes` do `/api/saude/detalhada`
+       passa a 2080374784; o alerta do Hermes (85 % do limite) acompanha sozinho. Transitório, aceito: na primeira
+       implantação com o OP-B5 as migrações já rodam na tarefa nova com a API antiga (2048 MB) no ar, e a soma fica
+       em 2624 MiB por alguns minutos, até a troca; um `voltar` para uma versão anterior ao OP-B5 traz de volta a
+       tarefa de 128 MB (README de `infra/producao` › Decisões técnicas (memória da tarefa, OP-B5)).
+     - **O que fica de fora.** Só carregar o grafo de serviços (`criarServicos`) custa ~85 MiB (~55 MB de heap) a
+       qualquer CLI; um grafo enxuto por comando tiraria ~35 MB de heap, mas mexe no grafo que a API e os testes usam
+       (fica para se a tarefa voltar a apertar). Baixar o `MIGRACAO_LOTE` na tarefa alongaria a implantação.
+     - **Testes.** O `testar-local.sh` confere o healthcheck desligado e mede o pico de cada comando no limite de
+       produção com 4 empresas (estourar é SIGKILL e falha); o PostgreSQL de teste do override foi a 1536 MiB (os
+       dados no tmpfs contam na memória dele). Ensaio `testar-local.sh --sem-actions` verde em 24/11/2026. Nada muda
+       no código da API, no ERP, no PDV, no `implantar.sh` ou nos workflows; sem migração.
 
 ## O que ainda não foi feito (Fase 0)
 

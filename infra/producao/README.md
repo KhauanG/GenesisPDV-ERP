@@ -21,18 +21,23 @@ Internet ──443──▶ Traefik v3 (rede "proxy")
 
 | Container | Imagem | Memória (teto) | Observação |
 |---|---|---|---|
-| `genesis-api` | `genesis-api:<versão>` (apps/api/Dockerfile) | 2 GB (heap do Node 1,5 GB) | Usuário `node`, sistema de arquivos só leitura, healthcheck em `/saude` |
+| `genesis-api` | `genesis-api:<versão>` (apps/api/Dockerfile) | 1984 MB (heap do Node 1,5 GB) | Usuário `node`, sistema de arquivos só leitura, healthcheck em `/saude` |
 | `genesis-web` | `genesis-web:<versão>` (apps/erp-web/Dockerfile) | 128 MB | nginx sem root (uid 101), ERP estático e a página de download (o instalador do PDV vem de uma pasta do host, só leitura) |
 | `genesis-cloudsql-proxy` | `gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.21.0-alpine` | 192 MB | Usuário nonroot (65532), healthcheck em `/readiness` |
 | `genesis-backup` | `genesis-backup:<versão>` (backup/Dockerfile) | 64 MB | Usuário `postgres` (70), clientes do PostgreSQL 18; `pg_dump` diário às 04:30 para o bucket |
-| `genesis-tarefa` | a mesma da API | 128 MB (heap do Node 96 MB), só enquanto roda | Migrações na implantação e comandos (`admin-criar`, `empresa-criar`...) |
+| `genesis-tarefa` | a mesma da API | 192 MB (heap do Node 128 MB), só enquanto roda | Migrações na implantação e comandos (`admin-criar`, `empresa-criar`...); sem o healthcheck da imagem |
 
 Soma dos limites: **2,5 GB** (decisão do dono, 03/11/2026: limite somado dos containers), contando a tarefa — ela
-roda com a API no ar (na implantação, a versão anterior continua no ar durante as migrações): 2048 + 128 + 192 + 64 +
-128 = 2560 MiB. No I1 o proxy tinha 256 MB; no I1b ele cedeu 64 MB ao backup (o pico medido do proxy é de dezenas de
-MB; [Decisões técnicas (I1b)](#decisões-técnicas-i1b)). Sem swap além do limite: se um container estourar, ele
-reinicia (`restart: unless-stopped`; a tarefa só falha) em vez de deixar a VPS lenta. Nenhuma porta é publicada no host
-e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy` e se anuncia ao Traefik por labels.
+roda com a API no ar (na implantação, a versão anterior continua no ar durante as migrações): 1984 + 128 + 192 + 64 +
+192 = 2560 MiB. No I1 o proxy tinha 256 MB; no I1b ele cedeu 64 MB ao backup (o pico medido do proxy é de dezenas de
+MB; [Decisões técnicas (I1b)](#decisões-técnicas-i1b)). A API tinha 2 GB; no OP-B5 ela cedeu 64 MB à tarefa, que
+passava dos 128 MB ao migrar 4 empresas
+([Decisões técnicas (memória da tarefa, OP-B5)](#decisões-técnicas-memória-da-tarefa-op-b5-24112026)); só na primeira
+implantação depois dele (e na seguinte a um `voltar` para uma versão anterior ao OP-B5) a soma passa por alguns
+minutos a 2624 MiB, porque as migrações rodam com a tarefa nova enquanto a API antiga, de 2 GB, continua no ar. Sem
+swap além do limite: se um container estourar, ele reinicia (`restart: unless-stopped`; a tarefa só falha) em vez de
+deixar a VPS lenta. Nenhuma porta é publicada no host e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy`
+e se anuncia ao Traefik por labels.
 
 ## Arquivos desta pasta
 
@@ -486,19 +491,19 @@ nesta ordem:
    horas antes da troca). Só o último reinício tem o trecho; dos anteriores, o `RestartCount` diz só quantos foram.
 4. **A memória agora**: `processo` do `/api/saude/detalhada` (heap usado, reservado e o teto do V8, RSS, em MiB) e
    `memoria` (o container, como no `docker stats`).
-5. **O kernel**, para o SIGKILL do OOM (o container passou dos 2 GB). O `docker inspect` não guarda o motivo de um
+5. **O kernel**, para o SIGKILL do OOM (o container passou do limite: 1984 MiB desde o OP-B5; 2 GB até ele). O `docker inspect` não guarda o motivo de um
    reinício feito pelo `restart: unless-stopped`: ao subir de novo, o Docker zera `State.ExitCode` e
    `State.OOMKilled`; o que fica é o `RestartCount` (e o `StartedAt`). O `journalctl` lê `--since` no fuso da VPS,
    então ponha `UTC` no horário:
 
 ```bash
 docker inspect genesis-api --format '{{.State.StartedAt}} reinícios={{.RestartCount}}'   # reinícios > 0: o container caiu e voltou
-journalctl -k --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|killed process'   # OOM do kernel/cgroup (mem_limit 2g)
+journalctl -k --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|killed process'   # OOM do kernel/cgroup (mem_limit 1984m)
 journalctl -u docker -u containerd --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|exit|die|restart'   # saída do container, com o código
 docker logs genesis-api --since '2026-11-04T17:50:00Z' --until '2026-11-04T18:06:00Z' 2>&1 | tail -n 100
 ```
 
-Linha `oom-kill`/`Killed process … (node)` no `journalctl -k` (saída 137, SIGKILL) = o container passou dos 2 GB;
+Linha `oom-kill`/`Killed process … (node)` no `journalctl -k` (saída 137, SIGKILL) = o container passou do limite;
 saída 134 com `JavaScript heap out of memory` no log = o heap do Node (1,5 GB) acabou antes; saída 1 com a linha
 `"level":60` = erro do código. O `docker events` não serve para o passado (o daemon só guarda os últimos eventos em
 memória, e os healthchecks os renovam o tempo todo): use-o para acompanhar a próxima queda ao vivo,
@@ -878,7 +883,7 @@ Consultar a cada 1 a 5 minutos é o esperado. **Formato exato** (exemplo):
   "empresas_sem_resposta": 0,
   "ultimo_backup": { "status": "ok", "data": "2026-11-10T07:31:10Z", "tamanho_bytes": 1843200,
                      "ultimo_sucesso_em": "2026-11-10T07:31:10Z" },
-  "memoria": { "usada_bytes": 412090368, "limite_bytes": 2147483648 },
+  "memoria": { "usada_bytes": 412090368, "limite_bytes": 2080374784 },
   "processo": { "no_ar_segundos": 10036, "heap_usado_mb": 182.4, "heap_total_mb": 214.1, "heap_limite_mb": 1584,
                 "rss_mb": 356.7 }
 }
@@ -896,7 +901,7 @@ Consultar a cada 1 a 5 minutos é o esperado. **Formato exato** (exemplo):
 | `empresas_sem_resposta` | Empresas cujo banco não respondeu (em manutenção ou fora do ar) |
 | `ultimo_backup.status` | `ok`, `falhou`, `ausente` (nunca houve backup) ou `indisponivel` (o bucket não respondeu) |
 | `ultimo_backup.data` / `tamanho_bytes` / `ultimo_sucesso_em` | Fim do último backup (UTC), o tamanho somado dos arquivos e o fim do último backup sem falha |
-| `memoria.usada_bytes` / `limite_bytes` | Memória do container da API (como no `docker stats`) e o limite (2 GiB) |
+| `memoria.usada_bytes` / `limite_bytes` | Memória do container da API (como no `docker stats`) e o limite (1984 MiB; 2 GiB até o OP-B5) |
 | `processo.no_ar_segundos` | Há quantos segundos este processo da API está no ar (volta para perto de zero a cada reinício) |
 | `processo.heap_usado_mb` / `heap_total_mb` / `heap_limite_mb` | Heap do Node (V8) em MiB: o usado, o reservado e o teto (`--max-old-space-size=1536` mais o espaço novo); passar do teto derruba a API com `JavaScript heap out of memory` |
 | `processo.rss_mb` | Memória do processo no sistema (heap, buffers, código), em MiB |
@@ -925,7 +930,7 @@ venda e nenhum segredo aparecem na resposta (teste de integração `apps/api/tes
 
 - `genesis-cloudsql-proxy` vira um **PostgreSQL 18** com o mesmo nome na rede interna e o usuário `genesis` com os
   privilégios do Cloud SQL (`CREATEDB` e `CREATEROLE`, **sem SUPERUSER**); o `genesis_control` não existe antes
-  (a migração cria, como em produção);
+  (a migração cria, como em produção); os dados ficam num tmpfs, que conta na memória do container (1536 MiB);
 - um **Traefik v3** local (imagem com a versão fixada no override) na porta `127.0.0.1:18443`, lendo os mesmos labels;
 - um **S3 local** (RustFS, o mesmo do desenvolvimento) no lugar do bucket do GCS, com a mesma assinatura (I1b).
 
@@ -936,12 +941,14 @@ Traefik com os domínios de produção: `/saude` nos domínios da API e do ERP, 
 `index.html`, HSTS), a página de download (CSP, `/pdv/atual.json` 404 sem instalador; `implantar.sh pdv publicar`
 com instaladores de mentira: download inteiro com `attachment`, `.sha256`, recusa de sha256 errado sem tocar na página
 nem deixar temporário, e a retenção da atual e da anterior), `/sync/*` só no domínio da API, o login no ERP pela origem do ERP com o cookie
-`Secure` + `SameSite=Strict`, os limites de memória (a soma do compose de produção com a tarefa ≤ 2560 MiB e o
-pico do `referencias` no limite de 128 MiB), os usuários sem root, uma segunda versão seguida de `voltar` e o bloco
+`Secure` + `SameSite=Strict`, os limites de memória (a soma do compose de produção com a tarefa ≤ 2560 MiB; a tarefa
+sem o healthcheck da imagem e o pico de cada comando dela no limite de 192 MiB — `migrar-controle`, três
+`empresa-criar` até 4 empresas, o lote das migrações, `migrar-empresas`, `referencias` e `particoes`; OP-B5), os
+usuários sem root, uma segunda versão seguida de `voltar` e o bloco
 do Cloud Shell colado de novo (o `estado` avisa da chave `root:root 600`; o `instalar.sh` devolve `root:65532 640`).
 Do I1b: o `genesis-backup` healthy e sem root; `backup agora`/`listar`/`estado` com os dois bancos no bucket e o pico
 de memória dentro dos 64 MiB; o `token-monitor` (recusa sem terminal, grava só o hash, a troca invalida o anterior) e
-o `/api/saude/detalhada` (401 sem token, 200 nos dois domínios com o último backup e a memória de 2 GiB do
+o `/api/saude/detalhada` (401 sem token, 200 nos dois domínios com o último backup e a memória de 1984 MiB do
 container); o **ensaio de desastre** (API parada, backup, o PostgreSQL trocado por um vazio, `restaurar todos`,
 contagens de linhas de todas as tabelas e a colação iguais às de antes, `--como` ao lado, recusa por cima,
 `migrar-empresas` e o login no ERP); e o pico do Cloud SQL Auth Proxy de verdade com 192 MiB (sem o Google: só a
@@ -983,11 +990,11 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
 - **Migrações antes da troca, num container de tarefa** (`genesis-tarefa`, perfil `tarefa`): controle, depois
   empresas (canário e lotes). Falha → para e a versão anterior continua; nova versão sem saúde em 240 s → volta
   sozinha para a anterior.
-- **Tarefa com 128 MB, dentro do teto de 2,5 GB**: ela roda com a API no ar, então conta no limite somado da
-  decisão do dono e ocupa a folga de 128 MB (heap do Node 96 MB). Pico medido no teste local: 82 MiB no
-  `referencias` (migra todas as empresas, recarrega as referências nacionais e o seed; inclui o cache de arquivos).
-  Com mais empresas o pico pode subir; um estouro derruba só a tarefa (a implantação para antes da troca e a versão
-  anterior continua) e aí o limite volta a ser conversa com o dono. O `genesis-backup` do I1b (64 MB) coube tirando
+- **Tarefa dentro do teto de 2,5 GB**: ela roda com a API no ar, então conta no limite somado da decisão do dono.
+  No I1, 128 MB (heap do Node 96 MB), com o pico de 82 MiB medido no `referencias`; desde o OP-B5, **192 MB (heap
+  128 MB)**, com os 64 MB tirados da API, e sem o healthcheck da imagem
+  ([Decisões técnicas (memória da tarefa, OP-B5)](#decisões-técnicas-memória-da-tarefa-op-b5-24112026)). Um estouro
+  derruba só a tarefa (a implantação para antes da troca e a versão anterior continua). O `genesis-backup` do I1b (64 MB) coube tirando
   64 MB do proxy do Cloud SQL ([Decisões técnicas (I1b)](#decisões-técnicas-i1b)).
 - **Commit da implantação sempre da `main`**: o checkout traz o histórico inteiro, o workflow resolve o hash curto
   (o `actions/checkout` só aceita SHA completo em `ref`) e exige `git merge-base --is-ancestor <commit> origin/main`.
@@ -1181,6 +1188,67 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   uma sessão), `GENESIS_CONFERIR_TENTATIVAS`/`GENESIS_CONFERIR_INTERVALO`. O teste de unidade usa dublês de `docker`,
   `curl`, `df`, `id`, `nice` e `ionice` e o `git` de verdade; o ensaio de ponta a ponta é o `testar-local.sh
   --sem-actions`. Decisão 215 do `apps/api/README.md`.
+
+## Decisões técnicas (memória da tarefa, OP-B5, 24/11/2026)
+
+- **O que estourou.** No ensaio do OP-B2, o `empresa-criar` passou dos 128 MB do `genesis-tarefa` ("Memory cgroup
+  out of memory"). Medido de novo, comando por comando: a imagem da API montada como em produção, o PostgreSQL 18,
+  cada comando sozinho num container com folga (512 MiB) e depois no limite final. O número que importa é o pico do
+  cgroup (`memory.peak` no cgroup v2 da VPS, `memory.max_usage_in_bytes` no v1 da sessão: o que o kernel compara com
+  o limite, com o cache de arquivos); o anônimo e o heap do V8 foram medidos à parte.
+
+  | Comando | Pico do cgroup | Heap do V8 usado |
+  |---|---|---|
+  | `migrar-controle` | 92–100 MiB | 60 MB |
+  | `particoes` | 92–98 MiB | 60 MB |
+  | `admin-criar` | 110–121 MiB | 59 MB (mais os 19 MiB do argon2, fora do heap) |
+  | `empresa-criar` | 112–120 MiB | 71–76 MB (o argon2 da senha provisória, as migrações e as referências) |
+  | `migrar-empresas`, 1 empresa | 117 MiB | 72 MB |
+  | `migrar-empresas` e `referencias`, 4 ou mais empresas (4, 10, 11 e 31) | 124–138 MiB | 81–88 MB |
+
+  O pico para de subir a partir de 4 empresas: o lote padrão (`MIGRACAO_LOTE` = 4) migra 4 bancos em paralelo. Com
+  os 128 MB de antes, **o `migrar-empresas` da implantação estouraria assim que houvesse 4 empresas**, e o
+  `empresa-criar` passava perto (o OOM do ensaio).
+- **O que era da sessão e o que é da aplicação.** A suspeita do plano era o certificado do proxy da sessão nas imagens
+  base (`NODE_EXTRA_CA_CERTS` com 123 certificados): a mesma pasta `/app` sobre a base com o certificado e sobre a
+  `node` pura dá o mesmo pico (diferença dentro do ruído, ~2 MiB). Os 10 a 15 MiB a mais que apareciam vinham do
+  **`HEALTHCHECK` da imagem da API**, que o container de tarefa herdava: o Docker o roda a cada 5 s no período inicial
+  (40 s) e a cada 15 s depois, e cada verificação é um `node` a mais (~40 MB de RSS) dentro do mesmo limite, pedindo
+  um `/saude` que ninguém serve. Isso vale em produção também. Da aplicação: só carregar o grafo de serviços da API
+  (`criarServicos`, com Nest, AWS SDK, exceljs, pg-boss e os schemas do `@genesis/shared`) custa ~85 MiB do cgroup
+  (~55 MB de heap) antes de qualquer trabalho; o lote de 4 migrações em paralelo soma ~40 MiB; o argon2, 19 MiB nos
+  comandos que geram hash.
+- **A escolha: tirar o que era à toa e redistribuir, sem passar do teto.** O `genesis-tarefa` desliga o healthcheck
+  (`healthcheck: disable: true`) e fica com **192 MB e heap de 128 MB** (dois terços do container); a **API cede
+  64 MB e fica com 1984 MB**, com o heap de 1,5 GB sem mudança (sobram 448 MB fora do heap, eram 512; o pico de heap
+  medido na massa de carga de 4 milhões de movimentos foi de 348 MB, decisão 176 do README da API). Soma: 1984 + 128
+  + 192 + 64 + 192 = 2560 MiB, o teto da decisão do dono de 03/11/2026, que não muda (por isso sem pergunta nova). No
+  limite final, o maior pico medido foi 137 MiB de 192 (71 %), com o heap em 88 de 128 MB.
+- **A transição (aceita como transitória).** O `implantar.sh implantar` roda o `migrar-controle` e o `migrar-empresas`
+  com o compose da versão **nova** (a tarefa de 192 MB), e a `genesis-api` da versão em produção só é recriada no
+  passo 4/4, depois das migrações. Na **primeira implantação com o OP-B5**, a API ainda está com o limite antigo de
+  2048 MB enquanto as migrações rodam: por alguns minutos, os limites somados ficam em 2048 + 128 + 192 + 64 + 192 =
+  **2624 MiB**, 64 MiB acima do teto da D13. É só limite (não uso: a API usa bem menos que o limite), a VPS tem 8 GB, e
+  a partir da troca do passo 4/4 a soma volta a 2560 MiB; a mesma janela se repete na implantação seguinte a um
+  `voltar` para uma versão anterior ao OP-B5. Não vale um passo a mais no `implantar.sh` (recriar a API antiga com
+  1984 MB antes de migrar seria um reinício a mais da API em produção) por alguns minutos de folga de limite.
+- **`voltar` para uma versão anterior ao OP-B5.** O `voltar` sobe a versão anterior com o compose dela, e o
+  `implantar.sh tarefa` usa o compose da versão em produção: depois de voltar para uma release anterior ao OP-B5, a
+  API volta a 2048 MB e a tarefa a **128 MB, heap de 96 MB e o healthcheck herdado**. Com 4 empresas ou mais, um
+  `implantar.sh tarefa migrar-empresas` (ou `referencias`) estoura de novo, e o `empresa-criar` passa perto (o OOM
+  do ensaio do OP-B2). Nesse caso, implante de novo uma versão com o OP-B5 antes de rodar esses comandos à mão; a
+  migração da implantação seguinte já usa a tarefa nova.
+- **Fora, de propósito.** Um grafo de serviços enxuto para os CLIs (cada comando importando só o que usa) tiraria
+  ~35 MB de heap e ~50 MiB do pico, mas mexe no grafo que a API e os testes usam; fica para se a tarefa voltar a
+  apertar. Baixar o lote das migrações na tarefa cortaria parte dos ~40 MiB, mas alonga a implantação com muitas
+  empresas. O `recalcular-saldos` de uma empresa do tamanho da massa de carga (heap de 348 MB) não foi medido na
+  tarefa e não caberia no heap dela.
+- **Teste.** O `testar-local.sh` confere o healthcheck desligado e mede o pico de cada comando no limite de produção
+  com 4 empresas (`migrar-controle`, três `empresa-criar`, `migrar-empresas`, `referencias` e `particoes`); um
+  estouro é SIGKILL e falha o teste. O PostgreSQL do override passou de 512 para 1536 MiB: os dados ficam num tmpfs,
+  que conta na memória do container, e com as 4 empresas e a cópia do ensaio de restauração os 512 MiB derrubavam o
+  PostgreSQL de teste. Ensaio `testar-local.sh --sem-actions` em 24/11/2026: verde (picos de 92 a 134 MiB). Decisão
+  216 do `apps/api/README.md`.
 
 ## Pendências
 

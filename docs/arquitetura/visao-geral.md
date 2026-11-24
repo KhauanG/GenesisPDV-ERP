@@ -706,7 +706,7 @@ Decisão do dono (roadmap, D13): **opção C** da 10.2 — app em VPS e banco ge
 
 | Peça | Onde | Detalhe |
 |---|---|---|
-| API e ERP | VPS KVM 2 da **Hostinger** (Campinas, Ubuntu 24.04, 8 GB) | Projeto Docker Compose `genesis` próprio, ao lado do projeto `icebeer` (n8n, Evolution...) que já roda lá; **2,5 GB de RAM no total** para o Genesis, limite somado dos containers (API 2 GB, ERP 128 MB, proxy do banco 192 MB, backup 64 MB e o container de tarefa, 128 MB, só durante migrações e comandos) |
+| API e ERP | VPS KVM 2 da **Hostinger** (Campinas, Ubuntu 24.04, 8 GB) | Projeto Docker Compose `genesis` próprio, ao lado do projeto `icebeer` (n8n, Evolution...) que já roda lá; **2,5 GB de RAM no total** para o Genesis, limite somado dos containers (API 1984 MB, ERP 128 MB, proxy do banco 192 MB, backup 64 MB e o container de tarefa, 192 MB, só durante migrações e comandos; redistribuído no OP-B5) |
 | Proxy reverso e TLS | **Traefik v3** que já existe na VPS | O Genesis só entra na rede Docker `proxy` e se anuncia por labels; certificados do Let's Encrypt; nenhuma porta nova no host |
 | PostgreSQL | **Google Cloud SQL PostgreSQL 18** (São Paulo) | Usuário `genesis` com `CREATEDB`/`CREATEROLE` (sem SUPERUSER); só conexão cifrada, sem rede autorizada: acesso só pelo **Cloud SQL Auth Proxy** na rede interna do projeto, com a chave de uma conta de serviço só com o papel Cloud SQL Client |
 | Arquivos | Bucket do **Cloud Storage** em São Paulo | Privado, com versões (as antigas apagadas em 90 dias); a API fala S3 com chave HMAC |

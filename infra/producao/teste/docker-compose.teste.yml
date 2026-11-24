@@ -29,8 +29,10 @@ services:
       retries: 30
     # O entrypoint do postgres troca de usuário (root → postgres): precisa das capacidades padrão.
     cap_drop: !reset []
-    mem_limit: !override 512m
-    memswap_limit: !override 512m
+    # Os dados ficam no tmpfs (até 1 GB), que conta no limite do container: com as 4 empresas da medição da tarefa
+    # (OP-B5) e a cópia do ensaio de restauração, 512 MB derrubavam o PostgreSQL pelo OOM do cgroup.
+    mem_limit: !override 1536m
+    memswap_limit: !override 1536m
 
   traefik-teste:
     image: traefik:v3.7.10
