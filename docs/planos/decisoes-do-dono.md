@@ -256,3 +256,15 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
 - **Para o dono:** a execução real que fecha a Fase 2 na loja piloto (importação, carga do Nuvem3, contagens, NF-e
   reais, transferência, conferência e `db:recalcular-saldos`) está em `docs/implantacao/checklist-fechamento-fase2.md`;
   o resultado de cada passo é anotado lá e no `docs/andamento.md`, sem dado real.
+
+## Operação sem o GitHub Actions (24/11/2026)
+
+- **D70 — RESPONDIDA (24/11/2026):** "minha cota de Actions acabou, continue o projeto, usando sandbox para testes,
+  para não precisarmos dos actions". A verificação local completa na sessão (OP-B1) passa a ser o portão no lugar da
+  CI; os workflows ficam no repositório para quando a cota voltar. Plano: `docs/planos/operacao-sem-actions-plano.md`.
+  - **D70-Q1** (implantação pela VPS com um comando, OP-B2) e **D70-Q2** (instalador do PDV montado na sessão pelo
+    Wine, OP-B3): sem resposta ainda; vale a recomendação (A) de cada uma, como "padrão até a confirmação do dono".
+  - **Servidor da Oracle oferecido pelo dono (24/11/2026; ARM Ampere, 2 CPU, 12 GB):** não usado agora, pela
+    recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
+    sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
+    na sessão. Fica como opção para um ambiente de homologação na Fase 3.
