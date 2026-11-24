@@ -93,8 +93,10 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
 - Reproduz, na ordem do `ci.yml` e com os mesmos comandos, todos os jobs que rodam em Linux: `ts`, a integração da
   API no PostgreSQL 16 local **e** no 18 (container `postgres:18-alpine` numa porta livre, removido no fim mesmo com
   falha ou `Ctrl+C`), `imagens`, o PDV no Linux (`pdv`: restore, build e testes; `pdv-formatacao`) e o `e2e-sync`,
-  mais o job local `scripts` (o `shellcheck` e o teste do próprio script). Sobe o `dockerd` e o PostgreSQL 16 se
-  faltarem. Logs em `.verificacao-local/<job>.log`.
+  mais os jobs locais `pdv-instalador` (o instalador do Windows gerado pelo Wine e conferido contra o último release;
+  sem o Wine instalado, sai da rodada como pulado, com o aviso) e `scripts` (o `shellcheck`, o teste do próprio
+  script e os do instalador pelo Wine). Sobe o `dockerd` e o PostgreSQL 16 se faltarem. Logs em
+  `.verificacao-local/<job>.log`.
 - No fim imprime a tabela job × resultado × tempo (também em `.verificacao-local/resumo.md`) e sai com ≠ 0 se algum
   job falhou. **A tabela vai no corpo do PR**, e é a de uma rodada completa: cada rodada apaga os logs e o resumo da
   anterior, e `--so`/`--pular` servem para repetir um job depois de uma correção (os outros saem como pulados). Na
@@ -103,8 +105,17 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
 - Um job vermelho conhecido como sensível a tempo (`carga-terminais`, `Terminais.test.tsx`, o heap do
   `recalcular-saldos`) se confere rodando o arquivo sozinho (`CLAUDE.md` › Checks); o resultado repetido vai junto na
   descrição do PR.
-- **Não coberto até o OP-B3** (só o runner Windows faz): a impressora de teste do spooler (`SpoolerWindowsTests`), o
-  instalador do Windows e o teste dele (instala, abre, reinstala e desinstala). O resumo lembra disso em toda rodada.
+- **Não coberto** (só o Windows de verdade: o runner, quando a cota voltar, ou o primeiro caixa): a impressora de
+  teste do spooler (`SpoolerWindowsTests`) e, do instalador, o que o Wine não reproduz — a permissão das pastas de
+  dados, o PDV instalado aberto até "Banco local pronto" e o AppMutex (roteiro "Conferência no primeiro caixa" do
+  README do PDV › Instalar na loja). O resumo lembra disso em toda rodada.
+- **Release do PDV sem o Actions (OP-B3, D70-Q2):** `apps/pdv/instalador/linux-wine/gerar-instalador.sh` monta no
+  Linux, pelo Inno Setup no Wine, o mesmo instalador do `pdv-release.yml`; `testar-instalador.sh` o confere;
+  `publicar-release.sh X.Y.Z` cria a tag `pdv-vX.Y.Z` num commit da `main` e o GitHub Release com o `.exe` e o
+  `.exe.sha256` (`--simular` só confere). A sessão faz isso sozinha, por autorização do dono; README do PDV ›
+  decisão 93 e "Instalar na loja". Criar a tag `pdv-v*` dispararia o "PDV release" (`pdv-release.yml`, em todo push
+  de tag): por isso ele fica desligado no GitHub enquanto durar a D70 (D70-Q3, padrão até a confirmação do dono), e o
+  `publicar-release.sh` recusa criar a tag com ele ligado (`--aceitar-disparo` cria assim mesmo, com o aviso).
 - Os workflows de `.github/workflows` ficam no repositório, sem mudança, para quando a cota voltar; nenhum é
   disparado. Decisões técnicas do script: README da API › decisão 214.
 - **Implantação sem o Actions (OP-B2, D70-Q1):** o dono cola um comando no terminal da VPS e o

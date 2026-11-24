@@ -689,6 +689,10 @@ foi publicado.
    página (ou espere a próxima implantação automática, se ela estiver ligada).
 3. Confira `https://download.grupoicebeer.com.br` (versão e sha256) ou, na VPS, `cat /opt/genesis/download/pdv/atual.json`.
 
+Sem cota do Actions (D70), o passo 1 é da sessão do Claude Code (`apps/pdv/instalador/linux-wine/gerar-instalador.sh`,
+`testar-instalador.sh` e `publicar-release.sh X.Y.Z`: README do PDV › decisão 93), e o passo 2 é a implantação com
+`--publicar-pdv` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)).
+
 **Tirar uma versão da página** (ex.: saiu com defeito): no GitHub, edite o release e marque **“Set as a
 pre-release”** (ou apague o release) e rode a Implantação (com **“publicar_pdv”** marcado): a página volta para o
 release publicado de versão mais alta que sobrou, e o instalador retirado sai da pasta (a versão maior não fica como

@@ -273,6 +273,21 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     - **Release do PDV (D70-Q2):** a sessão monta o instalador pelo Wine (OP-B3), confere e cria o GitHub Release
       `pdv-vX.Y.Z` (tag na `main`) com o `.exe` e o `.exe.sha256`, e pede a publicação na página de download pelo
       vigia. A atualização dos caixas nas lojas continua com o dono, um caixa de cada vez.
+  - **D70-Q3 — SEM RESPOSTA (24/11/2026; levantada na revisão do OP-B3): vale a recomendação (A), padrão até a
+    confirmação do dono.** Quando a sessão cria a tag `pdv-vX.Y.Z` para o release (`publicar-release.sh`), o GitHub
+    dispara sozinho o workflow "PDV release" (`pdv-release.yml`, que roda em todo push de tag `pdv-v*`; a tag criada
+    com o login de uma pessoa conta como push). Sem cota, cada release deixa uma execução falhada no histórico público
+    do Actions; com cota, o Windows monta outro instalador ao mesmo tempo, e o job do release dele falha ("já tem
+    arquivos") ou, se o da sessão parou no meio, sobe os binários dele no rascunho. O que fazer?
+    - **(A) recomendada:** desligar o workflow "PDV release" no GitHub enquanto durar a D70 (o arquivo continua no
+      repositório, só fica "desabilitado"; um comando o liga de novo quando a cota voltar, junto com a volta do release
+      pelo Windows). Desligado, a tag não dispara nada. Até a resposta, o `publicar-release.sh` confere o estado do
+      workflow (só leitura) e **recusa** criar a tag com ele ligado; `--aceitar-disparo` cria assim mesmo, com o aviso.
+      Com a resposta (A), a sessão o desliga uma vez (comando no README do PDV › decisão 93).
+    - (B) aceitar a execução disparada como esperada: o script só avisa, e cada release deixa uma execução vermelha do
+      "PDV release" no histórico público.
+    - (C) cancelar pela API a execução disparada logo depois de criar a tag: ela fica no histórico como cancelada e,
+      com cota, pode já ter começado.
   - **Servidor da Oracle oferecido pelo dono (24/11/2026; ARM Ampere, 2 CPU, 12 GB):** não usado agora, pela
     recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
     sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova

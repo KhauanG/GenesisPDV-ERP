@@ -21,11 +21,17 @@
 #                    do implantar-sem-actions.sh e o compose de produção (com o teto somado de 2,5 GB)
 #   pdv              PDV no Linux: restore --locked-mode, build Release e testes (os que exigem Windows ficam pulados)
 #   pdv-formatacao   dotnet format --verify-no-changes
+#   pdv-instalador   só local (OP-B3): o instalador do Windows gerado pelo Wine (apps/pdv/instalador/linux-wine/
+#                    gerar-instalador.sh) e conferido contra a publicação win-x64 e o último release publicado
+#                    (testar-instalador.sh, que exige o osslsigncode); sem o Wine instalado, sai da rodada como
+#                    "pulado", com o aviso
 #   e2e-sync         API local + PDV headless (apps/api/test/e2e-pdv/rodar.sh)
-#   scripts          só local: shellcheck de scripts/ e .github/scripts/ e o teste deste script
+#   scripts          só local: shellcheck de scripts/, .github/scripts/ e apps/pdv/instalador/linux-wine/, o teste
+#                    deste script e os testes de unidade do gerar-instalador.sh e do publicar-release.sh
 #
-# Não coberto aqui (só o runner Windows faz, até o OP-B3): a impressora de teste do spooler (SpoolerWindowsTests), o
-# instalador do Windows e o teste dele (instala, abre, reinstala e desinstala).
+# Não coberto aqui (só o Windows de verdade faz: o runner, quando a cota voltar, ou o primeiro caixa): a impressora de
+# teste do spooler (SpoolerWindowsTests) e, do instalador, o que o Wine não reproduz (testar-instalador.ps1): a
+# permissão das pastas de dados para o grupo Usuários, o PDV instalado aberto até "Banco local pronto" e o AppMutex.
 #
 # Sobe o dockerd (integracao-pg18 e imagens; numa sessão própria, que o Ctrl+C não derruba) e o PostgreSQL 16 local
 # (integracao-pg16 e e2e-sync) se não estiverem no ar (como o .claude/hooks/session-start.sh), só para os jobs que
@@ -38,7 +44,7 @@ set -uo pipefail
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RAIZ" || exit 2
 
-JOBS=(ts integracao-pg16 integracao-pg18 imagens pdv pdv-formatacao e2e-sync scripts)
+JOBS=(ts integracao-pg16 integracao-pg18 imagens pdv pdv-formatacao pdv-instalador e2e-sync scripts)
 declare -A DESCRICAO=(
   [ts]='TypeScript (API, ERP web, shared)'
   [integracao-pg16]='Integração da API (PostgreSQL 16)'
@@ -46,13 +52,14 @@ declare -A DESCRICAO=(
   [imagens]='Imagens Docker (API, ERP e backup)'
   [pdv]='PDV (.NET 10) – Linux'
   [pdv-formatacao]='PDV (.NET 10) – formatação'
+  [pdv-instalador]='Instalador do PDV pelo Wine (só local)'
   [e2e-sync]='E2E PDV ↔ API'
   [scripts]='Scripts da verificação local'
 )
 # Saída do .github/scripts/mudancas.sh → jobs daqui. O job "scripts" é de segundos e roda sempre.
 declare -A SAIDA_MUDANCAS=(
   [ts]=ts [integracao-pg16]=ts [integracao-pg18]=ts [imagens]=imagens
-  [pdv]=pdv [pdv-formatacao]=pdv [e2e-sync]=e2e
+  [pdv]=pdv [pdv-formatacao]=pdv [pdv-instalador]=pdv [e2e-sync]=e2e
 )
 
 LOGS="${VERIFICACAO_LOCAL_LOGS:-$RAIZ/.verificacao-local}"
@@ -162,6 +169,13 @@ for job in "${JOBS[@]}"; do
     RODA[$job]=1
   fi
 done
+# O instalador pelo Wine é opcional: sem o Wine, sai da rodada com o aviso (CONTRIBUTING.md › Sem o GitHub Actions).
+AVISO_WINE=''
+if [[ -n ${RODA[pdv-instalador]:-} ]] && ! wine --version >/dev/null 2>&1; then
+  unset 'RODA[pdv-instalador]'
+  RESULTADO[pdv-instalador]='pulado (sem o Wine)'
+  AVISO_WINE='aviso: pdv-instalador pulado: o Wine não está instalado (apt-get install wine64 wine32:i386 osslsigncode; README do PDV › decisão 93)'
+fi
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Passos e jobs
@@ -452,6 +466,14 @@ job_pdv_formatacao() {
   passo 'Formatação (dotnet format)' no_pdv dotnet format GenesisPDV.slnx --verify-no-changes --no-restore || return 1
 }
 
+# OP-B3: o instalador da versão do apps/pdv/Directory.Build.props, gerado e conferido como o release seria.
+job_pdv_instalador() {
+  passo 'Instalador do Windows pelo Wine (gerar-instalador.sh)' apps/pdv/instalador/linux-wine/gerar-instalador.sh ||
+    return 1
+  passo 'Conferência do instalador (testar-instalador.sh, contra o último release)' \
+    apps/pdv/instalador/linux-wine/testar-instalador.sh || return 1
+}
+
 job_e2e_sync() {
   local saidas="$LOGS/e2e-sync"
   rm -rf "$saidas"
@@ -467,9 +489,14 @@ job_e2e_sync() {
 }
 
 job_scripts() {
-  passo 'shellcheck (scripts/ e .github/scripts/)' bash -c 'shellcheck -x -S warning scripts/*.sh .github/scripts/*.sh' ||
+  passo 'shellcheck (scripts/, .github/scripts/ e o instalador pelo Wine)' bash -c \
+    'shellcheck -x -S warning scripts/*.sh .github/scripts/*.sh apps/pdv/instalador/linux-wine/*.sh apps/pdv/instalador/linux-wine/teste/*.sh' ||
     return 1
   passo 'Teste do verificar-local.sh (comandos falsos)' bash scripts/testar-verificar-local.sh || return 1
+  passo 'Teste do gerar-instalador.sh (comandos falsos)' bash apps/pdv/instalador/linux-wine/teste/testar-gerar-instalador.sh ||
+    return 1
+  passo 'Teste do publicar-release.sh (gh falso)' bash apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh ||
+    return 1
 }
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -511,6 +538,7 @@ if [[ -n $(git status --porcelain 2>/dev/null) ]]; then sujo=' + alterações n�
 echo "Verificação local (D70): $ramo @ $commit$sujo"
 [[ -n $MOTIVO_MUDANCAS ]] && echo "Escopo: $MOTIVO_MUDANCAS"
 echo "Logs: $LOGS"
+[[ -n $AVISO_WINE ]] && echo "$AVISO_WINE"
 
 INICIO_TOTAL=$SECONDS
 for job in "${JOBS[@]}"; do
@@ -548,8 +576,9 @@ falhas=0
     [[ ${RESULTADO[$job]} == FALHOU ]] && falhas=$((falhas + 1))
   done
   echo
-  echo 'Não coberto aqui (só o runner Windows, até o OP-B3): impressora de teste do spooler (SpoolerWindowsTests),'
-  echo 'instalador do Windows e o teste dele (instala, abre, reinstala e desinstala).'
+  [[ -n $AVISO_WINE ]] && echo "${AVISO_WINE#aviso: }." && echo
+  echo 'Não coberto aqui (só no Windows de verdade): impressora de teste do spooler (SpoolerWindowsTests) e, do'
+  echo 'instalador, a permissão das pastas de dados, o PDV aberto até "Banco local pronto" e o AppMutex.'
 } >"$LOGS/resumo.md"
 echo
 cat "$LOGS/resumo.md"

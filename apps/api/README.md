@@ -7206,7 +7206,9 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `GENESISPDV_TETO_CONSULTA_MS=800`, como o job do Windows.
      - **Não coberto** (só o runner Windows, até o OP-B3): a impressora de teste do spooler (`SpoolerWindowsTests`), o
        instalador do Windows e o teste dele; o resumo lembra disso em toda rodada. Os workflows de `.github/workflows`
-       continuam no repositório, sem mudança, para quando a cota voltar.
+       continuam no repositório, sem mudança, para quando a cota voltar. **Desde o OP-B3** o job local
+       `pdv-instalador` gera o instalador pelo Wine e o confere, e o `scripts` roda os testes de unidade do
+       instalador e do release; continua não coberto só o que o Wine não reproduz (README do PDV › decisão 93).
 215. **`infra/producao/implantar-sem-actions.sh`: a implantação pela própria VPS, sem o GitHub Actions** (OP-B2;
      D70-Q1 sem resposta do dono: vale a recomendação (A), **padrão até a confirmação do dono**, roadmap §16; plano
      `docs/planos/operacao-sem-actions-plano.md`; `infra/producao/teste/testar-implantar-sem-actions.sh`,

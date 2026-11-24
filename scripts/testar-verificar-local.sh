@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Testes de unidade do scripts/verificar-local.sh (OP-B1; D70), sem rodar nada de verdade: o script é copiado para uma
 # raiz falsa (um repositório git num diretório temporário, com os arquivos que ele lê e dublês dos scripts que ele
-# chama) e roda com dublês do pnpm, dotnet, docker, shellcheck, pg_isready e psql no PATH. Cobre: a ordem dos jobs e
-# dos passos e os comandos da CI (variáveis da integração, PostgreSQL 16 × 18, cwd do dotnet), a tabela final e o
-# resumo.md, a saída ≠ 0 com um job forçado a falhar (e os outros jobs seguindo), o container do PostgreSQL 18
+# chama) e roda com dublês do pnpm, dotnet, docker, shellcheck, pg_isready, psql e wine no PATH. Cobre: a ordem dos
+# jobs e dos passos e os comandos da CI (variáveis da integração, PostgreSQL 16 × 18, cwd do dotnet), a tabela final e
+# o resumo.md, a saída ≠ 0 com um job forçado a falhar (e os outros jobs seguindo), o container do PostgreSQL 18
 # removido sempre (sucesso, falha e SIGTERM no meio dos testes, ao grupo ou só ao script), a sobra de verificação
 # morta (e a de outro usuário, viva), o dockerd subido antes do PostgreSQL 18 quando o Docker está fora do ar, o
 # install nas integrações, o passo do Drizzle que gera migração, o build atrás do proxy (rede do host, build-args e as
-# bases com o certificado), --so, --pular, opção ou job desconhecido e o --mudancas com a árvore de trabalho
-# (inclusive arquivo não commitado). As variáveis de configuração do script vêm sujas do ambiente de propósito: o job
-# `scripts` da verificação de verdade roda este teste com o ambiente dela, e a cópia na raiz falsa não pode usá-las
-# (com VERIFICACAO_LOCAL_LOGS, apagaria e reescreveria os logs reais).
+# bases com o certificado), --so, --pular, opção ou job desconhecido, o --mudancas com a árvore de trabalho
+# (inclusive arquivo não commitado) e o job opcional pdv-instalador (pulado com o aviso quando falta o Wine). As
+# variáveis de configuração do script vêm sujas do ambiente de propósito: o job `scripts` da verificação de verdade
+# roda este teste com o ambiente dela, e a cópia na raiz falsa não pode usá-las (com VERIFICACAO_LOCAL_LOGS, apagaria
+# e reescreveria os logs reais).
 #
 #   bash scripts/testar-verificar-local.sh
 # Precisa de bash, git, jq e coreutils.
@@ -40,8 +41,8 @@ confere() { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 
 # --- Raiz falsa -------------------------------------------------------------------------------------------------------
 cp "$AQUI/verificar-local.sh" "$RAIZ/scripts/"
-mkdir -p "$RAIZ/apps/api/drizzle/empresa" "$RAIZ/apps/api/test/e2e-pdv" "$RAIZ/apps/pdv" "$RAIZ/apps/erp-web" \
-  "$RAIZ/infra/producao/backup" "$RAIZ/infra/producao/teste" "$RAIZ/.github/scripts"
+mkdir -p "$RAIZ/apps/api/drizzle/empresa" "$RAIZ/apps/api/test/e2e-pdv" "$RAIZ/apps/pdv/instalador/linux-wine/teste" \
+  "$RAIZ/apps/erp-web" "$RAIZ/infra/producao/backup" "$RAIZ/infra/producao/teste" "$RAIZ/.github/scripts"
 echo 'select 1;' >"$RAIZ/apps/api/drizzle/empresa/0000_inicio.sql"
 printf 'ARG IMAGEM_NODE=node:22-teste\nFROM ${IMAGEM_NODE}\n' >"$RAIZ/apps/api/Dockerfile"
 printf 'ARG IMAGEM_NODE=node:22-teste\nFROM ${IMAGEM_NODE}\n' >"$RAIZ/apps/erp-web/Dockerfile"
@@ -49,7 +50,10 @@ printf 'ARG IMAGEM_ALPINE=alpine:teste\nFROM ${IMAGEM_ALPINE}\n' >"$RAIZ/infra/p
 echo 'services: {}' >"$RAIZ/infra/producao/docker-compose.yml"
 : >"$RAIZ/infra/producao/genesis.env.exemplo"
 for s in infra/producao/backup/testar-genesis-backup.sh infra/producao/teste/testar-implantar-logs.sh \
-  infra/producao/teste/testar-implantar-sem-actions.sh scripts/testar-verificar-local.sh; do
+  infra/producao/teste/testar-implantar-sem-actions.sh scripts/testar-verificar-local.sh \
+  apps/pdv/instalador/linux-wine/gerar-instalador.sh apps/pdv/instalador/linux-wine/testar-instalador.sh \
+  apps/pdv/instalador/linux-wine/teste/testar-gerar-instalador.sh \
+  apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh; do
   printf '#!/usr/bin/env bash\necho "%s $(pwd)" >>"$REGISTRO"\n' "$s" >"$RAIZ/$s"
 done
 cat >"$RAIZ/apps/api/test/e2e-pdv/rodar.sh" <<'EOF'
@@ -63,7 +67,8 @@ echo "mudancas.sh $*" >>"$REGISTRO"
 echo "Motivo: local"
 cat "$DUBLE/mudancas"
 EOF
-chmod +x "$RAIZ"/scripts/*.sh "$RAIZ"/apps/api/test/e2e-pdv/rodar.sh "$RAIZ"/.github/scripts/*.sh
+chmod +x "$RAIZ"/scripts/*.sh "$RAIZ"/apps/api/test/e2e-pdv/rodar.sh "$RAIZ"/.github/scripts/*.sh \
+  "$RAIZ"/apps/pdv/instalador/linux-wine/*.sh "$RAIZ"/apps/pdv/instalador/linux-wine/teste/*.sh
 printf '.verificacao-local/\n' >"$RAIZ/.gitignore"
 git -C "$RAIZ" init -q -b main
 git -C "$RAIZ" add -A
@@ -127,6 +132,8 @@ EOF
 printf '#!/usr/bin/env bash\n[[ $* == -u ]] && { echo 0; exit 0; }\nexec %q "$@"\n' "$(command -v id)" >"$BIN/id"
 printf '#!/usr/bin/env bash\n[[ $1 == -p ]] && grep -qx -- "$2" "$DUBLE/ps-vivos" 2>/dev/null\n' >"$BIN/ps"
 printf '#!/usr/bin/env bash\necho "psql $*" >>"$REGISTRO"\n' >"$BIN/psql"
+# wine --version: instalado, a não ser com $DUBLE/sem-wine (a sessão pode ter o Wine de verdade no PATH).
+printf '#!/usr/bin/env bash\n[[ -e $DUBLE/sem-wine ]] && exit 127\necho wine-teste\n' >"$BIN/wine"
 chmod +x "$BIN"/*
 
 # Roda o script na raiz falsa, sem o proxy da sessão; a saída fica em $T/saida e o status em $STATUS.
@@ -173,17 +180,23 @@ em_ordem 'pnpm install --frozen-lockfile' 'pnpm format:check' 'pnpm lint' 'pnpm 
   "dotnet build GenesisPDV.slnx --no-restore -c Release | cwd=$RAIZ/apps/pdv" \
   "dotnet test --solution GenesisPDV.slnx --no-build -c Release | cwd=$RAIZ/apps/pdv TETO=800" \
   "dotnet format GenesisPDV.slnx --verify-no-changes --no-restore | cwd=$RAIZ/apps/pdv" \
+  "apps/pdv/instalador/linux-wine/gerar-instalador.sh $RAIZ" "apps/pdv/instalador/linux-wine/testar-instalador.sh $RAIZ" \
   'dotnet build tests/GenesisPDV.E2E.Tests --no-restore -c Release' \
   "rodar.sh -c Release --no-build DATABASE_URL=postgres://genesis:genesis_dev@127.0.0.1:5432/genesis_control E2E_LOG_API=$LOGS/e2e-sync/e2e-api.log" \
-  'shellcheck -x -S warning scripts/' "scripts/testar-verificar-local.sh $RAIZ"
+  'shellcheck -x -S warning scripts/' "scripts/testar-verificar-local.sh $RAIZ" \
+  "apps/pdv/instalador/linux-wine/teste/testar-gerar-instalador.sh $RAIZ" \
+  "apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh $RAIZ"
+grep -q '^shellcheck .*scripts/.*apps/pdv/instalador/linux-wine/gerar-instalador\.sh.*linux-wine/teste/testar-publicar-release\.sh' "$REGISTRO" ||
+  falha 'o shellcheck do job scripts não cobre os scripts do instalador pelo Wine'
 grep -q -- '--network host' "$REGISTRO" && falha 'sem proxy, o build não deveria usar a rede do host'
-for j in ts integracao-pg16 integracao-pg18 imagens pdv pdv-formatacao e2e-sync scripts; do
+for j in ts integracao-pg16 integracao-pg18 imagens pdv pdv-formatacao pdv-instalador e2e-sync scripts; do
   [[ $(resultado "$j") == ok ]] || falha "job $j: '$(resultado "$j")' em vez de ok"
   [[ -s $LOGS/$j.log ]] || falha "sem o log do job $j"
 done
 grep -q '| Job | Resultado | Tempo |' "$T/saida" || falha 'a tabela não saiu na tela'
 grep -q 'tudo verde' "$T/saida" || falha 'sem a mensagem final de sucesso'
 grep -q 'Não coberto aqui' "$LOGS/resumo.md" || falha 'o resumo não lista o que fica só no Windows'
+grep -q 'sem o Wine' "$T/saida" "$LOGS/resumo.md" && falha 'com o Wine instalado, avisou que falta o Wine'
 [[ -z $(git -C "$RAIZ" status --porcelain) ]] || falha 'a verificação deixou arquivos na árvore (compose, segredos?)'
 grep -q 'dockerd' "$REGISTRO" && falha 'com o Docker no ar, subiu o dockerd'
 grep -q 'de-quem-chamou\|192\.0\.2\.1' "$REGISTRO" "$T/saida" && falha 'usou a configuração do ambiente de quem chamou'
@@ -218,7 +231,7 @@ rodar "$VL"
 rm -f "$DUBLE/falhar-pg18"
 [[ $STATUS == 1 ]] || falha "com falha forçada saiu com $STATUS (esperado 1)"
 [[ $(resultado integracao-pg18) == FALHOU ]] || falha "integracao-pg18: '$(resultado integracao-pg18)'"
-for j in ts integracao-pg16 imagens pdv pdv-formatacao e2e-sync scripts; do
+for j in ts integracao-pg16 imagens pdv pdv-formatacao pdv-instalador e2e-sync scripts; do
   [[ $(resultado "$j") == ok ]] || falha "job $j depois da falha: '$(resultado "$j")'"
 done
 grep -q '| integracao-pg18 — .* | FALHOU |' "$T/saida" || falha 'a tabela da tela não mostra o FALHOU'
@@ -331,7 +344,9 @@ read -r _ base ponta < <(grep '^mudancas.sh ' "$REGISTRO")
 [[ $(git -C "$RAIZ" show "$ponta:nao-commitado.txt") == novo ]] || falha 'a ponta não tem o arquivo não commitado'
 [[ $(git -C "$RAIZ" rev-parse HEAD) == $(git -C "$RAIZ" rev-parse main) ]] || falha 'o --mudancas mexeu no HEAD'
 [[ $(git -C "$RAIZ" status --porcelain) == '?? nao-commitado.txt' ]] || falha 'o --mudancas mexeu no índice'
-for j in pdv pdv-formatacao scripts; do [[ $(resultado "$j") == ok ]] || falha "--mudancas: $j '$(resultado "$j")'"; done
+for j in pdv pdv-formatacao pdv-instalador scripts; do
+  [[ $(resultado "$j") == ok ]] || falha "--mudancas: $j '$(resultado "$j")'"
+done
 for j in ts integracao-pg16 integracao-pg18 imagens e2e-sync; do
   [[ $(resultado "$j") == 'pulado (sem mudanças)' ]] || falha "--mudancas: $j '$(resultado "$j")'"
 done
@@ -339,6 +354,18 @@ rm -f "$RAIZ/nao-commitado.txt"
 rodar "$VL" --mudancas nao-existe
 [[ $STATUS == 2 ]] || falha "--mudancas com base inexistente saiu com $STATUS"
 confere '--mudancas: árvore de trabalho num commit solto (sem mexer no HEAD nem no índice), jobs pela saída do mudancas.sh'
+
+# 8. Sem o Wine: o pdv-instalador sai da rodada como pulado, com o aviso na tela e no resumo, e a rodada fica verde.
+touch "$DUBLE/sem-wine"
+rodar "$VL" --so pdv-instalador,scripts
+rm -f "$DUBLE/sem-wine"
+[[ $STATUS == 0 ]] || falha "sem o Wine saiu com $STATUS"
+[[ $(resultado pdv-instalador) == 'pulado (sem o Wine)' ]] || falha "sem o Wine: pdv-instalador '$(resultado pdv-instalador)'"
+grep -q 'aviso: pdv-instalador pulado: o Wine não está instalado' "$T/saida" || falha 'sem o aviso do Wine na tela'
+grep -q 'o Wine não está instalado' "$LOGS/resumo.md" || falha 'sem o aviso do Wine no resumo'
+grep -q '^apps/pdv/instalador/linux-wine/\(gerar\|testar\)-instalador\.sh ' "$REGISTRO" && falha 'sem o Wine, rodou o instalador'
+[[ $(resultado scripts) == ok ]] || falha 'sem o Wine, o job scripts não rodou'
+confere 'sem o Wine: pdv-instalador pulado com o aviso (tela e resumo), rodada verde'
 
 [[ ! -e $VERIFICACAO_LOCAL_LOGS ]] || falha 'uma rodada escreveu na pasta de logs de quem chamou (VERIFICACAO_LOCAL_LOGS)'
 confere 'nenhuma rodada usou VERIFICACAO_LOCAL_LOGS, VERIFICAR_PG16_URL, o mudancas.sh nem a imagem de quem chamou'

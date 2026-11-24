@@ -78,8 +78,10 @@ mais que o tempo limite de um comando da sessão (cada integração sozinha já 
 **inteiro, em segundo plano** (`run_in_background`), espere o aviso de fim e cole a tabela do
 `.verificacao-local/resumo.md`. Cada rodada apaga os logs e o resumo da anterior, então `--so`/`--pular` servem para
 repetir um job depois de uma correção, não para montar a tabela do PR em partes (a de uma rodada parcial mostra os
-outros jobs como pulados). O que só o Windows cobre (spooler, instalador e o teste dele) fica **não coberto** até o
-OP-B3. CONTRIBUTING.md › Sem o GitHub Actions.
+outros jobs como pulados). O instalador do PDV sai pelo Wine (OP-B3: job `pdv-instalador`; o release pela sessão com
+`apps/pdv/instalador/linux-wine/publicar-release.sh`, README do PDV › decisão 93); o que só o Windows de verdade cobre
+(spooler, a permissão das pastas, o PDV instalado aberto e o AppMutex) fica **não coberto**, com o roteiro do primeiro
+caixa. CONTRIBUTING.md › Sem o GitHub Actions.
 
 - Postgres local: `pg_ctlcluster 16 main start` se não estiver no ar. dotnet: `export PATH=$HOME/.dotnet:$PATH DOTNET_ROOT=$HOME/.dotnet`.
 - Testes sensíveis a tempo (`carga-terminais` p95, `Terminais.test.tsx`, heap do `recalcular-saldos`) podem falhar sob
