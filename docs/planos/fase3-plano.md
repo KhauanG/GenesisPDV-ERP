@@ -15,7 +15,7 @@
 > - migrações: empresa `0029` em diante, controle `0007` em diante (cada bloco traz a sua linha "Migrações");
 > - decisões técnicas: API a partir da **215** (a 214 já está ocupada no working tree pelo OP-B1), ERP a partir da **86**,
 >   PDV a partir da **93**;
-> - decisões do dono: **D71** em diante;
+> - decisões do dono: **D72** em diante;
 > - PRs: a Fase 3 começa no **PR-17**, porque o PR-16 está reservado para a operação sem o Actions (OP-B1..B3).
 
 **Restrição do dono:** tudo funcional, **sem a parte fiscal**. Nada de NFC-e, NF-e, SEFAZ, certificado A1/A3 nem DF-e até a 3F.
@@ -197,7 +197,7 @@ O que as Fases 1 e 2 já entregaram e que a Fase 3 usa, e o que falta, por área
 
 **Regra:** enquanto a pergunta não for respondida, vale a **recomendação (★)**, implementada de forma **configurável** quando há
 chave. O dono responde "1A, 2B…". Cada resposta é registrada em `docs/planos/decisoes-do-dono.md` e na tabela do roadmap §16, a
-partir da **D71**. As perguntas já abertas que esta fase fecha são citadas pelo código antigo (D15, D66).
+partir da **D72**. As perguntas já abertas que esta fase fecha são citadas pelo código antigo (D15, D66).
 
 **Contexto da Ice Beer que vale para todas** (decisões já tomadas): hoje **não há gerentes**; toda liberação de supervisor é feita
 com o **PIN do dono** (Master), e o dono vai criar um login com o perfil de sistema **"Encarregado"** (PC-8) para liberar na loja.
@@ -1591,7 +1591,7 @@ corpo do PR-17.
     entre os caixas); o mesmo CPF em dois caixas e no ERP; o orçamento disputado; a troca de uma venda cancelada no ERP; a atualização
     beta (roteiro manual Windows);
   - SYNC (9.16/9.17, 10.1/10.4, 13.4 `CT`, 14.4, 17.5, 20.4), MD (4.5 comodato, 6.2 vales, 3.5.6, 7.3), PDV (10.10, 16.11, 23.3 nº 4,
-    24.1, `CT`), ERP 15.4.4, READMEs, roadmap (itens [x] e as correções de "Decisões e documentos", D71 em diante), `andamento.md` com os
+    24.1, `CT`), ERP 15.4.4, READMEs, roadmap (itens [x] e as correções de "Decisões e documentos", D72 em diante), `andamento.md` com os
     próximos números;
   - roteiro do dono para a Definição de pronto (um dia de operação da loja piloto sem abrir o ERP para nada do balcão), sem dado real.
 - **Pronto:** a Definição de pronto demonstrada e registrada, com cada item dependente do Windows marcado só depois do roteiro manual
@@ -1670,7 +1670,7 @@ crachá (F3-B27); baixa interna (F3-B51, B52); conferência e comprovantes (F3-B
   - Definição de pronto: "critérios 10.10" passa a apontar a seção criada no F3-B19; o item da atualização conforme a F3-Q33 e a F3-Q34;
     o item do comodato conforme a F3-Q13;
   - Riscos: "Homologação da NFC-e" reescrito para a ordem 2 → 3 → 4 → 5 → 3F (F3-Q37); "Certificado Authenticode" conforme a F3-Q35;
-  - §16 a partir da D71.
+  - §16 a partir da D72.
 - `docs/planos/decisoes-do-dono.md`: as respostas F3-Q1..F3-Q48 (e a D15, a D66, a D28 confirmada e o servidor da Oracle da D70).
 - READMEs: API a partir da 215, ERP a partir da 86, PDV a partir da 93 (conferir a numeração no merge), com os Padrões desta fase.
 - **SYNC:** 9.16 e 9.17 (o restante da troca imediata como saldo do mesmo vale, já correto, só reforçado; o `vale.utilizado` só no
