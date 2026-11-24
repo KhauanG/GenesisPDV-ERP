@@ -7206,6 +7206,52 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      - **Não coberto** (só o runner Windows, até o OP-B3): a impressora de teste do spooler (`SpoolerWindowsTests`), o
        instalador do Windows e o teste dele; o resumo lembra disso em toda rodada. Os workflows de `.github/workflows`
        continuam no repositório, sem mudança, para quando a cota voltar.
+215. **`infra/producao/implantar-sem-actions.sh`: a implantação pela própria VPS, sem o GitHub Actions** (OP-B2;
+     D70-Q1 sem resposta do dono: vale a recomendação (A), **padrão até a confirmação do dono**, roadmap §16; plano
+     `docs/planos/operacao-sem-actions-plano.md`; `infra/producao/teste/testar-implantar-sem-actions.sh`,
+     `testar-local.sh --sem-actions`). O dono cola um comando no terminal da VPS (Hostinger › VPS › Terminal, como
+     root; passo a passo no README de `infra/producao` › Implantar sem o GitHub Actions): o script, baixado da
+     `main` do repositório público, refaz o `implantacao.yml` com as mesmas conferências — commit de 7 a 40
+     hexadecimais (o formato do workflow) ancestral da `origin/main` de um clone parcial só da `main` e sem tags em
+     `/opt/genesis/fonte` (root 700, sem credencial nem pergunta de senha), versão em 12 caracteres, as 3 imagens com os mesmos
+     Dockerfiles, tags e `VERSAO` montadas na VPS sob `nice`/`ionice` (no lugar do `docker save | ssh docker load`),
+     os 5 arquivos da release, `instalar.sh` e `implantar.sh implantar` sem mudança, o `--publicar-pdv` com as regras
+     do passo do workflow (versão mais alta publicada, `.sha256` de uma linha, hash do arquivo baixado conferido
+     antes da troca, GitHub fora = aviso, lista vazia = `pdv retirar`; o `jq` vem da imagem `genesis-backup` recém
+     montada, `--network none`, mantendo a VPS sem `jq`) e a conferência pelas URLs públicas dos domínios do `.env`.
+     Recusa sem root, com menos de 5 GB livres no disco do Docker ou do `/opt/genesis`
+     (`GENESIS_ESPACO_MINIMO_GB`) e com outra implantação em andamento (confere livre a trava do `implantar.sh` e
+     segura a sua do começo ao fim); `--simular` confere tudo e mostra o que faria, sem checkout, build, cópia,
+     instalação, troca, download nem limpeza. Depois da implantação, mesmo a que falhou, limpa as imagens do Genesis
+     além das 3 mais recentes de cada nome (`GENESIS_MANTER_IMAGENS`; nunca a atual nem a anterior, as do `voltar`)
+     e o cache do build com mais de uma semana. O resumo final é o do workflow (versão, página de download, onde ver
+     o estado). Escolhas técnicas, sem pergunta ao dono:
+     - **Prioridade da montagem.** O `nice`/`ionice` do plano vale para o cliente do Docker; os passos `RUN` rodam no
+       BuildKit do daemon, na prioridade dele. Documentado no README da produção, com a recomendação de um horário
+       fora do movimento; um construtor `docker-container` com limite de CPU e memória fica para se a montagem
+       atrapalhar as lojas (a VPS teria de baixar a imagem do BuildKit, e o cache iria para outro lugar).
+     - **7 a 40 hexadecimais**, não os 12 a 40 que o plano citou entre parênteses: o plano pede "o formato aceito pelo
+       workflow", que é `[0-9a-f]{7,40}`, e o GitHub mostra os 7 primeiros caracteres; o hash curto ambíguo é
+       recusado pelo `git rev-parse`.
+     - **Fora do terminal.** O terminal da Hostinger é uma aba do navegador: fechar a aba, cair a conexão ou o
+       notebook dormir mandaria SIGHUP ao script no meio do `implantar.sh implantar` (migrações ou troca pela metade,
+       sem a volta automática nem a versão registrada, e sem o resumo). Depois das conferências, o script se roda de
+       novo numa sessão própria (`setsid`, entrada em `/dev/null`, uma cópia de si mesmo, a trava herdada) com a
+       saída em `/opt/genesis/logs/implantar-sem-actions-<data>.log` (700/600, os 10 últimos), e o terminal só a
+       mostra (`tail --pid`) e sai com o código dela; `--acompanhar` volta a mostrar a em andamento ou a última. Sem
+       `systemd-run` (a saída iria para o journal, e o dono teria de aprender o `journalctl`) nem `trap '' HUP`
+       sozinho (a escrita no terminal morto falharia e o `set -e` pararia o script do mesmo jeito).
+     - **Testes.** Unidade sem Docker nem rede (dublês de `docker`, `curl`, `df`, `id`, `nice` e `ionice`; o `git` de
+       verdade sobre um repositório local; o `instalar.sh` e o `implantar.sh` falsos dentro dele, copiados pelo
+       script como os de verdade): formato, ancestralidade (outro branch, inexistente, main reescrita), root, espaço,
+       as duas travas, a ordem das etapas, `--simular`, `--sem-conferir-url`, as falhas de build, `instalar.sh`,
+       `implantar.sh` e URL com o resumo, a limpeza e o `--publicar-pdv` (certo, errado, fora do formato, já
+       publicado, sem release e o 404 conferido, GitHub fora), o terminal morto por SIGHUP/SIGKILL no meio do
+       `implantar.sh` e o `--acompanhar`; roda como root ou não, no job `imagens` da CI e do
+       `scripts/verificar-local.sh`. Ponta a ponta: o `testar-local.sh --sem-actions` implanta o `HEAD` de uma `main`
+       local na stack de teste (build pelo script, migrações e troca pelo `implantar.sh`, URLs pelo Traefik local, a
+       API com a versão do commit) e volta. Nenhuma mudança no `implantacao.yml`, na API, no ERP ou no PDV; sem
+       migração.
 
 ## O que ainda não foi feito (Fase 0)
 

@@ -17,8 +17,8 @@
 #   integracao-pg16  integração da API no PostgreSQL 16 local (o do infra/docker-compose.yml; fora da CI desde a D59)
 #   integracao-pg18  integração da API no PostgreSQL 18 (container postgres:18-alpine numa porta livre, removido no
 #                    fim mesmo com falha ou Ctrl+C), com as variáveis do job integracao-pg18
-#   imagens          build das 3 imagens Docker (sem push), shellcheck, testes do backup e dos logs do implantar.sh e
-#                    o compose de produção (com o teto somado de 2,5 GB)
+#   imagens          build das 3 imagens Docker (sem push), shellcheck, testes do backup, dos logs do implantar.sh e
+#                    do implantar-sem-actions.sh e o compose de produção (com o teto somado de 2,5 GB)
 #   pdv              PDV no Linux: restore --locked-mode, build Release e testes (os que exigem Windows ficam pulados)
 #   pdv-formatacao   dotnet format --verify-no-changes
 #   e2e-sync         API local + PDV headless (apps/api/test/e2e-pdv/rodar.sh)
@@ -434,6 +434,8 @@ job_imagens() {
     bash -c 'shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/teste/*.sh' || return 1
   passo 'Script do backup (testes de unidade)' bash infra/producao/backup/testar-genesis-backup.sh || return 1
   passo 'Logs do implantar.sh (testes de unidade)' bash infra/producao/teste/testar-implantar-logs.sh || return 1
+  passo 'Implantação sem o Actions (testes de unidade)' bash infra/producao/teste/testar-implantar-sem-actions.sh ||
+    return 1
   passo 'Compose de produção válido (e dentro dos 2,5 GB somados)' compose_producao || return 1
 }
 

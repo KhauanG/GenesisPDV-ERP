@@ -227,6 +227,12 @@ jobs:
       - name: Logs do implantar.sh (testes de unidade)
         run: bash infra/producao/teste/testar-implantar-logs.sh
 
+      # Sem Docker nem rede (dublês de docker, curl, df, id, nice e ionice; git de verdade num repositório local): a
+      # implantação pela VPS sem o Actions (D70-Q1, OP-B2): formato e ancestralidade do commit, recusas, a ordem das
+      # etapas, --simular e o --publicar-pdv com sha256 certo e errado.
+      - name: Implantação sem o Actions (testes de unidade)
+        run: bash infra/producao/teste/testar-implantar-sem-actions.sh
+
       - name: Compose de produção válido (e dentro dos 2,5 GB somados, com o backup e o container de tarefa)
         run: |
           cd infra/producao

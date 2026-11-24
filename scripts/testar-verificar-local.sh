@@ -49,7 +49,7 @@ printf 'ARG IMAGEM_ALPINE=alpine:teste\nFROM ${IMAGEM_ALPINE}\n' >"$RAIZ/infra/p
 echo 'services: {}' >"$RAIZ/infra/producao/docker-compose.yml"
 : >"$RAIZ/infra/producao/genesis.env.exemplo"
 for s in infra/producao/backup/testar-genesis-backup.sh infra/producao/teste/testar-implantar-logs.sh \
-  scripts/testar-verificar-local.sh; do
+  infra/producao/teste/testar-implantar-sem-actions.sh scripts/testar-verificar-local.sh; do
   printf '#!/usr/bin/env bash\necho "%s $(pwd)" >>"$REGISTRO"\n' "$s" >"$RAIZ/$s"
 done
 cat >"$RAIZ/apps/api/test/e2e-pdv/rodar.sh" <<'EOF'
@@ -167,7 +167,8 @@ em_ordem 'pnpm install --frozen-lockfile' 'pnpm format:check' 'pnpm lint' 'pnpm 
   'docker build -f apps/erp-web/Dockerfile -t genesis-web:verificacao-local .' \
   'docker build -f infra/producao/backup/Dockerfile -t genesis-backup:verificacao-local infra/producao/backup' \
   'shellcheck -x -S warning infra/producao/' "infra/producao/backup/testar-genesis-backup.sh $RAIZ" \
-  "infra/producao/teste/testar-implantar-logs.sh $RAIZ" 'docker compose --project-directory . -f docker-compose.yml config -q' \
+  "infra/producao/teste/testar-implantar-logs.sh $RAIZ" "infra/producao/teste/testar-implantar-sem-actions.sh $RAIZ" \
+  'docker compose --project-directory . -f docker-compose.yml config -q' \
   "dotnet restore GenesisPDV.slnx --locked-mode | cwd=$RAIZ/apps/pdv" \
   "dotnet build GenesisPDV.slnx --no-restore -c Release | cwd=$RAIZ/apps/pdv" \
   "dotnet test --solution GenesisPDV.slnx --no-build -c Release | cwd=$RAIZ/apps/pdv TETO=800" \

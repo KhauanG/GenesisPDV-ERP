@@ -24,7 +24,8 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   achados confirmados corrigidos no próprio PR.
 - **PR por fatia do plano** (ex.: PR-5 = F2-B18..B21). **Merge só com a liberação explícita do dono**, e nunca push direto
   na `main`.
-- **Deploy em produção é do dono** (workflow Implantação). Não dispare workflows do GitHub sem necessidade (a fila e
+- **Deploy em produção é do dono** (workflow Implantação; sem cota do Actions, D70, o `infra/producao/implantar-sem-actions.sh`
+  que ele cola no terminal da VPS). Não dispare workflows do GitHub sem necessidade (a fila e
   o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
 - Nunca commitar: `.env`, `.db`, `bin/`, `obj/`, `dist/`, `publish/`, instaladores, `.pfx`, planilhas/dados reais, testes
   temporários. Sem identificador de modelo em commits, PRs ou código.

@@ -14,9 +14,12 @@
 #
 # Como root (sudo), como o instalar.sh na VPS: ele exige root e põe a chave da conta de serviço no grupo 65532.
 #
-#   sudo infra/producao/teste/testar-local.sh [--sem-build] [--manter]
-#     --sem-build  usa as imagens genesis-api, genesis-web e genesis-backup :teste-local já existentes
-#     --manter     não derruba a stack no fim (para olhar; derrube depois com o comando que o script imprime)
+#   sudo infra/producao/teste/testar-local.sh [--sem-build] [--manter] [--sem-actions]
+#     --sem-build    usa as imagens genesis-api, genesis-web e genesis-backup :teste-local já existentes
+#     --manter       não derruba a stack no fim (para olhar; derrube depois com o comando que o script imprime)
+#     --sem-actions  também o ensaio de ponta a ponta do implantar-sem-actions.sh (D70, OP-B2): uma main local com o
+#                    commit atual (HEAD) no lugar do repositório público, o build das 3 imagens pelo script, a troca
+#                    de versão pelo implantar.sh, as URLs públicas pelo Traefik local e a volta (`voltar`)
 # Variáveis: TESTE_IMAGEM_NODE e TESTE_IMAGEM_ALPINE (imagens base do build, ex.: com a CA de um proxy
 #            corporativo), TESTE_BUILD_OPCOES (opções extras do `docker build`, ex.:
 #            "--network host --build-arg https_proxy=http://127.0.0.1:3128" para o `apk add` do backup atrás de um
@@ -35,12 +38,15 @@ PROJETO=genesis-teste
 export TESTE_PORTA_HTTPS=${TESTE_PORTA_HTTPS:-18443}
 BUILD=1
 MANTER=0
+SEM_ACTIONS=0
+VERSAO_C=
 for arg in "$@"; do
   case "$arg" in
     --sem-build) BUILD=0 ;;
     --manter) MANTER=1 ;;
+    --sem-actions) SEM_ACTIONS=1 ;;
     *)
-      echo "uso: $0 [--sem-build] [--manter]" >&2
+      echo "uso: $0 [--sem-build] [--manter] [--sem-actions]" >&2
       exit 2
       ;;
   esac
@@ -95,6 +101,9 @@ limpar() {
     docker image rm "genesis-api:$VERSAO_A" "genesis-web:$VERSAO_A" "genesis-backup:$VERSAO_A" >/dev/null 2>&1 || true
   fi
   docker image rm "genesis-api:$VERSAO_B" "genesis-web:$VERSAO_B" "genesis-backup:$VERSAO_B" >/dev/null 2>&1 || true
+  if [ -n "$VERSAO_C" ]; then
+    docker image rm "genesis-api:$VERSAO_C" "genesis-web:$VERSAO_C" "genesis-backup:$VERSAO_C" >/dev/null 2>&1 || true
+  fi
   rm -rf "$T"
   echo "containers, rede, volumes, imagens de teste e $T removidos"
   exit $codigo
@@ -289,7 +298,10 @@ bash "$T/releases/$VERSAO_A/implantar.sh" pdv retirar >/dev/null
 [ -z "$(find "$T/download/pdv" -name 'GenesisPDV-Setup-*')" ] || falha "pdv retirar deixou instaladores"
 [ -z "$(bash "$T/releases/$VERSAO_A/implantar.sh" pdv atual)" ] || falha "pdv atual depois do retirar deveria vir vazio"
 bash "$T/releases/$VERSAO_A/implantar.sh" pdv retirar >/dev/null || falha "pdv retirar sem nada publicado deveria passar"
-req "$DOWNLOAD" "$(url "$DOWNLOAD" /)" | grep -q 'pagina.js' || falha "download: página fora do ar depois do retirar"
+# A página guardada antes do grep: o `grep -q` acha o pagina.js já no comentário do começo e sai, e o curl, ainda
+# escrevendo, morreria de SIGPIPE (com o pipefail, a falha seria do curl, não da página).
+pagina=$(req "$DOWNLOAD" "$(url "$DOWNLOAD" /)")
+grep -q 'pagina.js' <<<"$pagina" || falha "download: página fora do ar depois do retirar"
 confere ".sha256 de duas linhas recusado; versão menor apaga a retirada; pdv retirar volta a página para \"não publicado\""
 sync=$(req "$API" -o /dev/null -w '%{http_code} %{content_type}' "$(url "$API" /sync/estado)")
 [[ $sync =~ ^4[0-9][0-9]\ application/json ]] || falha "api: /sync/estado sem credenciais deveria ser recusado pela API (veio: $sync)"
@@ -505,6 +517,49 @@ done
 saida=$(bash "$T/implantar.sh" logs)
 grep -q "api-.*-$VERSAO_B.log" <<<"$saida" || falha "implantar.sh logs não lista o log de $VERSAO_B"
 confere "logs da API guardados antes de cada troca (implantar.sh logs)"
+
+if [ "$SEM_ACTIONS" = 1 ]; then
+  passo "Implantação sem o Actions (implantar-sem-actions.sh, D70): main local, build pelo script, troca e volta"
+  # O repositório público vira um clone local com a main no commit atual (HEAD); o que não foi commitado não entra
+  # (o script implanta commit, como o workflow).
+  ORIGEM=$T/origem.git
+  git clone --quiet --bare "$RAIZ" "$ORIGEM"
+  COMMIT_C=$(git -C "$RAIZ" rev-parse HEAD)
+  git -C "$ORIGEM" update-ref refs/heads/main "$COMMIT_C"
+  VERSAO_C=$(git -C "$ORIGEM" rev-parse --short=12 "$COMMIT_C")
+  # As URLs públicas (os domínios de produção do .env, porta 443) chegam ao Traefik local.
+  mkdir -p "$T/bin-sem-actions"
+  printf '#!/usr/bin/env bash\nexec %q -k --noproxy "*" --connect-to "::127.0.0.1:%s" "$@"\n' \
+    "$(command -v curl)" "$TESTE_PORTA_HTTPS" >"$T/bin-sem-actions/curl"
+  chmod +x "$T/bin-sem-actions/curl"
+  opcoes_build=${TESTE_BUILD_OPCOES:-}
+  [ -z "${TESTE_IMAGEM_NODE:-}" ] || opcoes_build+=" --build-arg IMAGEM_NODE=$TESTE_IMAGEM_NODE"
+  [ -z "${TESTE_IMAGEM_ALPINE:-}" ] || opcoes_build+=" --build-arg IMAGEM_ALPINE=$TESTE_IMAGEM_ALPINE"
+  sem_actions() {
+    PATH=$T/bin-sem-actions:$PATH GENESIS_REPOSITORIO=$ORIGEM GENESIS_BUILD_OPCOES=$opcoes_build \
+      bash "$PRODUCAO/implantar-sem-actions.sh" "$@"
+  }
+  sem_actions --simular "$COMMIT_C" >"$T/sem-actions-simular.log" 2>&1 ||
+    falha "implantar-sem-actions.sh --simular: $(tail -n 20 "$T/sem-actions-simular.log")"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_A" ] && [ ! -e "$T/releases/$VERSAO_C" ] &&
+    ! docker image inspect "genesis-api:$VERSAO_C" >/dev/null 2>&1 || falha "--simular mudou a versão, criou a release ou montou imagem"
+  confere "--simular: commit $VERSAO_C conferido na main, nada montado nem trocado"
+  sem_actions "$VERSAO_C" || falha "implantar-sem-actions.sh $VERSAO_C"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_C" ] && [ "$(cat "$T/versoes/anterior")" = "$VERSAO_A" ] ||
+    falha "versões depois do implantar-sem-actions.sh: atual $(cat "$T/versoes/atual"), anterior $(cat "$T/versoes/anterior")"
+  for img in genesis-api genesis-web genesis-backup; do
+    docker image inspect "$img:$VERSAO_C" >/dev/null || falha "imagem $img:$VERSAO_C não montada"
+  done
+  # A implantação rodou fora do terminal (setsid), com a saída no log da pasta.
+  grep -q "Versão: $VERSAO_C no ar." "$T/logs/implantar-sem-actions.log" || falha "log da implantação sem o Actions sem o resumo"
+  [ "$(stat -c %a "$T/fonte")" = 700 ] || falha "fonte sem 700"
+  [ -x "$T/releases/$VERSAO_C/implantar.sh" ] && [ -x "$T/releases/$VERSAO_C/instalar.sh" ] || falha "releases/$VERSAO_C sem os .sh executáveis"
+  detalhada "$API" | jq -e --arg v "$VERSAO_C" '.status == "ok" and .api.versao == $v' >/dev/null ||
+    falha "a API no ar não é a $VERSAO_C: $(detalhada "$API" | head -c 300)"
+  bash "$T/implantar.sh" voltar >/dev/null || falha "voltar depois do implantar-sem-actions.sh"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_A" ] || falha "voltar não devolveu a $VERSAO_A"
+  confere "implantar-sem-actions.sh $VERSAO_C: imagens montadas pelo script, troca pelo implantar.sh, URLs públicas pelo Traefik, API $VERSAO_C no ar e o voltar para $VERSAO_A"
+fi
 
 passo "Bloco do Cloud Shell colado de novo (chave da conta de serviço volta a root:root 600)"
 chown root:root "$T/segredos/gcp-conta-servico.json"

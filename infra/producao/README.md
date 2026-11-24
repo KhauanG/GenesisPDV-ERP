@@ -43,8 +43,9 @@ e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy` e se 
 | `genesis.env.exemplo` | Modelo do `/opt/genesis/genesis.env`: configuração **não secreta** da API (AMBIENTE, TRUST_PROXY, CORS...) |
 | `instalar.sh` | Preparação da VPS, idempotente: confere pré-requisitos, gera os segredos da aplicação, acerta permissões |
 | `implantar.sh` | `implantar <versão>`, `voltar`, `estado`, `tarefa <comando>`, `backup <...>`, `token-monitor`, `pdv <atual\|publicar\|retirar>`, `logs [guardar]` |
+| `implantar-sem-actions.sh` | Implantação pela própria VPS, sem o GitHub Actions (D70): baixa o commit da `main`, monta as imagens na VPS e roda o `instalar.sh` e o `implantar.sh` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)) |
 | `backup/` | Imagem do `genesis-backup` (`Dockerfile`), o script `genesis-backup.sh` (agendar, agora, estado, listar, restaurar) e os testes de unidade dele (`testar-genesis-backup.sh`, sem Docker; rodam no CI) |
-| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`, sem Docker; rodam no CI) |
+| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`) e do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
 
 Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
 
@@ -55,6 +56,7 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
   docker-compose.yml  ->   releases/<versão atual>/docker-compose.yml
   implantar.sh        ->   releases/<versão atual>/implantar.sh
   releases/<versão>/       # arquivos desta pasta, um por versão (guarda as 5 últimas)
+  fonte/                   # root 700: clone do repositório público, só do implantar-sem-actions.sh (D70)
   versoes/atual, anterior, historico
   logs/                    # root 700: api-<AAAAMMDDTHHMMSSZ>-<versão>.log (600), o log da API guardado antes de
                            # cada troca do container: o trecho em volta do último reinício pelo Docker (se houve)
@@ -351,6 +353,82 @@ Formato da resposta e regras sugeridas de alerta em [Monitoramento](#monitoramen
 
 ---
 
+## Implantar sem o GitHub Actions (D70)
+
+Desde 24/11/2026 a cota do GitHub Actions acabou (decisão do dono **D70**) e o workflow **Implantação** não roda. Até
+a cota voltar (ou até o dono decidir outra coisa: pergunta **D70-Q1**, a opção (A) é o padrão até a confirmação), a
+implantação é **um comando colado no terminal da VPS**: o `implantar-sem-actions.sh` faz na própria VPS o que o
+workflow fazia no GitHub, com as mesmas conferências, e roda os mesmos `instalar.sh` e `implantar.sh`. Nada muda no
+`implantacao.yml`: quando a cota voltar, o workflow continua valendo.
+
+**Antes:** o que vai para a produção é um commit da `main` (o PR já juntado, com a verificação local verde). Anote o
+hash do commit (no GitHub, na lista de commits da `main`: os 7 primeiros caracteres bastam) ou deixe sem commit para
+implantar o último da `main`. Prefira um horário **fora do movimento das lojas**: as imagens são montadas na própria
+VPS, o que leva alguns minutos e usa a CPU e o disco dela (a versão em produção continua no ar durante a montagem).
+
+**Passo a passo:**
+
+1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (o navegador abre um terminal já como `root`).
+2. Cole o comando, trocando `COMMIT` pelo hash anotado (ou apagando-o, para o último da `main`):
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/KhauanG/GenesisPDV-ERP/main/infra/producao/implantar-sem-actions.sh -o ~/implantar-sem-actions.sh && bash ~/implantar-sem-actions.sh --publicar-pdv COMMIT
+   ```
+
+   O primeiro trecho baixa o script da `main` do repositório público; o segundo roda. O `--publicar-pdv` faz o que o
+   campo `publicar_pdv` do workflow fazia: atualiza a página de download com o último GitHub Release do PDV (tire-o
+   para implantar sem mexer na página). Para só conferir, sem montar nem trocar nada, troque `--publicar-pdv` por
+   `--simular`.
+3. Espere o fim (de 5 a 15 minutos; a primeira vez demora mais, porque baixa o repositório e as imagens base). O
+   script mostra cada etapa com `==>` e termina com o resumo. **Se puder, não feche a aba até o resumo**, mas, se
+   ela fechar, a conexão cair ou o notebook dormir, a implantação **continua sozinha na VPS**: depois das
+   conferências ela roda fora do terminal (o terminal só mostra o andamento; o Ctrl+C também só para de mostrar).
+   Para ver de novo, abra o terminal da VPS e rode
+   `bash ~/implantar-sem-actions.sh --acompanhar`: mostra a implantação em andamento até o fim ou, se ela já
+   terminou, a saída inteira da última, com o resumo. A saída de cada implantação fica em
+   `/opt/genesis/logs/implantar-sem-actions-<data>.log` (as 10 últimas). Resumo:
+
+   ```
+   ### Implantação sem o Actions: 1a2b3c4d5e6f (7 min 40 s)
+   Versão: 1a2b3c4d5e6f no ar.
+   Página de download: PDV 0.13.0 (já publicado).
+   Estado da VPS (containers, memória, backup): bash /opt/genesis/implantar.sh estado
+   Voltar para a versão anterior, se precisar: /opt/genesis/implantar.sh voltar
+   Saída completa desta implantação: /opt/genesis/logs/implantar-sem-actions-20261124T220000Z-4242.log
+   ```
+
+4. Confira o ERP no navegador (`https://erp.grupoicebeer.com.br`). Se algo estiver errado depois de no ar, **volte
+   para a versão anterior** com `/opt/genesis/implantar.sh voltar` (segundos; as migrações não são desfeitas, como
+   sempre) e avise para a correção.
+
+**O que o script faz, na ordem do workflow** (`bash ~/implantar-sem-actions.sh --ajuda` lista as opções):
+
+| Etapa | O que faz |
+|---|---|
+| Conferências | Recusa se não for `root`, se o commit não tiver o formato do workflow (7 a 40 caracteres hexadecimais), se houver menos de **5 GB livres** no disco do Docker ou do `/opt/genesis` (`GENESIS_ESPACO_MINIMO_GB`) ou se outra implantação estiver rodando (a trava do `implantar.sh` ou outra execução deste script) |
+| 1. Commit | Clona (na primeira vez) ou atualiza o repositório público em `/opt/genesis/fonte` (root, 700; sem token: o repositório é público) e confere que o commit está no histórico da `main` (commit de outro branch ou de PR é recusado) |
+| 2. Versão | O commit em 12 caracteres, como no workflow: a tag das imagens e o nome da release |
+| 3. Imagens | `genesis-api`, `genesis-web` e `genesis-backup` `:<versão>`, com os mesmos Dockerfiles do workflow, montadas na VPS (no lugar do `docker save \| ssh docker load`), com `nice`/`ionice` |
+| 4. Arquivos | `docker-compose.yml`, `implantar.sh`, `instalar.sh` e os dois modelos do commit em `/opt/genesis/releases/<versão>` |
+| 5. PDV (com `--publicar-pdv`) | Antes da troca: o instalador do GitHub Release `pdv-vX.Y.Z` publicado de versão mais alta e o `.sha256`, baixados e conferidos (sha256 errado ou `.sha256` fora do formato param aqui, com a produção intacta; GitHub fora do ar é só um aviso) |
+| 6. Implantação | `instalar.sh` e `implantar.sh implantar <versão>`: o mesmo de sempre (proxy do banco, migrações, troca, saúde e a volta automática se a nova não ficar saudável) |
+| 7. Página (com `--publicar-pdv`) | `implantar.sh pdv publicar` (ou `pdv retirar`, sem release publicado), como o workflow |
+| 8. URLs públicas | A API, o ERP, o painel do monitoramento (401 sem token) e a página de download pelos domínios do `/opt/genesis/.env` (`--sem-conferir-url` pula) |
+| Limpeza | Imagens do Genesis além das 3 mais recentes de cada (nunca a atual nem a anterior, as do `voltar`) e o cache do build com mais de uma semana |
+
+**Se der errado:** a mensagem `ERRO:` diz em que etapa parou e o que fazer (se a aba fechou antes, o
+`--acompanhar` mostra a saída com o erro e o resumo). Até a etapa 5 nada mudou na produção.
+Na etapa 6 vale o de sempre: falha antes da troca (migração, trava) deixa a versão anterior no ar; a nova sem saúde
+volta sozinha para a anterior, com o log da API guardado (`bash /opt/genesis/releases/<versão>/implantar.sh logs`).
+Rodar de novo o mesmo comando é seguro (o `instalar.sh` é idempotente e a montagem reaproveita o cache).
+
+**Testado sem a VPS:** `infra/producao/teste/testar-implantar-sem-actions.sh` (dublês, sem Docker nem rede; roda no
+`scripts/verificar-local.sh`) e o ensaio de ponta a ponta `sudo infra/producao/teste/testar-local.sh --sem-actions`
+([Teste local da stack](#teste-local-da-stack)). Decisões em
+[Decisões técnicas (implantação sem o Actions)](#decisões-técnicas-implantação-sem-o-actions-d70-24112026).
+
+---
+
 ## Operação no dia a dia (na VPS)
 
 | Para | Comando |
@@ -454,10 +532,12 @@ anterior funciona com o schema novo; apps/api/README.md › Migrações). Para v
 anterior, rode o workflow manualmente na `main` informando a versão no campo **“Commit a implantar”**: serve o hash
 de 12 caracteres que aparece em `implantar.sh estado`, em `/opt/genesis/versoes/historico` e na tag das imagens, ou
 o hash completo. O commit tem de estar na `main` (o workflow recusa outro). O build sai daquele commit; as migrações
-já aplicadas continuam, pelo mesmo motivo. Uma falha de migração de empresa deixa só aquela empresa em manutenção (503) e a versão anterior no ar; o
+já aplicadas continuam, pelo mesmo motivo (sem a cota do Actions, D70: `bash ~/implantar-sem-actions.sh <hash>`
+na VPS, [Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)). Uma falha de migração de empresa deixa só aquela empresa em manutenção (503) e a versão anterior no ar; o
 `implantar.sh` para antes de trocar a API.
 
-**Implantar sem o GitHub** (emergência, de um computador com Docker e o repositório):
+**Implantar sem o GitHub** (emergência, de um computador com Docker e o repositório; sem a cota do Actions, o
+caminho normal é o da própria VPS, [Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)):
 
 ```bash
 V=$(git rev-parse --short=12 HEAD)
@@ -871,9 +951,17 @@ Roda **como root** (`sudo`), como na VPS: o `instalar.sh` exige root e põe a ch
 65532 (`chown`). Estar no grupo `docker` não basta; o script recusa logo no começo, antes do build.
 
 ```bash
-sudo infra/producao/teste/testar-local.sh            # builda as imagens genesis-*:teste-local
-sudo infra/producao/teste/testar-local.sh --manter   # deixa a stack no ar para olhar
+sudo infra/producao/teste/testar-local.sh                 # builda as imagens genesis-*:teste-local
+sudo infra/producao/teste/testar-local.sh --manter        # deixa a stack no ar para olhar
+sudo infra/producao/teste/testar-local.sh --sem-actions   # e o ensaio do implantar-sem-actions.sh (D70)
 ```
+
+Com `--sem-actions`, depois da volta atrás, o `implantar-sem-actions.sh` implanta o commit atual (`HEAD`, numa `main`
+local no lugar do repositório público; o que não foi commitado não entra): `--simular` primeiro (nada muda), depois
+o build das 3 imagens pelo script, a troca pelo `implantar.sh` (as migrações de verdade), as URLs públicas pelo Traefik
+local (os domínios de produção levados a `127.0.0.1`), a API no ar com a versão do commit
+(`/api/saude/detalhada`) e o `voltar` para a `teste-local`. As opções de build (`TESTE_BUILD_OPCOES` e as imagens
+base) valem também para ele.
 
 Precisa de `docker`, `openssl`, `curl` e `jq` na máquina. Atrás de um proxy corporativo com CA própria, passe imagens
 base que confiem nela e, se o build só sai pelo proxy, as opções do `docker build`:
@@ -1033,6 +1121,66 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   variável com um IP de documentação (`203.0.113.10`, da faixa reservada para exemplos) a trocar, para o comando não
   rodar pela metade com um `<` que o shell lê como redirecionamento. O Traefik aparece só como "Traefik v3"; o teste
   local fixa a imagem dele para ser reprodutível.
+
+## Decisões técnicas (implantação sem o Actions, D70, 24/11/2026)
+
+- **As imagens são montadas na própria VPS.** Sem o runner, não há onde montar e de onde enviar (`docker save | ssh
+  docker load`); a VPS já tem o Docker com o Buildx, e o código vem do repositório público (sem token, sem segredo
+  novo, sem registry). Custo: alguns minutos de CPU e disco da VPS a cada implantação; por isso o aviso e a
+  recomendação de um horário fora do movimento. A montagem roda sob `nice -n 19` e `ionice -c 3` (o pedido do
+  plano), mas o trabalho pesado dos passos `RUN` é feito pelo BuildKit dentro do daemon do Docker, que não herda a
+  prioridade do comando: o `nice` vale para o cliente e o envio do contexto. Uma prioridade de verdade pediria um
+  construtor separado (`docker buildx create --driver docker-container` com limite de CPU e memória), com a imagem do
+  BuildKit baixada na VPS e o cache noutro lugar; fica para se a montagem atrapalhar as lojas. A versão em produção
+  continua no ar até a troca, e os limites de memória dos containers do Genesis não mudam.
+- **Mesmas conferências do workflow.** Commit com 7 a 40 hexadecimais (o `[0-9a-f]{7,40}` do workflow; o plano dizia
+  12 a 40, mas o objetivo era "o formato aceito pelo workflow", e o GitHub mostra os 7 primeiros), ancestral da
+  `origin/main` (só o branch `main` é buscado: um commit de outro branch pelo hash curto não é encontrado; pelo
+  completo, o clone parcial o busca sob demanda e a ancestralidade recusa), versão em 12 caracteres, os mesmos Dockerfiles, tags e `VERSAO`, os mesmos 5 arquivos na release
+  e o mesmo `instalar.sh`/`implantar.sh`. Sem commit, o último da `main` (como o disparo manual sem o campo).
+- **A fonte em `/opt/genesis/fonte`, root 700**, um clone parcial só da `main` e sem tags (`--single-branch --no-tags
+  --filter=blob:none`: o histórico inteiro da `main` para a ancestralidade, os arquivos só do commit implantado; nenhuma
+  tag que um hash curto pudesse casar), sem credencial (`credential.helper` vazio e
+  `GIT_TERMINAL_PROMPT=0`: um repositório que deixasse de ser público falharia em vez de pedir senha), com o endereço
+  do `origin` reposto a cada execução e o `checkout --force` + `clean -ffdx` antes do build (nada de sobra no
+  contexto).
+- **Duas travas.** O `implantar.sh` segura a dele (`.implantacao.lock`) só enquanto roda; o build vem antes, então o
+  script confere que ela está livre no começo (não segura: o `implantar.sh` a pega na etapa 6) e segura a sua
+  (`.implantar-sem-actions.lock`) do começo ao fim, para duas execuções não montarem e trocarem ao mesmo tempo.
+- **Fora do terminal.** O terminal da Hostinger é uma aba do navegador; no workflow, o `implantar.sh` rodava por um
+  SSH a partir de um runner estável. Fechar a aba, cair a conexão ou o notebook dormir mandaria SIGHUP ao script no
+  meio do `implantar.sh implantar` (as migrações ou a troca pela metade, sem a volta automática, sem a versão
+  registrada e sem o resumo para o dono saber). Por isso, depois das conferências (que respondem na hora, no
+  terminal), o script se roda de novo numa sessão própria (`setsid`: sem terminal, o SIGHUP e o Ctrl+C não chegam),
+  com a entrada em `/dev/null`, uma cópia de si mesmo (o comando do README baixa de novo por cima do
+  `~/implantar-sem-actions.sh`, e o bash lê o script aos poucos) e a trava herdada; a saída vai para
+  `logs/implantar-sem-actions-<data>.log` (pasta 700, arquivo 600, os 10 últimos; o link
+  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra (`tail --pid`), saindo com o código dela.
+  `--acompanhar` volta a mostrar. Nem `trap '' HUP` sozinho (a escrita no terminal que caiu falharia e o `set -e`
+  pararia o script do mesmo jeito), nem `systemd-run` (a saída iria para o journal). O `--simular` roda no terminal.
+- **Espaço mínimo de 5 GB** (`GENESIS_ESPACO_MINIMO_GB`) no disco do Docker e no do `/opt/genesis`: as 3 imagens
+  somam ~700 MB, e o cache do build (dependências do pnpm, as camadas intermediárias) passa de 2 GB na primeira
+  montagem; com folga para os logs e o backup. Medido com `df` antes de qualquer coisa.
+- **jq sem instalar na VPS.** O `--publicar-pdv` lê a API pública do GitHub (sem token: 60 consultas por hora bastam)
+  com o `jq` da imagem `genesis-backup` que acabou de ser montada (`docker run --network none`), mantendo a decisão
+  "sem jq na VPS" da página de download. O download do release vai só por `https` (`--proto =https`, também nos
+  redirecionamentos). Mesmas regras do workflow: versão mais alta publicada, `.sha256` de uma linha, hash calculado
+  do arquivo, falha do GitHub = aviso, lista vazia = `retirar`.
+- **URLs públicas pelos domínios do `/opt/genesis/.env`** (o que o Traefik serve; o padrão do workflow se faltar;
+  `GENESIS_API_URL`/`GENESIS_ERP_URL`/`GENESIS_DOWNLOAD_URL` como as variáveis do environment), com as mesmas 20
+  tentativas de 6 s e as mesmas conferências.
+- **Limpeza:** depois de uma implantação boa, o `limpar` do `implantar.sh` já deixa só a atual e a anterior; o script
+  cobre a que falhou (ficam as 3 imagens mais recentes de cada nome, `GENESIS_MANTER_IMAGENS`, nunca a atual nem a
+  anterior) e o cache do build com mais de uma semana (`docker builder prune --filter until=168h`: o da semana fica,
+  para a próxima montagem ser rápida).
+- **O script vem da `main`** (raw.githubusercontent.com), não do commit implantado: é o mesmo nível de confiança do
+  código que vai para a produção, e um commit antigo é implantado com as regras de hoje. Voltar para a versão
+  anterior continua sendo o `implantar.sh voltar` (as imagens dela ficam); um commit anterior ao I1b (sem o
+  Dockerfile do backup) é recusado.
+- **Só para os testes:** `GENESIS_PASTA`, `GENESIS_REPOSITORIO` (um clone local), `GENESIS_BUILD_OPCOES` (o proxy de
+  uma sessão), `GENESIS_CONFERIR_TENTATIVAS`/`GENESIS_CONFERIR_INTERVALO`. O teste de unidade usa dublês de `docker`,
+  `curl`, `df`, `id`, `nice` e `ionice` e o `git` de verdade; o ensaio de ponta a ponta é o `testar-local.sh
+  --sem-actions`. Decisão 215 do `apps/api/README.md`.
 
 ## Pendências
 

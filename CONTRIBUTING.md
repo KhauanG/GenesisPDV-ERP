@@ -53,7 +53,8 @@ commit.
   produção (API, ERP e backup) com o `docker compose config` de `infra/producao` (e a soma dos limites de memória ≤ 2,5
   GB), o `shellcheck` dos scripts de `infra/producao` e os testes de unidade do script de backup
   (`infra/producao/backup/testar-genesis-backup.sh`) e dos logs guardados pelo `implantar.sh`
-  (`infra/producao/teste/testar-implantar-logs.sh`),
+  (`infra/producao/teste/testar-implantar-logs.sh`) e da implantação sem o Actions
+  (`infra/producao/teste/testar-implantar-sem-actions.sh`),
   o PDV no Windows (build, testes, impressora de teste do spooler e o instalador instalado, aberto e desinstalado de
   verdade), a formatação do C# (`dotnet format`) num job leve no Linux e o e2e PDV ↔ API. Cada job só roda
   quando muda algo que ele confere ([CI: o que roda quando](#ci-o-que-roda-quando)).
@@ -106,6 +107,10 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
   instalador do Windows e o teste dele (instala, abre, reinstala e desinstala). O resumo lembra disso em toda rodada.
 - Os workflows de `.github/workflows` ficam no repositório, sem mudança, para quando a cota voltar; nenhum é
   disparado. Decisões técnicas do script: README da API › decisão 214.
+- **Implantação sem o Actions (OP-B2, D70-Q1):** o dono cola um comando no terminal da VPS e o
+  `infra/producao/implantar-sem-actions.sh` refaz o workflow Implantação na própria VPS (commit da `main`, imagens
+  montadas lá, `instalar.sh` e `implantar.sh`); passo a passo no README de `infra/producao` › Implantar sem o GitHub
+  Actions, decisões no README da API › decisão 215. A sessão nunca implanta: não tem acesso à VPS.
 
 ## CI: o que roda quando
 

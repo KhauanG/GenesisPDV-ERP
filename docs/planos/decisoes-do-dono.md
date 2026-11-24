@@ -264,6 +264,8 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   CI; os workflows ficam no repositório para quando a cota voltar. Plano: `docs/planos/operacao-sem-actions-plano.md`.
   - **D70-Q1** (implantação pela VPS com um comando, OP-B2) e **D70-Q2** (instalador do PDV montado na sessão pelo
     Wine, OP-B3): sem resposta ainda; vale a recomendação (A) de cada uma, como "padrão até a confirmação do dono".
+    A (A) da D70-Q1 está pronta desde o OP-B2 (`infra/producao/implantar-sem-actions.sh`, um comando no terminal da
+    VPS; passo a passo no README de `infra/producao` › Implantar sem o GitHub Actions): disponível, sem obrigar.
   - **Servidor da Oracle oferecido pelo dono (24/11/2026; ARM Ampere, 2 CPU, 12 GB):** não usado agora, pela
     recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
     sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
