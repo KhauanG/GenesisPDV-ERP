@@ -273,7 +273,8 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     - **Release do PDV (D70-Q2):** a sessão monta o instalador pelo Wine (OP-B3), confere e cria o GitHub Release
       `pdv-vX.Y.Z` (tag na `main`) com o `.exe` e o `.exe.sha256`, e pede a publicação na página de download pelo
       vigia. A atualização dos caixas nas lojas continua com o dono, um caixa de cada vez.
-- **D71 — ABERTA (24/11/2026): desligar o workflow "PDV release" enquanto durar a D70?** A tag `pdv-vX.Y.Z` criada
+- **D71 = (A) — RESPONDIDA (25/11/2026):** "Sobre o D71, faça o que você recomenda". A sessão desliga o workflow
+  "PDV release" pela API na hora do primeiro release sem o Actions e avisa o dono. Pergunta original: **desligar o workflow "PDV release" enquanto durar a D70?** A tag `pdv-vX.Y.Z` criada
   pela sessão (OP-B3, `publicar-release.sh`) é um push de tag e dispara o `pdv-release.yml` (`on: push: tags`).
   ★(A) **recomendada**: a sessão desliga só esse workflow pela API do GitHub (reversível: "Enable workflow" na aba
   Actions, ou a sessão religa quando a cota voltar) na hora do primeiro release sem o Actions, e avisa. (B) manter
