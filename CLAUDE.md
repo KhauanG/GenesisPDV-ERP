@@ -41,12 +41,17 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   acompanha `https://download.grupoicebeer.com.br/implantacao/estado.json` e o `no_ar_desde` do `/saude` da API até
   `ok`, `falhou` ou `recusado` do commit ou de um merge depois dele (o vigia implanta a ponta da `main`); sai com 0,
   1 ou 3 (tempo limite: a implantação ainda roda, a VPS está fora ou o vigia desligado). O motivo de uma falha fica só
-  no log do vigia, que o dono vê na VPS: `bash ~/instalar-vigia.sh --estado`. Um commit que falhou não roda de novo
-  sozinho (o próximo merge, ou um pedido manual do dono), e o vigia não desfaz uma volta do dono. O
+  no log do vigia, que o dono vê na VPS: `bash /opt/genesis/vigia/instalar-vigia.sh --estado` (a cópia que o vigia
+  mantém na versão instalada; antes da primeira implantação com o OP-B9, a `~/instalar-vigia.sh`). Um commit que
+  falhou não roda de novo sozinho (o próximo merge, ou um pedido manual do dono), e o vigia não desfaz uma volta do
+  dono. O
   `scripts/pedir-implantacao.sh` (OP-B4) ficou só avisando. Só depois de o dono reinstalar o vigia (README de
-  `infra/producao` › Vigia da implantação). Não crie tag `implantar*` nem apague as que existem. Não dispare workflows
-  do GitHub sem necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou
-  re-run "para ver".
+  `infra/producao` › Vigia da implantação); desde o OP-B9 (D121), essa reinstalação é a última à mão: depois de cada
+  implantação `ok`, o vigia aplica sozinho a instalação do commit implantado (o programa, a unidade e o timer do
+  systemd, conferidos antes, e a cópia do `instalar-vigia.sh` em `/opt/genesis/vigia`), e o dono só roda o comando
+  de instalar de novo se o vigia parou ou foi desligado. Não crie tag `implantar*` nem apague as que existem. Não
+  dispare workflows do GitHub sem necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de
+  `workflow_dispatch` ou re-run "para ver".
 - Nunca commitar: `.env`, `.db`, `bin/`, `obj/`, `dist/`, `publish/`, instaladores, `.pfx`, planilhas/dados reais, testes
   temporários. Sem identificador de modelo em commits, PRs ou código.
 - O repositório é **público** (D60, 06/11/2026): tudo que entra fica visível para qualquer pessoa, inclusive o

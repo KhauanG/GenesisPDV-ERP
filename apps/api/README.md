@@ -7384,6 +7384,52 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        verify`), o `--so-pdv` no `testar-implantar-sem-actions.sh` e `scripts/testar-acompanhar-implantacao.sh` (no job
        `scripts` do `verificar-local.sh`). Nada roda na produção até o dono reinstalar o vigia; nenhuma tag, release ou
        ref criada. Sem migração; API, ERP e PDV sem mudança.
+219. **Vigia da implantação: se atualiza por inteiro a cada implantação "ok"** (OP-B9; D121 = (A), decidida pelo dono
+     em 25/11/2026, `docs/planos/decisoes-do-dono.md`; plano `docs/planos/operacao-sem-actions-plano.md`;
+     `infra/producao/vigia/`; README de `infra/producao` › Vigia da implantação e Decisões técnicas (o vigia se
+     atualiza por inteiro)). Sem SSH para a sessão, a reinstalação do vigia depois do PR-16b é a última feita à mão:
+     depois de cada `ok`, o vigia roda o `instalar-vigia.sh` **do commit implantado** com `--autoatualizar <commit>`
+     (fora do terminal, com a trava do vigia herdada no descritor 9), que troca só o que mudou (sha256), por rename: o
+     `vigia-implantacao.sh`, a cópia do `implantar-sem-actions.sh` (a da `main`), a do `instalar-vigia.sh` em
+     `/opt/genesis/vigia` (a que o dono usa no `--estado` e no `--desligar`: a de `~` fica na versão do dia em que o
+     comando de instalar a baixou), o `genesis-vigia.service` e o `genesis-vigia.timer`, com o `daemon-reload`.
+     Escolhas técnicas, sem pergunta ao dono:
+     - **Conferido antes, tudo ou nada.** Os cinco arquivos lidos e conferidos antes de qualquer troca; a unidade e o
+       timer pelo formato esperado (os mesmos nomes, o `oneshot` com `KillMode=process`, o `OnUnitInactiveSec`, o
+       `WantedBy=timers.target`) e pelo `systemd-analyze verify` sem erro **nem aviso** sobre eles (o aviso sai com
+       0: a linha seria ignorada). A cópia nova e uma ligação (hard link) com o arquivo de antes ficam prontas ao lado
+       de cada destino antes da primeira troca: a troca e a volta são só renames, que não pedem espaço em disco.
+       Falhou a conferência (65) ou qualquer troca (a de uma unidade ou de um script, o `daemon-reload`, o
+       `try-restart` do timer que mudou, o timer que não ficou ligado: 1, com todos os arquivos de antes de volta):
+       fica tudo como estava e o vigia segue no agendamento antigo; a implantação continua `ok`; o motivo só no
+       `vigia.log`. O arquivo que não veio do repositório (69) ou a volta que não se completou (70) fica `pendente` e
+       tenta na rodada seguinte. A instalação à mão faz a mesma conferência.
+     - **O dono manda no timer.** Só `try-restart` (mexe só no timer ligado): o vigia desligado com o `--desligar`
+       continua desligado; nunca `enable` nem `start`. O `--desligar` não espera a trava: o timer que parou no meio
+       da troca e não está mais habilitado (`systemctl is-enabled`) foi desligado pelo dono, não é falha e não é
+       religado (nem ao desfazer). Não mexe nos pedidos vistos, nos tratados nem na janela que existe.
+     - **Compatível para trás.** A linha `# genesis-vigia-autoatualizar: 1` do instalador diz que ele aceita o
+       `--autoatualizar`; numa volta a um commit sem ela (anterior ao OP-B9), o vigia faz como antes, só o programa, e
+       não desfaz a instalação.
+     - **Transição sem comando do dono.** O vigia do OP-B7 instalado troca só o programa ao implantar o primeiro commit
+       com o OP-B9; no começo de cada rodada, o vigia novo compara o sha256 dele com o da última instalação completa
+       (`vigia/instalacao`, root 600: o commit, o resultado, quando e esse sha256) e, sem o registro ou com outro
+       sha256, aplica a instalação do commit no ar (`versoes/atual`, conferido na `main` do clone), sem trocar o vigia
+       pelo de um commit anterior ao OP-B9 (`sem-autoatualizar`); a versão no ar fora da `main` do clone fica
+       `sem-commit` (a instalação atual, sem nova tentativa até a próxima implantação `ok`). A `pendente` é refeita
+       como depois do `ok` que a deixou (a conferência não grava `pendente`). A volta pelo terminal (`implantar.sh
+       voltar`) não troca o vigia e não dispara nada. Os resultados do registro: `ok`, `recusado`, `falhou`,
+       `pendente`, `sem-autoatualizar`, `sem-commit` e `instalacao` (a do comando à mão).
+     - **Testes.** `infra/producao/teste/testar-vigia-implantacao.sh` (as unidades que mudam, trocadas e recarregadas;
+       só o service mudado, sem `try-restart`; as iguais, intocadas; a inválida, recusada, também na instalação à
+       mão; a troca que falha, desfeita, também a de um script depois das unidades (o disco cheio) e a volta que não
+       se completa, refeita na rodada seguinte; o vigia desligado, que continua desligado, também pelo `--desligar`
+       no meio da troca; a volta a um commit sem o `--autoatualizar`, o merge seguinte pelo vigia antigo e a rodada
+       que compara o sha256; o arquivo que não veio; a conferência com o commit no ar anterior ao OP-B9 e com a
+       versão no ar fora da `main`; a transição com o vigia do OP-B7 de verdade, o do `e539ed0`; nada no
+       `estado.json`). Vale na VPS a partir da
+       primeira implantação de um commit com o OP-B9 pelo vigia; nenhuma tag, release ou ref criada. Sem migração;
+       API, ERP e PDV sem mudança.
 
 ## O que ainda não foi feito (Fase 0)
 
