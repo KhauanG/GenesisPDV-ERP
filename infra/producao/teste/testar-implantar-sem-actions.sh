@@ -7,13 +7,17 @@
 # travas, a ordem das etapas (build com nice/ionice e as tags/Dockerfiles do workflow, os arquivos da versão,
 # instalar.sh, implantar.sh, URLs públicas, limpeza), `--simular` (nada montado nem trocado), `--sem-conferir-url`, o
 # `--publicar-pdv` (versão mais alta publicada, sha256 certo, errado e fora do formato, já publicado, sem release →
-# retirar e o 404 conferido, GitHub fora do ar → só aviso), a falha da implantação e das URLs com o resumo, a limpeza
+# retirar e o 404 conferido, GitHub fora do ar → só aviso), o `--so-pdv` (OP-B7: a versão no ar, sem montar nem
+# trocar nada; sem release publicado não retira; GitHub fora do ar e o --tag de um release ainda não publicado = 69;
+# arquivo inválido = 65; só o espaço do instalador), a falha da
+# implantação e das URLs com o resumo, a limpeza
 # das imagens (também a atual depois de implantações que falharam) e a execução fora do terminal (o terminal morto
-# por SIGHUP/SIGKILL no meio do implantar.sh não interrompe a implantação; o log e o --acompanhar).
+# por SIGHUP/SIGKILL no meio do implantar.sh não interrompe a implantação; o log e o --acompanhar), com o log mostrado
+# até a última linha (OP-B6: o processo zumbi, a ordem ruim forçada e muitas rodadas).
 # O ensaio de ponta a ponta, com o Docker e a stack de verdade, é o `testar-local.sh --sem-actions`.
 #
 #   bash infra/producao/teste/testar-implantar-sem-actions.sh
-# Precisa de bash, git, jq, tar, coreutils e util-linux (flock); roda sem root.
+# Precisa de bash, git, jq, tar, coreutils, util-linux (flock) e do /proc do Linux; roda sem root.
 set -euo pipefail
 
 AQUI=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -45,7 +49,9 @@ confere() { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 # Cada chamada vai para $DUBLE/ordem (a ordem das etapas). Arquivos de controle em $DUBLE: uid (o `id -u`), df-livre-kb
 # (o espaço livre do `df`), build-falha, imagens-<nome> (o `docker image ls`: "<data>\t<tag>" por linha), gh-lista e
 # gh-release (as respostas da API do GitHub), gh-falha (a lista falha), assets/<arquivo> (os downloads do release),
-# pagina-versao (o atual.json servido), url-falha (o /saude público não responde), implantar-espera (o implantar.sh
+# sem-imagem (o `docker image inspect` falha),
+# pagina-versao (o atual.json servido), url-falha (o /saude público não responde), pagina-falha (a raiz da página de
+# download não responde), implantar-espera (o implantar.sh
 # implantar espera o arquivo sumir, com implantar-esperando criado) e retirar-sem-efeito (o pdv retirar não tira).
 cat >"$T/bin/docker" <<'DUBLE'
 #!/usr/bin/env bash
@@ -64,6 +70,7 @@ case "$1" in
     case "$2" in
       ls) cat "$DUBLE/imagens-$3" 2>/dev/null || true ;;
       rm) ;;
+      inspect) [ ! -e "$DUBLE/sem-imagem" ] ;;
       *) exit 1 ;;
     esac
     ;;
@@ -106,7 +113,7 @@ case "$url" in
     ;;
   */pdv/*.exe) [ -s "$DUBLE/pagina-versao" ] || exit 22 ;;
   */saude) [ ! -e "$DUBLE/url-falha" ] || exit 22; echo '{"status":"ok","banco_controle":"ok"}' | escrever ;;
-  */) echo '<html><div id="root"></div><script src="/pagina.js"></script>' | escrever ;;
+  */) [ ! -e "$DUBLE/pagina-falha" ] || exit 22; echo '<html><div id="root"></div><script src="/pagina.js"></script>' | escrever ;;
   *) exit 22 ;;
 esac
 DUBLE
@@ -500,6 +507,7 @@ pdv_cenario
 head -c 4096 /dev/urandom >"$DUBLE/assets/$exe"
 rodar --publicar-pdv "$V1"
 recusa "sha256 que não confere" "não confere com o $exe.sha256"
+[ "$CODIGO" = 65 ] || falha "sha256 que não confere: deveria sair com 65 (arquivo inválido), saiu $CODIGO"
 nao_chamou '^instalar\.sh|^implantar\.sh (implantar|pdv publicar)' "sha256 que não confere"
 grep -q "Versão: $V1 não foi implantada" <<<"$SAIDA" && grep -q 'não conferiu' <<<"$SAIDA" || falha "resumo do sha256 errado: $SAIDA"
 pdv_cenario
@@ -548,6 +556,235 @@ for caso in lista release sha256 exe; do
     falha "resumo do GitHub sem o $caso: $SAIDA"
 done
 confere "--publicar-pdv com o GitHub sem responder ou o release incompleto: só um aviso, a implantação segue e a página fica como está"
+
+# --- --so-pdv (OP-B7) ---------------------------------------------------------------------------------------------
+# A versão no ar ($V1) com a release dela; só a página de download muda.
+so_pdv_cenario() {
+  pdv_cenario
+  mkdir -p "$GENESIS_PASTA/versoes" "$GENESIS_PASTA/releases/$V1"
+  echo "$V1" >"$GENESIS_PASTA/versoes/atual"
+  cp "$R/infra/producao/implantar.sh" "$GENESIS_PASTA/releases/$V1/implantar.sh"
+}
+so_pdv_nada_mais() {
+  nao_chamou '^git |^docker (build|buildx)|^nice |^instalar\.sh|^implantar\.sh (implantar|pdv retirar)|^docker image (ls|rm)|^docker builder' "$1"
+  nao_chamou '^curl https://(api|erp)\.grupoicebeer' "$1"
+  [ "$(cat "$GENESIS_PASTA/versoes/atual")" = "$V1" ] || falha "$1: o --so-pdv não troca a versão"
+}
+so_pdv_cenario
+rodar --so-pdv "$V1"
+recusa "--so-pdv com commit" "sem commit e sem --publicar-pdv"
+rodar --so-pdv --publicar-pdv
+recusa "--so-pdv com --publicar-pdv" "sem commit e sem --publicar-pdv"
+rm -f "$GENESIS_PASTA/versoes/atual"
+rodar --so-pdv
+recusa "--so-pdv sem versão no ar" "nenhuma versão no ar registrada"
+echo antiga >"$GENESIS_PASTA/versoes/atual"
+rodar --so-pdv
+recusa "--so-pdv com versoes/atual fora do formato" "nenhuma versão no ar registrada"
+echo "$V1" >"$GENESIS_PASTA/versoes/atual"
+touch "$DUBLE/sem-imagem"
+rodar --so-pdv
+recusa "--so-pdv sem a imagem do backup" "falta a imagem genesis-backup:$V1"
+rm -f "$DUBLE/sem-imagem" "$GENESIS_PASTA/releases/$V1/implantar.sh"
+rodar --so-pdv
+recusa "--so-pdv sem a release" "falta $GENESIS_PASTA/releases/$V1/implantar.sh"
+nao_chamou 'api\.github\.com' "--so-pdv recusado"
+confere "--so-pdv: sem commit nem --publicar-pdv; recusa sem a versão no ar, sem a release dela ou sem a imagem do backup, antes do GitHub"
+
+so_pdv_cenario
+rodar --so-pdv
+sucesso "--so-pdv publica"
+antes "^curl $baixa/$exe\$" '^implantar\.sh pdv publicar 0\.13\.0 2026-11-17T12:00:00Z$'
+antes '^implantar\.sh pdv publicar' '^curl https://download\.grupoicebeer\.com\.br/pdv/atual\.json$'
+cmp -s "$DUBLE/pdv-recebido/$exe" "$DUBLE/assets/$exe" || falha "--so-pdv: o pdv publicar não recebeu o instalador do release"
+so_pdv_nada_mais "--so-pdv publica"
+grep -q "### Publicação do PDV sem o Actions: versão no ar $V1" <<<"$SAIDA" &&
+  grep -q 'Página de download: PDV 0.13.0 (publicado nesta implantação).' <<<"$SAIDA" || falha "resumo do --so-pdv: $SAIDA"
+so_pdv_cenario
+echo "$SHA_PDV" >"$DUBLE/pdv-atual"
+echo 0.13.0 >"$DUBLE/pagina-versao"
+rodar --so-pdv
+sucesso "--so-pdv já publicado"
+nao_chamou "^curl $baixa/$exe\$|pdv publicar" "--so-pdv já publicado"
+so_pdv_nada_mais "--so-pdv já publicado"
+so_pdv_cenario
+jq -n '[{tag_name: "pdv-v0.14.0", draft: false, prerelease: true}]' >"$DUBLE/gh-lista"
+echo 0.12.0 >"$DUBLE/pagina-versao"
+rodar --so-pdv
+sucesso "--so-pdv sem release publicado"
+nao_chamou 'pdv (publicar|retirar)' "--so-pdv sem release publicado"
+grep -q 'nunca retira o instalador' <<<"$SAIDA" || falha "--so-pdv sem release: sem o aviso: $SAIDA"
+confere "--so-pdv: publica o release mais novo na versão no ar (sem git, build, instalar.sh, implantar, limpeza nem as URLs da API e do ERP), nada no já publicado, e sem release publicado não retira o instalador"
+
+so_pdv_cenario
+head -c 4096 /dev/urandom >"$DUBLE/assets/$exe"
+rodar --so-pdv
+[ "$CODIGO" = 65 ] || falha "--so-pdv com sha256 errado: deveria sair com 65, saiu $CODIGO: $SAIDA"
+grep -qF "não confere com o $exe.sha256" <<<"$SAIDA" || falha "--so-pdv com sha256 errado: sem a mensagem: $SAIDA"
+nao_chamou 'pdv publicar' "--so-pdv com sha256 errado"
+so_pdv_cenario
+echo "$SHA_PDV  outro-nome.exe" >"$DUBLE/assets/$exe.sha256"
+rodar --so-pdv
+[ "$CODIGO" = 65 ] || falha "--so-pdv com .sha256 fora do formato: deveria sair com 65, saiu $CODIGO: $SAIDA"
+nao_chamou 'pdv publicar' "--so-pdv com .sha256 fora do formato"
+# As falhas do ambiente (aqui, a URL pública da página que não responde, depois de publicar) saem com 1, não 65: o
+# vigia as tenta de novo.
+so_pdv_cenario
+touch "$DUBLE/pagina-falha"
+rodar --so-pdv
+[ "$CODIGO" = 1 ] || falha "--so-pdv com a página sem responder: deveria sair com 1, saiu $CODIGO: $SAIDA"
+grep -q 'não respondeu como esperado' <<<"$SAIDA" || falha "--so-pdv com a página sem responder: sem a mensagem: $SAIDA"
+for caso in lista release; do
+  so_pdv_cenario
+  case $caso in
+    lista) touch "$DUBLE/gh-falha" ;;
+    release) jq -n '{tag_name: "pdv-v0.13.0", published_at: "2026-11-17T12:00:00Z", assets: [{name: "GenesisPDV-Setup-0.13.0.exe"}]}' >"$DUBLE/gh-release" ;;
+  esac
+  rodar --so-pdv
+  [ "$CODIGO" = 69 ] || falha "--so-pdv com o GitHub sem o $caso: deveria sair com 69, saiu $CODIGO: $SAIDA"
+  grep -q 'A página de download fica como está' <<<"$SAIDA" || falha "--so-pdv sem o $caso: sem o aviso: $SAIDA"
+  nao_chamou 'pdv (publicar|retirar)' "--so-pdv com o GitHub sem o $caso"
+done
+so_pdv_cenario
+rodar --simular --so-pdv
+sucesso "--simular --so-pdv"
+nao_chamou '^curl |pdv (publicar|retirar|atual)' "--simular --so-pdv"
+so_pdv_nada_mais "--simular --so-pdv"
+confere "--so-pdv: arquivo inválido sai com 65; o GitHub sem responder ou o release incompleto, com 69 (o vigia tenta depois); a página que não respondeu, com 1; --simular não baixa nem publica"
+
+# --tag (a tag que o vigia viu): o release dela ainda não publicado (a tag nasce antes: o rascunho, o envio do
+# instalador) sai com 69, sem mexer na página, em vez de "já publicado" com o anterior; o publicado dela, ou um de
+# versão maior, vale.
+rodar --tag=pdv-v0.14.0 "$V1"
+recusa "--tag sem --so-pdv" "--tag vai só com --so-pdv"
+for t in pdv-v0.14 v0.14.0 'pdv-v0.14.0;id'; do
+  rodar --so-pdv "--tag=$t"
+  recusa "--tag=$t" "tag inválida"
+done
+so_pdv_cenario
+echo "$SHA_PDV" >"$DUBLE/pdv-atual"
+echo 0.13.0 >"$DUBLE/pagina-versao"
+rodar --so-pdv --tag=pdv-v0.14.0
+[ "$CODIGO" = 69 ] || falha "--tag de um release ainda não publicado (0.14.0 é pre-release; o publicado é 0.13.0, já na página): deveria sair com 69, saiu $CODIGO: $SAIDA"
+grep -q 'O release pdv-v0.14.0 ainda não está publicado (o publicado mais novo: pdv-v0.13.0' <<<"$SAIDA" ||
+  falha "--tag não publicado: sem o aviso: $SAIDA"
+nao_chamou 'releases/tags/|pdv (publicar|retirar|atual)' "--tag não publicado"
+so_pdv_cenario
+jq -n '[{tag_name: "pdv-v0.14.0", draft: true, prerelease: false}]' >"$DUBLE/gh-lista"
+rodar --so-pdv --tag=pdv-v0.14.0
+[ "$CODIGO" = 69 ] || falha "--tag sem nenhum release publicado: deveria sair com 69, saiu $CODIGO: $SAIDA"
+grep -q 'o publicado mais novo: nenhum' <<<"$SAIDA" || falha "--tag sem nenhum release publicado: sem o aviso: $SAIDA"
+for t in pdv-v0.13.0 pdv-v0.12.9; do
+  so_pdv_cenario
+  rodar --so-pdv "--tag=$t"
+  sucesso "--tag=$t com o pdv-v0.13.0 publicado"
+  chamou '^implantar\.sh pdv publicar 0\.13\.0 ' || falha "--tag=$t: deveria publicar o 0.13.0: $(cat "$DUBLE/ordem")"
+done
+confere "--so-pdv --tag: o release da tag ainda não publicado (pre-release, rascunho, nenhum) sai com 69 sem mexer na página; a tag publicada ou uma menor que o publicado mais novo publica; sem --so-pdv ou fora do formato, recusa"
+
+# Espaço: o --so-pdv não monta imagem, então não pede os 5 GB do build (nem mede o disco do Docker), só o mínimo do
+# instalador (1 GB) no /opt/genesis e no temporário.
+so_pdv_cenario
+echo $((4 * 1048576)) >"$DUBLE/df-livre-kb"
+rodar --so-pdv
+sucesso "--so-pdv com 4 GB livres"
+nao_chamou "^df -Pk -- $DUBLE/raiz-docker\$" "--so-pdv: o disco do Docker"
+chamou "^df -Pk -- $GENESIS_PASTA\$" || falha "--so-pdv: sem medir o $GENESIS_PASTA: $(grep '^df' "$DUBLE/ordem")"
+so_pdv_cenario
+echo 1000 >"$DUBLE/df-livre-kb"
+rodar --so-pdv
+recusa "--so-pdv sem espaço" "mínimo: 1 GB para o instalador do PDV"
+nao_chamou 'api\.github\.com' "--so-pdv sem espaço"
+confere "--so-pdv: só o espaço do instalador (4 GB livres bastam; menos de 1 GB recusa), sem medir o disco do Docker"
+
+# --- O log até o fim (OP-B6) --------------------------------------------------------------------------------------
+# O que mostra a implantação fora do terminal (o desacoplar e o --acompanhar): as funções do script, sozinhas, com
+# processos que escrevem as últimas linhas e saem logo em seguida. O `tail -f --pid` de antes saía sem ler o fim (na
+# CI da main, o --acompanhar parou na etapa 6) e seguia para sempre o processo zumbi (o filho terminado e não
+# recolhido): o primeiro caso falha com ele (o tempo limite), e o segundo com o laço "enquanto vivo: lê; espera".
+eval "$(sed -n '/^processo_vivo() {$/,/^}$/p; /^mostrar_ate_o_fim() {$/,/^}$/p' "$SCRIPT")"
+declare -F processo_vivo mostrar_ate_o_fim >/dev/null || falha "o script sem as funções processo_vivo e mostrar_ate_o_fim"
+FUNCOES_LOG=$(declare -f processo_vivo mostrar_ate_o_fim)
+SLEEP_REAL=$(command -v sleep)
+export FUNCOES_LOG SLEEP_REAL
+# mostrar_ate_o_fim <pid> <log> num bash à parte, com tempo limite (o de antes não terminava com o zumbi).
+seguir() { timeout 20 bash -c 'eval "$FUNCOES_LOG"; mostrar_ate_o_fim "$1" "$2"' _ "$@"; }
+# O processo $1 já terminou: sumiu ou é zumbi (o estado Z do /proc).
+terminou() { [ ! -e "/proc/$1" ] || [[ $(cat "/proc/$1/stat" 2>/dev/null) =~ \)\ [ZX]\  ]]; }
+L=$T/seguir.log
+# Zumbi: o pai (o sleep, depois do exec) não recolhe o filho que escreveu e saiu. O filho só escreve e sai depois do
+# exec ($$ no subshell é o pai): antes dele, o próprio sh poderia recolhê-lo.
+: >"$L"
+sh -c '(while [ "$(cat /proc/$$/comm)" != sleep ]; do sleep 0.01; done; printf "linha 1\nfim\n" >>"$1") &
+  echo $! >"$2"; exec sleep 30' _ "$L" "$T/zumbi.pid" &
+pai=$!
+for _ in $(seq 1 200); do
+  [ -s "$T/zumbi.pid" ] && terminou "$(cat "$T/zumbi.pid")" && break
+  sleep 0.05
+done
+zumbi=$(cat "$T/zumbi.pid")
+[[ $(cat "/proc/$zumbi/stat") =~ \)\ Z\  ]] || falha "o processo de teste deveria ser zumbi: $(cat "/proc/$zumbi/stat")"
+CODIGO=0
+SAIDA=$(seguir "$zumbi" "$L") || CODIGO=$?
+kill "$pai" 2>/dev/null || true
+wait "$pai" 2>/dev/null || true
+[ "$CODIGO" = 0 ] || falha "o processo zumbi deveria contar como terminado (saiu $CODIGO; 124 = não terminou): $SAIDA"
+[ "$SAIDA" = $'linha 1\nfim' ] || falha "zumbi: o log inteiro: $SAIDA"
+# A ordem ruim, forçada: um dublê do sleep (a espera entre as leituras) faz o processo escrever as últimas linhas e
+# sair entre uma leitura e a próxima conferência; elas têm de aparecer.
+mkdir -p "$T/bin-ordem"
+cat >"$T/bin-ordem/sleep" <<'DUBLE'
+#!/usr/bin/env bash
+if [ ! -e "$ORDEM/liberado" ]; then
+  : >"$ORDEM/liberado"
+  for _ in $(seq 1 200); do
+    [ ! -e "/proc/$ESCRITOR" ] || [[ $(cat "/proc/$ESCRITOR/stat" 2>/dev/null) =~ \)\ [ZX]\  ]] && exit 0
+    "$SLEEP_REAL" 0.05
+  done
+  exit 1
+fi
+exec "$SLEEP_REAL" "$@"
+DUBLE
+chmod +x "$T/bin-ordem/sleep"
+mkdir -p "$T/ordem"
+: >"$L"
+# A espera do processo tem limite (500 × 0,02 s = 10 s, abaixo do timeout 20 do seguir): se o dublê não for chamado
+# (uma regressão na espera entre as leituras ou na conferência de processo vivo), o teste falha com a mensagem abaixo
+# em vez de ficar parado no wait.
+bash -c 'echo início >>"$1"
+  for _ in $(seq 1 500); do [ -e "$2/liberado" ] && break; sleep 0.02; done
+  printf "última 1\núltima 2\n" >>"$1"' _ "$L" "$T/ordem" &
+escritor=$!
+until grep -q início "$L"; do sleep 0.02; done
+CODIGO=0
+SAIDA=$(ORDEM=$T/ordem ESCRITOR=$escritor PATH=$T/bin-ordem:$PATH seguir "$escritor" "$L") || CODIGO=$?
+if [ ! -e "$T/ordem/liberado" ]; then
+  kill "$escritor" 2>/dev/null || true
+  wait "$escritor" 2>/dev/null || true
+  falha "ordem ruim: o dublê do sleep não foi chamado (saiu $CODIGO): $SAIDA"
+fi
+wait "$escritor" || true
+[ "$CODIGO" = 0 ] && [ "$SAIDA" = $'início\núltima 1\núltima 2' ] ||
+  falha "as linhas escritas logo antes do fim deveriam aparecer (saiu $CODIGO): $SAIDA"
+# Muitas vezes: o processo escreve e sai na hora (sem dublê); o log aparece inteiro todas as vezes.
+for i in $(seq 1 30); do
+  : >"$L"
+  bash -c 'for n in $(seq 1 50); do echo "linha $n"; done >>"$1"; echo "fim $2" >>"$1"' _ "$L" "$i" &
+  escritor=$!
+  SAIDA=$(seguir "$escritor" "$L") || falha "rodada $i: saiu ≠ 0"
+  wait "$escritor" || true
+  [ "$(wc -l <<<"$SAIDA")" = 51 ] && [ "$(tail -n 1 <<<"$SAIDA")" = "fim $i" ] ||
+    falha "rodada $i: o log inteiro, até o fim: $SAIDA"
+done
+# A saída que não aceita escrita (o terminal que caiu): para de mostrar com 1, sem esperar o processo.
+"$SLEEP_REAL" 30 &
+vivo=$!
+CODIGO=0
+seguir "$vivo" "$L" >&- 2>/dev/null || CODIGO=$?
+kill "$vivo" 2>/dev/null || true
+wait "$vivo" 2>/dev/null || true
+[ "$CODIGO" = 1 ] || falha "a saída fechada: esperava parar com 1 (saiu $CODIGO)"
+confere "o log até o fim: a conferência do processo antes de cada leitura e uma leitura depois do fim (a ordem ruim forçada e 30 rodadas), o zumbi conta como terminado e a saída fechada para de mostrar"
 
 # --- Fora do terminal ---------------------------------------------------------------------------------------------
 # O "terminal" (uma sessão própria, como a do terminal do navegador) morre por SIGHUP e SIGKILL com o implantar.sh no

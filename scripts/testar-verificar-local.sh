@@ -51,7 +51,7 @@ echo 'services: {}' >"$RAIZ/infra/producao/docker-compose.yml"
 : >"$RAIZ/infra/producao/genesis.env.exemplo"
 for s in infra/producao/backup/testar-genesis-backup.sh infra/producao/teste/testar-implantar-logs.sh \
   infra/producao/teste/testar-implantar-sem-actions.sh infra/producao/teste/testar-vigia-implantacao.sh \
-  scripts/testar-verificar-local.sh scripts/testar-pedir-implantacao.sh \
+  scripts/testar-verificar-local.sh scripts/testar-acompanhar-implantacao.sh \
   apps/pdv/instalador/linux-wine/gerar-instalador.sh apps/pdv/instalador/linux-wine/testar-instalador.sh \
   apps/pdv/instalador/linux-wine/teste/testar-gerar-instalador.sh \
   apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh; do
@@ -187,7 +187,7 @@ em_ordem 'pnpm install --frozen-lockfile' 'pnpm format:check' 'pnpm lint' 'pnpm 
   "rodar.sh -c Release --no-build DATABASE_URL=postgres://genesis:genesis_dev@127.0.0.1:5432/genesis_control E2E_LOG_API=$LOGS/e2e-sync/e2e-api.log" \
   'shellcheck -x -S warning scripts/' "scripts/testar-verificar-local.sh $RAIZ" \
   "apps/pdv/instalador/linux-wine/teste/testar-gerar-instalador.sh $RAIZ" \
-  "apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh $RAIZ" "scripts/testar-pedir-implantacao.sh $RAIZ"
+  "apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh $RAIZ" "scripts/testar-acompanhar-implantacao.sh $RAIZ"
 grep -q '^shellcheck .*infra/producao/vigia/\*\.sh' "$REGISTRO" || falha 'o shellcheck do job imagens não cobre o vigia da implantação'
 grep -q '^shellcheck .*scripts/.*apps/pdv/instalador/linux-wine/gerar-instalador\.sh.*linux-wine/teste/testar-publicar-release\.sh' "$REGISTRO" ||
   falha 'o shellcheck do job scripts não cobre os scripts do instalador pelo Wine'

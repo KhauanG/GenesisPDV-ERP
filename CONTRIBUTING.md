@@ -116,18 +116,27 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
   decisão 93 e "Instalar na loja". Criar a tag `pdv-v*` dispararia o "PDV release" (`pdv-release.yml`, em todo push
   de tag): por isso ele fica desligado no GitHub enquanto durar a D70 (D70-Q3, padrão até a confirmação do dono), e o
   `publicar-release.sh` recusa criar a tag com ele ligado (`--aceitar-disparo` cria assim mesmo, com o aviso).
+  **Desde a D120 (25/11/2026)** a rede da sessão recusa escrita no GitHub: o release o dono cria pelo site.
+  `apps/pdv/instalador/linux-wine/preparar-release-manual.sh X.Y.Z` faz as mesmas conferências do
+  `publicar-release.sh`, só com leituras, e deixa em `apps/pdv/publish/release-manual/pdv-vX.Y.Z/` os dois arquivos a
+  anexar, as notas e o `PASSO-A-PASSO.txt` do dono (com o link do formulário preenchido; desligar o "PDV release" é o
+  passo 1, D71); depois que o dono publica, `preparar-release-manual.sh X.Y.Z --conferir` confere o release e o
+  download público e diz se a página de download (o vigia) já serve a versão. Roteiro: README do PDV › Release pelo
+  site do GitHub; decisões no README do PDV › decisão 94. O `publicar-release.sh` fica para quando a sessão tiver
+  escrita (recusado com 403, ele aponta o caminho manual).
 - Os workflows de `.github/workflows` ficam no repositório, sem mudança, para quando a cota voltar; nenhum é
   disparado. Decisões técnicas do script: README da API › decisão 214.
 - **Implantação sem o Actions (OP-B2, D70-Q1):** o dono cola um comando no terminal da VPS e o
   `infra/producao/implantar-sem-actions.sh` refaz o workflow Implantação na própria VPS (commit da `main`, imagens
   montadas lá, `instalar.sh` e `implantar.sh`); passo a passo no README de `infra/producao` › Implantar sem o GitHub
   Actions, decisões no README da API › decisão 215. A sessão não tem acesso à VPS.
-- **Vigia da implantação (OP-B4, D70):** com o vigia instalado pelo dono (`infra/producao/vigia/instalar-vigia.sh`),
-  a sessão pede a implantação de um commit da `main` com `scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`:
-  cria a tag `implantar/<AAAAMMDD-HHMMSS>` no repositório público, a VPS a busca a cada 2 minutos e roda o
-  `implantar-sem-actions.sh`; o resultado sai só em `https://download.<domínio>/implantacao/estado.json` (numa volta
-  para um commit anterior ao OP-B4, que não serve esse arquivo, só com `--sem-estado`). README de
-  `infra/producao` › Vigia da implantação; README da API › decisão 217.
+- **Vigia da implantação (OP-B4 e OP-B7, D70 e D119):** com o vigia instalado pelo dono
+  (`infra/producao/vigia/instalar-vigia.sh`), a VPS implanta sozinha cada commit novo da `main` (uma vez por commit,
+  fora das 17h à meia-noite, horário de Brasília) e publica o PDV do release novo na página de download; a tag
+  `implantar/<AAAAMMDD-HHMMSS>` fica como pedido manual do dono. A sessão só acompanha:
+  `scripts/acompanhar-implantacao.sh <commit>` lê `https://download.<domínio>/implantacao/estado.json` (a única
+  saída pública da VPS) e o `/saude` da API. README de `infra/producao` › Vigia da implantação; README da API ›
+  decisões 217 e 218.
 
 ## CI: o que roda quando
 

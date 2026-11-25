@@ -7241,16 +7241,31 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        sem a volta automática nem a versão registrada, e sem o resumo). Depois das conferências, o script se roda de
        novo numa sessão própria (`setsid`, entrada em `/dev/null`, uma cópia de si mesmo, a trava herdada) com a
        saída em `/opt/genesis/logs/implantar-sem-actions-<data>.log` (700/600, os 10 últimos), e o terminal só a
-       mostra (`tail --pid`) e sai com o código dela; `--acompanhar` volta a mostrar a em andamento ou a última. Sem
+       mostra e sai com o código dela; `--acompanhar` volta a mostrar a em andamento ou a última. Sem
        `systemd-run` (a saída iria para o journal, e o dono teria de aprender o `journalctl`) nem `trap '' HUP`
        sozinho (a escrita no terminal morto falharia e o `set -e` pararia o script do mesmo jeito).
+     - **A saída até a última linha, sem o `tail --pid` (OP-B6, 25/11/2026).** Na CI da `main` depois do PR-16, o
+       `--acompanhar` do teste "Fora do terminal" parou na etapa 6, sem o resumo, com a implantação terminada (o
+       código de saída, do `wait`, vinha certo): o `tail -f --pid` pode sair sem ler o que foi escrito pouco antes de
+       o processo terminar, e segue para sempre um zumbi (terminado e não recolhido pelo pai, que ainda responde ao
+       `kill -0`; o `tail` de antes não saía no teste com um). No lugar dele, `mostrar_ate_o_fim`: um descritor
+       aberto uma vez no log (o `cat` continua de onde parou), e a cada 0,2 s a conferência do processo
+       (`processo_vivo`: o `kill -0` e o estado do `/proc/<pid>/stat`, com Z e X como terminado) **antes** da
+       leitura do que falta; a última leitura é feita com ele já terminado. Vale para o `desacoplar` (o terminal e a
+       chamada do vigia, cuja saída vai para o `ultima-implantacao.log`) e o `--acompanhar`; o Ctrl+C continua só
+       parando de mostrar, e a escrita que falha (o terminal que caiu) também para de mostrar sem mudar o código de
+       saída do `desacoplar`. O mesmo padrão não aparece nos outros scripts de `infra/producao` e `scripts/` (o vigia
+       espera o script terminar; o `pedir-implantacao.sh` acompanha pela URL). Linux só (o `/proc`), como a VPS.
      - **Testes.** Unidade sem Docker nem rede (dublês de `docker`, `curl`, `df`, `id`, `nice` e `ionice`; o `git` de
        verdade sobre um repositório local; o `instalar.sh` e o `implantar.sh` falsos dentro dele, copiados pelo
        script como os de verdade): formato, ancestralidade (outro branch, inexistente, main reescrita), root, espaço,
        as duas travas, a ordem das etapas, `--simular`, `--sem-conferir-url`, as falhas de build, `instalar.sh`,
        `implantar.sh` e URL com o resumo, a limpeza e o `--publicar-pdv` (certo, errado, fora do formato, já
        publicado, sem release e o 404 conferido, GitHub fora), o terminal morto por SIGHUP/SIGKILL no meio do
-       `implantar.sh` e o `--acompanhar`; roda como root ou não, no job `imagens` da CI e do
+       `implantar.sh` e o `--acompanhar`, e o log até o fim (OP-B6: as funções sozinhas com o processo zumbi, a
+       ordem ruim forçada por um dublê do `sleep` — o processo escreve as últimas linhas e sai entre uma leitura e a
+       próxima conferência —, 30 rodadas de um processo que escreve e sai na hora e a saída fechada; o zumbi falha
+       com o `tail --pid`); roda como root ou não, no job `imagens` da CI e do
        `scripts/verificar-local.sh`. Ponta a ponta: o `testar-local.sh --sem-actions` implanta o `HEAD` de uma `main`
        local na stack de teste (build pelo script, migrações e troca pelo `implantar.sh`, URLs pelo Traefik local, a
        API com a versão do commit) e volta. Nenhuma mudança no `implantacao.yml`, na API, no ERP ou no PDV; sem
@@ -7324,6 +7339,51 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        no job `imagens` da CI e do `scripts/verificar-local.sh`), `scripts/testar-pedir-implantacao.sh` (`gh` e `curl`
        falsos; job `scripts`) e a rota do `estado.json` no `testar-local.sh`. Nada roda na produção até o dono instalar
        o vigia; nenhuma tag, release ou ref de verdade foi criada. Sem migração; API e PDV sem mudança.
+
+218. **Vigia da implantação: implanta sozinho cada commit novo da `main`, uma vez por commit, fora das 17h à
+     meia-noite, e publica o PDV do release novo** (OP-B7; D119 = (A), decidida pelo dono em 25/11/2026,
+     `docs/planos/decisoes-do-dono.md`; plano `docs/planos/operacao-sem-actions-plano.md`;
+     `infra/producao/vigia/`, `infra/producao/implantar-sem-actions.sh --so-pdv`, `scripts/acompanhar-implantacao.sh`;
+     README de `infra/producao` › Vigia da implantação e Decisões técnicas (implantação automática da main)). A rede da
+     sessão recusa escrita em `git/refs` da API do GitHub, então a tag de pedido da decisão 217 não sai da sessão: o
+     merge que o dono libera vale também como "pode implantar". Cada rodada (a cada 2 minutos) faz uma coisa, nesta
+     prioridade: o pedido manual por tag (como na 217; roda na hora, a qualquer hora), a **ponta da `main`** ainda não
+     tratada (`implantar-sem-actions.sh <ponta>`, `pedido` = `main` no `estado.json`) e o **PDV**: quando a tag
+     `pdv-vX.Y.Z` de versão mais alta (com o commit dela) muda, o `implantar-sem-actions.sh --so-pdv` publica o release
+     publicado mais novo na página de download se o sha256 for diferente, sem montar imagem nem trocar a versão
+     (`pedido` = `pdv`, com a versão no ar). O automático (main e PDV) não começa entre as 17:00 e a meia-noite no
+     horário de Brasília (`vigia/janela`, padrão `17-24`, formato conferido); a implantação que já começou não é
+     interrompida. A sessão só acompanha: `scripts/acompanhar-implantacao.sh <commit>` (a janela, a hora prevista, o
+     `estado.json` de um commit que inclui o dela e o `no_ar_desde`); o `scripts/pedir-implantacao.sh` da 217 ficou só
+     avisando e passando o commit adiante, e nenhum dos dois chama o `gh`. Escolhas técnicas, sem pergunta ao dono:
+     - **Uma vez por commit, por lista.** `vigia/main-tratados` guarda cada ponta tratada (ok, falhou, recusado, já no
+       ar, o commit de um pedido manual): a falha não repete sozinha, e a volta do dono (`implantar.sh voltar`) não é
+       desfeita. A ponta que já é a versão no ar fica tratada sem implantar (instalação, autoatualização do vigia,
+       implantação feita pelo dono no terminal; o `recebido` dela no `estado.json` termina como `ok`). Só a ponta
+       conta: dois merges seguidos entram juntos. O acompanhamento da sessão estende o tempo limite até o fim da
+       janela também quando vê o `recebido` já dentro dela (começou fora, logo antes das 17:00).
+     - **PDV pela tag, não pela API a cada rodada.** O `git ls-remote --heads --tags` (que já trazia as tags) dá a ponta
+       e a tag `pdv-v*` mais alta; a API do GitHub (60 consultas por hora sem token) só é lida quando a tag muda. A
+       tag vai ao `--so-pdv` (`--tag=<tag>`): a tag nasce antes do release (o `publicar-release.sh` e o workflow), e
+       sem ela o `--so-pdv` achava o release anterior, que a página já servia, e a tag ficava tratada para sempre. Ele
+       sai com 69 quando o GitHub não responde, o release está incompleto ou o da tag ainda não foi publicado, com 65
+       no arquivo inválido (o único que não repete) e com 1 nas outras falhas (o Docker, o espaço, a página que não
+       respondeu); o vigia tenta o 69 e o 1 de novo 15 minutos depois, sem marcar a tag nem escrever no
+       `estado.json`, guardando o sha256 que a página servia e o inicio da primeira tentativa (o `inicio` público é o
+       desta tag). O `--so-pdv` não pede os 5 GB do build (só 1 GB, `GENESIS_ESPACO_MINIMO_PDV_GB`) e nunca retira o
+       instalador sozinho.
+     - **O `estado.json` do PDV só quando a página muda ou a publicação falha**: o "nada a publicar" de toda instalação
+       não apaga o resultado da última implantação. Continuam só os cinco campos da 217.
+     - **A janela também vale para a publicação só do PDV** (nada automático no horário das lojas); fora do formato,
+       vale o padrão, com uma linha no log. `TZ=America/Sao_Paulo`, ou `<-03>3` sem o tzdata.
+     - **Testes.** `infra/producao/teste/testar-vigia-implantacao.sh` (a ponta implantada uma vez, a falha que não
+       repete, a volta do dono, 16:59 roda, 17:00 e 23:59 esperam, 00:00 roda, a janela configurável, a instalação com a
+       versão no ar igual ou diferente da ponta, o PDV sozinho sem rebuild, a tag antes do release publicado, a falha
+       passageira, o release inválido, a tag manual com prioridade e fora da janela, o `estado.json` só com os campos
+       permitidos, a interrompida, a ponta implantada pelo terminal; `systemd-analyze
+       verify`), o `--so-pdv` no `testar-implantar-sem-actions.sh` e `scripts/testar-acompanhar-implantacao.sh` (no job
+       `scripts` do `verificar-local.sh`). Nada roda na produção até o dono reinstalar o vigia; nenhuma tag, release ou
+       ref criada. Sem migração; API, ERP e PDV sem mudança.
 
 ## O que ainda não foi feito (Fase 0)
 

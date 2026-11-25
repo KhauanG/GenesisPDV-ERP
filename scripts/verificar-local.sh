@@ -29,7 +29,7 @@
 #   e2e-sync         API local + PDV headless (apps/api/test/e2e-pdv/rodar.sh)
 #   scripts          só local: shellcheck de scripts/, .github/scripts/ e apps/pdv/instalador/linux-wine/, o teste
 #                    deste script e os testes de unidade do gerar-instalador.sh, do publicar-release.sh e do
-#                    pedir-implantacao.sh
+#                    acompanhar-implantacao.sh (e do aviso do pedir-implantacao.sh)
 #
 # Não coberto aqui (só o Windows de verdade faz: o runner, quando a cota voltar, ou o primeiro caixa): a impressora de
 # teste do spooler (SpoolerWindowsTests) e, do instalador, o que o Wine não reproduz (testar-instalador.ps1): a
@@ -502,7 +502,7 @@ job_scripts() {
     return 1
   passo 'Teste do publicar-release.sh (gh falso)' bash apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh ||
     return 1
-  passo 'Teste do pedir-implantacao.sh (gh e curl falsos)' bash scripts/testar-pedir-implantacao.sh || return 1
+  passo 'Teste do acompanhar-implantacao.sh (curl e date falsos)' bash scripts/testar-acompanhar-implantacao.sh || return 1
 }
 
 # ---------------------------------------------------------------------------------------------------------------------

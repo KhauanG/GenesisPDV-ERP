@@ -49,7 +49,7 @@ e se anuncia ao Traefik por labels.
 | `instalar.sh` | Preparação da VPS, idempotente: confere pré-requisitos, gera os segredos da aplicação, acerta permissões |
 | `implantar.sh` | `implantar <versão>`, `voltar`, `estado`, `tarefa <comando>`, `backup <...>`, `token-monitor`, `pdv <atual\|publicar\|retirar>`, `logs [guardar]` |
 | `implantar-sem-actions.sh` | Implantação pela própria VPS, sem o GitHub Actions (D70): baixa o commit da `main`, monta as imagens na VPS e roda o `instalar.sh` e o `implantar.sh` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)) |
-| `vigia/` | Vigia da implantação (D70, OP-B4): `vigia-implantacao.sh` (uma rodada: a tag de pedido do repositório público → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
+| `vigia/` | Vigia da implantação (D70, OP-B4 e OP-B7): `vigia-implantacao.sh` (uma rodada: a tag de pedido do dono, a ponta nova da `main` fora da janela ou o release novo do PDV → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
 | `backup/` | Imagem do `genesis-backup` (`Dockerfile`), o script `genesis-backup.sh` (agendar, agora, estado, listar, restaurar) e os testes de unidade dele (`testar-genesis-backup.sh`, sem Docker; rodam no CI) |
 | `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`), do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`) e do vigia da implantação (`testar-vigia-implantacao.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
 
@@ -63,9 +63,9 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
   implantar.sh        ->   releases/<versão atual>/implantar.sh
   releases/<versão>/       # arquivos desta pasta, um por versão (guarda as 5 últimas)
   fonte/                   # root 700: clone do repositório público, só do implantar-sem-actions.sh (D70)
-  vigia/                   # root 700: o vigia da implantação (OP-B4): vigia-implantacao.sh, a cópia do
-                           # implantar-sem-actions.sh, repo.git (clone parcial da main), vistos, vigia.log e
-                           # ultima-implantacao.log
+  vigia/                   # root 700: o vigia da implantação (OP-B4 e OP-B7): vigia-implantacao.sh, a cópia do
+                           # implantar-sem-actions.sh, repo.git (clone parcial da main), vistos, main-tratados,
+                           # pdv-tratados, janela (600), vigia.log e ultima-implantacao.log
   versoes/atual, anterior, historico
   logs/                    # root 700: api-<AAAAMMDDTHHMMSSZ>-<versão>.log (600), o log da API guardado antes de
                            # cada troca do container: o trecho em volta do último reinício pelo Docker (se houve)
@@ -424,6 +424,7 @@ VPS, o que leva alguns minutos e usa a CPU e o disco dela (a versão em produç�
 | 5. PDV (com `--publicar-pdv`) | Antes da troca: o instalador do GitHub Release `pdv-vX.Y.Z` publicado de versão mais alta e o `.sha256`, baixados e conferidos (sha256 errado ou `.sha256` fora do formato param aqui, com a produção intacta; GitHub fora do ar é só um aviso) |
 | 6. Implantação | `instalar.sh` e `implantar.sh implantar <versão>`: o mesmo de sempre (proxy do banco, migrações, troca, saúde e a volta automática se a nova não ficar saudável) |
 | 7. Página (com `--publicar-pdv`) | `implantar.sh pdv publicar` (ou `pdv retirar`, sem release publicado), como o workflow |
+| Só o PDV (`--so-pdv`, OP-B7) | Sem commit: as conferências de sempre, a versão no ar (com a release e a imagem do backup dela) e as etapas 5 e 7 com as regras do `--publicar-pdv`, sem montar imagem nem trocar a versão; sem release publicado, a página fica como está; pede só o espaço do instalador (1 GB, `GENESIS_ESPACO_MINIMO_PDV_GB`), não o do build; o GitHub fora do ar, o release incompleto e, com `--tag=pdv-vX.Y.Z` (o vigia passa a tag que viu), o release dessa tag ainda não publicado saem com 69, o arquivo inválido com 65 e as outras falhas com 1 (o vigia usa) |
 | 8. URLs públicas | A API, o ERP, o painel do monitoramento (401 sem token) e a página de download pelos domínios do `/opt/genesis/.env` (`--sem-conferir-url` pula) |
 | Limpeza | Imagens do Genesis além das 3 mais recentes de cada (nunca a atual nem a anterior, as do `voltar`) e o cache do build com mais de uma semana |
 
@@ -438,30 +439,50 @@ Rodar de novo o mesmo comando é seguro (o `instalar.sh` é idempotente e a mont
 ([Teste local da stack](#teste-local-da-stack)). Decisões em
 [Decisões técnicas (implantação sem o Actions)](#decisões-técnicas-implantação-sem-o-actions-d70-24112026).
 
-## Vigia da implantação (D70, OP-B4)
+## Vigia da implantação (D70, OP-B4 e OP-B7)
 
 O dono autorizou a sessão do Claude Code a **implantar sozinha um commit que já está na `main`** (D70, 24/11/2026),
 mas a sessão não abre conexão com a VPS e não recebe credencial nenhuma dela. O **vigia** inverte o sentido: a
-própria VPS, a cada 2 minutos, olha as tags do repositório **público** (só leitura, sem token) e, quando aparece um
-**pedido** novo, roda o mesmo `implantar-sem-actions.sh` da seção acima. O merge na `main` continua só com a
-liberação do dono; o vigia só implanta o que já entrou nela.
+própria VPS, a cada 2 minutos, olha o repositório **público** (só leitura, sem token) e roda o mesmo
+`implantar-sem-actions.sh` da seção acima. Desde a **D119** (25/11/2026), **cada merge que o dono libera na `main`
+vale também como "pode implantar"**: o vigia implanta sozinho cada commit novo da `main`. O merge na `main` continua
+só com a liberação do dono; o vigia só implanta o que já entrou nela.
 
-**Quem pode pedir:** só quem tem permissão de escrita no repositório (criar tag exige isso, a mesma permissão de
-juntar na `main`). O pedido é uma tag com o nome `implantar/<AAAAMMDD-HHMMSS>` (implantar) ou
-`implantar-pdv/<AAAAMMDD-HHMMSS>` (implantar e publicar o PDV do último release, o `--publicar-pdv`), apontando para
-um commit da `main`. Commit de outro branch é **recusado** sem rodar nada. Roda só o pedido **mais novo** que o vigia
-ainda não viu; os anteriores ficam como pulados. Os pedidos que já existiam quando o vigia foi instalado nunca rodam.
-Um commit mais velho que o que está no ar é permitido (é a "volta").
+**O que o vigia faz, uma coisa por rodada, nesta ordem:**
 
-**Limite da volta para antes deste bloco:** a rota do `estado.json` (no nginx do `genesis-web`) e a pasta montada
-(no `docker-compose.yml`) chegaram com o OP-B4. Numa volta para um commit anterior a ele, o vigia implanta
-normalmente, mas, depois da troca de versão, o `genesis-web` antigo responde 404 no `estado.json`: o resultado
-(`ok`, `falhou`) fica só no host e no log do vigia, e a sessão não o vê até a próxima implantação de um commit com o
-bloco. Por isso o `scripts/pedir-implantacao.sh` recusa esse commit, a não ser com `--sem-estado`: aí acompanha só até
-a API reiniciar (o `no_ar_desde` do `/saude`) e sai com 2, e o dono confere o resultado com
-`bash ~/instalar-vigia.sh --estado`.
+1. **Pedido manual do dono** (forçar ou voltar uma versão): uma tag `implantar/<AAAAMMDD-HHMMSS>` (implantar) ou
+   `implantar-pdv/<AAAAMMDD-HHMMSS>` (implantar e publicar o PDV do último release, o `--publicar-pdv`) num commit da
+   `main`. Roda **na hora, a qualquer hora** (também entre as 17h e a meia-noite) e tem prioridade sobre o resto. Commit
+   de outro branch é **recusado** sem rodar nada; roda só o pedido **mais novo** ainda não visto (os anteriores ficam
+   como pulados); os que já existiam quando o vigia foi instalado nunca rodam; um commit mais velho que o do ar é
+   permitido (é a "volta").
+2. **A `main`:** quando a ponta da `main` (o último merge) é um commit que o vigia **ainda não tratou**, ele o
+   implanta. **Uma vez por commit:** implantado, com falha ou recusado, o mesmo commit não roda de novo sozinho (o
+   próximo merge, sim). Por isso o vigia **não desfaz uma volta** feita pelo dono com `implantar.sh voltar`: a ponta já
+   foi tratada. A ponta que já é a versão no ar fica tratada sem implantar, e o commit de um pedido manual também.
+3. **O PDV:** quando aparece um release novo do PDV (a tag `pdv-vX.Y.Z` de versão mais alta muda), o vigia publica
+   na página de download o release `pdv-vX.Y.Z` **publicado** mais novo (rascunho e pre-release não contam), se o
+   instalador for diferente (sha256) do que a página serve, **sem remontar nem trocar a versão no ar**
+   (`implantar-sem-actions.sh --so-pdv --tag=<tag>`, com as mesmas conferências do `--publicar-pdv`). Um release com
+   arquivo inválido não é tentado de novo (o log diz). A tag que aparece antes de o release dela ser publicado (o
+   `publicar-release.sh` e o workflow criam a tag, depois o rascunho, enviam o instalador e só então publicam; ou um
+   pre-release que vira release depois), o GitHub fora do ar e as falhas passageiras (o Docker, o espaço, a página que
+   não respondeu) tentam de novo a cada 15 minutos, sem mexer no `estado.json`, até dar certo: um release deixado como
+   pre-release com a tag mais alta fica nisso (uma linha no log) até sair um release publicado de versão igual ou
+   maior. Sem release publicado, a página fica como está (só o `--publicar-pdv` de uma implantação manual retira o
+   instalador). **Para o vigia tentar de novo uma tag que ficou `falhou`** (o release refeito com "substituir", na
+   mesma tag): apague a linha dela em `/opt/genesis/vigia/pdv-tratados` (ex.: `sed -i '/^pdv-v0.14.0 /d'
+   /opt/genesis/vigia/pdv-tratados`; vale na próxima rodada fora da janela) ou publique na hora com `bash
+   ~/implantar-sem-actions.sh --so-pdv`.
 
-**Instalar (uma vez, no terminal da VPS):**
+**Horário (a janela):** nada automático (2 e 3) **começa entre as 17:00 e a meia-noite**, no horário de Brasília: o
+movimento das lojas. Um merge feito nesse horário é implantado logo depois da meia-noite. Uma implantação que já
+começou não é interrompida. A janela fica em `/opt/genesis/vigia/janela` (padrão `17-24`; horas cheias
+`<início>-<fim>`, o fim antes do início passa pela meia-noite, ex.: `22-6`; ou `nenhuma` para implantar a qualquer
+hora). Para trocar, no terminal da VPS: `echo 18-24 > /opt/genesis/vigia/janela` (vale na próxima rodada; um valor
+fora do formato vale como o padrão, com uma linha no log).
+
+**Instalar ou reinstalar (uma vez, no terminal da VPS; depois do merge do OP-B7, reinstale uma vez):**
 
 1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (já entra como `root`).
 2. Cole o comando:
@@ -470,50 +491,79 @@ a API reiniciar (o `no_ar_desde` do `/saude`) e sai com 2, e o dono confere o re
    curl -fsSL https://raw.githubusercontent.com/KhauanG/GenesisPDV-ERP/main/infra/producao/vigia/instalar-vigia.sh -o ~/instalar-vigia.sh && bash ~/instalar-vigia.sh
    ```
 
-3. O que esperar: seis etapas com `==>` (menos de um minuto) e, no fim, `Vigia da implantação instalado.` O
+3. O que esperar: sete etapas com `==>` (menos de um minuto) e, no fim, `Vigia da implantação instalado.` O
    script baixa a `main` do repositório público para `/opt/genesis/vigia/repo.git`, instala o vigia e o
    `implantar-sem-actions.sh` em `/opt/genesis/vigia`, as duas unidades do systemd (`genesis-vigia.service` e
-   `genesis-vigia.timer`), marca os pedidos antigos como vistos e liga o timer. **Nada é implantado na instalação.**
-   Rodar o mesmo comando de novo atualiza o vigia para a versão da `main` (sem perder o que já foi visto).
-4. A página pública do resultado (`https://download.grupoicebeer.com.br/implantacao/estado.json`) passa a responder
-   depois da primeira implantação com este bloco (é ela que monta a pasta no `genesis-web`); até lá, 404.
+   `genesis-vigia.timer`), marca os pedidos por tag antigos como vistos, cria a janela com o padrão (se ainda não
+   existe), confere a ponta da `main` e liga o timer. **Nada é implantado durante a instalação.** A etapa 5 diz o que
+   vem depois: se a ponta da `main` já é a versão no ar, nada a fazer; senão (o caso logo depois do merge do OP-B7),
+   o vigia a implanta **sozinho na primeira rodada fora da janela** (1 a 2 minutos depois, ou depois da meia-noite).
+   Rodar o mesmo comando de novo atualiza o vigia para a versão da `main` (sem perder o que já foi visto e tratado).
+4. A página pública do resultado (`https://download.grupoicebeer.com.br/implantacao/estado.json`) responde depois da
+   primeira implantação pelo vigia; até lá, 404.
 
-**Ver o que o vigia fez:** `bash ~/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a última rodada, o
-estado público e as 20 últimas linhas do log (`/opt/genesis/vigia/vigia.log`, uma linha por pedido: recebido, em
-andamento, ok, falhou, recusado, pulado). A saída completa da última implantação pedida fica em
-`/opt/genesis/vigia/ultima-implantacao.log`, e a da implantação em andamento (ou a última, com o resumo) aparece com
+**Ver o que o vigia fez:** `bash ~/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a janela, a versão no
+ar, os últimos commits da `main` tratados e as últimas publicações do PDV, a última rodada, o estado público e as 20
+últimas linhas do log (`/opt/genesis/vigia/vigia.log`: recebido, em andamento, ok, falhou, recusado, pulado, a espera
+da janela com a hora prevista). A saída completa da última chamada fica em `/opt/genesis/vigia/ultima-implantacao.log`,
+e a da implantação em andamento (ou a última, com o resumo) aparece com
 `bash /opt/genesis/vigia/implantar-sem-actions.sh --acompanhar`.
 
-**Desligar:** `bash ~/instalar-vigia.sh --desligar` desliga o timer: nenhum pedido novo é atendido, e uma implantação
-que já estava em andamento termina normalmente (o comando nunca a interrompe). Para religar, o comando de instalar de
-novo; os pedidos feitos enquanto o vigia esteve desligado **não** rodam (a sessão pede de novo), e um pedido que
-estava esperando (como `recebido`) fica `recusado` no `estado.json`, com o fim (o motivo vai ao log do vigia). O
-mesmo vale se a pasta `/opt/genesis/vigia` (ou só a lista `vistos`) se perder, mesmo com o timer ligado: o vigia
-para de implantar e pede o comando de instalar, que marca todas as tags existentes como vistas (as tags ficam no
-repositório depois de atendidas; sem isso, o pedido mais novo do histórico rodaria de novo, uma volta sem ninguém
-pedir).
+**Desligar:** `bash ~/instalar-vigia.sh --desligar` desliga o timer: nada novo é implantado, e uma implantação que já
+estava em andamento termina normalmente (o comando nunca a interrompe). Para religar, o comando de instalar de novo:
+a ponta da `main` que ainda não foi tratada é implantada na primeira rodada fora da janela; os pedidos **por tag**
+feitos enquanto o vigia esteve desligado **não** rodam, e um pedido por tag que estava esperando (como `recebido`)
+fica `recusado` no `estado.json`, com o fim (o motivo vai ao log do vigia). O mesmo vale se a pasta
+`/opt/genesis/vigia` (ou só a lista `vistos`) se perder, mesmo com o timer ligado: o vigia para de implantar e pede o
+comando de instalar, que marca todas as tags existentes como vistas.
 
-**Como a sessão pede e confere** (`scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`, CLAUDE.md): confere que
-o commit está na `origin/main`, cria a tag pela API REST do GitHub e acompanha o `estado.json` e o `/saude` da API
-(o `no_ar_desde` muda quando a versão nova sobe) até `ok`, `falhou` ou `recusado` (sai com 0 no `ok`, 1 no
-`falhou`, `recusado` ou pulado, 2 na volta com `--sem-estado` quando a API reinicia e 3 no tempo limite de 1 hora:
-sem resultado, a implantação ainda roda, a VPS está fora ou o vigia está desligado, e o dono confere com
-`--estado`). O `estado.json` tem **só**
-`{pedido, commit (12 caracteres), resultado, inicio, fim}`: o nome da tag e o commit já são públicos no repositório;
-nenhum log, versão de software, estado da VPS ou mensagem de erro sai da VPS (isso fica no `vigia.log`, que só o
-dono vê). É a **única saída pública da VPS**, por decisão do dono (D70).
+**Forçar ou voltar uma versão pelo site do GitHub (pedido manual do dono).** O jeito mais rápido de voltar continua
+sendo o `/opt/genesis/implantar.sh voltar` no terminal da VPS (segundos). Para implantar um commit da `main` pelo site:
+
+1. No GitHub, **Releases › Draft a new release**.
+2. Em **Choose a tag**, escreva o nome novo `implantar/AAAAMMDD-HHMMSS` com a data e a hora de agora em UTC (Brasília
+   + 3 h; ex.: `implantar/20261126-140500`) e escolha **Create new tag on publish**. Em **Target**, escolha o commit da
+   `main` (a lista **Recent commits**; para o último, deixe `main`).
+3. Título qualquer (ex.: "pedido de implantação"), marque **Set as a pre-release** (para não aparecer como release
+   do PDV) e **Publish release**. O vigia vê a tag em até 2 minutos e implanta na hora, mesmo entre as 17h e a
+   meia-noite.
+4. Depois do resultado, apague o release (**Delete**), deixando a tag: o vigia não precisa dele, e a tag fica como
+   registro. Com `implantar-pdv/` no lugar de `implantar/`, a implantação também publica o PDV do último release.
+
+**Como a sessão acompanha** (`scripts/acompanhar-implantacao.sh <commit>`, CLAUDE.md): depois de cada merge liberado
+pelo dono, a sessão avisa o dono, confere que o commit está na `origin/main`, diz se está dentro da janela (a hora
+prevista do começo) e acompanha o `estado.json` e o `/saude` da API (o `no_ar_desde` muda quando a versão nova sobe)
+até `ok`, `falhou` ou `recusado` do commit ou de um commit da `main` que o inclui (sai com 0 no `ok`, 1 no `falhou` ou
+`recusado` e 3 no tempo limite de 1 hora depois do fim da janela, quando o commit chega dentro dela: começando dentro
+dela, ou vendo o `recebido` do vigia já dentro dela; sem resultado, a implantação ainda roda, a VPS está
+fora ou o vigia está desligado, e o dono confere com `--estado`). A sessão **não cria tag** (a rede dela recusa escrita
+no GitHub fora dos PRs); o `scripts/pedir-implantacao.sh` do OP-B4 ficou só avisando e passando ao acompanhamento.
+O `estado.json` tem **só** `{pedido, commit (12 caracteres), resultado, inicio, fim}`: o `pedido` é o nome da tag,
+`main` (o automático) ou `pdv` (a publicação só do PDV, com o commit da versão no ar, escrita só quando a página
+mudou ou a publicação falhou); o nome da tag e o commit já são públicos no repositório; nenhum log, versão de
+software, estado da VPS ou mensagem de erro sai da VPS (isso fica no `vigia.log`, que só o dono vê). É a **única
+saída pública da VPS**, por decisão do dono (D70).
+
+**Limites:** voltar **por tag** para um commit anterior ao OP-B4 (24/11/2026) implanta, mas o `genesis-web` dele não
+serve o `estado.json` (404 depois da troca): o resultado só o dono vê com `--estado`. Voltar por tag para um commit
+anterior ao OP-B7 troca o vigia pelo daquele commit (a autoatualização usa o vigia do commit implantado), que não
+implanta a `main` sozinho: depois, rode de novo o comando de instalar (ele traz o vigia da `main`, sem desfazer a
+volta: a ponta já foi tratada).
 
 **Se der errado:** um `falhou` deixa a VPS como o `implantar-sem-actions.sh` deixaria (a mensagem `ERRO:` diz em que
 etapa parou; antes da troca, a versão anterior continua no ar; a nova sem saúde volta sozinha). Se a VPS reiniciar no
-meio de uma implantação, o pedido fica como `falhou` na rodada seguinte (confira com `bash /opt/genesis/implantar.sh
-estado`). Com outra implantação em andamento (o dono pelo terminal, por exemplo), o pedido espera, como `recebido`,
-e roda na rodada seguinte à que ela terminar.
+meio de uma implantação, ela fica como `falhou` na rodada seguinte (confira com `bash /opt/genesis/implantar.sh
+estado`). Com outra implantação em andamento (o dono pelo terminal, por exemplo), o vigia espera, como `recebido`, e
+roda na rodada seguinte à que ela terminar; se ela implantou a mesma ponta da `main` que o vigia esperava, ele não
+implanta de novo e o `estado.json` fica `ok` (a ponta está no ar). Para tentar de novo um commit da `main` que falhou: o próximo merge, ou um
+pedido manual (acima).
 
-**Testado sem a VPS:** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id` e `systemctl`, o `git` de
-verdade sobre um repositório local com as tags de pedido, um `implantar-sem-actions.sh` falso; o `systemd-analyze
-verify` das unidades) e `scripts/testar-pedir-implantacao.sh` (`gh` e `curl` falsos); a rota do `estado.json` no
-`testar-local.sh`. Decisões em
-[Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026).
+**Testado sem a VPS:** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id`, `systemctl` e `date`, o
+`git` de verdade sobre um repositório local com as tags e os merges, um `implantar-sem-actions.sh` falso; o
+`systemd-analyze verify` das unidades), o `--so-pdv` no `testar-implantar-sem-actions.sh` e
+`scripts/testar-acompanhar-implantacao.sh` (`curl` e `date` falsos); a rota do `estado.json` no `testar-local.sh`.
+Decisões em [Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026) e
+[Decisões técnicas (implantação automática da main)](#decisões-técnicas-implantação-automática-da-main-op-b7-25112026).
 
 ---
 
@@ -537,7 +587,7 @@ verify` das unidades) e `scripts/testar-pedir-implantacao.sh` (`gh` e `curl` fal
 | Logs do backup | `docker logs genesis-backup --tail 100` (uma linha por banco; `FALHOU` quando algo deu errado) |
 | Restaurar (um banco ao lado, ou tudo num servidor vazio) | [Backup › Restaurar](#restaurar) |
 | Gerar ou trocar o token do monitoramento | `/opt/genesis/implantar.sh token-monitor` (o anterior para de valer na hora) |
-| Ver o vigia da implantação (timer, último pedido, log) ou desligá-lo | `bash ~/instalar-vigia.sh --estado` / `bash ~/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
+| Ver o vigia da implantação (timer, janela, último pedido, commits tratados, log) ou desligá-lo | `bash ~/instalar-vigia.sh --estado` / `bash ~/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
 | Ver o instalador do PDV publicado na página de download | `cat /opt/genesis/download/pdv/atual.json` (ou a linha "Página de download" do `implantar.sh estado`) |
 
 **A API reiniciou sozinha** (ex.: 04/11/2026, 18:05:42Z, no meio de uma importação). Primeiro a causa, depois o
@@ -774,8 +824,12 @@ foi publicado.
 3. Confira `https://download.grupoicebeer.com.br` (versão e sha256) ou, na VPS, `cat /opt/genesis/download/pdv/atual.json`.
 
 Sem cota do Actions (D70), o passo 1 é da sessão do Claude Code (`apps/pdv/instalador/linux-wine/gerar-instalador.sh`,
-`testar-instalador.sh` e `publicar-release.sh X.Y.Z`: README do PDV › decisão 93), e o passo 2 é a implantação com
-`--publicar-pdv` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)).
+`testar-instalador.sh`: README do PDV › decisão 93; desde a D120, o release o dono cria pelo site do GitHub com a pasta
+do `preparar-release-manual.sh X.Y.Z`, README do PDV › Release pelo site do GitHub e decisão 94), e o passo 2 o vigia
+faz sozinho: vê o release novo e publica na página, sem trocar a versão no ar (`implantar-sem-actions.sh --so-pdv`,
+fora da janela das 17h à meia-noite; [Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)). À mão, no terminal da VPS: `bash
+~/implantar-sem-actions.sh --so-pdv` (ou uma implantação com `--publicar-pdv`,
+[Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)).
 
 **Tirar uma versão da página** (ex.: saiu com defeito): no GitHub, edite o release e marque **“Set as a
 pre-release”** (ou apague o release) e rode a Implantação (com **“publicar_pdv”** marcado): a página volta para o
@@ -1250,9 +1304,18 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   com a entrada em `/dev/null`, uma cópia de si mesmo (o comando do README baixa de novo por cima do
   `~/implantar-sem-actions.sh`, e o bash lê o script aos poucos) e a trava herdada; a saída vai para
   `logs/implantar-sem-actions-<data>.log` (pasta 700, arquivo 600, os 10 últimos; o link
-  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra (`tail --pid`), saindo com o código dela.
+  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra, saindo com o código dela.
   `--acompanhar` volta a mostrar. Nem `trap '' HUP` sozinho (a escrita no terminal que caiu falharia e o `set -e`
   pararia o script do mesmo jeito), nem `systemd-run` (a saída iria para o journal). O `--simular` roda no terminal.
+- **A saída mostrada até a última linha (OP-B6).** O terminal (e o `--acompanhar`) mostrava o log com o
+  `tail -f --pid`, que podia sair sem ler o que a implantação escreveu pouco antes de terminar: na CI da `main` de
+  25/11/2026, o `--acompanhar` parou na etapa 6, sem o resumo, embora a implantação tivesse terminado (o código de
+  saída vinha certo; só a tela ficava cortada, e a mesma saída cortada ia para o `ultima-implantacao.log` do vigia).
+  O `tail --pid` também seguia para sempre um processo zumbi (o que terminou e ainda não foi recolhido pelo pai,
+  como o órfão num container sem um init que recolha). No lugar dele, o script lê o log por um descritor aberto uma
+  vez e, a cada 0,2 s, **confere se o processo vive antes de ler o que falta**; a última leitura é feita com o
+  processo já terminado (o zumbi conta como terminado), então tudo o que ele escreveu antes de sair aparece. O
+  Ctrl+C continua só parando de mostrar; a saída que não aceita mais escrita (o terminal que caiu) também.
 - **Espaço mínimo de 5 GB** (`GENESIS_ESPACO_MINIMO_GB`) no disco do Docker e no do `/opt/genesis`: as 3 imagens
   somam ~700 MB, e o cache do build (dependências do pnpm, as camadas intermediárias) passa de 2 GB na primeira
   montagem; com folga para os logs e o backup. Medido com `df` antes de qualquer coisa.
@@ -1294,9 +1357,9 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   nova (as tags não são apagadas depois de atendidas). Um pedido que esperava a trava (`recebido`) e fica como visto
   na reinstalação passa a `recusado` no `estado.json`, com o fim, para a sessão não esperar para sempre.
 - **Volta para antes do OP-B4.** O vigia implanta, mas o `genesis-web` daquele commit não tem a rota nem a
-  montagem do `estado.json` (404 depois da troca). O `pedir-implantacao.sh` confere as duas no commit (`git show`
-  do `genesis.conf` e do `docker-compose.yml`) antes de criar a tag e recusa sem `--sem-estado`; com ele, acompanha
-  até a API reiniciar e sai com 2 (o resultado final, o dono vê com `--estado`).
+  montagem do `estado.json` (404 depois da troca). Até o OP-B7, o `pedir-implantacao.sh` conferia as duas no commit
+  (`git show` do `genesis.conf` e do `docker-compose.yml`) antes de criar a tag e recusava sem `--sem-estado`; desde
+  o OP-B7 a sessão não cria tag, e essa volta (só por pedido manual do dono) se confere com `--estado`.
 - **Recusa antes de chamar.** O vigia confere o commit num clone parcial próprio (`vigia/repo.git`, bare, só a
   `main`, sem tags e sem os arquivos) e dá "recusado" ao que não descende da `main`, sem chamar o script (que também
   recusaria). Rede fora: a rodada sai com 0 e tenta na seguinte (uma linha no log, não uma a cada 2 minutos).
@@ -1387,6 +1450,64 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   que conta na memória do container, e com as 4 empresas e a cópia do ensaio de restauração os 512 MiB derrubavam o
   PostgreSQL de teste. Ensaio `testar-local.sh --sem-actions` em 24/11/2026: verde (picos de 92 a 134 MiB). Decisão
   216 do `apps/api/README.md`.
+
+## Decisões técnicas (implantação automática da main, OP-B7, 25/11/2026)
+
+- **Por quê.** A rede da sessão recusa escrita no caminho `git/refs` da API do GitHub (criar e juntar PR funcionam):
+  a sessão não cria a tag de pedido do OP-B4. O dono decidiu (D119 = A) que o merge que ele libera vale também como
+  "pode implantar". O vigia continua só lendo o repositório público.
+- **Uma coisa por rodada, nesta prioridade:** o pedido manual por tag (na hora, fora da janela também), a ponta da
+  `main` e o PDV. A leitura é um `git ls-remote --heads --tags` (a ponta da `main` sai dele, sem fetch a cada 2
+  minutos); o `fetch` do clone parcial só roda quando há o que implantar (a ancestralidade e a cópia do
+  `implantar-sem-actions.sh` da `main`).
+- **Uma vez por commit.** `vigia/main-tratados` (só acrescentada, uma linha por commit: o commit, o resultado e
+  quando) guarda cada ponta tratada: `ok`, `falhou`, `recusado` (a `main` reescrita entre o `ls-remote` e o `fetch`),
+  `ja-no-ar` e `no-ar-na-instalacao` (a ponta já era a versão no ar) e o commit de um pedido manual. A ponta que já é a
+  versão no ar (`versoes/atual`) fica tratada sem implantar: cobre a instalação, a autoatualização do vigia (o vigia
+  novo não tem a lista e não implanta de novo o que acabou de subir) e a implantação feita pelo dono no terminal (se
+  o `estado.json` mostrava o `recebido` dela, ele termina como `ok`, e o acompanhamento da sessão não fica sem
+  resultado). Só a
+  ponta conta: um merge que nunca foi a ponta numa rodada (dois merges seguidos) entra junto com o seguinte.
+- **A volta do dono fica.** O `implantar.sh voltar` muda o `versoes/atual` para a anterior, mas a ponta já está na
+  lista: o vigia não a implanta de novo. A falha também não repete sozinha (o próximo merge ou um pedido manual).
+- **Janela no horário de Brasília**, `TZ=America/Sao_Paulo` (sem o tzdata, `<-03>3`: o Brasil não tem horário de
+  verão desde 2019), em horas cheias. O arquivo `vigia/janela` (root 600) tem `17-24` (o padrão da D119) ou outra
+  janela no mesmo formato, inclusive passando pela meia-noite, ou `nenhuma`; fora do formato vale o padrão, com uma
+  linha no log (mais seguro implantar fora do pico que parar de implantar). Na janela, o `estado.json` mostra
+  `recebido` e o log, uma vez, a hora prevista. A publicação só do PDV também espera a janela (nada automático no
+  horário das lojas, mesmo sem reiniciar nada); o pedido manual não.
+- **PDV pela tag `pdv-vX.Y.Z`.** O `ls-remote` já traz as tags: a de versão mais alta (`sort -V`) e o commit dela são
+  a chave (`vigia/pdv-tratados`); quando a chave muda, o `implantar-sem-actions.sh --so-pdv` faz as conferências do
+  `--publicar-pdv` (o release publicado mais novo, o sha256 do `.sha256` e do arquivo baixado, o que a página já
+  serve). Assim a API do GitHub (60 consultas por hora sem token) só é lida quando há tag nova, não a cada 2 minutos.
+  Uma tag por vez, passada ao `--so-pdv` (`--tag=<tag>`): sem ela, a tag que nasce antes do release (o
+  `publicar-release.sh` e o workflow) achava o release anterior, que a página já servia, e ficava tratada como "nada
+  a publicar" para sempre. Os códigos: `0` = tratada (publicada ou nada a publicar), `65` = arquivo inválido (tratada
+  como `falhou`, não repete: o único definitivo), `69` = o GitHub sem responder, o release incompleto ou o da tag
+  ainda não publicado, e qualquer outro (o `1`: o Docker, o espaço, a imagem, a página que não respondeu) = tenta de
+  novo 15 minutos depois (só para a mesma tag), sem marcar a tag nem escrever no `estado.json`; `75` = trava (a
+  próxima rodada). O `--so-pdv` não pede os 5 GB do build, só 1 GB para o instalador. A espera guarda o sha256 que a
+  página servia e o inicio da primeira tentativa: a publicação que trocou a página e falhou na conferência da URL
+  sai `ok` na tentativa seguinte, e o `inicio` do `estado.json` é o desta tag (o `pdv` com a mesma versão no ar
+  casava com a publicação de outro dia).
+- **O `--so-pdv` nunca retira o instalador** (sem release publicado, a página fica): retirar sozinho por um rascunho ou
+  um pre-release seria pior que deixar o que está. Ele usa a versão no ar (a release dela para o `implantar.sh pdv
+  publicar` e a imagem do backup para o `jq`) e confere pela URL só a página de download.
+- **`estado.json` do PDV só quando muda algo.** `pedido` = `pdv` e `commit` = a versão no ar, escrito quando a página
+  passou a servir outro sha256 (`ok`) ou o release tem arquivo inválido (`falhou`); o "nada a publicar" (o caso de
+  toda instalação) e as esperas não apagam o resultado da última implantação. A sessão lê um `pdv` de um commit que inclui o dela como "está no ar".
+- **A sessão só acompanha.** `scripts/acompanhar-implantacao.sh` confere a `origin/main`, avisa a janela (a padrão;
+  a da VPS só o dono vê) e espera o `estado.json` de um commit que inclui o dela (o vigia implanta a ponta); o
+  `pedir-implantacao.sh` ficou como aviso. Nenhum dos dois chama o `gh`.
+- **Interrompida.** A implantação automática interrompida (a VPS reiniciou) fica `falhou` e tratada, como o pedido
+  manual; a publicação só do PDV interrompida tenta de novo (troca só arquivos da página, por rename).
+- **Testes:** `testar-vigia-implantacao.sh` (os cenários do OP-B4 com a versão no ar igual à ponta e, à parte, os do
+  OP-B7: a ponta implantada uma vez, a falha que não repete, a volta do dono, 16:59/17:00/23:59/00:00, a janela 22-6 e
+  fora do formato, a instalação com a versão no ar igual e diferente, o PDV publicado sozinho, o nada a publicar, a
+  tag antes do release publicado, a falha passageira, o inválido, a tag manual com prioridade e dentro da janela, a
+  `main` antes do PDV, a interrompida e a ponta implantada pelo terminal), o
+  `--so-pdv` no `testar-implantar-sem-actions.sh` e o `scripts/testar-acompanhar-implantacao.sh`. Decisão 218 do
+  `apps/api/README.md`. Nada roda na produção até o dono reinstalar o vigia.
 
 ## Pendências
 

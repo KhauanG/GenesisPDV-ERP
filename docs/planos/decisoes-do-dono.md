@@ -273,7 +273,8 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     - **Release do PDV (D70-Q2):** a sessão monta o instalador pelo Wine (OP-B3), confere e cria o GitHub Release
       `pdv-vX.Y.Z` (tag na `main`) com o `.exe` e o `.exe.sha256`, e pede a publicação na página de download pelo
       vigia. A atualização dos caixas nas lojas continua com o dono, um caixa de cada vez.
-- **D71 — ABERTA (24/11/2026): desligar o workflow "PDV release" enquanto durar a D70?** A tag `pdv-vX.Y.Z` criada
+- **D71 = (A) — RESPONDIDA (25/11/2026):** "Sobre o D71, faça o que você recomenda". A sessão desliga o workflow
+  "PDV release" pela API na hora do primeiro release sem o Actions e avisa o dono. Pergunta original: **desligar o workflow "PDV release" enquanto durar a D70?** A tag `pdv-vX.Y.Z` criada
   pela sessão (OP-B3, `publicar-release.sh`) é um push de tag e dispara o `pdv-release.yml` (`on: push: tags`).
   ★(A) **recomendada**: a sessão desliga só esse workflow pela API do GitHub (reversível: "Enable workflow" na aba
   Actions, ou a sessão religa quando a cota voltar) na hora do primeiro release sem o Actions, e avisa. (B) manter
@@ -299,3 +300,120 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
     sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
     na sessão. Fica como opção para um ambiente de homologação na Fase 3.
+- **D119 = (A) — RESPONDIDA (25/11/2026):** "Opção A (recomendada)". A rede da sessão recusa escrita no caminho
+  `git/refs` da API do GitHub (HTTP 403 do proxy da sessão; criar e juntar PR continua funcionando), então a sessão
+  não cria a tag `implantar/…` do OP-B4. Decisão: o vigia passa a implantar **sozinho cada commit novo da `main`**
+  (cada merge que o dono libera vale também como "pode implantar"), **uma vez por commit**, **fora das 17h à
+  meia-noite** (horário de Brasília; o merge nesse horário é implantado depois da meia-noite), e publica na página de
+  download o PDV do release mais novo quando ele for diferente do que a página serve. A tag continua valendo como
+  pedido manual do dono (forçar ou voltar uma versão). Bloco OP-B7.
+- **D120 — release do PDV sem a sessão escrever no GitHub (25/11/2026, "Faça o que você recomendar"):** pela mesma
+  recusa da rede da sessão, o `publicar-release.sh` não cria o release daqui. Recomendação seguida: a sessão gera e
+  confere o instalador (OP-B3) e manda os dois arquivos (`.exe` e `.exe.sha256`) ao dono; o dono cria o release
+  `pdv-vX.Y.Z` pelo site do GitHub (Releases › Draft a new release, tag nova na `main`) com o passo a passo da sessão,
+  e, antes, desliga o workflow "PDV release" pela aba Actions (a D71, feita pelo dono porque a sessão também não
+  consegue). O vigia publica o release na página de download (D119). Bloco OP-B8.
+
+## Fase 3 — perguntas F3-Q1 a F3-Q48 (25/11/2026)
+
+- **RESPONDIDAS (25/11/2026):** "Sobre as perguntas, faça tudo pelo que você recomendou." Todas seguem a recomendação
+  (★) do `docs/planos/fase3-plano.md` › Perguntas ao dono; o texto completo de cada uma (opções e o efeito na loja) está
+  lá. Numeração: **D72 a D118**, na ordem das perguntas; a F3-Q27 fecha a **D15** (já aberta). A **D66** (arquivos
+  reais do Nuvem3) continua aberta, com a recomendação dela valendo (citada na F3-Q1).
+
+- **D72 (F3-Q1) = (B)** — A loja usa balança? Qual modelo?
+  - Fazer já a etiqueta de balança (código que começa com 2, impresso pela balança do açougue/petiscaria) e o peso digitado com permissão, e deixar a balança ligada no caixa para quando o dono disser o modelo.
+- **D73 (F3-Q2) = (A)** — No Nuvem3, o preço de atacado vale por quantidade, por escolha do operador ("Tipo de preço", F8) ou pelos dois? (PDV 35, item 3)
+  - Os dois, como na especificação: o atacado por quantidade (já existe) continua, e o F8 troca a venda inteira para atacado com `pdv.venda.tipo_preco_atacado` ou liberação.
+- **D74 (F3-Q3) = (A)** — O preço parcelado (preço maior quando o cliente parcela no cartão) é usado?
+  - Fazer como na especificação; produto sem "Preço parcelado" cadastrado não muda nada.
+- **D75 (F3-Q4) = (A)** — Complemento repetido (2× o mesmo molho)
+  - Cada opção 0 ou 1 vez por unidade do item; o "máximo" do grupo conta opções.
+- **D76 (F3-Q5) = (A)** — Lote digitado que não está na lista do caixa
+  - A nuvem procura o lote pelo código no produto, só entre os lotes com `estoque_id` nulo ou igual ao estoque da venda (regra da MD 3.6.9); achou, baixa esse lote; não achou, baixa pelo FEFO e guarda o texto do lote no item.
+- **D77 (F3-Q6) = (B)** — A loja usa "Serviço avulso" (`Ctrl+S`: um item de serviço com descrição e preço digitados)?
+  - Não agora: as lojas são obrigadas à NFC-e (D1); fica no backlog.
+- **D78 (F3-Q7) = (A)** — Quais tipos de promoção primeiro?
+  - "Leve 3 pague 2", % no item (com faixas por quantidade), preço fixo em horário (happy hour) e % por forma de pagamento (ex.: PIX à vista). O combo promocional depois.
+- **D79 (F3-Q8) = (A)** — Duas promoções no mesmo item ("acumulativa")? O item da venda só guarda uma.
+  - Uma promoção por item: vale a de maior desconto (a regra da PDV 11.4 sem `acumulativa`); a marca "acumulativa" fica guardada para depois.
+- **D80 (F3-Q9) = (A)** — Desconto por forma de pagamento com pagamento misto (parte PIX, parte dinheiro)
+  - Só quando a venda inteira é paga nas formas da promoção; ao lançar a forma, o caixa oferece "pagar tudo no PIX com 5%".
+- **D81 (F3-Q10) = (A)** — **Confirmação da D28** ("não há vendedor nem comissão no balcão").
+  - Mantém a D28: o recurso do vendedor fica pronto e **desligado** (`pdv.forca_escolha_vendedor` = Não; o F7 existe; a comissão só é calculada para quem tiver %); trocar o vendedor de venda já finalizada pelo ERP fica para a Fase 5, com o relatório de comissão.
+- **D82 (F3-Q11) = (A)** — Cadastro rápido de cliente no caixa: CPF obrigatório?
+  - Obrigatório para pessoa física: evita cliente duplicado e permite juntar automaticamente com o cadastro da nuvem (sem CPF, o operador usa só "nome na nota").
+- **D83 (F3-Q12) = (A)** — O cliente criado no caixa tem o CPF de um cliente que já existe
+  - A nuvem junta automaticamente (mantém o cadastro da nuvem, preenche só o que estava vazio e guarda o apelido); sem tela de mescla manual no ERP por ora.
+- **D84 (F3-Q13) = (B)** — A Ice Beer **empresta cascos em comodato** a clientes identificados (PDV 35, item 4)? Se sim, quem pode emprestar e com que limite?
+  - Empresta (ou pode vir a emprestar): o recurso fica pronto, desligado em `pdv.vasilhame_comodato` até o dono ligar; com permissão nova `pdv.vasilhame.comodato` e limite por cliente (`pdv.vasilhame_comodato_max_por_cliente`, ex.: 6 cascos); acima, o supervisor libera.
+- **D85 (F3-Q14) = (A)** — Venda com cascos emprestados é cancelada: os cascos voltam?
+  - Sim: o cancelamento devolve o empréstimo (os vazios voltam ao estoque e saem do saldo do cliente), como a D29 faz com os cascos trazidos; o caixa orienta recolher os cascos.
+- **D86 (F3-Q15) = (A)** — O cliente devolve cascos que comprou e leva crédito em vale?
+  - Sim, pelo preço atual do casco, com o mesmo teto e liberação da D38 (R$ 50,00 por operação sem supervisor).
+- **D87 (F3-Q16) = (A)** — Prazo da troca e validade do vale
+  - 30 dias para trocar (`pdv.dias_validade_cupom_troca`) e vale válido por 90 dias (`pdv.vale_compra_validade_dias`), os padrões atuais.
+- **D88 (F3-Q17) = (A)** — Vale vencido com saldo
+  - O saldo continua registrado e aparece no extrato; o caixa recusa o vale vencido, e o supervisor pode liberar (`pdv.troca.fora_prazo`); a nuvem não zera nada sozinha.
+- **D89 (F3-Q18) = (A)** — O caixa pode aceitar vale sem internet?
+  - Sim (`pdv.vale_exige_online` = Não): aceita o vale que o caixa conhece; se o mesmo vale for usado em dois caixas sem internet, o saldo fica negativo e o alerta aparece no Dashboard.
+- **D90 (F3-Q19) = (A)** — Quais vales ficam guardados em cada caixa?
+  - Os ativos e os que mudaram nos últimos 90 dias; o caixa apaga sozinho os que saíram da janela (vencidos ou zerados há mais de 90 dias); online, o caixa consulta qualquer vale.
+- **D91 (F3-Q20) = (A)** — Devolução em dinheiro na troca (e o resgate do vale em dinheiro)
+  - Só com `pdv.troca.devolver_dinheiro`, que nos perfis de sistema fica com o Administrador (o dono) e o Encarregado (PC-8); o operador pede a liberação, e hoje quem libera é o dono com o PIN.
+- **D92 (F3-Q21) = (A)** — Troca sem a venda de origem (cliente sem cupom, ou o caixa offline e a venda de outro caixa)
+  - Só com o supervisor (`pdv.troca.fora_prazo`), pelo preço de venda atual como teto, e só como vale (sem dinheiro); a mercadoria volta ao estoque pelo custo médio atual.
+- **D93 (F3-Q22) = (A)** — Para onde vai o produto devolvido?
+  - O operador escolhe "volta ao estoque" ou "avaria" (padrão "volta ao estoque"); drink ou porção feitos na loja (ficha técnica) nunca voltam ao estoque.
+- **D94 (F3-Q23) = (A)** — Troca de uma venda feita em outra loja?
+  - Sim, com internet (busca da venda na empresa toda, com os limites de privacidade do F3-B45); a mercadoria entra no estoque da loja que recebeu a troca.
+- **D95 (F3-Q24) = (A)** — Cupom de troca (comprovante sem preços para o cliente trocar depois)
+  - Só a pedido (Ctrl+Shift+T logo após a venda ou pela Gestão de vendas), com `pdv.imprime_cupom_troca` = Não.
+- **D96 (F3-Q25) = (A)** — O código do vale (`VC` + loja + caixa + sequência + 1 dígito) é **previsível**: quem tem o vale ...80 pode tentar o ...81 de outro cliente, e sem internet o caixa aceita qualquer vale que conheça. Proteger?
+  - Um código de conferência de 4 dígitos aleatórios impresso no vale (guardado só como resumo criptográfico); no uso, o leitor lê o código e o operador digita os 4 dígitos (chave `pdv.vale_exige_conferencia`, padrão Sim).
+- **D97 (F3-Q26) = (A)** — Operações de vale **fora** da troca, no caixa (SYNC 9.17): emitir um vale avulso (ex.: crédito por reclamação), devolver o saldo do vale em dinheiro e cancelar um vale emitido errado na mesma sessão. A loja usa?
+  - Sim, as três: o contrato na nuvem já sai no F3-B41; as permissões já existem (`pdv.vale.emitir`, `pdv.troca.devolver_dinheiro`, `pdv.troca.realizar`).
+- **D15 (F3-Q27) = (A)** — O que fazem "Limite de Valor de Vendas PDV" e "Limite Venda em Aberto" (PDV 35, item 1)?
+  - Como na especificação: venda acima do valor pede o supervisor ao concluir; o "em aberto" é o máximo de vendas suspensas por caixa. Vazio = sem limite; 0 no "em aberto" = não deixa suspender. Sugestão para a Ice Beer: valor vazio e 3 suspensas.
+- **D98 (F3-Q28) = (A)** — Fechar o caixa com venda suspensa
+  - Bloqueia e lista as suspensas para retomar ou cancelar (PDV 21.2).
+- **D99 (F3-Q29) = (A)** — Preço da venda suspensa ao recuperar
+  - Fica como estava (o que o cliente viu), como na venda recuperada depois de uma queda.
+- **D100 (F3-Q30) = (A)** — Tabela de preços no caixa
+  - Na tela e impressa na impressora do caixa, só a lista filtrada, com confirmação acima de 200 linhas.
+- **D101 (F3-Q31) = (A)** — Foto do produto no caixa
+  - Ligar `pdv.exibe_foto_produto` na Ice Beer, no painel do item e na consulta, só para produto com foto.
+- **D102 (F3-Q32) = (A, se usam)** — Avaria e consumo interno são registrados no caixa hoje (no Nuvem3)? (ERP 23.2, questão 20)
+  - Sim: as formas "Avarias" e "Baixas de utilização em loja" são ativadas, com liberação do supervisor e motivo; a baixa sai do estoque e não conta como venda.
+- **D103 (F3-Q33) = (A)** — Como atualizar os caixas?
+  - Velopack por usuário do Windows. A R3 (0.14.0, com as funções novas) sai ainda pelo instalador atual; depois, uma versão **sem nenhuma mudança de venda** (0.14.1) faz a passagem, com **uma** instalação manual em cada caixa, caixa por caixa; daí em diante as versões chegam sozinhas, sem senha de administrador, só com o caixa livre (no login ou depois do fechamento).
+- **D104 (F3-Q34) = (A)** — Canal "beta" (versão de teste antes de todos)
+  - O canal da empresa (já existe) mais uma exceção por terminal no ERP: a Ice Beer é uma empresa só, então sem a exceção o "beta" atualizaria todos os caixas; o beta vai primeiro ao caixa da loja Treino.
+- **D105 (F3-Q35) = ((a) = (A); (b) = conferir o Smart App Control antes)** — Assinatura das atualizações e do instalador
+  - (a) uma chave de assinatura própria das atualizações, gerada e guardada no PC do dono (nunca na VPS nem na sessão); a parte pública vai dentro do PDV e o caixa recusa pacote sem a assinatura certa. (b) Certificado Authenticode: **o dono confere antes** se algum PC de caixa tem o "Controle Inteligente de Aplicativos" (Smart App Control) ligado; se tiver, (A) comprar um certificado OV e assinar no PC do dono; se não tiver, (C) não comprar por ora, e o roadmap troca "instalador assinado" por "atualização com assinatura própria; Authenticode quando houver Smart App Control". **Pendente (dono):** a conferência nos caixas.
+- **D106 (F3-Q36) = (A)** — O servidor da Oracle (ARM Ampere, 2 CPU, 12 GB) que o dono ofereceu de novo ("quer testar por lá?"). A D70 já o deixou "como opção de homologação na Fase 3"; a pergunta agora é **como**.
+  - Usar como **homologação**, operado por **roteiros que o dono cola no terminal do servidor** (como o OP-B2): um roteiro monta o ambiente (API, ERP e PostgreSQL 18 com dados inventados, TLS e um nome separado, ex.: `homolog.<domínio>`), outro busca o branch e roda os checks, a carga do F3-B66 e o teste de dois caixas do F3-B70 e imprime **só a tabela de resultado**, que o dono cola no chat. A sessão **nunca** recebe chave nem senha.
+- **D107 (F3-Q37) = (B)** — A preparação administrativa da fase fiscal (credenciamento da NFC-e na SEFAZ-PR, CSC, certificado A1 de cada loja, conversa com o contador). O roadmap manda começar "durante a Fase 3", mas a ordem do dono põe a 3F depois das Fases 4 e 5.
+  - Começar no início da Fase 5: o certificado A1 vale 1 ano e comprar agora desperdiça a validade; o credenciamento e o CSC levam poucas semanas. Agora, só a conversa com o contador sobre as dúvidas da PDV 35, itens 4 e 6, sem compromisso.
+- **D108 (F3-Q38) = (A)** — Para que a venda feita no ERP vai servir antes da fase fiscal?
+  - Venda a bares e clientes a prazo e lançar venda esquecida, **sem documento fiscal**, com o aviso fixo "Sem documento fiscal: emita a nota no Nuvem3 até a fase fiscal" e o filtro "Documento fiscal: Sem documento" da listagem (ERP 15.4.1).
+- **D109 (F3-Q39) = (A)** — A venda do ERP pode deixar o estoque negativo?
+  - Segue `vendas.valida_estoque` (padrão Não), como a D27 decidiu para o caixa ("a loja nunca trava a venda por falta de estoque"), com o alerta `ESTOQUE_NEGATIVO`.
+- **D110 (F3-Q40) = (A)** — A venda do ERP aplica as promoções automáticas do caixa?
+  - Não: preço da loja, quantidade, mix e atacado; promoção vira desconto manual.
+- **D111 (F3-Q41) = (A)** — Antes do financeiro (Fase 4), o que a venda do ERP grava do pagamento?
+  - Pagamentos e parcelas gravados, sem contas a receber; a Fase 4 gera as contas das vendas antigas.
+- **D112 (F3-Q42) = (A)** — Cancelar pelo ERP uma venda do caixa cuja sessão **ainda está aberta**
+  - Bloquear com "cancele no caixa": o dinheiro está na gaveta e o fechamento ficaria errado.
+- **D113 (F3-Q43) = (A)** — Venda de **caixa já fechado** cancelada no ERP: como registrar a devolução ao cliente?
+  - Escolher a forma (dinheiro do cofre, estorno no cartão ou PIX, ou vale), só registrada até a Fase 4; o vale vira vale de verdade quando os vales entrarem.
+- **D114 (F3-Q44) = (A)** — Conferência do fechamento: tolerância e correção (PDV 35, item 7).
+  - "Conferida" quando a diferença de cada forma está dentro de `pdv.tolerancia_diferenca_caixa`, senão "Divergente"; quem tem `fechamentos_caixa.conferir` pode refazer, com auditoria. **Atenção:** o padrão é R$ 0,00, e aí qualquer centavo deixa a sessão "Divergente"; se o dono preferir, informar outro valor (ex.: R$ 0,05).
+- **D115 (F3-Q45) = (A)** — Devolução no ERP com "dinheiro" antes da Fase 4
+  - Registrada como "devolvido em dinheiro" (informativo, sem saída de conta).
+- **D116 (F3-Q46) = (A)** — Orçamentos: até onde ir?
+  - Orçamento no ERP com impressão/PDF pelo navegador, importado no caixa (F9 ou "ORC" + código) e criado no caixa; sem e-mail e sem link público por ora (o texto se copia para o WhatsApp à mão).
+- **D117 (F3-Q47) = (A)** — Pré-venda (o atendente monta a venda num computador e o caixa recebe pelo código)
+  - Não agora (depende de um terminal "utilitário" na loja e de internet entre os terminais); sai do roadmap da Fase 3 e vai para o backlog.
+- **D118 (F3-Q48) = (A)** — Orçamento criado **no caixa sem internet**: o número do orçamento (`ORC00321`) é dado pela nuvem só quando o caixa sobe o orçamento (SYNC 9.19), então a impressão feita offline sairia sem número.
+  - "Salvar como orçamento" só com internet: o caixa sobe na hora e imprime com o número; offline, a tecla avisa "requer conexão".

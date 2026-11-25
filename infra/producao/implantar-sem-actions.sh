@@ -5,6 +5,7 @@
 # `docker save | ssh docker load`), copia os arquivos da versão e roda os mesmos instalar.sh e implantar.sh.
 #
 #   bash implantar-sem-actions.sh [--simular] [--publicar-pdv] [--sem-conferir-url] [<commit da main>]
+#   bash implantar-sem-actions.sh --so-pdv [--tag=<pdv-vX.Y.Z>] [--simular] [--sem-conferir-url]
 #   bash implantar-sem-actions.sh --acompanhar
 #     <commit>            hash da main, curto (7 a 40 hexadecimais, como no workflow; os 12 de versoes/historico)
 #                         ou completo; sem commit, o último da main
@@ -13,13 +14,19 @@
 #     --publicar-pdv      publica na página de download o instalador do último GitHub Release pdv-vX.Y.Z (o campo
 #                         publicar_pdv do workflow)
 #     --sem-conferir-url  não confere a API, o ERP e a página pelas URLs públicas no fim
+#     --so-pdv            só publica na página de download o instalador do último GitHub Release (as mesmas
+#                         conferências do --publicar-pdv), na versão que está no ar: sem montar imagem nem trocar a
+#                         versão (o vigia da implantação, OP-B7)
+#     --tag=<pdv-vX.Y.Z>  só com --so-pdv: a tag que o vigia viu; enquanto o release publicado mais novo for de versão
+#                         menor que ela (o release dela ainda rascunho ou enviando), sai com 69 sem mexer na página
 #     --acompanhar        volta a mostrar a implantação em andamento (até o fim) ou, sem nenhuma, a saída da última
 #
 # Fora do terminal: depois das conferências, o script se roda de novo numa sessão própria (setsid, sem terminal e sem
-# entrada), com a saída em $PASTA/logs/implantar-sem-actions-<data>.log, e o terminal só a acompanha (tail). Fechar a
-# aba do navegador, perder a conexão, o notebook dormir ou o Ctrl+C param de mostrar, não a implantação: o SIGHUP do
-# terminal que cai não chega às migrações nem à troca de versão (o `implantar.sh implantar` pela metade, sem a volta
-# automática nem a versão registrada). O `--simular` roda no próprio terminal (não muda nada).
+# entrada), com a saída em $PASTA/logs/implantar-sem-actions-<data>.log, e o terminal só a acompanha, até a última
+# linha (mostrar_ate_o_fim). Fechar a aba do navegador, perder a conexão, o notebook dormir ou o Ctrl+C param de
+# mostrar, não a implantação: o SIGHUP do terminal que cai não chega às migrações nem à troca de versão (o
+# `implantar.sh implantar` pela metade, sem a volta automática nem a versão registrada). O `--simular` roda no
+# próprio terminal (não muda nada).
 #
 # Etapas, na ordem do workflow:
 #   1. commit: formato, fonte em /opt/genesis/fonte (clone do repositório público, root 700, sem token) e ancestral
@@ -33,11 +40,21 @@
 #   8. conferência pelas URLs públicas; depois, a limpeza das imagens antigas e o resumo.
 # Recusa sem root, com o commit fora da main, com menos de GENESIS_ESPACO_MINIMO_GB livres no disco do Docker ou do
 # /opt/genesis e com outra implantação em andamento (a trava do implantar.sh ou outra execução deste script). A
-# recusa pela trava sai com o código 75 (EX_TEMPFAIL: "tente de novo depois"), e as outras falhas com 1: o vigia da
+# recusa pela trava sai com o código 75 (EX_TEMPFAIL: "tente de novo depois"), o arquivo inválido do release do PDV
+# (sha256 que não confere, .sha256 fora do formato) com 65 (EX_DATAERR) e as outras falhas com 1: o vigia da
 # implantação (vigia/vigia-implantacao.sh, OP-B4) deixa o pedido para a próxima rodada em vez de dá-lo por falho.
 #
-# Variáveis: GENESIS_PASTA (padrão /opt/genesis), GENESIS_ESPACO_MINIMO_GB (padrão 5), GENESIS_MANTER_IMAGENS (padrão
-# 3), GENESIS_API_URL, GENESIS_ERP_URL e GENESIS_DOWNLOAD_URL (padrão: https:// e os domínios do /opt/genesis/.env).
+# --so-pdv (OP-B7; D119): as conferências de sempre (root, travas; o espaço só o do instalador,
+# GENESIS_ESPACO_MINIMO_PDV_GB, sem o do build), a versão no ar (versoes/atual, com a release e a imagem do backup
+# dela, de onde vem o jq), as etapas 5 e 7 com as mesmas regras do --publicar-pdv e a página de download pela URL
+# pública. Diferenças: sem release publicado, a página fica como está (nunca retira o instalador sozinho); o GitHub
+# sem responder, o release incompleto ou, com --tag, o release dessa tag ainda não publicado saem com 69
+# (EX_UNAVAILABLE: "tente mais tarde"); o arquivo inválido sai com 65. O vigia só dá por definitiva a falha do 65 (o
+# release com arquivo inválido); o 69, o 1 (o Docker, o espaço, a imagem, a URL que não respondeu) e os outros ele
+# tenta de novo mais tarde.
+#
+# Variáveis: GENESIS_PASTA (padrão /opt/genesis), GENESIS_ESPACO_MINIMO_GB (padrão 5),
+# GENESIS_ESPACO_MINIMO_PDV_GB (padrão 1, só o --so-pdv), GENESIS_MANTER_IMAGENS (padrão 3), GENESIS_API_URL, GENESIS_ERP_URL e GENESIS_DOWNLOAD_URL (padrão: https:// e os domínios do /opt/genesis/.env).
 # Só para os testes: GENESIS_REPOSITORIO (o ensaio local usa um clone local), GENESIS_BUILD_OPCOES (opções extras do
 # `docker build`, ex.: o proxy de uma sessão), GENESIS_CONFERIR_TENTATIVAS e GENESIS_CONFERIR_INTERVALO. As do
 # implantar.sh (GENESIS_COMPOSE_EXTRA, GENESIS_ESPERA_SEGUNDOS) passam direto para ele.
@@ -51,6 +68,8 @@ DOWNLOAD_GITHUB=https://github.com/$REPOSITORIO_PUBLICO/releases/download
 PASTA=${GENESIS_PASTA:-/opt/genesis}
 FONTE=$PASTA/fonte
 ESPACO_MINIMO_GB=${GENESIS_ESPACO_MINIMO_GB:-5}
+# O --so-pdv não monta imagem: só o instalador do PDV (baixado no temporário e publicado na página).
+ESPACO_MINIMO_PDV_GB=${GENESIS_ESPACO_MINIMO_PDV_GB:-1}
 MANTER_IMAGENS=${GENESIS_MANTER_IMAGENS:-3}
 TENTATIVAS=${GENESIS_CONFERIR_TENTATIVAS:-20}
 INTERVALO=${GENESIS_CONFERIR_INTERVALO:-6}
@@ -70,23 +89,36 @@ erro() {
   printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2
   exit 1
 }
+# O arquivo do release do PDV inválido: 65, o único que o vigia não tenta de novo (o comentário do começo).
+invalido() {
+  printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2
+  exit 65
+}
 # A trava de outra implantação: "tente de novo depois" (o comentário do começo).
 ocupado() {
   printf '\033[1;31mERRO: %s\033[0m\n' "$*" >&2
   exit 75
 }
 simulado() { printf '\033[1;36m[simulação]\033[0m faria: %s\n' "$*"; }
-uso() { sed -n '7,16p' "$0" | sed 's/^# \{0,1\}//'; }
+uso() { sed -n '7,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMIT=''
 SIMULAR=0
 PUBLICAR_PDV=0
 CONFERIR_URL=1
 ACOMPANHAR=0
+SO_PDV=0
+TAG_ESPERADA=''
 for arg in "$@"; do
   case "$arg" in
     --simular) SIMULAR=1 ;;
     --publicar-pdv) PUBLICAR_PDV=1 ;;
+    --so-pdv) SO_PDV=1 ;;
+    --tag=*)
+      TAG_ESPERADA=${arg#--tag=}
+      [[ $TAG_ESPERADA =~ ^pdv-v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        erro "tag inválida: '$TAG_ESPERADA' (o formato é pdv-vX.Y.Z, ex.: --tag=pdv-v0.14.0)."
+      ;;
     --sem-conferir-url) CONFERIR_URL=0 ;;
     --acompanhar) ACOMPANHAR=1 ;;
     -h | --ajuda)
@@ -103,11 +135,17 @@ for arg in "$@"; do
       ;;
   esac
 done
-for n in "$ESPACO_MINIMO_GB" "$MANTER_IMAGENS" "$TENTATIVAS" "$INTERVALO"; do
+for n in "$ESPACO_MINIMO_GB" "$ESPACO_MINIMO_PDV_GB" "$MANTER_IMAGENS" "$TENTATIVAS" "$INTERVALO"; do
   [[ $n =~ ^[0-9]+$ ]] || erro "valor numérico inválido numa variável GENESIS_*: '$n'."
 done
 [ "$MANTER_IMAGENS" -ge 2 ] || erro "GENESIS_MANTER_IMAGENS tem de ser 2 ou mais (a atual e a anterior)."
 [ "$ACOMPANHAR" = 0 ] || [ "$#" = 1 ] || erro "--acompanhar vai sozinho (sem commit nem outra opção)."
+if [ "$SO_PDV" = 1 ]; then
+  [ -z "$COMMIT" ] && [ "$PUBLICAR_PDV" = 0 ] ||
+    erro "--so-pdv publica o PDV na versão que está no ar: sem commit e sem --publicar-pdv."
+  PUBLICAR_PDV=1
+fi
+[ -z "$TAG_ESPERADA" ] || [ "$SO_PDV" = 1 ] || erro "--tag vai só com --so-pdv."
 
 # Estado da execução, para o resumo (o "Resumo" do workflow).
 VERSAO=''
@@ -119,6 +157,10 @@ PDV_ACAO=''    # '' = não mexe; publicar; retirar; ja (já publicado)
 PDV_VERSAO=''
 PDV_PUBLICADO=''
 PDV_EXE=''
+PDV_PULADO=0 # 1 = o GitHub não respondeu ou o release está incompleto (pular_pdv)
+# Os números das etapas do PDV e das URLs (o --so-pdv tem as dele).
+ETAPA_PDV=5/8 ETAPA_PAGINA=7/8 ETAPA_URLS=8/8
+[ "$SO_PDV" = 0 ] || ETAPA_PDV=2/4 ETAPA_PAGINA=3/4 ETAPA_URLS=4/4
 if [ "$PUBLICAR_PDV" = 1 ]; then
   PAGINA="não mexida: a implantação parou antes do passo do instalador do PDV"
 else
@@ -150,18 +192,29 @@ conferir_requisitos() {
   done
   docker info >/dev/null 2>&1 || erro "o Docker não respondeu (o serviço está rodando?)."
   # Os Dockerfiles usam o BuildKit (RUN --mount=type=cache): sem o plugin buildx, o `docker build` cai no construtor
-  # antigo e falha.
-  docker buildx version >/dev/null 2>&1 ||
+  # antigo e falha. O --so-pdv não monta imagem.
+  [ "$SO_PDV" = 1 ] || docker buildx version >/dev/null 2>&1 ||
     erro "falta o Docker Buildx (o BuildKit que os Dockerfiles usam): apt-get install -y docker-buildx-plugin."
-  local raiz_docker livre d
-  raiz_docker=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)
-  for d in ${raiz_docker:+"$raiz_docker"} "$PASTA"; do
+  # O build precisa do disco do Docker e do /opt/genesis; o --so-pdv, só do lugar do instalador (o temporário e a
+  # página de download no /opt/genesis), com um mínimo próprio.
+  local raiz_docker livre d minimo=$ESPACO_MINIMO_GB para='as imagens e o cache do build' discos=()
+  if [ "$SO_PDV" = 1 ]; then
+    minimo=$ESPACO_MINIMO_PDV_GB
+    para='o instalador do PDV'
+    discos=("$PASTA" "${TMPDIR:-/tmp}")
+  else
+    raiz_docker=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)
+    discos=(${raiz_docker:+"$raiz_docker"} "$PASTA")
+  fi
+  for d in "${discos[@]}"; do
     livre=$(livre_gb "$d")
     [[ $livre =~ ^[0-9]+$ ]] || erro "não foi possível medir o espaço livre em $d (df)."
-    [ "$livre" -ge "$ESPACO_MINIMO_GB" ] ||
-      erro "só ${livre} GB livres em $d (mínimo: $ESPACO_MINIMO_GB GB para as imagens e o cache do build). Libere espaço (docker image prune -a, com cuidado; docker builder prune) e rode de novo."
+    [ "$livre" -ge "$minimo" ] ||
+      erro "só ${livre} GB livres em $d (mínimo: $minimo GB para $para). Libere espaço (docker image prune -a, com cuidado; docker builder prune) e rode de novo."
   done
-  ok "root, Docker com Buildx, git e curl; espaço livre acima de $ESPACO_MINIMO_GB GB"
+  local buildx=' com Buildx'
+  [ "$SO_PDV" = 0 ] || buildx=''
+  ok "root, Docker$buildx, git e curl; espaço livre acima de $minimo GB"
   mkdir -p "$PASTA"
   # Uma execução deste script por vez (o build leva minutos, antes de o implantar.sh pegar a trava dele).
   exec 8>"$TRAVA"
@@ -169,6 +222,40 @@ conferir_requisitos() {
   trava_do_implantar_livre ||
     ocupado "outra implantação está em andamento (a trava do implantar.sh, $PASTA/.implantacao.lock): espere ela terminar."
   ok "nenhuma outra implantação em andamento"
+}
+
+# O processo $1 ainda roda: existe e não é zumbi. O zumbi (o filho que já terminou e o bash ainda não recolheu, ou o
+# órfão que o init de um container não recolhe) ainda responde ao `kill -0`, e o `tail --pid` o seguia para sempre.
+# Sem o /proc legível (o processo sumiu entre as duas conferências), conta como vivo: a próxima volta decide.
+processo_vivo() {
+  local linha estado
+  kill -0 "$1" 2>/dev/null || return 1
+  read -r linha 2>/dev/null <"/proc/$1/stat" || return 0
+  # O 2º campo (o nome, entre parênteses) pode ter espaços: o estado é o primeiro campo depois do último ") ".
+  estado=${linha##*') '}
+  case "${estado%% *}" in
+    Z | X) return 1 ;;
+  esac
+}
+
+# Mostra o log $2 inteiro, do começo, até o processo $1 terminar, sem perder o fim (OP-B6). O `tail -f --pid` podia
+# sair sem ler o que a implantação escreveu pouco antes de terminar (na CI, o --acompanhar parou na etapa 6, sem o
+# resumo). Aqui, a cada volta, a conferência do processo vem ANTES da leitura do que falta (um descritor aberto uma
+# vez só: o `cat` continua de onde a leitura anterior parou), e a última leitura é feita com ele já terminado: o que
+# ele escreveu antes de sair já está no arquivo. Falha (1) só se não der para abrir o log ou para escrever na saída
+# (o terminal que caiu); quem chama decide.
+mostrar_ate_o_fim() {
+  local pid=$1 log=$2 fd vivo=1
+  exec {fd}<"$log" || return 1
+  while [ "$vivo" = 1 ]; do
+    processo_vivo "$pid" || vivo=0
+    if ! cat <&"$fd"; then
+      exec {fd}<&-
+      return 1
+    fi
+    [ "$vivo" = 0 ] || sleep 0.2
+  done
+  exec {fd}<&-
 }
 
 # Roda as etapas 1 a 8 fora do terminal (o comentário do começo): uma cópia deste script (o comando do README baixa
@@ -190,24 +277,26 @@ desacoplar() {
   cp -f -- "$0" "$copia"
   GENESIS_SEM_ACTIONS_LOG=$log setsid -w bash "$copia" "$@" </dev/null >>"$log" 2>&1 &
   pid=$!
-  # O Ctrl+C (e o fim do terminal) chega a este processo e ao tail, não à implantação, que está noutra sessão.
+  # O Ctrl+C (e o fim do terminal) chega a este processo e ao que mostra o log, não à implantação, que está noutra
+  # sessão.
   trap 'echo; aviso "este terminal parou de mostrar, mas a implantação continua fora dele. Para acompanhar de novo: bash $0 --acompanhar"; exit 130' INT TERM
   ok "a implantação roda fora deste terminal: fechar a aba, perder a conexão ou o Ctrl+C não a interrompem (só param de mostrar). Para acompanhar de novo: bash $0 --acompanhar. Saída completa: $log"
-  tail -n +1 -s 0.2 -f --pid="$pid" "$log" || true
+  mostrar_ate_o_fim "$pid" "$log" || true
   wait "$pid" || codigo=$?
   exit "$codigo"
 }
 
-# --acompanhar: a implantação em andamento (o tail até o processo dela terminar) ou a saída da última.
+# --acompanhar: a implantação em andamento (o log até o processo dela terminar, mostrar_ate_o_fim) ou a saída da
+# última.
 acompanhar() {
   [ "$(id -u)" = 0 ] || erro "rode como root (a saída fica em $LOGS, só do root)."
   [ -e "$LOG_ULTIMO" ] || erro "nenhuma implantação sem o Actions registrada em $LOGS."
   local pid=''
   # Em andamento = a trava deste script presa (o pid sozinho poderia ser de outro processo, reaproveitado).
   if ! (exec 7>"$TRAVA" && flock -n 7); then pid=$(cat "$PID_ARQUIVO" 2>/dev/null || true); fi
-  if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+  if [[ $pid =~ ^[0-9]+$ ]] && processo_vivo "$pid"; then
     ok "implantação em andamento ($(readlink "$LOG_ULTIMO")); o Ctrl+C só para de mostrar."
-    tail -n +1 -s 0.2 -f --pid="$pid" "$LOG_ULTIMO"
+    mostrar_ate_o_fim "$pid" "$LOG_ULTIMO"
   else
     ok "nenhuma implantação sem o Actions em andamento; a saída da última ($(readlink "$LOG_ULTIMO")):"
     cat "$LOG_ULTIMO"
@@ -263,6 +352,24 @@ preparar_fonte() {
   git_fonte -c advice.detachedHead=false checkout --quiet --force --detach "$SHA"
   git_fonte clean -ffdxq
   ok "fonte no commit $VERSAO"
+}
+
+# --- --so-pdv: a versão no ar ----------------------------------------------------------------------------------
+
+# A versão que está no ar (o versoes/atual do implantar.sh), com a release dela (o implantar.sh pdv publicar) e a
+# imagem do backup (o jq): o --so-pdv publica o PDV nela, sem montar nem trocar nada.
+versao_no_ar() {
+  passo "1/4 Versão no ar (o --so-pdv não monta imagem nem troca a versão)"
+  VERSAO=$(cat "$PASTA/versoes/atual" 2>/dev/null || true)
+  [[ $VERSAO =~ ^[0-9a-f]{12}$ ]] || {
+    VERSAO=''
+    erro "nenhuma versão no ar registrada em $PASTA/versoes/atual: o --so-pdv publica o PDV na versão que está no ar (implante uma antes)."
+  }
+  [ -f "$PASTA/releases/$VERSAO/implantar.sh" ] ||
+    erro "falta $PASTA/releases/$VERSAO/implantar.sh (a release da versão no ar): implante a versão de novo."
+  docker image inspect "genesis-backup:$VERSAO" >/dev/null 2>&1 ||
+    erro "falta a imagem genesis-backup:$VERSAO (o jq que confere o release vem dela): implante a versão de novo."
+  ok "versão $VERSAO no ar (release e imagem do backup no lugar)"
 }
 
 # --- 3 e 4. Imagens e arquivos da versão ---------------------------------------------------------------------------
@@ -328,12 +435,17 @@ baixar_github() { curl -fsSL --proto '=https' --max-time 900 -o "$2" "$DOWNLOAD_
 pular_pdv() {
   aviso "$* A página de download fica como está (README de infra/producao › Página de download do PDV)."
   PDV_ACAO=''
-  PAGINA="não mexida (o GitHub não respondeu ou o release está incompleto: veja os avisos)"
+  PDV_PULADO=1
+  PAGINA="não mexida (o GitHub não respondeu, o release está incompleto ou ainda não foi publicado: veja os avisos)"
 }
 
 preparar_pdv() {
   [ "$PUBLICAR_PDV" = 1 ] || return 0
-  passo "5/8 Instalador do PDV (último GitHub Release), antes da troca de versão"
+  if [ "$SO_PDV" = 1 ]; then
+    passo "$ETAPA_PDV Instalador do PDV (último GitHub Release)"
+  else
+    passo "$ETAPA_PDV Instalador do PDV (último GitHub Release), antes da troca de versão"
+  fi
   if [ "$SIMULAR" = 1 ]; then
     simulado "procurar o GitHub Release pdv-vX.Y.Z publicado mais novo, baixar o instalador e o .sha256, conferir e publicar na página depois da troca (ou retirar o instalador, se não houver release publicado)"
     return 0
@@ -358,6 +470,19 @@ preparar_pdv() {
     pagina=$((pagina + 1))
   done
   tag=$(grep -E '^pdv-v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$tags" | sort -V | tail -n 1 || true)
+  # A tag que o vigia viu (--tag) sem o release dela publicado ainda: a tag nasce antes (o publicar-release.sh e o
+  # workflow criam a tag, depois o rascunho, enviam o instalador e só então publicam). Não é "nada a publicar": 69,
+  # para o vigia tentar de novo. Um release publicado de versão maior que a tag vale (é o mais novo).
+  if [ -n "$TAG_ESPERADA" ] && { [ -z "$tag" ] ||
+    [ "$(printf '%s\n%s\n' "$tag" "$TAG_ESPERADA" | sort -V | tail -n 1)" != "$tag" ]; }; then
+    pular_pdv "O release $TAG_ESPERADA ainda não está publicado (o publicado mais novo: ${tag:-nenhum}; rascunho e pre-release não contam)."
+    return 0
+  fi
+  if [ -z "$tag" ] && [ "$SO_PDV" = 1 ]; then
+    aviso "Nenhum GitHub Release pdv-vX.Y.Z publicado (rascunho e pre-release não contam): a página de download fica como está (o --so-pdv nunca retira o instalador; o --publicar-pdv numa implantação, sim)."
+    PAGINA="não mexida (nenhum GitHub Release do PDV publicado)"
+    return 0
+  fi
   if [ -z "$tag" ]; then
     aviso "Nenhum GitHub Release pdv-vX.Y.Z publicado (rascunho e pre-release não contam): depois da troca, a página de download volta a dizer que o instalador ainda não foi publicado (README de infra/producao › Página de download do PDV)."
     PDV_ACAO=retirar
@@ -390,11 +515,11 @@ preparar_pdv() {
   # O mesmo formato que a VPS exige (implantar.sh pdv publicar): uma linha só, '<64 hex>  <nome do instalador>'.
   PAGINA="não mexida: o instalador do PDV do release $tag não conferiu (veja o erro acima)"
   [ "$(awk 'END { print NR }' "$sha256")" = 1 ] ||
-    erro "$PDV_EXE.sha256 do release $tag deveria ter uma linha só ('<hash>  $PDV_EXE'): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
+    invalido "$PDV_EXE.sha256 do release $tag deveria ter uma linha só ('<hash>  $PDV_EXE'): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
   esperado=$(awk '{ print tolower($1) }' "$sha256")
   nome=$(awk '{ sub(/^\*/, "", $2); print $2 }' "$sha256")
   [[ $esperado =~ ^[0-9a-f]{64}$ ]] && [ "$nome" = "$PDV_EXE" ] ||
-    erro "$PDV_EXE.sha256 do release $tag fora do formato do sha256sum ('<hash>  $PDV_EXE'): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
+    invalido "$PDV_EXE.sha256 do release $tag fora do formato do sha256sum ('<hash>  $PDV_EXE'): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
   na_vps=$(bash "$PASTA/releases/$VERSAO/implantar.sh" pdv atual 2>/dev/null || true)
   if [ "$na_vps" = "$esperado" ]; then
     ok "A página de download já serve o PDV $PDV_VERSAO (sha256 $esperado): nada a baixar nem publicar."
@@ -409,7 +534,7 @@ preparar_pdv() {
   # O hash calculado do arquivo baixado, não o `sha256sum -c` (que confere o nome que o próprio .sha256 traz).
   calculado=$(sha256sum "$TEMP/pdv/$PDV_EXE" | cut -d' ' -f1)
   [ "$calculado" = "$esperado" ] ||
-    erro "o sha256 de $PDV_EXE baixado do release $tag ($calculado) não confere com o $PDV_EXE.sha256 do release ($esperado): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
+    invalido "o sha256 de $PDV_EXE baixado do release $tag ($calculado) não confere com o $PDV_EXE.sha256 do release ($esperado): nada foi publicado e a produção não mudou. Refaça o release (PDV release com \"substituir\") ou implante sem --publicar-pdv."
   ok "PDV $PDV_VERSAO baixado e conferido ($(stat -c %s "$TEMP/pdv/$PDV_EXE") bytes, sha256 $esperado); a VPS servia: ${na_vps:-nada}."
   PDV_ACAO=publicar
   PAGINA="não mexida: a implantação parou antes de publicar o PDV $PDV_VERSAO; rode de novo"
@@ -419,7 +544,7 @@ preparar_pdv() {
 # workflow: o implantar.sh confere o sha256 de novo e troca por rename.
 publicar_pdv() {
   if [ "$SIMULAR" = 1 ] && [ "$PUBLICAR_PDV" = 1 ]; then
-    passo "7/8 Página de download"
+    passo "$ETAPA_PAGINA Página de download"
     simulado "tar do instalador e do .sha256 | bash $PASTA/releases/$VERSAO/implantar.sh pdv publicar <X.Y.Z> <publicado_em> (ou pdv retirar)"
     return 0
   fi
@@ -428,7 +553,7 @@ publicar_pdv() {
     *) return 0 ;;
   esac
   local script=$PASTA/releases/$VERSAO/implantar.sh
-  passo "7/8 Página de download"
+  passo "$ETAPA_PAGINA Página de download"
   if [ "$PDV_ACAO" = retirar ]; then
     bash "$script" pdv retirar || {
       PAGINA="não mexida: falhou ao tirar o instalador (sem GitHub Release do PDV publicado); a página continua com o que servia, rode de novo"
@@ -498,18 +623,25 @@ conferir_urls() {
   api=${GENESIS_API_URL:-$(url_do_dominio API_DOMINIO api.grupoicebeer.com.br)}
   erp=${GENESIS_ERP_URL:-$(url_do_dominio ERP_DOMINIO erp.grupoicebeer.com.br)}
   download=${GENESIS_DOWNLOAD_URL:-$(url_do_dominio DOWNLOAD_DOMINIO download.grupoicebeer.com.br)}
-  passo "8/8 Conferência pelas URLs públicas"
+  passo "$ETAPA_URLS Conferência pelas URLs públicas"
+  if [ "$SIMULAR" = 1 ] && [ "$SO_PDV" = 1 ]; then
+    simulado "conferir $download/ e, com o instalador publicado, $download/pdv/atual.json e o instalador"
+    return 0
+  fi
   if [ "$SIMULAR" = 1 ]; then
     simulado "conferir $api/saude, $erp/saude, $erp/, $api/api/saude/detalhada (401 sem token) e $download/"
     return 0
   fi
-  conferir "$api/saude" '"status":"ok"'
-  conferir "$erp/saude" '"status":"ok"'
-  conferir "$erp/" '<div id="root">'
-  # Painel do monitoramento (I1b): publicado e fechado sem o token.
-  codigo=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$api/api/saude/detalhada" || true)
-  [ "$codigo" = 401 ] || erro "$api/api/saude/detalhada sem token deveria responder 401 (veio $codigo)."
-  echo "OK: $api/api/saude/detalhada sem token → 401"
+  # O --so-pdv não mexe na API nem no ERP: só a página de download.
+  if [ "$SO_PDV" = 0 ]; then
+    conferir "$api/saude" '"status":"ok"'
+    conferir "$erp/saude" '"status":"ok"'
+    conferir "$erp/" '<div id="root">'
+    # Painel do monitoramento (I1b): publicado e fechado sem o token.
+    codigo=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$api/api/saude/detalhada" || true)
+    [ "$codigo" = 401 ] || erro "$api/api/saude/detalhada sem token deveria responder 401 (veio $codigo)."
+    echo "OK: $api/api/saude/detalhada sem token → 401"
+  fi
   # Página de download e, com o instalador publicado, o atual.json e o primeiro byte do instalador.
   conferir "$download/" 'pagina.js'
   if [ "$PDV_ACAO" = publicar ] || [ "$PDV_ACAO" = ja ]; then
@@ -555,6 +687,14 @@ limpar_imagens() {
 # O "Resumo" do workflow: a versão, a página de download e onde ver o estado (sem segredo nem estado da VPS).
 resumo() {
   local versao script=$PASTA/implantar.sh tempo=$((SECONDS - INICIO))
+  if [ "$SO_PDV" = 1 ]; then
+    printf '\n\033[1;34m### Publicação do PDV sem o Actions: versão no ar %s\033[0m (%d min %d s)\n' "$VERSAO" \
+      $((tempo / 60)) $((tempo % 60))
+    echo "Versão: $VERSAO (no ar; não mudou: o --so-pdv não monta imagem nem troca a versão)."
+    echo "Página de download: $PAGINA."
+    [ -z "${GENESIS_SEM_ACTIONS_LOG:-}" ] || echo "Saída completa desta publicação: $GENESIS_SEM_ACTIONS_LOG"
+    return 0
+  fi
   case "$IMPLANTACAO" in
     sucesso) versao="$VERSAO no ar" ;;
     falha)
@@ -574,6 +714,8 @@ resumo() {
 ao_sair() {
   local codigo=$?
   [ -z "$TEMP" ] || rm -rf "$TEMP"
+  # --so-pdv com o GitHub sem responder ou o release incompleto: 69 (o comentário do começo).
+  [ "$codigo" != 0 ] || [ "$SO_PDV" = 0 ] || [ "$PDV_PULADO" = 0 ] || codigo=69
   if [ "$SIMULAR" = 1 ] && [ "$codigo" = 0 ]; then
     printf '\n\033[1;36mSimulação de %s: tudo conferido; nada foi montado nem trocado.\033[0m\n' "$VERSAO"
   elif [ "$SIMULAR" = 0 ] && [ -n "$VERSAO" ]; then
@@ -597,6 +739,13 @@ else
 fi
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/genesis-sem-actions.XXXXXX")
 trap ao_sair EXIT
+if [ "$SO_PDV" = 1 ]; then
+  versao_no_ar
+  preparar_pdv
+  publicar_pdv
+  conferir_urls
+  exit 0
+fi
 preparar_fonte
 montar_imagens
 copiar_arquivos
