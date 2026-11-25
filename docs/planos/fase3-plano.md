@@ -195,6 +195,9 @@ O que as Fases 1 e 2 já entregaram e que a Fase 3 usa, e o que falta, por área
 
 ## Perguntas ao dono
 
+**Respondidas pelo dono em 25/11/2026: todas pela recomendação (★)** — D72 a D118 e a D15 (F3-Q27); a F3-Q35(b) depende de o dono
+conferir o Smart App Control nos caixas. Registro em `docs/planos/decisoes-do-dono.md` › Fase 3.
+
 **Regra:** enquanto a pergunta não for respondida, vale a **recomendação (★)**, implementada de forma **configurável** quando há
 chave. O dono responde "1A, 2B…". Cada resposta é registrada em `docs/planos/decisoes-do-dono.md` e na tabela do roadmap §16, a
 partir da **D72**. As perguntas já abertas que esta fase fecha são citadas pelo código antigo (D15, D66).
