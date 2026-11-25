@@ -1250,9 +1250,18 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   com a entrada em `/dev/null`, uma cópia de si mesmo (o comando do README baixa de novo por cima do
   `~/implantar-sem-actions.sh`, e o bash lê o script aos poucos) e a trava herdada; a saída vai para
   `logs/implantar-sem-actions-<data>.log` (pasta 700, arquivo 600, os 10 últimos; o link
-  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra (`tail --pid`), saindo com o código dela.
+  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra, saindo com o código dela.
   `--acompanhar` volta a mostrar. Nem `trap '' HUP` sozinho (a escrita no terminal que caiu falharia e o `set -e`
   pararia o script do mesmo jeito), nem `systemd-run` (a saída iria para o journal). O `--simular` roda no terminal.
+- **A saída mostrada até a última linha (OP-B6).** O terminal (e o `--acompanhar`) mostrava o log com o
+  `tail -f --pid`, que podia sair sem ler o que a implantação escreveu pouco antes de terminar: na CI da `main` de
+  25/11/2026, o `--acompanhar` parou na etapa 6, sem o resumo, embora a implantação tivesse terminado (o código de
+  saída vinha certo; só a tela ficava cortada, e a mesma saída cortada ia para o `ultima-implantacao.log` do vigia).
+  O `tail --pid` também seguia para sempre um processo zumbi (o que terminou e ainda não foi recolhido pelo pai,
+  como o órfão num container sem um init que recolha). No lugar dele, o script lê o log por um descritor aberto uma
+  vez e, a cada 0,2 s, **confere se o processo vive antes de ler o que falta**; a última leitura é feita com o
+  processo já terminado (o zumbi conta como terminado), então tudo o que ele escreveu antes de sair aparece. O
+  Ctrl+C continua só parando de mostrar; a saída que não aceita mais escrita (o terminal que caiu) também.
 - **Espaço mínimo de 5 GB** (`GENESIS_ESPACO_MINIMO_GB`) no disco do Docker e no do `/opt/genesis`: as 3 imagens
   somam ~700 MB, e o cache do build (dependências do pnpm, as camadas intermediárias) passa de 2 GB na primeira
   montagem; com folga para os logs e o backup. Medido com `df` antes de qualquer coisa.

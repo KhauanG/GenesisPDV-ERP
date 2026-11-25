@@ -1,4 +1,4 @@
-# Operação sem o GitHub Actions — plano (OP-B1 a OP-B5)
+# Operação sem o GitHub Actions — plano (OP-B1 a OP-B6)
 
 Pedido do dono (24/11/2026): "minha cota de Actions acabou, continue o projeto, usando sandbox para testes, para não
 precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-do-dono.md`).

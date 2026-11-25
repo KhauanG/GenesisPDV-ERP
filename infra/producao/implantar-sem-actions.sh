@@ -16,10 +16,11 @@
 #     --acompanhar        volta a mostrar a implantação em andamento (até o fim) ou, sem nenhuma, a saída da última
 #
 # Fora do terminal: depois das conferências, o script se roda de novo numa sessão própria (setsid, sem terminal e sem
-# entrada), com a saída em $PASTA/logs/implantar-sem-actions-<data>.log, e o terminal só a acompanha (tail). Fechar a
-# aba do navegador, perder a conexão, o notebook dormir ou o Ctrl+C param de mostrar, não a implantação: o SIGHUP do
-# terminal que cai não chega às migrações nem à troca de versão (o `implantar.sh implantar` pela metade, sem a volta
-# automática nem a versão registrada). O `--simular` roda no próprio terminal (não muda nada).
+# entrada), com a saída em $PASTA/logs/implantar-sem-actions-<data>.log, e o terminal só a acompanha, até a última
+# linha (mostrar_ate_o_fim). Fechar a aba do navegador, perder a conexão, o notebook dormir ou o Ctrl+C param de
+# mostrar, não a implantação: o SIGHUP do terminal que cai não chega às migrações nem à troca de versão (o
+# `implantar.sh implantar` pela metade, sem a volta automática nem a versão registrada). O `--simular` roda no
+# próprio terminal (não muda nada).
 #
 # Etapas, na ordem do workflow:
 #   1. commit: formato, fonte em /opt/genesis/fonte (clone do repositório público, root 700, sem token) e ancestral
@@ -171,6 +172,40 @@ conferir_requisitos() {
   ok "nenhuma outra implantação em andamento"
 }
 
+# O processo $1 ainda roda: existe e não é zumbi. O zumbi (o filho que já terminou e o bash ainda não recolheu, ou o
+# órfão que o init de um container não recolhe) ainda responde ao `kill -0`, e o `tail --pid` o seguia para sempre.
+# Sem o /proc legível (o processo sumiu entre as duas conferências), conta como vivo: a próxima volta decide.
+processo_vivo() {
+  local linha estado
+  kill -0 "$1" 2>/dev/null || return 1
+  read -r linha 2>/dev/null <"/proc/$1/stat" || return 0
+  # O 2º campo (o nome, entre parênteses) pode ter espaços: o estado é o primeiro campo depois do último ") ".
+  estado=${linha##*') '}
+  case "${estado%% *}" in
+    Z | X) return 1 ;;
+  esac
+}
+
+# Mostra o log $2 inteiro, do começo, até o processo $1 terminar, sem perder o fim (OP-B6). O `tail -f --pid` podia
+# sair sem ler o que a implantação escreveu pouco antes de terminar (na CI, o --acompanhar parou na etapa 6, sem o
+# resumo). Aqui, a cada volta, a conferência do processo vem ANTES da leitura do que falta (um descritor aberto uma
+# vez só: o `cat` continua de onde a leitura anterior parou), e a última leitura é feita com ele já terminado: o que
+# ele escreveu antes de sair já está no arquivo. Falha (1) só se não der para abrir o log ou para escrever na saída
+# (o terminal que caiu); quem chama decide.
+mostrar_ate_o_fim() {
+  local pid=$1 log=$2 fd vivo=1
+  exec {fd}<"$log" || return 1
+  while [ "$vivo" = 1 ]; do
+    processo_vivo "$pid" || vivo=0
+    if ! cat <&"$fd"; then
+      exec {fd}<&-
+      return 1
+    fi
+    [ "$vivo" = 0 ] || sleep 0.2
+  done
+  exec {fd}<&-
+}
+
 # Roda as etapas 1 a 8 fora do terminal (o comentário do começo): uma cópia deste script (o comando do README baixa
 # de novo por cima do ~/implantar-sem-actions.sh, e o bash lê o script aos poucos) numa sessão própria, com a
 # entrada em /dev/null e a saída no log; a trava (descritor 8) passa para ela. Este processo só mostra o log até ela
@@ -190,24 +225,26 @@ desacoplar() {
   cp -f -- "$0" "$copia"
   GENESIS_SEM_ACTIONS_LOG=$log setsid -w bash "$copia" "$@" </dev/null >>"$log" 2>&1 &
   pid=$!
-  # O Ctrl+C (e o fim do terminal) chega a este processo e ao tail, não à implantação, que está noutra sessão.
+  # O Ctrl+C (e o fim do terminal) chega a este processo e ao que mostra o log, não à implantação, que está noutra
+  # sessão.
   trap 'echo; aviso "este terminal parou de mostrar, mas a implantação continua fora dele. Para acompanhar de novo: bash $0 --acompanhar"; exit 130' INT TERM
   ok "a implantação roda fora deste terminal: fechar a aba, perder a conexão ou o Ctrl+C não a interrompem (só param de mostrar). Para acompanhar de novo: bash $0 --acompanhar. Saída completa: $log"
-  tail -n +1 -s 0.2 -f --pid="$pid" "$log" || true
+  mostrar_ate_o_fim "$pid" "$log" || true
   wait "$pid" || codigo=$?
   exit "$codigo"
 }
 
-# --acompanhar: a implantação em andamento (o tail até o processo dela terminar) ou a saída da última.
+# --acompanhar: a implantação em andamento (o log até o processo dela terminar, mostrar_ate_o_fim) ou a saída da
+# última.
 acompanhar() {
   [ "$(id -u)" = 0 ] || erro "rode como root (a saída fica em $LOGS, só do root)."
   [ -e "$LOG_ULTIMO" ] || erro "nenhuma implantação sem o Actions registrada em $LOGS."
   local pid=''
   # Em andamento = a trava deste script presa (o pid sozinho poderia ser de outro processo, reaproveitado).
   if ! (exec 7>"$TRAVA" && flock -n 7); then pid=$(cat "$PID_ARQUIVO" 2>/dev/null || true); fi
-  if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+  if [[ $pid =~ ^[0-9]+$ ]] && processo_vivo "$pid"; then
     ok "implantação em andamento ($(readlink "$LOG_ULTIMO")); o Ctrl+C só para de mostrar."
-    tail -n +1 -s 0.2 -f --pid="$pid" "$LOG_ULTIMO"
+    mostrar_ate_o_fim "$pid" "$LOG_ULTIMO"
   else
     ok "nenhuma implantação sem o Actions em andamento; a saída da última ($(readlink "$LOG_ULTIMO")):"
     cat "$LOG_ULTIMO"

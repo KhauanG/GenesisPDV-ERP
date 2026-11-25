@@ -9,11 +9,12 @@
 # `--publicar-pdv` (versão mais alta publicada, sha256 certo, errado e fora do formato, já publicado, sem release →
 # retirar e o 404 conferido, GitHub fora do ar → só aviso), a falha da implantação e das URLs com o resumo, a limpeza
 # das imagens (também a atual depois de implantações que falharam) e a execução fora do terminal (o terminal morto
-# por SIGHUP/SIGKILL no meio do implantar.sh não interrompe a implantação; o log e o --acompanhar).
+# por SIGHUP/SIGKILL no meio do implantar.sh não interrompe a implantação; o log e o --acompanhar), com o log mostrado
+# até a última linha (OP-B6: o processo zumbi, a ordem ruim forçada e muitas rodadas).
 # O ensaio de ponta a ponta, com o Docker e a stack de verdade, é o `testar-local.sh --sem-actions`.
 #
 #   bash infra/producao/teste/testar-implantar-sem-actions.sh
-# Precisa de bash, git, jq, tar, coreutils e util-linux (flock); roda sem root.
+# Precisa de bash, git, jq, tar, coreutils, util-linux (flock) e do /proc do Linux; roda sem root.
 set -euo pipefail
 
 AQUI=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -548,6 +549,95 @@ for caso in lista release sha256 exe; do
     falha "resumo do GitHub sem o $caso: $SAIDA"
 done
 confere "--publicar-pdv com o GitHub sem responder ou o release incompleto: só um aviso, a implantação segue e a página fica como está"
+
+# --- O log até o fim (OP-B6) --------------------------------------------------------------------------------------
+# O que mostra a implantação fora do terminal (o desacoplar e o --acompanhar): as funções do script, sozinhas, com
+# processos que escrevem as últimas linhas e saem logo em seguida. O `tail -f --pid` de antes saía sem ler o fim (na
+# CI da main, o --acompanhar parou na etapa 6) e seguia para sempre o processo zumbi (o filho terminado e não
+# recolhido): o primeiro caso falha com ele (o tempo limite), e o segundo com o laço "enquanto vivo: lê; espera".
+eval "$(sed -n '/^processo_vivo() {$/,/^}$/p; /^mostrar_ate_o_fim() {$/,/^}$/p' "$SCRIPT")"
+declare -F processo_vivo mostrar_ate_o_fim >/dev/null || falha "o script sem as funções processo_vivo e mostrar_ate_o_fim"
+FUNCOES_LOG=$(declare -f processo_vivo mostrar_ate_o_fim)
+SLEEP_REAL=$(command -v sleep)
+export FUNCOES_LOG SLEEP_REAL
+# mostrar_ate_o_fim <pid> <log> num bash à parte, com tempo limite (o de antes não terminava com o zumbi).
+seguir() { timeout 20 bash -c 'eval "$FUNCOES_LOG"; mostrar_ate_o_fim "$1" "$2"' _ "$@"; }
+# O processo $1 já terminou: sumiu ou é zumbi (o estado Z do /proc).
+terminou() { [ ! -e "/proc/$1" ] || [[ $(cat "/proc/$1/stat" 2>/dev/null) =~ \)\ [ZX]\  ]]; }
+L=$T/seguir.log
+# Zumbi: o pai (o sleep, depois do exec) não recolhe o filho que escreveu e saiu. O filho só escreve e sai depois do
+# exec ($$ no subshell é o pai): antes dele, o próprio sh poderia recolhê-lo.
+: >"$L"
+sh -c '(while [ "$(cat /proc/$$/comm)" != sleep ]; do sleep 0.01; done; printf "linha 1\nfim\n" >>"$1") &
+  echo $! >"$2"; exec sleep 30' _ "$L" "$T/zumbi.pid" &
+pai=$!
+for _ in $(seq 1 200); do
+  [ -s "$T/zumbi.pid" ] && terminou "$(cat "$T/zumbi.pid")" && break
+  sleep 0.05
+done
+zumbi=$(cat "$T/zumbi.pid")
+[[ $(cat "/proc/$zumbi/stat") =~ \)\ Z\  ]] || falha "o processo de teste deveria ser zumbi: $(cat "/proc/$zumbi/stat")"
+CODIGO=0
+SAIDA=$(seguir "$zumbi" "$L") || CODIGO=$?
+kill "$pai" 2>/dev/null || true
+wait "$pai" 2>/dev/null || true
+[ "$CODIGO" = 0 ] || falha "o processo zumbi deveria contar como terminado (saiu $CODIGO; 124 = não terminou): $SAIDA"
+[ "$SAIDA" = $'linha 1\nfim' ] || falha "zumbi: o log inteiro: $SAIDA"
+# A ordem ruim, forçada: um dublê do sleep (a espera entre as leituras) faz o processo escrever as últimas linhas e
+# sair entre uma leitura e a próxima conferência; elas têm de aparecer.
+mkdir -p "$T/bin-ordem"
+cat >"$T/bin-ordem/sleep" <<'DUBLE'
+#!/usr/bin/env bash
+if [ ! -e "$ORDEM/liberado" ]; then
+  : >"$ORDEM/liberado"
+  for _ in $(seq 1 200); do
+    [ ! -e "/proc/$ESCRITOR" ] || [[ $(cat "/proc/$ESCRITOR/stat" 2>/dev/null) =~ \)\ [ZX]\  ]] && exit 0
+    "$SLEEP_REAL" 0.05
+  done
+  exit 1
+fi
+exec "$SLEEP_REAL" "$@"
+DUBLE
+chmod +x "$T/bin-ordem/sleep"
+mkdir -p "$T/ordem"
+: >"$L"
+# A espera do processo tem limite (500 × 0,02 s = 10 s, abaixo do timeout 20 do seguir): se o dublê não for chamado
+# (uma regressão na espera entre as leituras ou na conferência de processo vivo), o teste falha com a mensagem abaixo
+# em vez de ficar parado no wait.
+bash -c 'echo início >>"$1"
+  for _ in $(seq 1 500); do [ -e "$2/liberado" ] && break; sleep 0.02; done
+  printf "última 1\núltima 2\n" >>"$1"' _ "$L" "$T/ordem" &
+escritor=$!
+until grep -q início "$L"; do sleep 0.02; done
+CODIGO=0
+SAIDA=$(ORDEM=$T/ordem ESCRITOR=$escritor PATH=$T/bin-ordem:$PATH seguir "$escritor" "$L") || CODIGO=$?
+if [ ! -e "$T/ordem/liberado" ]; then
+  kill "$escritor" 2>/dev/null || true
+  wait "$escritor" 2>/dev/null || true
+  falha "ordem ruim: o dublê do sleep não foi chamado (saiu $CODIGO): $SAIDA"
+fi
+wait "$escritor" || true
+[ "$CODIGO" = 0 ] && [ "$SAIDA" = $'início\núltima 1\núltima 2' ] ||
+  falha "as linhas escritas logo antes do fim deveriam aparecer (saiu $CODIGO): $SAIDA"
+# Muitas vezes: o processo escreve e sai na hora (sem dublê); o log aparece inteiro todas as vezes.
+for i in $(seq 1 30); do
+  : >"$L"
+  bash -c 'for n in $(seq 1 50); do echo "linha $n"; done >>"$1"; echo "fim $2" >>"$1"' _ "$L" "$i" &
+  escritor=$!
+  SAIDA=$(seguir "$escritor" "$L") || falha "rodada $i: saiu ≠ 0"
+  wait "$escritor" || true
+  [ "$(wc -l <<<"$SAIDA")" = 51 ] && [ "$(tail -n 1 <<<"$SAIDA")" = "fim $i" ] ||
+    falha "rodada $i: o log inteiro, até o fim: $SAIDA"
+done
+# A saída que não aceita escrita (o terminal que caiu): para de mostrar com 1, sem esperar o processo.
+"$SLEEP_REAL" 30 &
+vivo=$!
+CODIGO=0
+seguir "$vivo" "$L" >&- 2>/dev/null || CODIGO=$?
+kill "$vivo" 2>/dev/null || true
+wait "$vivo" 2>/dev/null || true
+[ "$CODIGO" = 1 ] || falha "a saída fechada: esperava parar com 1 (saiu $CODIGO)"
+confere "o log até o fim: a conferência do processo antes de cada leitura e uma leitura depois do fim (a ordem ruim forçada e 30 rodadas), o zumbi conta como terminado e a saída fechada para de mostrar"
 
 # --- Fora do terminal ---------------------------------------------------------------------------------------------
 # O "terminal" (uma sessão própria, como a do terminal do navegador) morre por SIGHUP e SIGKILL com o implantar.sh no

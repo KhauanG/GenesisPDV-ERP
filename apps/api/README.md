@@ -7241,16 +7241,31 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        sem a volta automática nem a versão registrada, e sem o resumo). Depois das conferências, o script se roda de
        novo numa sessão própria (`setsid`, entrada em `/dev/null`, uma cópia de si mesmo, a trava herdada) com a
        saída em `/opt/genesis/logs/implantar-sem-actions-<data>.log` (700/600, os 10 últimos), e o terminal só a
-       mostra (`tail --pid`) e sai com o código dela; `--acompanhar` volta a mostrar a em andamento ou a última. Sem
+       mostra e sai com o código dela; `--acompanhar` volta a mostrar a em andamento ou a última. Sem
        `systemd-run` (a saída iria para o journal, e o dono teria de aprender o `journalctl`) nem `trap '' HUP`
        sozinho (a escrita no terminal morto falharia e o `set -e` pararia o script do mesmo jeito).
+     - **A saída até a última linha, sem o `tail --pid` (OP-B6, 25/11/2026).** Na CI da `main` depois do PR-16, o
+       `--acompanhar` do teste "Fora do terminal" parou na etapa 6, sem o resumo, com a implantação terminada (o
+       código de saída, do `wait`, vinha certo): o `tail -f --pid` pode sair sem ler o que foi escrito pouco antes de
+       o processo terminar, e segue para sempre um zumbi (terminado e não recolhido pelo pai, que ainda responde ao
+       `kill -0`; o `tail` de antes não saía no teste com um). No lugar dele, `mostrar_ate_o_fim`: um descritor
+       aberto uma vez no log (o `cat` continua de onde parou), e a cada 0,2 s a conferência do processo
+       (`processo_vivo`: o `kill -0` e o estado do `/proc/<pid>/stat`, com Z e X como terminado) **antes** da
+       leitura do que falta; a última leitura é feita com ele já terminado. Vale para o `desacoplar` (o terminal e a
+       chamada do vigia, cuja saída vai para o `ultima-implantacao.log`) e o `--acompanhar`; o Ctrl+C continua só
+       parando de mostrar, e a escrita que falha (o terminal que caiu) também para de mostrar sem mudar o código de
+       saída do `desacoplar`. O mesmo padrão não aparece nos outros scripts de `infra/producao` e `scripts/` (o vigia
+       espera o script terminar; o `pedir-implantacao.sh` acompanha pela URL). Linux só (o `/proc`), como a VPS.
      - **Testes.** Unidade sem Docker nem rede (dublês de `docker`, `curl`, `df`, `id`, `nice` e `ionice`; o `git` de
        verdade sobre um repositório local; o `instalar.sh` e o `implantar.sh` falsos dentro dele, copiados pelo
        script como os de verdade): formato, ancestralidade (outro branch, inexistente, main reescrita), root, espaço,
        as duas travas, a ordem das etapas, `--simular`, `--sem-conferir-url`, as falhas de build, `instalar.sh`,
        `implantar.sh` e URL com o resumo, a limpeza e o `--publicar-pdv` (certo, errado, fora do formato, já
        publicado, sem release e o 404 conferido, GitHub fora), o terminal morto por SIGHUP/SIGKILL no meio do
-       `implantar.sh` e o `--acompanhar`; roda como root ou não, no job `imagens` da CI e do
+       `implantar.sh` e o `--acompanhar`, e o log até o fim (OP-B6: as funções sozinhas com o processo zumbi, a
+       ordem ruim forçada por um dublê do `sleep` — o processo escreve as últimas linhas e sai entre uma leitura e a
+       próxima conferência —, 30 rodadas de um processo que escreve e sai na hora e a saída fechada; o zumbi falha
+       com o `tail --pid`); roda como root ou não, no job `imagens` da CI e do
        `scripts/verificar-local.sh`. Ponta a ponta: o `testar-local.sh --sem-actions` implanta o `HEAD` de uma `main`
        local na stack de teste (build pelo script, migrações e troca pelo `implantar.sh`, URLs pelo Traefik local, a
        API com a versão do commit) e volta. Nenhuma mudança no `implantacao.yml`, na API, no ERP ou no PDV; sem
