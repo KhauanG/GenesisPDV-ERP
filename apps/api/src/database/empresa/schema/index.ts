@@ -4,6 +4,7 @@ export * from './entradas.js';
 export * from './estoque.js';
 export * from './estrutura.js';
 export * from './financeiro.js';
+export * from './orcamentos.js';
 export * from './pessoas.js';
 export * from './produtos.js';
 export * from './referencias.js';

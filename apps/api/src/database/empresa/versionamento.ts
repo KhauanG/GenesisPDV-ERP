@@ -14,8 +14,18 @@ export const TABELAS_FN_VERSAO: readonly string[] = TABELAS_DOS_FLUXOS;
  * Fora de `TABELAS_FN_VERSAO` (que gera os espelhos do PDV); o `test:sync-triggers` confere o trigger, o índice e que
  * nenhuma está num fluxo. Quando o fluxo entrar, a tabela sai daqui.
  * - `vales` (0029, F3-B1; MD 3.13.2, C ↕): o fluxo `pessoas` com o filtro da D90 é do F3-B7.
+ * - `promocoes`, `promocoes_itens` (0030, F3-B2; MD 3.6.11, C ↓): fluxo `catalogo`, todas as linhas (F3-B7).
+ * - `orcamentos`, `itens_orcamento` (0030, F3-B2; MD 3.11.1, C ↓ loja) e `vendas_status_pdv` (MD 3.11.9, P ↓ caixa):
+ *   fluxo `operacao` (F3-B7).
  */
-export const TABELAS_FN_VERSAO_SEM_FLUXO = ['vales'] as const;
+export const TABELAS_FN_VERSAO_SEM_FLUXO = [
+  'vales',
+  'promocoes',
+  'promocoes_itens',
+  'orcamentos',
+  'itens_orcamento',
+  'vendas_status_pdv',
+] as const;
 
 /**
  * Colunas isentas de versão (argumentos do trigger `tg_<tabela>_versao`, migrações 0011, 0012 e 0016; MD 1.5; T3/T10
@@ -36,6 +46,8 @@ export const COLUNAS_ISENTAS_VERSAO: Readonly<Record<string, readonly string[]>>
   movimentos_estoque: ['seq_lancamento'],
   // Coluna gerada (0025, F2-B22): enviada − recebida do item da transferência.
   itens_transferencia: ['diferenca'],
+  // Coluna gerada (0030, F3-B2): `data + dias_validade` do orçamento (MD 3.11.1).
+  orcamentos: ['valido_ate'],
 };
 
 export const TABELAS_FN_VERSAO_LOCAL = [
@@ -88,6 +100,9 @@ export const TABELAS_FN_VERSAO_LOCAL = [
   'itens_troca',
   'movimentos_vale',
   'reservas_vale',
+  // Fase 3: a conferência do fechamento pelo gerente (MD 3.12.4, F3-B2) não sai da nuvem (—)
+  'conferencias_caixa',
+  'conferencias_caixa_formas',
 ] as const;
 
 /** Tabelas com bloco AU (`criado_por_id`, `atualizado_por_id` → usuarios). */
@@ -158,4 +173,8 @@ export const TABELAS_COM_AUTORIA = [
   // Fase 2, F2-B45: complementos (MD 3.6.8), cadastrados no ERP pelo F2-B51
   'produtos_grupos_complementos',
   'produtos_complementos',
+  // Fase 3, F3-B2: promoções (MD 3.6.11), orçamentos (MD 3.11.1) e a conferência do fechamento (MD 3.12.4)
+  'promocoes',
+  'orcamentos',
+  'conferencias_caixa',
 ] as const;

@@ -211,6 +211,13 @@
       "when": 1795633547817,
       "tag": "0029_fase3_vales_trocas",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1795640313070,
+      "tag": "0030_fase3_promocoes_orcamentos",
+      "breakpoints": true
     }
   ]
 }

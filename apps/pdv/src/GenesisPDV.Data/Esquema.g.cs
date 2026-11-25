@@ -1597,7 +1597,6 @@ public static partial class EsquemaNuvem
             new("quantidade", "numeric(15, 3)", typeof(decimal), Nulo: false, Escala: 3),
         ],
         [
-            new("ck_saldos_vasilhame_pessoas_quantidade", "quantidade >= 0"),
         ]),
         new("sessoes_caixa", PapelTabela.Movimento, null, ["id"],
         [

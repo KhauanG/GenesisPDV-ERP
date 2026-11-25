@@ -1,8 +1,9 @@
 /**
  * MD 3.12 – caixa: sessões (turnos), movimentos de dinheiro (abertura, reforço, sangria, estorno), fechamentos por
  * forma e a devolução avulsa de cascos (3.12.6). Tudo nasce no PDV e chega por evento (`caixa.*`,
- * `vasilhame.movimentado`, SYNC 9.3–9.6 e 9.26); o ERP só lê e confere (3.12.4, Fase 4). Nada daqui desce ao PDV
- * (`fn_versao_local`); as tabelas são de movimento do `Esquema.g.cs` (`TABELAS_MOVIMENTO_PDV`).
+ * `vasilhame.movimentado`, SYNC 9.3–9.6 e 9.26); o ERP só lê e confere (`conferencias_caixa`, 3.12.4, Fase 3). Nada
+ * daqui desce ao PDV (`fn_versao_local`); as tabelas que nascem no caixa são de movimento do `Esquema.g.cs`
+ * (`TABELAS_MOVIMENTO_PDV`); a conferência é só da nuvem e fica fora dele.
  *
  * Imutabilidade (`fn_protege_imutavel`) de `movimentos_caixa` e `movimentos_vasilhame` fica na migração customizada
  * (0012). `terminais.sessao_caixa_id` continua **sem** FK para `sessoes_caixa` (decisão técnica T8 da 1C): o heartbeat
@@ -21,11 +22,12 @@ import {
   pgTable,
   primaryKey,
   smallint,
+  text,
   uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { colunasPadrao, timestamptz } from '../../colunas.js';
+import { colunasAutoria, colunasPadrao, timestamptz } from '../../colunas.js';
 import { usuarios } from './acesso.js';
 import { caixas, lojas } from './estrutura.js';
 import { formasPagamento } from './financeiro.js';
@@ -316,6 +318,74 @@ export const fechamentosCaixaFormas = pgTable(
     uniqueIndex('uq_fechamentos_caixa_formas').on(t.fechamentoId, t.formaPagamentoId),
     index('ix_fechamentos_caixa_formas_forma_pagamento_id').on(t.formaPagamentoId),
     check('ck_fechamentos_caixa_formas_quantidade', sql`quantidade_pagamentos >= 0`),
+  ],
+);
+
+/** Situação da conferência (D114): dentro da tolerância por forma (`pdv.tolerancia_diferenca_caixa`) ou não. */
+export const SITUACOES_CONFERENCIA_CAIXA = ['conferida', 'divergente'] as const;
+
+/**
+ * C (—): a conferência do gerente sobre um fechamento (MD 3.12.4; ERP 14.9; Fase 3, F3-B2, migração 0030; README da
+ * API › decisão 221; a tela é do F3-B9). Uma por fechamento (`uq_conferencias_caixa_fechamento`): refazer (D114,
+ * `fechamentos_caixa.conferir`) altera a mesma linha, com auditoria. A situação "Conferida/Divergente" da sessão é
+ * derivada desta tabela, sem mexer no `ck_sessoes_caixa_status` (que desce ao caixa). `conta_financeira_id` é o
+ * lançamento de quebra ou sobra da Fase 4: sem FK até `contas_financeiras` existir.
+ */
+export const conferenciasCaixa = pgTable(
+  'conferencias_caixa',
+  {
+    ...colunasPadrao(),
+    ...colunasAutoria(),
+    fechamentoId: uuid('fechamento_id').notNull(),
+    conferidoPorId: uuid('conferido_por_id').notNull(),
+    conferidoEm: timestamptz('conferido_em').notNull(),
+    situacao: varchar('situacao', { length: 10 }).notNull(),
+    observacao: text('observacao'),
+    contaFinanceiraId: uuid('conta_financeira_id'),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_conferencias_caixa', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_conferencias_caixa_fechamento_id',
+      columns: [t.fechamentoId],
+      foreignColumns: [fechamentosCaixa.id],
+    }),
+    foreignKey({
+      name: 'fk_conferencias_caixa_conferido_por_id',
+      columns: [t.conferidoPorId],
+      foreignColumns: [usuarios.id],
+    }),
+    uniqueIndex('uq_conferencias_caixa_fechamento').on(t.fechamentoId),
+    index('ix_conferencias_caixa_conferido_por_id').on(t.conferidoPorId),
+    check('ck_conferencias_caixa_situacao', sql`situacao in (${listaSql(SITUACOES_CONFERENCIA_CAIXA)})`),
+  ],
+);
+
+/** O valor conferido por forma (MD 3.12.4): `diferenca` = conferido − calculado do fechamento, gravada pela API. */
+export const conferenciasCaixaFormas = pgTable(
+  'conferencias_caixa_formas',
+  {
+    ...colunasPadrao(),
+    conferenciaId: uuid('conferencia_id').notNull(),
+    formaPagamentoId: uuid('forma_pagamento_id').notNull(),
+    valorConferido: dinheiro('valor_conferido').notNull(),
+    diferenca: dinheiro('diferenca').notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_conferencias_caixa_formas', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_conferencias_caixa_formas_conferencia_id',
+      columns: [t.conferenciaId],
+      foreignColumns: [conferenciasCaixa.id],
+    }),
+    foreignKey({
+      name: 'fk_conferencias_caixa_formas_forma_pagamento_id',
+      columns: [t.formaPagamentoId],
+      foreignColumns: [formasPagamento.id],
+    }),
+    uniqueIndex('uq_conferencias_caixa_formas').on(t.conferenciaId, t.formaPagamentoId),
+    index('ix_conferencias_caixa_formas_forma_pagamento_id').on(t.formaPagamentoId),
+    check('ck_conferencias_caixa_formas_valor', sql`valor_conferido >= 0`),
   ],
 );
 

@@ -210,7 +210,7 @@ este terminal que também sobem por evento (`vales` emitidos no caixa, `comandas
 | `formas_pagamento` | Formas ativas com uso PDV, da loja ou sem loja |
 | `orcamentos`, `itens_orcamento` | Orçamentos/pré-vendas ativos da loja |
 | `comandas`, `itens_comanda` | Comandas abertas da loja (FUT, módulo opcional; vazias na Ice Beer) |
-| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste terminal alterado pela nuvem |
+| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste caixa alterado fora do terminal de origem |
 | `ncms`, `ncms_ibpt`, `cfops`, `cfops_grupos`, `meios_pagamento_fiscais`, `ufs`, `municipios`, `paises`, `cst_ibs_cbs`, `classificacoes_tributarias_ibs_cbs`, `aliquotas_ibs_cbs`, `parametros_fiscais_uf` | Referências fiscais (validação do item em 10.2, tributos aproximados, tPag, IBS/CBS; prazos, limites e URLs da UF da loja, 18) |
 
 **Tabelas de movimento (nascem no PDV, sobem como eventos):**

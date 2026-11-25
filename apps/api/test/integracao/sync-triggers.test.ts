@@ -44,7 +44,7 @@ describe('triggers das tabelas do pull (MD 1.5)', () => {
     }
   });
 
-  it('tabelas que vão descer com o fluxo num bloco seguinte (vales, F3-B1): fn_versao e índice, fora dos fluxos', async () => {
+  it('tabelas que vão descer com o fluxo num bloco seguinte (F3-B1 e F3-B2): fn_versao e índice, fora dos fluxos', async () => {
     const triggers = await consultar<{ tabela: string; funcao: string }>(
       emp.nomeBanco,
       `select c.relname as tabela, p.proname as funcao from pg_trigger t
@@ -60,7 +60,16 @@ describe('triggers das tabelas do pull (MD 1.5)', () => {
         )
       ).map((i) => i.indexname),
     );
-    expect(TABELAS_FN_VERSAO_SEM_FLUXO).toContain('vales');
+    expect(TABELAS_FN_VERSAO_SEM_FLUXO).toEqual(
+      expect.arrayContaining([
+        'vales',
+        'promocoes',
+        'promocoes_itens',
+        'orcamentos',
+        'itens_orcamento',
+        'vendas_status_pdv',
+      ]),
+    );
     for (const tabela of TABELAS_FN_VERSAO_SEM_FLUXO) {
       expect(mapa.get(tabela), `${tabela}: trigger tg_${tabela}_versao`).toBe('fn_versao');
       expect(indices.has(`ix_${tabela}_versao`), `${tabela}: índice ix_${tabela}_versao`).toBe(true);

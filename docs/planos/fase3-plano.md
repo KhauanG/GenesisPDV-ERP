@@ -152,7 +152,8 @@ O que as Fases 1 e 2 já entregaram e que a Fase 3 usa, e o que falta, por área
   - o "Imprimir comprovante" de reforço e sangria (ERP 15.2/15.3 "espera os templates de impressão"; não há tipo de template para
     eles em `TIPOS_TEMPLATE`);
   - a API e a tela de `templates_documentos` (a tabela existe e desce ao PDV);
-  - o índice `uq_templates_documentos_padrao` do MD 3.1.3 e a numeração `vale` do caixa 0;
+  - o índice `uq_templates_documentos_padrao` do MD 3.1.3 e a numeração `vale` do caixa 0 (correção no F3-B2: o índice já
+    existe desde a migração 0002, SQL customizado fora do snapshot; README da API › decisão 221);
   - as faixas de 6 chaves do catálogo estão mais largas que a ERP 9.3.1 (ver o F3-B12).
 
 ### Documentação
@@ -547,7 +548,9 @@ corpo do PR-17.
     (MD 6.4 regra 2);
   - **comodato comutativo:** tira o `ck_saldos_vasilhame_pessoas_quantidade` (o saldo pode ficar negativo por um tempo, Padrões). Se o
     gerador do `Esquema.g.cs` levar o CHECK ao espelho, a mudança entra na `FaseTres` (F3-B7);
-  - **índice** `uq_templates_documentos_padrao` (`nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`), **depois**
+  - **índice** `uq_templates_documentos_padrao` (`nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`)
+    [**feito no F3-B2:** o índice já existia desde a 0002, então não houve o que desmarcar; o teste confere a definição e o
+    efeito, decisão 221], **depois**
     de desmarcar os "padrão" duplicados do mesmo tipo e loja (fica o mais antigo), com uma linha de auditoria por desmarcação.
 - **Arquivos:** `schema/produtos.ts`, `schema/orcamentos.ts` (novo), `schema/vendas.ts`, `schema/caixa.ts`, `schema/pessoas.ts`,
   `apps/api/drizzle/empresa/0030_fase3_promocoes_orcamentos.sql` (drizzle-kit).

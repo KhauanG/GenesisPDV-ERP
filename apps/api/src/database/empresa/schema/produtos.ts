@@ -2,7 +2,7 @@
  * MD 3.6 – produtos e cadastros do catálogo (fluxo `catalogo` do pull): marcas, categorias, produtos, códigos de barras
  * (embalagem/fardo com fator e preço), variações, combo/kit e ficha técnica (posições e alternativas), preços por
  * quantidade, grupos de preço por quantidade (mix), dados por loja e por UF, lotes, fornecedores, imagens, histórico de
- * preços e restrições de horário de venda.
+ * preços, restrições de horário de venda e as promoções (MD 3.6.11, Fase 3).
  *
  * Índices únicos com `nulls not distinct`, as restrições `exclude using gist` (faixas sem sobreposição), os triggers de
  * versão, de coluna de filtro imutável, de EAN único e de composição sem ciclo ficam na migração customizada.
@@ -16,6 +16,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -1125,5 +1126,106 @@ export const restricoesHorarioVenda = pgTable(
       sql`dias_semana is null or (cardinality(dias_semana) between 1 and 7 and dias_semana <@ '{0,1,2,3,4,5,6}'::smallint[])`,
     ),
     check('ck_restricoes_horario_venda_horario', sql`hora_inicio <> hora_fim`),
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------------------------
+// Promoções (MD 3.6.11; ERP 8.8; PDV 11.4; Fase 3, F3-B2; migração 0030; README da API › decisão 221). Cadastro do
+// ERP (F3-B34) que desce a todos os caixas no fluxo `catalogo` (todas as linhas: o PDV filtra `lojas`, vigência e
+// `ativo`), aplicado pelo motor do PDV (F3-B35, B36). Até o fluxo entrar (F3-B7) as duas ficam em
+// `TABELAS_FN_VERSAO_SEM_FLUXO`; os triggers de versão, a autoria e a exclusão física proibida ficam na migração.
+
+/** D78: leve-pague, % no item (com faixas), preço fixo em horário e % por forma primeiro; o combo depois. */
+export const TIPOS_PROMOCAO = [
+  'leve_pague',
+  'combo',
+  'desconto_pct_item',
+  'preco_fixo',
+  'forma_pagamento',
+] as const;
+export const PAPEIS_ITEM_PROMOCAO = ['gatilho', 'brinde'] as const;
+
+/**
+ * C (↓): a promoção. `parametros` depende do `tipo` (ex.: `{leve: 3, pague: 2}`, `{pct: "10.0000"}`,
+ * `{faixas: [{qtd, pct}]}`, `{preco: "29.90"}`, `{forma_pagamento_id, pct}`); o formato de cada tipo é do contrato do
+ * shared (F3-B34), aqui só o objeto. `lojas` nulo = todas; `dias_semana` nulo = todos (0 = domingo). Só inativação: o
+ * caixa offline pode ter na venda o `promocao_id` (sem FK em `itens_venda`, padrões da Fase 3) de uma promoção que a
+ * nuvem precisa continuar conhecendo, então a exclusão física é recusada (`fn_exclusao_fisica_proibida`, 0028).
+ * `acumulativa` fica guardada para depois (D79: uma promoção por item, vale a de maior desconto).
+ */
+export const promocoes = pgTable(
+  'promocoes',
+  {
+    ...colunasPadrao(),
+    ...colunasAutoria(),
+    nome: varchar('nome', { length: 60 }).notNull(),
+    tipo: varchar('tipo', { length: 18 }).notNull(),
+    parametros: jsonb('parametros')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    inicio: timestamptz('inicio'),
+    fim: timestamptz('fim'),
+    diasSemana: smallint('dias_semana').array(),
+    horaInicio: time('hora_inicio'),
+    horaFim: time('hora_fim'),
+    lojas: uuid('lojas').array(),
+    prioridade: smallint('prioridade').notNull().default(0),
+    acumulativa: boolean('acumulativa').notNull().default(false),
+    ativo: boolean('ativo').notNull().default(true),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_promocoes', columns: [t.id] }),
+    index('ix_promocoes_vigencia')
+      .on(t.inicio, t.fim)
+      .where(sql`ativo and excluido_em is null`),
+    check('ck_promocoes_tipo', sql`tipo in (${listaSql(TIPOS_PROMOCAO)})`),
+    check('ck_promocoes_parametros', sql`jsonb_typeof(parametros) = 'object'`),
+    check('ck_promocoes_vigencia', sql`fim is null or inicio is null or fim > inicio`),
+    check('ck_promocoes_horario', sql`(hora_inicio is null) = (hora_fim is null)`),
+    check(
+      'ck_promocoes_dias_semana',
+      sql`dias_semana is null or (cardinality(dias_semana) between 1 and 7 and dias_semana <@ '{0,1,2,3,4,5,6}'::smallint[])`,
+    ),
+    check('ck_promocoes_lojas', sql`lojas is null or cardinality(lojas) >= 1`),
+  ],
+);
+
+/**
+ * C (↓): gatilhos e brindes da promoção, por produto ou por categoria (a categoria inclui as subcategorias, padrões da
+ * Fase 3). Desce com a promoção, sem filtro.
+ */
+export const promocoesItens = pgTable(
+  'promocoes_itens',
+  {
+    ...colunasPadrao(),
+    promocaoId: uuid('promocao_id').notNull(),
+    produtoId: uuid('produto_id'),
+    categoriaId: uuid('categoria_id'),
+    quantidade: quantidade('quantidade').notNull().default('1'),
+    papel: varchar('papel', { length: 8 }).notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_promocoes_itens', columns: [t.id] }),
+    foreignKey({
+      name: 'fk_promocoes_itens_promocao_id',
+      columns: [t.promocaoId],
+      foreignColumns: [promocoes.id],
+    }),
+    foreignKey({
+      name: 'fk_promocoes_itens_produto_id',
+      columns: [t.produtoId],
+      foreignColumns: [produtos.id],
+    }),
+    foreignKey({
+      name: 'fk_promocoes_itens_categoria_id',
+      columns: [t.categoriaId],
+      foreignColumns: [categorias.id],
+    }),
+    index('ix_promocoes_itens_promocao_id').on(t.promocaoId),
+    index('ix_promocoes_itens_produto_id').on(t.produtoId),
+    index('ix_promocoes_itens_categoria_id').on(t.categoriaId),
+    check('ck_promocoes_itens_alvo', sql`(produto_id is null) <> (categoria_id is null)`),
+    check('ck_promocoes_itens_papel', sql`papel in (${listaSql(PAPEIS_ITEM_PROMOCAO)})`),
+    check('ck_promocoes_itens_quantidade', sql`quantidade > 0`),
   ],
 );

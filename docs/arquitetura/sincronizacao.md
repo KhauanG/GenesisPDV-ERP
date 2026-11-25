@@ -4058,10 +4058,12 @@ desce ao PDV. Só o saldo desce.
 Hoje `vendas` não desce ao PDV (modelo 6.2). Mas três coisas mudam uma venda do terminal fora dele: cancelamento pelo
 ERP, devolução registrada em **outro** caixa (troca de venda de outro caixa, PDV 30.1) e status fiscal resolvido pela
 nuvem. Para a Gestão de vendas (F12) não oferecer cancelar/trocar algo já cancelado/devolvido, o fluxo `operacao`
-inclui a projeção **`vendas_status_pdv`** (modelo 3.11.9): uma linha por venda do terminal T alterada por origem que
-não seja o próprio T (ERP, evento de outro terminal, tarefa fiscal), gravada na mesma transação da alteração, com
-`id` (= `vendas.id`), `terminal_id`, `status`, `status_fiscal`, `devolucao`, `cancelada_em`, `cancelamento_origem` e
-`versao`; desce com filtro `terminal_id = T` e `atualizado_em > now() − interval '90 days'`. No PDV ela é um espelho
+inclui a projeção **`vendas_status_pdv`** (modelo 3.11.9): uma linha por venda do caixa de T alterada por origem que
+não seja o terminal que a criou (ERP, evento de outro terminal, tarefa fiscal), gravada na mesma transação da
+alteração, com `id` (= `vendas.id`), `caixa_id`, `terminal_id` (o terminal que criou a venda), `status`,
+`status_fiscal`, `devolucao`, `cancelada_em`, `cancelamento_origem` e `versao`; desce pelo **caixa** da venda (`caixa_id` = caixa de T, imutável) e
+`atualizado_em > now() − interval '90 days'`, para o terminal que substituiu outro no mesmo caixa receber o status das
+vendas antigas (tabela criada na migração 0030, F3-B2; o fluxo é do F3-B7). No PDV ela é um espelho
 com o mesmo nome: a Gestão de vendas lê `vendas` local com `left join vendas_status_pdv` e, quando há linha, as
 colunas da projeção prevalecem. O PDV **nunca** regrava a própria `vendas` com esses valores (a tabela de movimento
 continua imutável localmente). Além disso, operações destrutivas sobre venda
@@ -4884,7 +4886,7 @@ este arquivo primeiro"). Itens aplicados ficam na tabela só para rastreabilidad
 | M10 | 2.3 `empresas` | "`status <> 'ativa'` → `EMPRESA_SUSPENSA` (ERP e sync do PDV)": restringir a pull/heartbeat; push aceito em `suspensa` (20.6) | Aplicado |
 | M11 | 3.11.3 `itens_venda` | A ficha técnica vendida precisa de snapshot para a baixa: hoje só no payload (`componentes_estoque`); avaliar coluna `componentes_estoque jsonb` para auditoria. O combo (kit) não precisa: desde 30/10/2026 os componentes escolhidos são linhas de `itens_venda` (`kit_componente_id`, `kit_alternativa_id`) | Em aberto: avaliação (hoje o snapshot fica só no payload `componentes_estoque`) |
 | M12 | 3.9.4 `contas_financeiras` | Decidido: **não** há pessoa "CONSUMIDOR FINAL" no seed (7.12); venda `por_venda` sem cliente gera `contas_financeiras` com `pessoa_id` nulo, exibida como "Consumidor final" (10.2) | Aplicado |
-| M13 | 3.11.9 `vendas_status_pdv` | Projeção de status das vendas do terminal alteradas fora dele (16.3) no fluxo `operacao`; no PDV é espelho lido com `left join`, sem regravar `vendas` | Aplicado |
+| M13 | 3.11.9 `vendas_status_pdv` | Projeção de status das vendas do caixa alteradas fora do terminal de origem (16.3; `terminal_id` = terminal que criou a venda) no fluxo `operacao`; no PDV é espelho lido com `left join`, sem regravar `vendas` | Aplicado |
 | M14 | 3.14.1 `documentos_fiscais` | Valor `a_verificar` em `ck_documentos_fiscais_status` e coluna `chave_substituta varchar(44)` (tpEmis=1 sem resposta substituída em contingência, PDV 18.4, 9.11); `pagamentos_venda.transferido_de_id uuid` (3.11.4, reemissão como nova venda, 9.9) | Aplicado |
 | M15 | 1.5 | Recomendar que serviços do ERP que gravam tabelas sincronizáveis peguem a trava de ordenação no início da transação (`fn_trava_versao()`), para evitar deadlock com a aplicação de eventos (8.3) | Aplicado |
 | M16 | 3.1.2 catálogo | Chave nova `pdv.permite_pin_curto` (4.3); permissão nova `pdv.vale.emitir` (9.17) | Aplicado (chave no modelo 3.1.2; permissão no catálogo de permissões do PDV) |

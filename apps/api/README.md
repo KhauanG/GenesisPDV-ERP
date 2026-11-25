@@ -7495,6 +7495,66 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        únicas; a imutabilidade e a exclusão proibida; o item da venda fechada e o do rascunho), o
        `test:sync-triggers`, o `versionamento` e a numeração do caixa 0 no `estrutura`, nos PostgreSQL 16 e 18.
 
+221. **Esquema da nuvem 2 da Fase 3: promoções, orçamentos, a projeção de status e a conferência do fechamento**
+     (F3-B2; plano `docs/planos/fase3-plano.md`; MD 3.6.11, 3.11.1, 3.11.9, 3.12.4, 3.5.6, 3.1.3; SYNC 16.3; D78,
+     D79, D114, D116, D118; migração `0030_fase3_promocoes_orcamentos`; `schema/produtos.ts`, `schema/orcamentos.ts`
+     (novo), `schema/vendas.ts`, `schema/caixa.ts`, `schema/estoque.ts`). Só o esquema: o cadastro de promoções é do
+     F3-B34, os orçamentos do F3-B60 em diante, o `registrarStatusPdv` do F3-B10, a conferência do F3-B9, o comodato
+     do F3-B39, e os fluxos que levam promoções, orçamentos e a projeção ao caixa, do F3-B7. Escolhas técnicas, sem
+     pergunta ao dono:
+     - **Tabelas.** `promocoes` (C, ↓; `parametros` só como objeto, o formato por tipo fica no contrato do shared do
+       F3-B34; os cinco tipos da MD, com o combo guardado para depois pela D78; `acumulativa` guardada pela D79),
+       `promocoes_itens` (alvo produto **ou** categoria), `orcamentos` (`seq_codigo_orcamentos`, `valido_ate`
+       `generated always as (data + dias_validade) stored`, a reserva `reservado_terminal_id`/`reservado_ate`
+       sempre junta), `itens_orcamento`, `vendas_status_pdv` (P, ↓ caixa), `conferencias_caixa` (uma por fechamento,
+       `uq_conferencias_caixa_fechamento`: refazer pela D114 altera a mesma linha) e `conferencias_caixa_formas`.
+       CHECKs da MD mais os que a descrição dela já implicava (`ck_promocoes_parametros`, `ck_promocoes_dias_semana`
+       como o de `restricoes_horario_venda`, `ck_promocoes_lojas`, `ck_promocoes_itens_quantidade`,
+       `ck_orcamentos_valores`, `ck_orcamentos_origem` e `ck_orcamentos_origem_terminal` (orçamento do caixa com o
+       terminal, D118), `ck_orcamentos_convertido`, `ck_orcamentos_reserva`, `ck_itens_orcamento_valores`, os da
+       projeção com as listas de `vendas`, `ck_conferencias_caixa_situacao` e `ck_conferencias_caixa_formas_valor`).
+     - **`vendas_status_pdv` pelo caixa.** Além do MD original (filtro `terminal_id`), a projeção tem `caixa_id`
+       (o da venda), e o pull do F3-B7 vai filtrar por ele: o terminal que substituiu outro no mesmo caixa recebe o
+       status das vendas antigas (padrões da Fase 3). As duas colunas são imutáveis (`fn_filtro_imutavel`, MD 6.4
+       regra 2), `ix_vendas_status_pdv_caixa_id_versao` serve ao pull e o `id` é o da venda (PK e FK, sem default:
+       a nuvem sempre grava a projeção junto da mudança na venda). MD 3.11.9, 6.2 e 6.4 e SYNC 16.3 corrigidas.
+     - **FKs.** Para cadastro (loja, pessoa, usuário, terminal, produto, variação, categoria, caixa, forma, fechamento)
+       e `orcamentos.venda_id` (gravada pela própria nuvem ao aplicar a venda da conversão). **Sem FK nova** nas
+       colunas que o PDV envia (`vendas.orcamento_id`, `itens_venda.promocao_id` e `item_orcamento_id`, além do
+       `pagamentos_venda.vale_id` da decisão 220), conferido pelo teste **pela coluna** (`pg_constraint` com
+       `pg_attribute`), não pelo nome da constraint, para uma FK com outro nome também falhar; a MD 3.11.2 diz o
+       mesmo. `conferencias_caixa.conta_financeira_id` sem FK até `contas_financeiras` (Fase 4).
+     - **Versão.** As cinco que vão descer (`promocoes`, `promocoes_itens`, `orcamentos`, `itens_orcamento`,
+       `vendas_status_pdv`) já nascem com `fn_versao` e `ix_<tabela>_versao`, em `TABELAS_FN_VERSAO_SEM_FLUXO` até o
+       F3-B7 (o `test:sync-triggers` confere o trigger, o índice e que nenhuma está num fluxo); `valido_ate` é gerada,
+       então entra em `COLUNAS_ISENTAS_VERSAO` (`fn_versao('valido_ate')`; o `versionamento` confere). A conferência
+       não sai da nuvem: `fn_versao_local`. Autoria (AU) em `promocoes`, `orcamentos` e `conferencias_caixa`.
+     - **Exclusão física proibida** (`fn_exclusao_fisica_proibida` da 0028, `DELETE` e `TRUNCATE`) em `promocoes`,
+       como o plano pede, e também em `promocoes_itens`, `orcamentos` e `itens_orcamento`, pelo mesmo motivo: o caixa
+       offline pode ter na venda o `promocao_id`, o `orcamento_id` ou o `item_orcamento_id` (sem FK) de uma linha que
+       a nuvem precisa continuar conhecendo, e a linha que desce só sai do caixa como tombstone (MD 6.4 regra 4).
+       `loja_id` do orçamento imutável (`tg_orcamentos_filtro_imutavel`).
+     - **Comodato comutativo.** Sai o `ck_saldos_vasilhame_pessoas_quantidade` (`quantidade >= 0`): o saldo é a soma
+       dos movimentos na ordem em que chegam e pode ficar negativo por um tempo, com o alerta
+       `VASILHAME_COMODATO_NEGATIVO` (o handler é do F3-B39, que corrige também o texto da SYNC 9.26, hoje "aplica até
+       zerar"). O gerador leva o CHECK ao `Esquema.g.cs` (o espelho perde a linha), mas o PDV **não** cria CHECK da
+       nuvem nos espelhos (só os próprios, `criado_localmente` e o formato do `id`; o `EsquemaNuvemTests` compara os
+       CHECKs só das tabelas de movimento), então não há migração EF nem mudança no caixa instalado: a mudança não
+       precisa esperar a `FaseTres` (F3-B7).
+     - **Template padrão.** O `uq_templates_documentos_padrao` do MD 3.1.3 **já existe desde a 0002** (SQL
+       customizado, por isso fora do snapshot do drizzle-kit), com a mesma definição. O plano partiu de uma leitura que
+       não o viu: nenhum banco pode ter dois "padrão" do mesmo tipo e loja, então não há o que desmarcar nem
+       auditoria a gravar, e a 0030 não toca nele. O teste confere a definição do índice e o efeito (o segundo padrão
+       da mesma loja, ou de "todas", é recusado; o de outra loja convive; o excluído deixa de contar).
+     - **Compatibilidade.** Nenhuma tabela nova num fluxo nem em `TABELAS_MOVIMENTO_PDV` e nenhuma coluna nova nas
+       tabelas de movimento: o PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) não vê diferença. Nenhum dado existente muda.
+     - **Testes.** `test/integracao/migracao-promocoes-orcamentos.test.ts` (a empresa nova e a existente com a mesma
+       estrutura; a existente, com venda, sessão fechada com fechamento, cliente com cascos em comodato e os templates
+       do seed, sem nenhuma linha diferente depois; um caso inválido por CHECK; o comodato negativo aceito; os filtros
+       imutáveis; a exclusão física proibida; a coluna gerada e a versão; as chaves únicas; o template padrão), o
+       `test:sync-triggers`, o `versionamento` e a autoria do `cadastros-fase1`, nos PostgreSQL 16 e 18.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio
