@@ -164,3 +164,21 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
 - **Teste:** o `testar-local.sh` passa inteiro, sem ajuste, com o limite final; o pico medido fica registrado no
   comentário do compose e no README da produção.
 - **Pronto:** ensaio `testar-local.sh --sem-actions` verde no repositório como está.
+
+### OP-B6 — `--acompanhar` sem perder o fim da saída (correção da CI da `main`)
+
+- **Por quê:** na CI da `main` depois do merge do PR-16 (25/11/2026), o passo "Implantação sem o Actions (testes de
+  unidade)" falhou no cenário "Fora do terminal": o `--acompanhar` mostrou a implantação até a etapa 6 e saiu sem o
+  resumo ("Versão: … no ar."), embora a implantação tenha terminado. Na sessão o teste passa (6 rodadas seguidas). O
+  `--acompanhar` e o `desacoplar` dependem do `tail -f --pid`, que pode encerrar sem ler o que foi escrito no log
+  pouco antes de o processo da implantação sair (corrida entre a última escrita e a conferência do pid). O código de
+  saída já vinha certo (o `wait`); só a saída mostrada no terminal ficava cortada.
+- **Objetivo:** trocar o `tail -f --pid` por um acompanhamento que **sempre** mostra o log inteiro: confere se o
+  processo ainda vive **antes** de ler o que falta, e lê uma última vez depois de ele sair (inclusive o processo filho
+  já terminado e ainda não recolhido pelo bash — zumbi — conta como terminado). Vale para o `desacoplar` e para o
+  `--acompanhar`; o Ctrl+C continua só parando de mostrar. Procure o mesmo padrão no `vigia-implantacao.sh` e nos
+  outros scripts de `infra/producao` e `scripts/`.
+- **Teste:** um teste que reproduz a corrida de forma determinística (o processo escreve as últimas linhas e sai logo
+  em seguida, repetido muitas vezes, ou com um dublê de `kill`/`tail` que force a ordem ruim) e falha com o código
+  antigo; o cenário "Fora do terminal" continua verde; shellcheck.
+- **Pronto:** testes verdes; o README da produção e a decisão 215 do README da API atualizados.
