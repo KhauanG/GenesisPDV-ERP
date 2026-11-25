@@ -314,6 +314,14 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
   e, antes, desliga o workflow "PDV release" pela aba Actions (a D71, feita pelo dono porque a sessão também não
   consegue). O vigia publica o release na página de download (D119). Bloco OP-B8.
 
+- **D121 — o vigia aplica sozinho até as mudanças do próprio agendamento (25/11/2026, "1A"):** o dono perguntou se,
+  liberando o SSH, a sessão deixaria tudo automático, inclusive o comando de reinstalar o vigia. Não dá: a rede da
+  sessão só sai pela web (a porta 22 está fechada), não há onde guardar uma chave SSH com segurança (e a chave nunca
+  vem pelo chat) e o conector da Hostinger não roda comandos. Decisão (A), a recomendada: o dono reinstala o vigia uma
+  única vez, depois do merge do PR-16b, e o vigia passa a se atualizar por inteiro a cada implantação "ok" (o
+  programa, que já se atualizava, e também a unidade e o timer do systemd e o resto da instalação, conferidos antes de
+  trocar), para o dono não precisar mais rodar comando na VPS por causa do vigia. Bloco OP-B9. Sem SSH para a sessão.
+
 ## Fase 3 — perguntas F3-Q1 a F3-Q48 (25/11/2026)
 
 - **RESPONDIDAS (25/11/2026):** "Sobre as perguntas, faça tudo pelo que você recomendou." Todas seguem a recomendação

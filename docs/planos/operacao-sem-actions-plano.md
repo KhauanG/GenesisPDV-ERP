@@ -236,3 +236,27 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
   para quando a sessão tiver escrita no GitHub (aviso claro quando a escrita é recusada pela rede da sessão).
 - **Teste:** com dublês, as recusas do preparo (fora da `main`, versão errada, sem conferência) e o conteúdo da pasta.
 - **Pronto:** teste verde; o roteiro no README do PDV; CONTRIBUTING.md e CLAUDE.md apontam para ele.
+
+### OP-B9 — O vigia se atualiza por inteiro a cada implantação (D121)
+
+- **Objetivo:** depois da reinstalação do dono no PR-16b, nenhuma mudança do vigia volta a pedir comando na VPS.
+  Hoje, depois de uma implantação "ok", o vigia só troca o próprio `vigia-implantacao.sh` pelo do commit implantado;
+  a unidade e o timer do systemd (`genesis-vigia.service`, `genesis-vigia.timer`) e o resto do que o
+  `instalar-vigia.sh` prepara (a cópia do `implantar-sem-actions.sh`, a janela, a pasta pública do estado) só mudam
+  quando o dono reinstala. Passa a ser assim: depois do "ok", o vigia roda a atualização do commit implantado (por
+  exemplo, `instalar-vigia.sh --autoatualizar` daquele commit, fora do terminal, sem a etapa que dá os pedidos
+  antigos por vistos e sem mexer nos tratados nem na janela que existe), que troca só o que mudou, por rename, e faz o
+  `daemon-reload`. Regras: a unidade e o timer novos só entram depois de conferidos (`systemd-analyze verify` e o
+  formato esperado); se a conferência ou a troca falhar, fica tudo como estava (a implantação continua "ok", o motivo
+  vai só para o `vigia.log`, nada no `estado.json`) e o vigia continua rodando no agendamento antigo; a rodada em
+  andamento termina com os arquivos antigos; um commit anterior ao OP-B9 (uma volta do dono) mantém o comportamento
+  de hoje (só o programa do vigia, como antes) e não desfaz a instalação; o timer não pode ficar desligado nem
+  duplicado depois da troca. O `instalar-vigia.sh` à mão continua valendo (primeira instalação, `--estado`,
+  `--desligar`).
+- **Teste:** com dublês (o systemd e o git locais, como no `testar-vigia-implantacao.sh`): a unidade ou o timer que
+  mudam no commit implantado são trocados e recarregados; os iguais não mexem em nada; a unidade inválida é recusada
+  e a antiga fica; uma volta a um commit sem o `--autoatualizar` não quebra; o `--desligar` do dono é respeitado (o
+  vigia desligado continua desligado); nada vai ao `estado.json`.
+- **Pronto:** testes verdes; README de `infra/producao` › Vigia da implantação (a reinstalação do PR-16b é a última
+  feita à mão; quando ainda é preciso o comando: só se o vigia parou ou foi desligado), README da API › decisões,
+  CLAUDE.md; nada muda na API, no ERP, no PDV nem nas migrações.
