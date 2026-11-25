@@ -4,6 +4,8 @@ import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import {
+  ACOES_AUDITORIA,
+  ACOES_AUDITORIA_FASE3,
   ACOES_AUDITORIA_SO_SERVIDOR,
   ehAcaoAuditoria,
   ehAcaoAuditoriaSoServidor,
@@ -271,6 +273,18 @@ describe('fixtures do protocolo de sincronização', () => {
     expect(
       ehAcaoAuditoria(payloadAuditoriaRegistrosSchema.parse(comAcaoForaDoCatalogo).registros[0]!.acao),
     ).toBe(false);
+    // Fase 3 (F3-B3): as ações novas do caixa já são aceitas pela nuvem, antes de qualquer PDV que as grave, e nenhuma
+    // é reservada ao servidor (o push recusaria o lote do caixa que a trouxesse).
+    for (const a of ACOES_AUDITORIA_FASE3) {
+      expect(ehAcaoAuditoria(a), a).toBe(true);
+      expect(ehAcaoAuditoriaSoServidor(a), a).toBe(false);
+      expect(a.length, a).toBeLessThanOrEqual(40);
+      expect(
+        payloadAuditoriaRegistrosSchema.safeParse({ registros: [{ ...p.registros[0], acao: a }] }).success,
+        a,
+      ).toBe(true);
+    }
+    expect(new Set(ACOES_AUDITORIA).size).toBe(ACOES_AUDITORIA.length);
     const motivoInventado = { logins: [{ ...p.logins[0], motivo_falha: 'motivo_inventado' }] };
     expect(payloadAuditoriaRegistrosSchema.safeParse(motivoInventado).success).toBe(false);
   });

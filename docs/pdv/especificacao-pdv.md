@@ -1504,8 +1504,9 @@ vale ficam na PDV-2.
      faltantes`, ao preço do casco, `vasilhame_item_origem_id` = item cheio. É venda de mercadoria: entra na NFC-e com
      o NCM do casco e CFOP 5102 (validar com o contador).
    - [PDV-2] `faltantes > 0`, cliente identificado e `pdv.vasilhame_comodato = true` (nova chave, padrão `false`) → o operador
-     pode escolher "Emprestar cascos": nenhum item fiscal; imprime o comprovante não fiscal **"Termo de empréstimo de
-     vasilhame"** em 2 vias (cliente, quantidade, casco, valor de referência, assinatura); o saldo vai para
+     com `pdv.vasilhame.comodato` (D84) pode escolher "Emprestar cascos" (acima de
+     `pdv.vasilhame_comodato_max_por_cliente`, padrão 6 cascos de saldo do cliente, o supervisor libera): nenhum item fiscal;
+     imprime o comprovante não fiscal **"Termo de empréstimo de vasilhame"** em 2 vias (cliente, quantidade, casco, valor de referência, assinatura); o saldo vai para
      `saldos_vasilhame_pessoas`.
    - `faltantes < 0` (trouxe mais cascos) → os excedentes são tratados como devolução avulsa (abaixo).
 3. Cancelar o item cheio cancela o item de casco vinculado; alterar a quantidade do item cheio pergunta de novo os
@@ -3940,6 +3941,7 @@ Legenda: ✔ tem; L = pede liberação de supervisor; — não tem.
 | `pdv.troca.fora_prazo` | Troca fora do prazo / sem venda de origem | L | L | ✔ | PDV-2 |
 | `pdv.troca.devolver_dinheiro` | Devolver em dinheiro | L | L | ✔ | PDV-2 |
 | `pdv.vale.emitir` | Emissão avulsa de vale (`vale.emitido`, sincronizacao.md 9.17) | L | ✔ | ✔ | PDV-2 |
+| `pdv.vasilhame.comodato` | Emprestar cascos em comodato (10.12; D84) até `pdv.vasilhame_comodato_max_por_cliente`; acima, o supervisor libera (liberação `comodato`) | ✔ | ✔ | ✔ | PDV-2 |
 | `pdv.documento.reimprimir` | Reimprimir documentos | ✔ | ✔ | ✔ | PDV-1 |
 | `pdv.gaveta.abrir_avulsa` | Abrir gaveta sem venda | L | ✔ | ✔ | PDV-1 |
 | `pdv.cliente.cadastro_rapido` | Cadastro rápido de cliente | ✔ | ✔ | ✔ | PDV-2 |
@@ -3967,7 +3969,9 @@ Legenda: ✔ tem; L = pede liberação de supervisor; — não tem.
 gerente. Tem a coluna **Supervisor** (as "L" dela continuam "L" para ele) **mais o cancelamento da venda paga**
 (`pdv.venda.cancelar_venda_finalizada`; resposta do dono de 05/11/2026, diferente do Supervisor de caixa): cancela
 sozinho, ou libera com o PIN, a venda paga **da sessão de caixa aberta** — a de caixa fechado continua sem cancelamento
-no PDV (D23, abaixo). Nada de `pdv.config.*` nem `pdv.auditoria.ver_local`.
+no PDV (D23, abaixo). Pela D91 (F3-B3), também **devolve dinheiro** na troca e no resgate do vale
+(`pdv.troca.devolver_dinheiro`), que o Supervisor de caixa continua pedindo. Nada de `pdv.config.*` nem
+`pdv.auditoria.ver_local`.
 O Painel de saúde e o Sobre da Central valem para quem tem `pdv.acesso.entrar` (PC-7). Não há permissão para cancelar
 venda de caixa já fechado (D23: só pelo ERP, na Fase 3).
 

@@ -3162,7 +3162,10 @@ revogação `terminal_revogado`, `token_anterior_reutilizado`, as decisões da f
 `evento_reprocessado`, `lacuna_substituida` e as alterações feitas só no ERP), recusa o evento (`PAYLOAD_INVALIDO`,
 com as ações em `detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria
 como estado do servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do
-10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal.
+10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal. As ações que o caixa da Fase 3
+vai gravar (`ACOES_AUDITORIA_FASE3`: preço alterado, F8, acréscimo, lote vencido, peso digitado, venda suspensa e
+recuperada, limite de valor, comodato) entram no catálogo da nuvem **antes** do PDV que as grava (F3-B3), e o caixa
+só as envia com o recurso da onda disponível (17.5).
 
 ### 9.23 `terminal.configuracao_alterada`
 

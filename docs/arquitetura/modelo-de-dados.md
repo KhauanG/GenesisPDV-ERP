@@ -851,6 +851,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.taxa_servico_no_documento_fiscal` | bool | `false` | S | S | Novo (PDV 25.3): `false` = a taxa de serviço (gorjeta, Lei 13.419/2017) fica fora do rateio/`vOutro` e do `vNF`; a parte dos pagamentos que a cobre vai em `pagamentos_venda.valor_taxa_servico` e a nuvem a lança como passivo `gorjetas_a_repassar` (7.5). `true` = rateada em `acrescimo_rateado` e incluída no `vNF` |
 | `pdv.confirmacao_idade` | `por_venda`/`por_item`/`desligado` | `desligado` (O20 do dono, roadmap D36) | S | S | Novo (PDV 10.11): frequência do modal de confirmação de idade para produtos com `idade_minima` |
 | `pdv.vasilhame_comodato` | bool | `false` | S | S | Novo (PDV 10.12): permite "Emprestar cascos" (comodato) a cliente identificado em vez de cobrar o casco faltante |
+| `pdv.vasilhame_comodato_max_por_cliente` | inteiro 0–9999 | `6` | S | S | Novo (PDV 10.12; F3-B3; D84): saldo de cascos em comodato do cliente, depois do empréstimo, que quem tem `pdv.vasilhame.comodato` empresta sem o supervisor; acima, liberação `comodato`; `0` = todo empréstimo pede o supervisor |
 | `pdv.cancelamento_devolve_vazios` | bool | `true` | S | S | Novo (PDV 13.3; sincronizacao.md 10.4; decisão do dono, D29): no cancelamento da venda finalizada o caixa devolve ao cliente os vazios que ele trouxe e a nuvem estorna a entrada deles (`ESTORNO_VASILHAME_DEVOLVIDO`); `false` = os vazios ficam na loja |
 | `pdv.pix_manual_exige_supervisor` | bool | `true` | S | S | Novo (PDV 16.7): a confirmação manual de PIX sempre pede liberação de supervisor |
 | `pdv.desconto_cascos_max_sem_supervisor` | dinheiro | `50.00` | S | S | Novo (PDV 10.12; Fase 1C, C11c; roadmap D38, decidida pelo dono): crédito dos cascos descontados na venda (F11 › V) que o operador dá sem o supervisor; acima, a liberação vira `desconto_cascos` em `liberacoes`; `0` = sem teto (só a permissão `pdv.venda.desconto_total`) |
@@ -868,6 +869,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.crediario_exige_senha_cliente` | bool | `false` | S | S | Novo |
 | `pdv.vale_exige_online` | bool | `false` | S | S | Novo |
 | `pdv.vale_exige_cliente_acima` | dinheiro | `0.00` | S | S | Novo (0 = nunca) |
+| `pdv.vale_exige_conferencia` | bool | `true` | S | S | Novo (F3-B3; D96): o vale sai com um código de conferência de 4 dígitos (a nuvem guarda só o resumo, `vales.conferencia_hash`) e o uso pede os 4 dígitos além do código lido |
 | `pdv.troca_kit_parcial` | bool | `false` | S | S | Novo |
 | `pdv.devolucao_emite_nfe_entrada` | bool | `false` | S | S | Novo |
 | `pdv.delivery_emite_nota_na_saida` | bool | `true` | S | S | Novo |
@@ -5391,11 +5393,11 @@ PDV (31.2). Chaves `pdv.*` no formato `pdv.<area>.<acao>` (ex.: `pdv.caixa.sangr
 | `administrador` | Administrador | Tudo, exceto ser Master |
 | `gerente` | Gerente | Cadastros (sem usuários e configurações fiscais), estoque, vendas, relatórios, conferência de caixa; no PDV, todas as permissões da coluna "Gerente" do PDV 31.2 |
 | `financeiro` | Financeiro | Financeiro completo, relatórios financeiros, download de XML, consulta de vendas |
-| `estoquista` | Estoquista | Produtos (sem preço), acertos, recebimentos, NF-e de entrada, transferências, relatórios de estoque |
+| `estoquista` | Estoquista | Produtos (sem preço), promoções (ver, criar e editar, como quem edita produtos; F3-B3), acertos, recebimentos, NF-e de entrada, transferências, relatórios de estoque |
 | `vendedor` | Vendedor | Orçamentos, vendas ERP, consulta de produtos e pessoas, relatório de comissão próprio |
 | `operador_caixa` | Operador de caixa | Só PDV: coluna "Operador" do PDV 31.2 (✔) |
 | `supervisor_caixa` | Supervisor de caixa | Operador + coluna "Supervisor" do PDV 31.2, incluindo `pdv.supervisor` |
-| `encarregado` | Encarregado | Só PDV: as permissões do Supervisor de caixa mais cancelar a venda paga do caixa aberto (quem libera na loja sem gerente; dono, 05/11/2026; PDV 31.2) |
+| `encarregado` | Encarregado | Só PDV: as permissões do Supervisor de caixa mais cancelar a venda paga do caixa aberto e devolver dinheiro na troca e no resgate do vale (`pdv.troca.devolver_dinheiro`, D91) (quem libera na loja sem gerente; dono, 05/11/2026; PDV 31.2) |
 
 ### 7.10 `unidades_medida`
 

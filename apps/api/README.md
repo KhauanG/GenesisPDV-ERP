@@ -7555,6 +7555,80 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        imutáveis; a exclusão física proibida; a coluna gerada e a versão; as chaves únicas; o template padrão), o
        `test:sync-triggers`, o `versionamento` e a autoria do `cadastros-fase1`, nos PostgreSQL 16 e 18.
 
+222. **Permissões, perfis, chaves e ações de auditoria da Fase 3** (F3-B3; plano `docs/planos/fase3-plano.md`; ERP 8.8,
+     11.3, 11.4; PDV 10.12, 31.2; D84, D91, D96, D102; migração de dados `0031_fase3_permissoes`;
+     `packages/shared/src/{permissoes,perfis-padrao,configuracoes,enums}.ts`, `sync/eventos.ts`). Só catálogo e dados:
+     nenhuma tela nem regra de caixa nova (o cadastro de promoções é do F3-B34, o comodato do F3-B39/B40, a troca e o
+     vale dos F3-B41 a B48, a baixa interna do F3-B52). Escolhas técnicas, sem pergunta ao dono:
+     - **Catálogo.** `promocoes.ver/criar/editar/excluir` no grupo Produtos (como o ERP 11.4) e
+       `pdv.vasilhame.comodato` no grupo "PDV – Venda", com liberação. O menu de Promoções passa de `produtos.ver` para
+       `promocoes.ver` (README do ERP › decisão 86).
+     - **Perfis padrão (PDV 31.2 e decisões do dono).** Promoções: Administrador e Gerente com as quatro, Estoquista
+       com ver/criar/editar (quem edita produtos edita promoções, a mesma regra da migração; com "Altera preço do produto
+       no ERP" = Não, o F3-B34 aplica às promoções a mesma trava de preço do cadastro do produto). Comodato (D84, a
+       recomendação da F3-Q13 = B): no Operador de caixa e, por ele, no Supervisor e no Encarregado; o recurso nasce
+       desligado (`pdv.vasilhame_comodato` = Não), o operador empresta até `pdv.vasilhame_comodato_max_por_cliente` e o
+       supervisor libera acima (liberação `comodato`). Ler a D84 como "só o supervisor empresta" a faria igual à opção
+       (D), que o dono não escolheu. `pdv.troca.devolver_dinheiro` no Encarregado (D91: fica com o Administrador e o
+       Encarregado; o Supervisor de caixa continua pedindo a liberação; a descrição do perfil muda e a anterior entra em
+       `descricoesAnteriores`). `pdv.pagamento.consumo_interno` no Supervisor (e no Encarregado): a PDV 31.2 já dava ✔ ao
+       Supervisor e a D102 manda o supervisor liberar a baixa interna; as formas `consumo_interno` continuam inativas e
+       fora de `TiposDaFase` no caixa até o F3-B52, então nada muda na loja agora. O `permissoes.spec.ts` confere a
+       matriz das permissões que a fase usa nos perfis de caixa.
+     - **Migração 0031 (só dados).** A permissão efetiva de promoções de cada usuário passa a ser a de produtos de hoje
+       (MD 3.3.4: perfil ∪ concedidas − negadas): (1) todo perfil não excluído com `produtos.editar` ativa, personalizado
+       **ou de sistema**, ganha `promocoes.ver/criar/editar`, com uma linha `permissoes_alteradas` (origem `sistema`, o
+       antes e o incluído, como o `PUT /perfis/:id`) e `permissoes_versao` + 1 dos usuários dele; (2) o ajuste por
+       usuário de `produtos.editar` (concedida ou negada) vale também para as três, e a negada de `produtos.excluir`
+       para `promocoes.excluir`, com a auditoria do usuário. Sem o item (2), o usuário com `produtos.editar` negada num
+       perfil que a tem passaria a criar promoções; (3) o perfil de sistema que o seed completa com promoções
+       (Administrador, Gerente, Estoquista; o `permissoes.spec.ts` do shared confere a lista fixa da 0031 contra o
+       `PERFIS_PADRAO` de hoje) e de que a empresa tirou a permissão de produtos correspondente fica com a linha de
+       promoções **já excluída**, que o seed respeita como "a empresa removeu" (`aplicarSeedEmpresa` não volta linha
+       excluída). A migração põe as quatro chaves no catálogo antes (`on conflict do nothing`, com o texto e a ordem do
+       shared do F3-B3; o pós-migração acerta os dois com o shared de cada versão e recarrega o catálogo só depois das
+       migrações, e a FK `fk_perfis_permissoes_permissao` exige a chave; o teste confere os valores fixos do SQL logo
+       depois da 0031 e os do shared de hoje depois do pós-migração), pega a trava de versão primeiro
+       (`fn_trava_versao`) e garante a partição da auditoria do mês. O resto da matriz (comodato, devolução em dinheiro,
+       baixa interna) chega aos perfis de sistema pelo seed do pós-migração. Na empresa nova, a 0031 não acha perfis e
+       o seed faz tudo.
+     - **Chaves** (com o padrão da recomendação de cada pergunta, todas por loja e no PDV):
+       `pdv.vasilhame_comodato_max_por_cliente` (inteiro 0–9999, padrão 6 cascos de saldo do cliente depois do
+       empréstimo; 0 = todo empréstimo pede o supervisor) e `pdv.vale_exige_conferencia` (padrão Sim; o formato do
+       resumo é do F3-B41). A `pdv.limite_padrao_cliente_pdv` já existia. Sem tela no ERP neste bloco (Parâmetros-PDV é
+       do F3-B12): valem os padrões.
+     - **Ações de auditoria** (`ACOES_AUDITORIA_FASE3`, espalhada em `ACOES_AUDITORIA`): `preco_alterado`,
+       `tipo_preco_alterado`, `acrescimo_total`, `lote_vencido_liberado`, `peso_digitado`, `venda_suspensa`,
+       `venda_recuperada`, `limite_valor_liberado` e `comodato_emprestado`, aceitas pela API desde já (o
+       `auditoria.registros` não passa pelo T13) e nenhuma reservada ao servidor. O PDV **não** muda: o
+       `CatalogosNuvem.AcoesAuditoria` do caixa continua sem elas (o `CicloOnlineTests` confere que a lista da nuvem
+       espalha a da fase e que as duas não se cruzam), e o caixa só as envia com o recurso da onda disponível (F3-B4).
+       `venda_recuperada` é o nome que o caixa já grava **só localmente** desde a 1C (a venda interrompida por uma
+       queda): quando o PDV passar a enviá-la, sobem as duas, e o F3-B23 distingue a da venda suspensa pelo `depois`.
+       A `acao_desconhecida` (a proteção da versão futura) é do F3-B4.
+     - **Liberações** (`ACOES_LIBERACAO_FASE3`, só constantes): `limite_valor`, `consumo_interno`, `alterar_preco`,
+       `tipo_preco`, `lote_vencido`, `peso_manual`, `comodato`, `troca_fora_prazo`, `troca_dinheiro` e `vale_avulso`.
+       Ficam fora de `ACOES_LIBERACAO_VENDA` (as que o PDV já gera, conferidas com o `AcaoLiberacao` do caixa) até o
+       bloco que as gera; o campo continua texto livre, então nenhuma muda o `venda.finalizada` v1.
+     - **`COLUNAS_FORA_DO_PAYLOAD`** das tabelas da fase que sobem por evento (SYNC 9.16, 9.17, 9.19): `trocas` (o
+       `codigo` da sequência, a `origem` e o cancelamento), `itens_troca` (nada), `vales` (o cancelamento, que vem no
+       `vale.cancelado`), `movimentos_vale` (o `evento_id`), `orcamentos` (o `codigo` do resultado do push, a
+       `valido_ate` gerada, a conversão, a reserva e, como do ERP, a resposta do cliente) e `itens_orcamento` (nada). O
+       `contratos-eventos.spec.ts` confere desde já que cada coluna citada existe na tabela; a conferência completa
+       contra o contrato entra com cada evento.
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) recebe no pull as chaves, permissões e linhas novas e as ignora (permissão desconhecida no
+       caixa não libera nada; a chave sem leitor fica no espelho); nenhum evento nem `versoes_schema` muda. No PDV
+       deste branch só o `PermissoesPdv.PerfilOperador` (o operador de demonstração e os testes) ganha o comodato, para
+       continuar igual ao `PDV_OPERADOR` do shared.
+     - **Testes.** `test/integracao/migracao-permissoes-fase3.test.ts` (uma empresa de antes do F3-B3 com perfis
+       personalizados com e sem `produtos.editar`, a permissão removida, um perfil excluído, ajustes concedidos e negados
+       por usuário e perfis de sistema mexidos pela empresa: a permissão efetiva de promoções de cada usuário é a de
+       produtos de antes, nada mais muda fora da regra e da matriz, nenhuma linha sai, a auditoria e a
+       `permissoes_versao` de quem mudou, o seed reaplicado sem efeito, a descrição do Encarregado e a empresa nova
+       pelo seed), o `permissoes.spec.ts` (matriz), o `configuracoes.spec.ts`, os de contrato no shared e na API, o
+       `menu.test.ts` do ERP e o `CicloOnlineTests` do PDV.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

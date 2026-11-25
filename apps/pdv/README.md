@@ -4266,3 +4266,18 @@ reimpresso continua o original, com o número do caixa.
       nem na versão do PDV; nenhum release nem tag criados por este bloco. Na sessão de 25/11/2026, o workflow "PDV
       release" ainda estava ligado (`GET actions/workflows/pdv-release.yml`): o primeiro release pelo site começa pelo
       passo 1.
+
+95. **Permissões e ações de auditoria da Fase 3 no catálogo, sem mudar o caixa** (F3-B3; PDV 10.12 e 31.2; D84, D91,
+    D102; README da API › decisão 222). O shared ganhou `pdv.vasilhame.comodato` (no perfil do Operador e, por ele, no
+    do Supervisor e no do Encarregado), a `pdv.troca.devolver_dinheiro` no Encarregado e a
+    `pdv.pagamento.consumo_interno` no Supervisor, as chaves `pdv.vasilhame_comodato_max_por_cliente` e
+    `pdv.vale_exige_conferencia` e as ações de auditoria da fase (`ACOES_AUDITORIA_FASE3`). No PDV só muda o
+    `PermissoesPdv.PerfilOperador` (o operador de demonstração e os testes), para continuar igual ao `PDV_OPERADOR`:
+    nenhuma tela lê o comodato ainda (F3-B40). O `CatalogosNuvem.AcoesAuditoria` **não** ganha as ações novas: é a
+    lista do que o caixa envia no `auditoria.registros`, e o caixa só as envia com o recurso da onda disponível
+    (`RecursoDisponivel`, F3-B4); o `CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem` passou a conferir que a lista
+    da nuvem é a do caixa mais a da fase (espalhada) e que as duas não se cruzam, e o
+    `Permissoes_do_caixa_e_o_perfil_do_operador_sao_os_do_shared`, que o Encarregado é o Supervisor mais o cancelamento
+    da venda paga e a devolução em dinheiro. `venda_recuperada`, que o caixa já grava só localmente (a venda
+    interrompida por uma queda), é também o nome da ação da venda suspensa recuperada (F3-B23): quando o caixa passar
+    a enviá-la, sobem as duas. Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova.

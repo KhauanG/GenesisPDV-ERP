@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as caixa from '../database/empresa/schema/caixa.js';
 import * as financeiro from '../database/empresa/schema/financeiro.js';
+import * as orcamentos from '../database/empresa/schema/orcamentos.js';
+import * as trocasVales from '../database/empresa/schema/trocas-vales.js';
 import * as vendas from '../database/empresa/schema/vendas.js';
 
 /**
@@ -224,6 +226,37 @@ describe('contrato dos payloads × tabelas da nuvem', () => {
     expect([...contrato.TIPOS_COBRANCA_PIX]).toEqual([...vendas.TIPOS_COBRANCA_PIX]);
     expect([...contrato.STATUS_COBRANCA_PIX]).toEqual([...vendas.STATUS_COBRANCA_PIX]);
     expect([...contrato.TIPOS_FECHAMENTO_CAIXA]).toEqual([...caixa.TIPOS_FECHAMENTO_CAIXA]);
+  });
+
+  it('COLUNAS_FORA_DO_PAYLOAD só cita colunas que existem, inclusive nas tabelas da Fase 3 ainda sem contrato (F3-B3)', () => {
+    // As da Fase 3 (trocas, vales, orçamentos) ganham contrato nos blocos dos eventos; até lá, um nome errado aqui
+    // passaria calado, porque elas não estão em `TABELAS`.
+    const tabelas: Record<string, Table> = {
+      ...Object.fromEntries(TABELAS.map(([nome, tabela]) => [nome, tabela])),
+      trocas: trocasVales.trocas,
+      itens_troca: trocasVales.itensTroca,
+      vales: trocasVales.vales,
+      movimentos_vale: trocasVales.movimentosVale,
+      orcamentos: orcamentos.orcamentos,
+      itens_orcamento: orcamentos.itensOrcamento,
+    };
+    const inexistentes: string[] = [];
+    for (const [nome, fora] of Object.entries(
+      contrato.COLUNAS_FORA_DO_PAYLOAD as Record<
+        string,
+        { nuvem: readonly string[]; erp: readonly string[] }
+      >,
+    )) {
+      const tabela = tabelas[nome];
+      if (!tabela) {
+        inexistentes.push(nome);
+        continue;
+      }
+      const colunas = new Set(Object.values(getTableColumns(tabela)).map((c) => c.name));
+      for (const c of [...fora.nuvem, ...fora.erp])
+        if (!colunas.has(c) || PADRAO.includes(c)) inexistentes.push(`${nome}.${c}`);
+    }
+    expect(inexistentes).toEqual([]);
   });
 
   it('handler de tipo contratado valida com o schema do contrato, não com um próprio', async () => {

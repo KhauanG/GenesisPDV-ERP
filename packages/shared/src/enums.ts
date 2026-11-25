@@ -34,8 +34,34 @@ export const ORIGENS_AUDITORIA = [
 export type OrigemAuditoria = (typeof ORIGENS_AUDITORIA)[number];
 
 /**
+ * Ações de auditoria que o caixa da Fase 3 vai gravar (F3-B3; plano da Fase 3 › Padrões, "Auditoria com ação
+ * desconhecida"): entram no catálogo da nuvem **antes** de qualquer PDV que as grave, para a API já aceitá-las no
+ * `auditoria.registros` (que não passa pelo T13). O PDV publicado não as conhece (o `CatalogosNuvem.AcoesAuditoria` do
+ * caixa continua sem elas, conferido pelo `CicloOnlineTests`) e só passa a enviá-las com o recurso da onda disponível
+ * (`RecursoDisponivel`, F3-B4). `venda_recuperada` é o nome que o caixa já grava **só localmente** desde a 1C (a venda
+ * interrompida por uma queda, `ServicoVenda`): quando o PDV passar a enviá-la, sobem as duas (a da queda e a da venda
+ * suspensa do F3-B23, que a distingue pelo `depois`). README da API › decisão 222.
+ */
+export const ACOES_AUDITORIA_FASE3 = [
+  // Preço digitado ou alterado no item, e o F8 (tipo de preço da venda) (F3-B16, F3-B17).
+  'preco_alterado',
+  'tipo_preco_alterado',
+  // F6 › acréscimo no total da venda (F3-B16).
+  'acrescimo_total',
+  // Lote vencido vendido com a liberação (F3-B21) e o peso digitado com a balança ou sem ela (F3-B22).
+  'lote_vencido_liberado',
+  'peso_digitado',
+  // Venda suspensa e recuperada (F3-B23) e a venda acima de `pdv.limite_valor_venda` liberada (F3-B24).
+  'venda_suspensa',
+  'venda_recuperada',
+  'limite_valor_liberado',
+  // Cascos emprestados em comodato (F3-B40).
+  'comodato_emprestado',
+] as const;
+
+/**
  * Catálogo único das ações de `auditoria.acao` (ERP 17.1: lista aberta, sem CHECK no banco; a API e o PDV só gravam
- * ações daqui). MD 3.1.7 + ERP 17.1 + as citadas no MD 1.10 e 2.4.
+ * ações daqui). MD 3.1.7 + ERP 17.1 + as citadas no MD 1.10 e 2.4, mais as da Fase 3 (`ACOES_AUDITORIA_FASE3`).
  */
 export const ACOES_AUDITORIA = [
   'criar',
@@ -92,6 +118,7 @@ export const ACOES_AUDITORIA = [
   // Projeção do saldo (ou o `custo_medio` do produto) refeita pelo razão no `db:recalcular-saldos --corrigir` (Fase 2,
   // F2-B3): a linha de saldo em `antes`/`depois`; nunca altera movimento.
   'recalcular_saldos',
+  ...ACOES_AUDITORIA_FASE3,
 ] as const;
 export type AcaoAuditoria = (typeof ACOES_AUDITORIA)[number];
 

@@ -218,6 +218,13 @@
       "when": 1795640313070,
       "tag": "0030_fase3_promocoes_orcamentos",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1795645784719,
+      "tag": "0031_fase3_permissoes",
+      "breakpoints": true
     }
   ]
 }

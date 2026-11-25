@@ -579,6 +579,16 @@ corpo do PR-17.
 - **Testes:** perfis padrão; a migração de dados num perfil personalizado com e sem `produtos.editar`; vitest do menu.
 - **Pronto:** nenhuma permissão ampliada além da regra acima; o menu de Promoções aparece para quem já editava produtos.
 - **Depende de:** F3-B2.
+- [**Feito no F3-B3** (README da API › decisão 222): a regra da migração vale para **todo** perfil com `produtos.editar`
+  (o de sistema também, com a auditoria) e para os ajustes por usuário (concedida e negada, senão o usuário com
+  `produtos.editar` negada passaria a criar promoções); o perfil de sistema que a empresa tirou de produtos fica com a
+  linha de promoções já excluída, que o seed respeita. O Estoquista ganha ver/criar/editar pela mesma regra; como ele
+  não tem `produtos.alterar_preco`, o F3-B34 tem de aplicar às promoções a trava de preço do cadastro do produto
+  (`geral.altera_preco_produto_erp` = Não, `trava-preco.ts`; ver as entregas do F3-B34). Comodato
+  no Operador (a D84 é "até o limite, sem o supervisor"; "só o supervisor" seria a opção D) e, por ele, no Supervisor e
+  no Encarregado. `pdv.pagamento.consumo_interno` no Supervisor (✔ na PDV 31.2 e D102). As ações de auditoria entram
+  em `ACOES_AUDITORIA_FASE3`, espalhada em `ACOES_AUDITORIA`; o `CatalogosNuvem` do PDV continua sem elas até o
+  F3-B4. Constantes de liberação em `ACOES_LIBERACAO_FASE3`. A `acao_desconhecida` fica para o F3-B4.]
 
 #### F3-B4 – Upcasters, versões por tipo e a auditoria desconhecida (SYNC 17.5)
 - **Tamanho:** M · **Rigor:** completo (protocolo)
@@ -1125,11 +1135,17 @@ corpo do PR-17.
   `forma_pagamento`), dinheiro e percentual em texto decimal; API `/promocoes` com versão (409) e auditoria legível; ERP: listagem
   (Nome, Tipo, Situação, Loja) e formulário com vigência, dias da semana, horário, lojas, prioridade e a grade de gatilhos e brindes
   por produto ou categoria; no produto, a promoção vigente que o atinge; a chave das promoções nos caixas com a **trava dura** do F3-B12
-  (só liga com 0 terminais ativos abaixo da R4).
+  (só liga com 0 terminais ativos abaixo da R4). **Trava de preço (F3-B3, README da API › decisão 222):** com
+  `geral.altera_preco_produto_erp` = Não, criar ou editar promoção que mude preço (`preco_fixo`, `desconto_pct_item`,
+  `leve_pague`, `combo`, `forma_pagamento`; na prática, todos os tipos de hoje) exige `produtos.alterar_preco`, a mesma
+  regra de `apps/api/src/produtos/trava-preco.ts` e do `garantirAlterarPreco`; sem ela, o Estoquista (que ganhou
+  `promocoes.criar/editar` no F3-B3) mudaria o preço cobrado nos caixas por uma promoção, contornando a trava do
+  cadastro do produto.
 - **Arquivos:** `packages/shared/src/promocoes.ts` (novo), `apps/api/src/produtos/promocoes*.ts`,
   `apps/erp-web/src/paginas/produtos/Promocoes*.tsx`.
 - **Migrações:** nenhuma.
-- **Testes:** zod; integração do CRUD (403, loja não permitida) e do pull; vitest.
+- **Testes:** zod; integração do CRUD (403, loja não permitida), da trava de preço (com a chave = Não, o Estoquista
+  recebe 403 ao criar e ao editar a promoção; com `produtos.alterar_preco`, grava) e do pull; vitest.
 - **Pronto:** promoção cadastrada chega ao SQLite do caixa novo; os caixas antigos seguem vendendo.
 - **Depende de:** F3-B7, F3-B12.
 

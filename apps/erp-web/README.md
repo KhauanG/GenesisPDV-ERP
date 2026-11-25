@@ -1574,6 +1574,14 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     direto e o do login com o id de outro tipo de registro, as duas direções; todas as rotas `:id` da árvore com um id
     fora do formato; `useCadastro` e o formulário de usuários sem a guarda da rota; o id válido segue abrindo).
 
+86. **Menu de Promoções pela permissão própria** (Fase 3, F3-B3; ERP 8.8 e 11.4; README da API › decisão 222;
+    `src/menu.ts`). O item Produtos › Promoções (ainda "Em construção"; a tela é do F3-B34) passa de `produtos.ver` para
+    `promocoes.ver`, que entrou no catálogo. Quem já editava produtos não perde o item: a migração 0031 deu
+    `promocoes.ver/criar/editar` aos perfis com `produtos.editar` (e repetiu os ajustes por usuário), e o seed dá as
+    mesmas ao Administrador, ao Gerente e ao Estoquista. Quem só via produtos (Vendedor, perfil de consulta) deixa de ver
+    o item vazio. Testes: `src/menu.test.ts` (segue `promocoes.ver`, não `produtos.ver`; aparece nos perfis padrão que
+    editam produtos; toda permissão do menu existe no catálogo).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar
