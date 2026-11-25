@@ -242,15 +242,17 @@ confere o executável publicado).
 
 O caixa da loja usa o **instalador do Windows** (`GenesisPDV-Setup-x.y.z.exe`): as lojas são todas Windows (D21). Ele
 sai do CI e do workflow **PDV release** (decisão 62) ou, **sem cota do GitHub Actions (D70)**, da própria sessão do
-Claude Code, que gera o mesmo instalador no Linux pelo Wine, confere e publica o release (decisão 93 e "Sem o GitHub
-Actions", abaixo). Desde 05/11/2026 não há pacote para Linux (decisão 80).
+Claude Code, que gera o mesmo instalador no Linux pelo Wine e o confere (decisão 93 e "Sem o GitHub Actions", abaixo);
+o release, desde a D120, o dono cria pelo site do GitHub com os arquivos que a sessão prepara (decisão 94 e "Release
+pelo site do GitHub", abaixo). Desde 05/11/2026 não há pacote para Linux (decisão 80).
 
 **Na loja, baixe sempre pela página de download: <https://download.grupoicebeer.com.br>.** É o endereço que a loja
 conhece (sem procurar o arquivo certo no GitHub); a página oferece o instalador do release `pdv-vX.Y.Z` mais novo
 publicado, com a versão, o tamanho, o sha256 e estas instruções resumidas. Ela só passa a oferecer uma versão nova **depois da
 próxima implantação**: publique com **Actions › PDV release** e depois rode **Actions › Implantação**
-(infra/producao/README.md › Página de download do PDV); sem o Actions, o release sai do `publicar-release.sh` e a
-página é atualizada pela implantação com `--publicar-pdv` (infra/producao/README.md › Implantar sem o GitHub Actions).
+(infra/producao/README.md › Página de download do PDV); sem o Actions, o dono cria o release pelo site ("Release pelo
+site do GitHub", abaixo) e o vigia da VPS publica na página sozinho, fora das 17h à meia-noite (infra/producao/README.md
+› Vigia da implantação).
 
 **Requisitos mínimos** (PDV 32.7): Windows 10 64 bits 22H2 ou Windows 11 (o instalador recusa versões mais antigas e
 32 bits), 2 núcleos, 4 GB de memória, SSD com 20 GB livres, tela 1024×768, internet só para ativar (depois o caixa
@@ -331,9 +333,14 @@ Quem faz é a sessão do Claude Code (o dono autorizou em 24/11/2026), num commi
 ```bash
 apps/pdv/instalador/linux-wine/gerar-instalador.sh         # publica win-x64, compila o GenesisPDV.iss no Wine (~1 min)
 apps/pdv/instalador/linux-wine/testar-instalador.sh        # confere contra a publicação e o último release (~1 min)
+apps/pdv/instalador/linux-wine/preparar-release-manual.sh X.Y.Z    # desde a D120: a pasta para o dono publicar pelo site
 apps/pdv/instalador/linux-wine/publicar-release.sh X.Y.Z --simular   # só as conferências e o que faria
 apps/pdv/instalador/linux-wine/publicar-release.sh X.Y.Z   # tag pdv-vX.Y.Z, release com o .exe e o .exe.sha256
 ```
+
+**Desde a D120 (25/11/2026) a rede da sessão recusa escrita no GitHub** (HTTP 403 em `git/refs` e nos releases): o
+`publicar-release.sh` fica para quando a sessão voltar a ter escrita (recusado com 403, ele para e aponta o caminho
+manual; não tente contornar), e o release o dono cria pelo site, com o roteiro abaixo.
 
 Precisa do Wine com 32 bits e do `osslsigncode` (`dpkg --add-architecture i386 && apt-get install wine64 wine32:i386
 osslsigncode`), de ~2 GB livres e, para o release, do `gh` com permissão de escrita no repositório. O release só sai do
@@ -356,6 +363,62 @@ nem o aviso de "PDV aberto". Enquanto o release sair sem o runner Windows, no **
 4. Com o PDV **aberto**, dê dois cliques no mesmo instalador: ele tem de dizer "O instalador encontrou o GenesisPDV
    aberto neste computador". Clique em **Cancelar** (nada muda).
 5. Feche o PDV com Alt+F4 e abra de novo: abre normalmente. Se os quatro passos deram certo, siga para os outros caixas.
+
+### Release pelo site do GitHub (D120, decisão 94)
+
+A sessão gera e confere o instalador (acima) e prepara tudo; o dono só cria o release no site; a página de download o
+vigia atualiza sozinho. Nada disso escreve no GitHub pela sessão.
+
+**1. A sessão prepara** (com o commit do release já na `main`, a árvore limpa e o instalador conferido):
+
+```bash
+apps/pdv/instalador/linux-wine/preparar-release-manual.sh X.Y.Z   # [--saida <pasta>]; as opções do publicar-release.sh
+```
+
+Faz as mesmas conferências do `publicar-release.sh` antes de publicar (o `.sha256`, o `.conferido` e a origem deste
+mesmo arquivo com a árvore limpa, a URL da API de produção, nenhuma assinatura, a referência = o último release
+publicado, o commit na `origin/main` com o `<Version>` X.Y.Z, a tag e o release que já existam), só com leituras, e
+deixa em `apps/pdv/publish/release-manual/pdv-vX.Y.Z/` (ignorada pelo git): `GenesisPDV-Setup-X.Y.Z.exe` e
+`GenesisPDV-Setup-X.Y.Z.exe.sha256` (os dois a anexar), `notas-do-release.md` (o texto das notas, o mesmo do workflow)
+e `PASSO-A-PASSO.txt` (o roteiro abaixo com os valores deste release: o commit, o tamanho, o sha256, o estado do
+workflow "PDV release" e o **link do formulário já preenchido** com a tag, o commit, o título e as notas). A sessão manda
+ao dono os dois arquivos e o `PASSO-A-PASSO.txt` (o `.exe` tem uns 50 MB) e avisa qual commit vai no release.
+
+**2. O dono publica** (no navegador, logado no GitHub; uns 5 minutos):
+
+1. **Desligue o workflow "PDV release"** (D71; só na primeira vez: o `PASSO-A-PASSO.txt` diz se ainda está ligado).
+   No repositório, aba **Actions** › na lista da esquerda, **PDV release** › botão **"..."** no alto, à direita ›
+   **Disable workflow**. Sem isso, a tag nova dispara o workflow (sem cota, uma execução falhada no histórico
+   público; com cota, um segundo instalador montado no Windows tentando publicar no mesmo release). O arquivo continua
+   no repositório; quando a cota voltar, o mesmo botão tem **Enable workflow**.
+2. **Abra o link do `PASSO-A-PASSO.txt`**: é o formulário **Releases › Draft a new release** com a tag `pdv-vX.Y.Z`,
+   o commit (Target), o título `GenesisPDV X.Y.Z` e as notas já preenchidos. À mão: *Choose a tag* › digite
+   `pdv-vX.Y.Z` › **Create new tag: pdv-vX.Y.Z on publish**; *Target* › o commit indicado (aba *Recent commits*; não
+   escolha a `main` se ela já avançou); título e notas do `PASSO-A-PASSO.txt`.
+3. **Confira** a tag, o commit (os 7 primeiros caracteres), o título e as notas.
+4. **Anexe os dois arquivos** (`.exe` e `.exe.sha256`, sem renomear): arraste para *"Attach binaries by dropping them
+   here or selecting them"* e espere as duas barras terminarem.
+5. Deixe **"Set as a pre-release" desmarcado** (a página de download não oferece pre-release) e **"Set as the latest
+   release" marcado**.
+6. **Publish release** (não *Save draft*). Avise a sessão.
+
+Se já existir um rascunho ou um release sem arquivos dessa versão, o `PASSO-A-PASSO.txt` diz para editá-lo (o lápis,
+*Edit*) em vez de criar outro. **Nunca troque os arquivos de um release publicado**: se a conferência abaixo apontar
+arquivo errado, a correção é uma versão nova (X.Y.Z+1), como sempre (decisão 62).
+
+**3. A sessão confere o que foi publicado:**
+
+```bash
+apps/pdv/instalador/linux-wine/preparar-release-manual.sh X.Y.Z --conferir
+```
+
+Só leituras: a tag `pdv-vX.Y.Z` no commit do instalador, o release publicado (sem rascunho nem pre-release) só com os
+dois arquivos do tamanho certo, o download público com o mesmo sha256 e o mesmo `.sha256` dos que foram preparados, o
+aviso se o workflow "PDV release" ficou ligado e a página de download: o vigia da VPS (OP-B7, D119) vê o release novo
+e o publica em `https://download.grupoicebeer.com.br` sem trocar a versão no ar, na rodada seguinte fora das 17h à
+meia-noite (horário de Brasília); a conferência diz se `https://download.grupoicebeer.com.br/pdv/atual.json` já mostra
+a versão e o sha256 (senão, rode de novo mais tarde). A sessão conta o resultado ao dono. Depois, a atualização dos
+caixas continua com o dono, um de cada vez, começando pela "Conferência no primeiro caixa" (acima).
 
 ### Linux (.deb) — sem distribuição desde a decisão 80
 
@@ -394,7 +457,9 @@ dados.
   `.exe.sha256` (só Windows, decisão 80). A URL padrão vem da variável do repositório `PDV_URL_API_PADRAO` (sem ela, a do piloto). O
   workflow recusa publicar commit fora da main, uma tag que já existe em outro commit (suba a versão: os binários de
   uma tag nunca mudam) e um release que já tem arquivos; para refazer o mesmo commit (ex.: upload interrompido), rode
-  à mão escolhendo a própria tag em *Use workflow from*, com "publicar" e "substituir" marcados.
+  à mão escolhendo a própria tag em *Use workflow from*, com "publicar" e "substituir" marcados. Sem cota do Actions
+  (D70) e sem escrita da sessão no GitHub (D120): o release sai pelo site, com a pasta do
+  `preparar-release-manual.sh` ("Release pelo site do GitHub", acima; decisão 94).
 - **Assinatura (opcional):** com os segredos `PDV_CERT_PFX_BASE64` (o `.pfx` em base64) e `PDV_CERT_SENHA`, o
   executável, o instalador e o desinstalador saem assinados (Authenticode com carimbo de tempo); o `.pfx` nunca entra no
   repositório. Configure assim, senão qualquer pessoa com escrita no repositório consegue ler o certificado de um
@@ -4156,3 +4221,48 @@ reimpresso continua o original, com o número do caixa.
     - Rodada na sessão em 24/11/2026: o instalador do **0.13.0** gerado no Wine e conferido contra o `pdv-v0.13.0`
       publicado, verde (as mesmas 22 linhas na lista, o mesmo .NET 10.0.15). **Nenhum release nem tag criados por este
       bloco.** Nada muda no C#, no `GenesisPDV.iss`, nos workflows, no protocolo (`versoes_schema`) nem na versão do PDV.
+94. **Release do PDV pelo site do GitHub, preparado e conferido pela sessão** (OP-B8; D120, decidida pelo dono em
+    25/11/2026 pela recomendação, roadmap §16; plano `docs/planos/operacao-sem-actions-plano.md` › OP-B8; decisões 62
+    e 93). A rede das sessões na nuvem recusa escrita no GitHub (HTTP 403 do proxy em `git/refs` e nos releases;
+    criar e juntar PR continua): o `publicar-release.sh` não cria o release daqui, e a sessão não contorna a recusa.
+    - **Mesmas conferências, outra mão:** o preparo é o `publicar-release.sh --preparar-manual` (o
+      `preparar-release-manual.sh` é só a porta de entrada, para o roteiro ter um nome claro), então tudo o que o
+      release pela sessão confere antes de escrever vale igual, sem duplicar código: o `.sha256`, o `.conferido` e a
+      origem do mesmo arquivo, a árvore limpa, a URL de produção, nenhuma assinatura, a referência = o último release
+      publicado (sha256 e .NET dele), o commit na `origin/main` (depois do `git fetch`) com o `<Version>` X.Y.Z, a tag
+      que já exista no mesmo commit e o release publicado sem arquivos (com arquivos, recusa: nunca se trocam). Só
+      leituras (`gh api` GET, que a rede da sessão deixa, e o `.sha256` da referência pelo `curl`).
+    - **O workflow ligado não recusa o preparo:** quem cria a tag é o dono, então desligar o "PDV release" (D71: com a
+      D120, o dono o desliga pela aba Actions, porque a sessão também não consegue) vira o passo 1 do roteiro, com o
+      estado lido do GitHub (ligado, desligado, inexistente ou "a tag já existe, nada é disparado"). A tag criada pelo
+      formulário do release no site também é um push de tag e dispara o `on: push: tags`. Na conferência, o workflow
+      ainda ligado vira aviso.
+    - **A pasta:** `apps/pdv/publish/release-manual/pdv-vX.Y.Z/` (dentro do `publish/` ignorado) ou `--saida`, que tem
+      de ser nova, vazia ou de um preparo anterior (só os quatro nomes que ele deixa, reescritos; qualquer outro arquivo
+      recusa, para nunca misturar). Os dois arquivos são cópias conferidas de novo pelo `sha256sum -c` na pasta. O
+      `PASSO-A-PASSO.txt` leva o link `releases/new?tag=…&target=<commit>&title=…&body=…` (o formulário do GitHub
+      aceita esses campos pela URL; os anexos, só à mão) e diz se a `main` já avançou depois do commit (o alvo tem de
+      ser o commit do instalador, não a `main`), se há rascunho a editar e o botão final (*Publish release* ou *Update
+      release*). As notas e o título são os do workflow e do `publicar-release.sh` (uma variável só).
+    - **A conferência depois (`--conferir`, o `--conferir-publicado`):** a tag tem de existir no commit do instalador
+      (em outro commit, a mesma recusa de sempre: suba a versão); o release publicado, sem pre-release (o vigia e a
+      página só pegam release publicado sem a marca), com exatamente os dois arquivos, cada um com o tamanho daqui e
+      `uploaded`; o download público do `.exe` com o sha256 conferido e o do `.exe.sha256` igual byte a byte ao daqui.
+      A página de download (`GENESIS_URL_DOWNLOAD/pdv/atual.json`, padrão `https://download.grupoicebeer.com.br`) é
+      informativa: já servindo a versão, diz; senão, que o vigia publica na rodada seguinte fora da janela; fora do ar,
+      só avisa (o release em si está conferido). Arquivo errado no release nunca é trocado: versão nova.
+    - **Aviso da escrita recusada:** no `publicar-release.sh` sem opção, uma escrita (`--method`) recusada com
+      `HTTP 403` imprime que, nas sessões na nuvem, é a rede (D120), que não se contorna, e o comando do caminho manual;
+      o script para na primeira recusa (antes de criar a tag, nada fica pela metade). O resto do script não mudou e
+      continua para quando a sessão tiver escrita.
+    - **Testes:** `teste/testar-publicar-release.sh` ganhou a escrita recusada com 403, o preparo (os quatro arquivos e
+      o conteúdo, o link, o workflow desligado e ligado, a tag e o rascunho que já existem, a `main` que avançou,
+      `--saida`), as recusas do preparo sem escrita e sem pasta (fora da `main`, versão, árvore suja, sem conferência,
+      `.sha256` errado, release com arquivos, pasta com outro arquivo, `--simular`/`--aceitar-disparo`, `--saida` na
+      conferência, os dois modos juntos), a conferência (página com a versão antiga, a nova e fora do ar; o workflow
+      ainda ligado) e as recusas dela (sem tag, rascunho, pre-release, tag em outro commit, arquivo pela metade, arquivo
+      a mais, sem o release, o `.exe` e o `.sha256` públicos trocados), no job `scripts` do `verificar-local.sh`, com o
+      `shellcheck` dos scripts. Nada muda no C#, no `GenesisPDV.iss`, nos workflows, no protocolo (`versoes_schema`)
+      nem na versão do PDV; nenhum release nem tag criados por este bloco. Na sessão de 25/11/2026, o workflow "PDV
+      release" ainda estava ligado (`GET actions/workflows/pdv-release.yml`): o primeiro release pelo site começa pelo
+      passo 1.

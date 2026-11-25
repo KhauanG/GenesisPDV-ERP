@@ -29,7 +29,10 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   libera vale também como "pode implantar", uma vez por commit, **fora das 17h à meia-noite** (horário de Brasília;
   um merge nesse horário entra depois da meia-noite), e o vigia publica na página de download o PDV do release novo.
   A sessão **não cria tag** (a rede dela recusa escrita em `git/refs`; não tente nem contorne). O dono autorizou a
-  sessão (24/11/2026) a **criar o GitHub Release do PDV** (OP-B3; sem escrita no GitHub, D120). Continua do dono: a
+  sessão (24/11/2026) a **criar o GitHub Release do PDV** (OP-B3), mas sem escrita no GitHub (D120) quem cria é o dono
+  pelo site: a sessão gera e confere o instalador, roda `apps/pdv/instalador/linux-wine/preparar-release-manual.sh
+  X.Y.Z`, manda ao dono os dois arquivos e o `PASSO-A-PASSO.txt` da pasta e, depois que ele publica, confere com
+  `preparar-release-manual.sh X.Y.Z --conferir` (README do PDV › Release pelo site do GitHub). Continua do dono: a
   liberação de cada merge na `main`, os pedidos manuais por tag (forçar ou voltar uma versão) e a atualização dos
   caixas nas lojas. **Depois de cada merge liberado pelo dono:** avise o dono de que o vigia vai implantar (e quando,
   se for dentro da janela), acompanhe com `scripts/acompanhar-implantacao.sh <commit do merge>` (em segundo plano:
@@ -94,10 +97,10 @@ mais que o tempo limite de um comando da sessão (cada integração sozinha já 
 **inteiro, em segundo plano** (`run_in_background`), espere o aviso de fim e cole a tabela do
 `.verificacao-local/resumo.md`. Cada rodada apaga os logs e o resumo da anterior, então `--so`/`--pular` servem para
 repetir um job depois de uma correção, não para montar a tabela do PR em partes (a de uma rodada parcial mostra os
-outros jobs como pulados). O instalador do PDV sai pelo Wine (OP-B3: job `pdv-instalador`; o release pela sessão com
-`apps/pdv/instalador/linux-wine/publicar-release.sh`, README do PDV › decisão 93); o que só o Windows de verdade cobre
-(spooler, a permissão das pastas, o PDV instalado aberto e o AppMutex) fica **não coberto**, com o roteiro do primeiro
-caixa. CONTRIBUTING.md › Sem o GitHub Actions.
+outros jobs como pulados). O instalador do PDV sai pelo Wine (OP-B3: job `pdv-instalador`; o release o dono cria pelo
+site com a pasta do `apps/pdv/instalador/linux-wine/preparar-release-manual.sh`, README do PDV › decisões 93 e 94, D120);
+o que só o Windows de verdade cobre (spooler, a permissão das pastas, o PDV instalado aberto e o AppMutex) fica **não
+coberto**, com o roteiro do primeiro caixa. CONTRIBUTING.md › Sem o GitHub Actions.
 
 - Postgres local: `pg_ctlcluster 16 main start` se não estiver no ar. dotnet: `export PATH=$HOME/.dotnet:$PATH DOTNET_ROOT=$HOME/.dotnet`.
 - Testes sensíveis a tempo (`carga-terminais` p95, `Terminais.test.tsx`, heap do `recalcular-saldos`) podem falhar sob

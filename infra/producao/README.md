@@ -824,10 +824,10 @@ foi publicado.
 3. Confira `https://download.grupoicebeer.com.br` (versão e sha256) ou, na VPS, `cat /opt/genesis/download/pdv/atual.json`.
 
 Sem cota do Actions (D70), o passo 1 é da sessão do Claude Code (`apps/pdv/instalador/linux-wine/gerar-instalador.sh`,
-`testar-instalador.sh` e `publicar-release.sh X.Y.Z`: README do PDV › decisão 93; desde a D120, o release o dono cria
-pelo site do GitHub), e o passo 2 o vigia faz sozinho: vê o release novo e publica na página, sem trocar a versão no ar
-(`implantar-sem-actions.sh --so-pdv`, fora da janela das 17h à meia-noite; [Vigia da
-implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)). À mão, no terminal da VPS: `bash
+`testar-instalador.sh`: README do PDV › decisão 93; desde a D120, o release o dono cria pelo site do GitHub com a pasta
+do `preparar-release-manual.sh X.Y.Z`, README do PDV › Release pelo site do GitHub e decisão 94), e o passo 2 o vigia
+faz sozinho: vê o release novo e publica na página, sem trocar a versão no ar (`implantar-sem-actions.sh --so-pdv`,
+fora da janela das 17h à meia-noite; [Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)). À mão, no terminal da VPS: `bash
 ~/implantar-sem-actions.sh --so-pdv` (ou uma implantação com `--publicar-pdv`,
 [Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)).
 

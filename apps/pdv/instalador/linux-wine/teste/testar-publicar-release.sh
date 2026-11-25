@@ -13,7 +13,12 @@
 # release (sem release anterior), a tag anotada no mesmo commit e o release publicado sem arquivos (volta para
 # rascunho antes dos envios; com falha no envio, fica em rascunho e a segunda execução completa), o rascunho de uma
 # execução interrompida (tira os arquivos parciais), a falha no envio (o release fica em rascunho) e o download
-# público que não confere.
+# público que não confere; a escrita recusada com HTTP 403 (a rede da sessão, D120) com o aviso do caminho manual. E
+# o preparo do release pelo site (OP-B8, preparar-release-manual.sh): a pasta com os dois arquivos, as notas e o passo
+# a passo (o link do formulário, o estado do workflow, a tag e o rascunho que já existam), as recusas do preparo (fora
+# da main, versão, sem conferência, árvore suja, release publicado com arquivos, pasta com outros arquivos, opções da
+# publicação), e a conferência do que o dono publicou (a tag, o rascunho, o pre-release, os arquivos, o download
+# público e a página de download), tudo sem escrita.
 #
 #   bash apps/pdv/instalador/linux-wine/teste/testar-publicar-release.sh
 # Precisa de bash, git, jq e coreutils.
@@ -22,7 +27,7 @@ set -euo pipefail
 AQUI=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 T=$(mktemp -d "${TMPDIR:-/tmp}/genesis-publicar-release.XXXXXX")
 trap 'rm -rf "$T"' EXIT
-export REGISTRO=$T/registro DUBLE=$T/duble GENESIS_REPO=dono-teste/repo-teste
+export REGISTRO=$T/registro DUBLE=$T/duble GENESIS_REPO=dono-teste/repo-teste GENESIS_URL_DOWNLOAD=https://download.exemplo.invalid
 BIN=$T/bin
 mkdir -p "$BIN" "$DUBLE"
 unset GH_TOKEN GITHUB_TOKEN
@@ -41,7 +46,7 @@ git_t init -q --bare "$T/origem.git"
 git_t clone -q "$T/origem.git" "$T/raiz" 2>/dev/null
 RAIZ=$T/raiz
 mkdir -p "$RAIZ/apps/pdv/instalador/linux-wine"
-cp "$AQUI/../publicar-release.sh" "$RAIZ/apps/pdv/instalador/linux-wine/"
+cp "$AQUI/../publicar-release.sh" "$AQUI/../preparar-release-manual.sh" "$RAIZ/apps/pdv/instalador/linux-wine/"
 printf 'apps/pdv/publish/\n' >"$RAIZ/.gitignore"
 props() { printf '<Project>\n  <PropertyGroup>\n    <Version>%s</Version>\n  </PropertyGroup>\n</Project>\n' "$1" >"$RAIZ/apps/pdv/Directory.Build.props"; }
 props 0.13.0
@@ -97,7 +102,8 @@ origem() { jq "$1" "$PASTA/$NOME.origem.json" >"$T/c" && mv "$T/c" "$PASTA/$NOME
 # com os arquivos). $DUBLE/erro-500: a leitura da tag falha com 500; $DUBLE/falhar-envio-<nome>: o envio desse falha.
 # A lista de releases traz também o pdv-v0.13.0 e o pdv-v0.12.0 publicados e um pdv-v0.15.0 em rascunho (que não
 # conta), a não ser com $DUBLE/sem-anteriores. O workflow pdv-release.yml está desligado ("disabled_manually"), a não
-# ser com $DUBLE/workflow-ativo ou $DUBLE/workflow-404.
+# ser com $DUBLE/workflow-ativo ou $DUBLE/workflow-404. $DUBLE/escrita-403: toda escrita é recusada com 403 (como a
+# rede da sessão desde a D120).
 cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$REGISTRO"
@@ -115,6 +121,7 @@ while (($#)); do
   esac
 done
 R=repos/dono-teste/repo-teste
+[[ $metodo != GET && -e $DUBLE/escrita-403 ]] && { echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; }
 nao_achou() { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
 campo() { local c; for c in "${campos[@]}"; do [[ $c == "$1="* ]] && { echo "${c#*=}"; return; }; done; }
 case "$metodo $url" in
@@ -156,8 +163,9 @@ case "$metodo $url" in
   *) echo "dublê do gh: chamada inesperada: $metodo $url" >&2; exit 3 ;;
 esac
 EOF
-# curl: o download público devolve o .exe do release ($DUBLE/curl-corrompido: outro conteúdo) e o .sha256 dos
-# releases 0.13.0 e 0.12.0.
+# curl: o download público devolve o .exe do release ($DUBLE/curl-corrompido: outro conteúdo), o .sha256 dele
+# ($DUBLE/curl-sha256-outro: outra linha) e o dos releases 0.13.0 e 0.12.0; a página de download, o $DUBLE/atual.json
+# (sem ele, 404).
 cat >"$BIN/curl" <<EOF
 #!/usr/bin/env bash
 echo "curl \$*" >>"\$REGISTRO"
@@ -166,6 +174,9 @@ while ((\$#)); do case \$1 in -o) saida=\$2; shift ;; https://*) url=\$1 ;; esac
 case "\$url" in
   */pdv-v0.13.0/GenesisPDV-Setup-0.13.0.exe.sha256) echo "\$HASH_013  GenesisPDV-Setup-0.13.0.exe" >"\$saida" ;;
   */pdv-v0.12.0/GenesisPDV-Setup-0.12.0.exe.sha256) echo "\$HASH_012  GenesisPDV-Setup-0.12.0.exe" >"\$saida" ;;
+  */pdv-v0.14.0/$NOME.sha256)
+    if [[ -e \$DUBLE/curl-sha256-outro ]]; then echo "\$HASH_013  $NOME" >"\$saida"; else cp "$PASTA/$NOME.sha256" "\$saida"; fi ;;
+  https://download.exemplo.invalid/pdv/atual.json) [[ -f \$DUBLE/atual.json ]] && cp "\$DUBLE/atual.json" "\$saida" || exit 22 ;;
   */pdv-v0.14.0/$NOME)
     if [[ -e \$DUBLE/curl-corrompido ]]; then echo outro >"\$saida"; else cp "$PASTA/$NOME" "\$saida"; fi ;;
   *) exit 22 ;;
@@ -431,5 +442,174 @@ rodar 0.14.0
 [[ $STATUS == 1 ]] || falha "download corrompido saiu com $STATUS"
 grep -q 'não tem o sha256' "$T/saida" || falha 'sem o aviso do download que não confere'
 confere 'download público que não confere: saída 1 com o aviso'
+
+# 8. A publicação pela sessão com a escrita recusada (HTTP 403, a rede da sessão; D120): saída 1 e o aviso do caminho
+# manual, sem tentar outra coisa.
+zerar
+preparar "$C_014"
+touch "$DUBLE/escrita-403"
+rodar 0.14.0
+[[ $STATUS == 1 ]] || falha "escrita recusada com 403 saiu com $STATUS"
+grep -qF 'escrita recusada (HTTP 403)' "$T/saida" || falha 'sem o aviso da escrita recusada'
+grep -qF 'preparar-release-manual.sh 0.14.0' "$T/saida" || falha 'o aviso não aponta o caminho manual'
+[[ $(grep -c -- '--method' "$REGISTRO") == 1 ]] || falha 'tentou outra escrita depois da recusa'
+confere 'escrita recusada com 403: saída 1 e o aviso do caminho manual (preparar-release-manual.sh)'
+
+# 9. Preparo do release pelo site (OP-B8): a pasta com os dois arquivos, as notas e o passo a passo, sem escrita.
+PM="$RAIZ/apps/pdv/instalador/linux-wine/preparar-release-manual.sh"
+SAIDA_PADRAO=$RAIZ/apps/pdv/publish/release-manual/pdv-v0.14.0
+NOTAS="GenesisPDV 0.14.0 para Windows: $NOME (instale por cima da versão anterior: banco, backups e ativação ficam). Confira o .exe.sha256 antes de instalar (README do PDV › Instalar na loja)."
+manual() {
+  : >"$REGISTRO"
+  STATUS=0
+  env PATH="$BIN:$PATH" "$PM" "$@" >"$T/saida" 2>&1 || STATUS=$?
+}
+recusa_manual() {
+  local motivo=$1 texto=$2
+  shift 2
+  manual "$@"
+  [[ $STATUS == 1 ]] || falha "$motivo: saiu com $STATUS (esperado 1)"
+  grep -qF -- "$texto" "$T/saida" || falha "$motivo: sem a mensagem '$texto'"
+  sem_escrita "$motivo"
+}
+limpar_saida() { find "$RAIZ/apps/pdv/publish/release-manual" -mindepth 1 -delete 2>/dev/null || true; }
+zerar
+limpar_saida
+preparar "$C_014"
+manual 0.14.0
+[[ $STATUS == 0 ]] || falha "preparo saiu com $STATUS"
+sem_escrita 'preparo'
+grep -q "^curl .*pdv-v0.14.0/$NOME\$" "$REGISTRO" && falha 'o preparo baixou o instalador do release'
+[[ $(find "$SAIDA_PADRAO" -mindepth 1 -printf '%f\n' | sort | tr '\n' ' ') == "$NOME $NOME.sha256 PASSO-A-PASSO.txt notas-do-release.md " ]] ||
+  falha "a pasta do preparo: $(find "$SAIDA_PADRAO" -mindepth 1 -printf '%f ')"
+cmp -s "$SAIDA_PADRAO/$NOME" "$PASTA/$NOME" && cmp -s "$SAIDA_PADRAO/$NOME.sha256" "$PASTA/$NOME.sha256" ||
+  falha 'os dois arquivos da pasta não são os conferidos'
+[[ $(cat "$SAIDA_PADRAO/notas-do-release.md") == "$NOTAS" ]] || falha 'as notas não são as do workflow'
+ROTEIRO=$SAIDA_PADRAO/PASSO-A-PASSO.txt
+grep -qF "https://github.com/dono-teste/repo-teste/releases/new?tag=pdv-v0.14.0&target=$C_014&title=GenesisPDV%200.14.0&body=GenesisPDV%200.14.0%20para%20Windows" "$ROTEIRO" ||
+  falha 'sem o link do formulário com a tag, o commit, o título e as notas'
+grep -qF 'já está desligado (disabled_manually): pule este passo' "$ROTEIRO" || falha 'sem o estado do workflow (desligado)'
+grep -qF "a main já avançou até ${C_REMOTO:0:12}" "$ROTEIRO" || falha 'sem dizer que a main avançou depois do commit'
+grep -qF "$NOME.sha256  (sha256 $HASH)" "$ROTEIRO" || falha 'sem o sha256 no roteiro'
+grep -qF 'Set as a pre-release" DESMARCADO' "$ROTEIRO" || falha 'sem o aviso do pre-release'
+grep -qF 'Publish release' "$ROTEIRO" || falha 'sem o Publish release'
+grep -qF 'preparar-release-manual.sh 0.14.0 --conferir' "$T/saida" || falha 'sem o próximo passo (a conferência)'
+confere 'preparo: a pasta com os dois arquivos conferidos, as notas e o passo a passo com o link, sem escrita'
+
+# 9b. Workflow ligado: o preparo sai (o desligar é o passo 1 do dono), com o aviso; a mesma pasta é trocada inteira.
+zerar
+preparar "$C_014"
+touch "$DUBLE/workflow-ativo"
+manual 0.14.0
+[[ $STATUS == 0 ]] || falha "preparo com o workflow ligado saiu com $STATUS"
+grep -qF 'LIGADO: desligue-o antes de publicar' "$ROTEIRO" || falha 'o roteiro não pede para desligar o workflow'
+grep -qF 'o passo 1 do roteiro (desligá-lo) vem antes de publicar' "$T/saida" || falha 'sem o aviso do workflow ligado'
+sem_escrita 'preparo com o workflow ligado'
+# Tag no mesmo commit e um rascunho: o roteiro manda editar o rascunho, e o workflow não importa (nada é disparado).
+jq -n --arg s "$C_014" '{object: {type: "commit", sha: $s}}' >"$DUBLE/ref.json"
+jq -n --arg n "$NOME" '{id: 77, tag_name: "pdv-v0.14.0", draft: true, prerelease: false, assets: [{id: 9, name: $n, size: 10, state: "starter"}]}' >"$DUBLE/release.json"
+manual 0.14.0 --saida "$T/pasta-do-dono"
+[[ $STATUS == 0 ]] || falha "preparo com a tag e o rascunho saiu com $STATUS"
+grep -qF 'Já há um rascunho do pdv-v0.14.0' "$T/pasta-do-dono/PASSO-A-PASSO.txt" || falha 'o roteiro não manda editar o rascunho'
+grep -qF 'a tag pdv-v0.14.0 já existe: publicar não dispara nada' "$T/pasta-do-dono/PASSO-A-PASSO.txt" || falha 'com a tag criada, o workflow ainda é passo'
+grep -q 'actions/workflows' "$REGISTRO" && falha 'leu o workflow com a tag já criada'
+sem_escrita 'preparo com a tag e o rascunho'
+confere 'preparo: workflow ligado vira o passo 1; tag e rascunho existentes, editar o rascunho; --saida'
+
+# 9c. Recusas do preparo, sem escrita.
+zerar
+limpar_saida
+preparar "$C_FORA"
+recusa_manual 'preparo fora da main' 'não está na main' 0.14.0
+[[ -e $SAIDA_PADRAO ]] && falha 'a recusa deixou a pasta do preparo'
+preparar "$C_013"
+recusa_manual 'preparo com a versão errada' 'diz <Version>0.13.0</Version>, não 0.14.0' 0.14.0
+preparar "$C_014" false
+recusa_manual 'preparo com a árvore suja' 'alterações não commitadas' 0.14.0
+preparar "$C_014"
+rm "$PASTA/$NOME.conferido"
+recusa_manual 'preparo sem a conferência' 'testar-instalador.sh' 0.14.0
+preparar "$C_014"
+printf '%064d  %s\n' 0 "$NOME" >"$PASTA/$NOME.sha256"
+recusa_manual 'preparo com o .sha256 errado' 'não confere' 0.14.0
+preparar "$C_014"
+jq -n '{id: 77, tag_name: "pdv-v0.14.0", draft: false, assets: [{id: 1, name: "x", size: 1, state: "uploaded"}]}' >"$DUBLE/release.json"
+recusa_manual 'preparo com o release já publicado com arquivos' 'já está publicado com 1 arquivo(s)' 0.14.0
+zerar
+mkdir -p "$T/pasta-ocupada"
+echo x >"$T/pasta-ocupada/outro.txt"
+recusa_manual 'pasta com outros arquivos' 'tem outros arquivos (outro.txt)' 0.14.0 --saida "$T/pasta-ocupada"
+[[ $(ls "$T/pasta-ocupada") == outro.txt ]] || falha 'mexeu na pasta ocupada'
+recusa_manual '--simular no preparo' 'que não vale aqui' 0.14.0 --simular
+recusa_manual '--aceitar-disparo no preparo' 'que não vale aqui' 0.14.0 --aceitar-disparo
+rodar 0.14.0 --preparar-manual --simular
+[[ $STATUS == 1 ]] && grep -qF -- '--simular é da publicação pela sessão' "$T/saida" || falha 'publicar-release.sh --preparar-manual --simular'
+rodar 0.14.0 --conferir-publicado --saida "$T/x"
+[[ $STATUS == 1 ]] && grep -qF -- '--saida só vale com --preparar-manual' "$T/saida" || falha '--saida na conferência'
+rodar 0.14.0 --preparar-manual --conferir-publicado
+[[ $STATUS == 1 ]] && grep -qF 'não vão juntos' "$T/saida" || falha '--preparar-manual com --conferir-publicado'
+confere 'recusas do preparo sem escrita: fora da main, versão, árvore suja, sem conferência, .sha256, release com arquivos, pasta ocupada, opções'
+
+# 10. Conferência do que o dono publicou pelo site: só leituras.
+publicado() {
+  jq -n --arg s "$C_014" '{object: {type: "commit", sha: $s}}' >"$DUBLE/ref.json"
+  jq -n --arg n "$NOME" --argjson t "$(stat -c %s "$PASTA/$NOME")" --argjson u "$(stat -c %s "$PASTA/$NOME.sha256")" \
+    '{id: 77, tag_name: "pdv-v0.14.0", draft: false, prerelease: false,
+      assets: [{id: 1, name: $n, size: $t, state: "uploaded"}, {id: 2, name: ($n + ".sha256"), size: $u, state: "uploaded"}]}' \
+    >"$DUBLE/release.json"
+}
+rel() { jq "$1" "$DUBLE/release.json" >"$T/c" && mv "$T/c" "$DUBLE/release.json"; }
+zerar
+preparar "$C_014"
+publicado
+jq -n --arg h "$HASH_013" '{versao: "0.13.0", arquivo: "GenesisPDV-Setup-0.13.0.exe", sha256: $h}' >"$DUBLE/atual.json"
+manual 0.14.0 --conferir
+[[ $STATUS == 0 ]] || falha "conferência do publicado saiu com $STATUS"
+sem_escrita 'conferência'
+grep -qF "release pdv-v0.14.0 conferido: publicado no commit $C_014" "$T/saida" || falha 'sem o resultado da conferência'
+grep -qF "releases/download/pdv-v0.14.0/$NOME.sha256" "$REGISTRO" || falha 'não baixou o .sha256 público'
+grep -qF 'ainda oferece o 0.13.0: o vigia publica o 0.14.0' "$T/saida" || falha 'sem dizer que a página ainda não mudou'
+grep -q 'continua ligado' "$T/saida" && falha 'avisou do workflow desligado'
+jq -n --arg h "$HASH" '{versao: "0.14.0", sha256: $h}' >"$DUBLE/atual.json"
+touch "$DUBLE/workflow-ativo"
+manual 0.14.0 --conferir
+[[ $STATUS == 0 ]] || falha "conferência com a página nova saiu com $STATUS"
+grep -qF 'já oferece o 0.14.0' "$T/saida" || falha 'sem dizer que a página já oferece a versão'
+grep -qF 'continua ligado' "$T/saida" || falha 'sem o aviso do workflow ainda ligado'
+rm "$DUBLE/atual.json"
+manual 0.14.0 --conferir
+[[ $STATUS == 0 ]] && grep -qF 'não consegui ler https://download.exemplo.invalid/pdv/atual.json' "$T/saida" ||
+  falha 'a página de download fora do ar derrubou a conferência do release'
+confere 'conferência do publicado: a tag, os dois arquivos, o download público e a página (já, ainda não, fora), sem escrita'
+
+# 10b. Recusas da conferência, sem escrita.
+zerar
+preparar "$C_014"
+recusa_manual 'conferência sem a tag' 'a tag pdv-v0.14.0 não existe no GitHub' 0.14.0 --conferir
+publicado
+rel '.draft = true'
+recusa_manual 'conferência do rascunho' 'ainda está em rascunho' 0.14.0 --conferir
+publicado
+rel '.prerelease = true'
+recusa_manual 'conferência do pre-release' 'marcado como pre-release' 0.14.0 --conferir
+publicado
+jq -n --arg s "$C_013" '{object: {type: "commit", sha: $s}}' >"$DUBLE/ref.json"
+recusa_manual 'conferência da tag em outro commit' "já existe no commit $C_013" 0.14.0 --conferir
+publicado
+rel '.assets[0].size = 10'
+recusa_manual 'conferência de um arquivo pela metade' "não tem $NOME inteiro" 0.14.0 --conferir
+publicado
+rel '.assets += [{id: 3, name: "outro.zip", size: 1, state: "uploaded"}]'
+recusa_manual 'conferência com outro arquivo' 'outros arquivos além dos dois' 0.14.0 --conferir
+publicado
+rm "$DUBLE/release.json"
+recusa_manual 'conferência sem o release da tag' 'não há release dela' 0.14.0 --conferir
+publicado
+touch "$DUBLE/curl-corrompido"
+recusa_manual 'conferência do .exe público trocado' 'o arquivo anexado é outro' 0.14.0 --conferir
+rm "$DUBLE/curl-corrompido"
+touch "$DUBLE/curl-sha256-outro"
+recusa_manual 'conferência do .sha256 público trocado' "$NOME.sha256 público não é o daqui" 0.14.0 --conferir
+confere 'recusas da conferência sem escrita: sem tag, rascunho, pre-release, outro commit, arquivo pela metade ou a mais, sem release, download trocado'
 
 echo 'publicar-release.sh: todos os testes passaram'
