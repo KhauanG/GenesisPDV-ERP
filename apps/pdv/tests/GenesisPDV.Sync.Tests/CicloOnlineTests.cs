@@ -756,6 +756,7 @@ public sealed partial class CicloOnlineTests
         var hashes = amb.Api.HashesValidos.ToList();
         amb.Api.HashesValidos.Clear();
         await AmbienteSync.EsperarAsync(() => ciclo.Situacao.Terminal == EstadoTerminalSync.Bloqueado, "bloqueado");
+        var janela = System.Diagnostics.Stopwatch.StartNew();
         var (heartbeats, pulls, pushes) = (amb.Api.Contar("/sync/heartbeat"), amb.Api.Contar("/sync/pull"), amb.Api.Contar("/sync/push"));
         // Janela de medida (não é espera de condição): o laço não pode girar; o heartbeat espera o backoff (≥ 5 s).
         await Task.Delay(TimeSpan.FromSeconds(2), Ct);
@@ -763,7 +764,10 @@ public sealed partial class CicloOnlineTests
         Assert.Equal(pulls, amb.Api.Contar("/sync/pull"));
         Assert.Equal(pushes, amb.Api.Contar("/sync/push"));
         Assert.InRange(amb.Log.Linhas.Count(l => l.Contains("Token recusado", StringComparison.Ordinal)), 1, 4);
-        Assert.True(ciclo.EsperaHeartbeat > TimeSpan.FromSeconds(2));
+        // O backoff contado do bloqueio, e não o que sobra dele: o da 1ª falha é de 5 s exatos, e o que sobra depois da
+        // janela de 2 s ficava abaixo de 2 s com o runner lento (a espera do "bloqueado" e o Delay que atrasam).
+        Assert.True(ciclo.EsperaHeartbeat + janela.Elapsed > TimeSpan.FromSeconds(2),
+            $"o heartbeat deveria esperar o backoff: falta {ciclo.EsperaHeartbeat}, {janela.Elapsed} depois do bloqueio");
         Assert.True(ciclo.Rodando);
 
         // A nuvem volta a aceitar: o primeiro 200 do heartbeat libera push e pull, e o estado volta a ativo.
