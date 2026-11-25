@@ -49,7 +49,7 @@ e se anuncia ao Traefik por labels.
 | `instalar.sh` | Preparação da VPS, idempotente: confere pré-requisitos, gera os segredos da aplicação, acerta permissões |
 | `implantar.sh` | `implantar <versão>`, `voltar`, `estado`, `tarefa <comando>`, `backup <...>`, `token-monitor`, `pdv <atual\|publicar\|retirar>`, `logs [guardar]` |
 | `implantar-sem-actions.sh` | Implantação pela própria VPS, sem o GitHub Actions (D70): baixa o commit da `main`, monta as imagens na VPS e roda o `instalar.sh` e o `implantar.sh` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)) |
-| `vigia/` | Vigia da implantação (D70, OP-B4 e OP-B7): `vigia-implantacao.sh` (uma rodada: a tag de pedido do dono, a ponta nova da `main` fora da janela ou o release novo do PDV → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
+| `vigia/` | Vigia da implantação (D70, OP-B4 e OP-B7): `vigia-implantacao.sh` (uma rodada: a tag de pedido do dono, a ponta nova da `main` fora da janela ou o release novo do PDV → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar` e o `--autoatualizar` que o vigia roda depois de cada `ok`, OP-B9; uma cópia dele fica em `/opt/genesis/vigia`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
 | `backup/` | Imagem do `genesis-backup` (`Dockerfile`), o script `genesis-backup.sh` (agendar, agora, estado, listar, restaurar) e os testes de unidade dele (`testar-genesis-backup.sh`, sem Docker; rodam no CI) |
 | `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`), do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`) e do vigia da implantação (`testar-vigia-implantacao.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
 
@@ -482,7 +482,8 @@ começou não é interrompida. A janela fica em `/opt/genesis/vigia/janela` (pad
 hora). Para trocar, no terminal da VPS: `echo 18-24 > /opt/genesis/vigia/janela` (vale na próxima rodada; um valor
 fora do formato vale como o padrão, com uma linha no log).
 
-**Instalar ou reinstalar (uma vez, no terminal da VPS; depois do merge do OP-B7, reinstale uma vez):**
+**Instalar ou reinstalar (no terminal da VPS; a reinstalação depois do merge do PR-16b, com o OP-B7, é a última
+feita à mão: desde o OP-B9 o vigia se atualiza por inteiro sozinho, abaixo):**
 
 1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (já entra como `root`).
 2. Cole o comando:
@@ -492,24 +493,56 @@ fora do formato vale como o padrão, com uma linha no log).
    ```
 
 3. O que esperar: sete etapas com `==>` (menos de um minuto) e, no fim, `Vigia da implantação instalado.` O
-   script baixa a `main` do repositório público para `/opt/genesis/vigia/repo.git`, instala o vigia e o
-   `implantar-sem-actions.sh` em `/opt/genesis/vigia`, as duas unidades do systemd (`genesis-vigia.service` e
+   script baixa a `main` do repositório público para `/opt/genesis/vigia/repo.git`, instala o vigia, o
+   `implantar-sem-actions.sh` e uma cópia do próprio `instalar-vigia.sh` em `/opt/genesis/vigia`, as duas unidades do systemd (`genesis-vigia.service` e
    `genesis-vigia.timer`), marca os pedidos por tag antigos como vistos, cria a janela com o padrão (se ainda não
    existe), confere a ponta da `main` e liga o timer. **Nada é implantado durante a instalação.** A etapa 5 diz o que
    vem depois: se a ponta da `main` já é a versão no ar, nada a fazer; senão (o caso logo depois do merge do OP-B7),
    o vigia a implanta **sozinho na primeira rodada fora da janela** (1 a 2 minutos depois, ou depois da meia-noite).
    Rodar o mesmo comando de novo atualiza o vigia para a versão da `main` (sem perder o que já foi visto e tratado).
+   A unidade e o timer da `main` só entram conferidos (o formato e o `systemd-analyze verify`); fora disso, o comando
+   para sem trocar nada.
 4. A página pública do resultado (`https://download.grupoicebeer.com.br/implantacao/estado.json`) responde depois da
    primeira implantação pelo vigia; até lá, 404.
 
-**Ver o que o vigia fez:** `bash ~/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a janela, a versão no
-ar, os últimos commits da `main` tratados e as últimas publicações do PDV, a última rodada, o estado público e as 20
-últimas linhas do log (`/opt/genesis/vigia/vigia.log`: recebido, em andamento, ok, falhou, recusado, pulado, a espera
+**O vigia se atualiza sozinho, por inteiro (OP-B9; D121, 25/11/2026).** Depois de cada implantação `ok`, o vigia
+aplica a instalação do commit que acabou de subir: o próprio programa (`vigia-implantacao.sh`), a cópia do
+`implantar-sem-actions.sh` (a da `main`), a cópia do `instalar-vigia.sh` em `/opt/genesis/vigia` (a do `--estado` e
+do `--desligar`, abaixo) e as duas unidades do systemd (`genesis-vigia.service` e `genesis-vigia.timer`), só o que
+mudou, com o `daemon-reload`; o timer que mudou é reiniciado (se estava ligado). A unidade e o timer novos só entram
+conferidos (o formato esperado e o `systemd-analyze verify` sem erro nem aviso); se a conferência ou a troca falhar
+(mesmo com o disco cheio no meio: tudo é preparado antes, e a troca e a volta são só renames), **fica tudo como
+estava** (o vigia continua rodando no agendamento de antes, a implantação continua `ok` e o motivo vai só ao
+`vigia.log`; a próxima implantação `ok` tenta a dela). Ela não liga o timer: **o vigia desligado pelo dono continua
+desligado**, também se o `--desligar` cair no meio da troca; não mexe nos pedidos vistos, nos commits tratados nem na
+janela que existe. **Na transição, nada a fazer:** o vigia do OP-B7 (o da reinstalação depois do PR-16b) troca só o
+programa quando implanta o primeiro commit com o OP-B9, e a rodada seguinte (2 minutos depois), já com o vigia novo,
+aplica o resto. **O comando de instalar à mão só volta a ser preciso** se o vigia parou (o timer desligado com o
+`--desligar`, que só o comando de instalar religa) ou se a pasta `/opt/genesis/vigia` (ou a lista `vistos`) se
+perdeu. O que a última instalação aplicou aparece no `--estado` da cópia em `/opt/genesis/vigia` (abaixo), na linha
+"Instalação do vigia aplicada por último": o commit e o resultado, que é um destes:
+
+- `ok`: aplicada;
+- `recusado`: a unidade ou o timer do commit não passaram na conferência (ficam os de antes; a próxima implantação
+  `ok` tenta a dela);
+- `falhou`: a troca falhou e foi desfeita, tudo como antes (a próxima implantação `ok` tenta a dela);
+- `pendente`: um arquivo não veio do GitHub, ou a troca falhou e não voltou por inteiro: tenta de novo a cada rodada;
+- `sem-autoatualizar`: o commit no ar é anterior ao OP-B9 (uma volta do dono): só o programa do vigia, como antes;
+- `sem-commit`: a versão no ar não está na `main` (um commit implantado pelo terminal fora dela): fica a instalação
+  atual, sem nova tentativa até a próxima implantação `ok`; não é preciso reinstalar;
+- `instalacao`: a do comando de instalar à mão.
+
+**Ver o que o vigia fez:** `bash /opt/genesis/vigia/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a janela, a versão no
+ar, os últimos commits da `main` tratados e as últimas publicações do PDV, a instalação do vigia aplicada por último,
+a última rodada, o estado público e as 20 últimas linhas do log (`/opt/genesis/vigia/vigia.log`: recebido, em andamento, ok, falhou, recusado, pulado, a espera
 da janela com a hora prevista). A saída completa da última chamada fica em `/opt/genesis/vigia/ultima-implantacao.log`,
 e a da implantação em andamento (ou a última, com o resumo) aparece com
-`bash /opt/genesis/vigia/implantar-sem-actions.sh --acompanhar`.
+`bash /opt/genesis/vigia/implantar-sem-actions.sh --acompanhar`. Use a cópia em `/opt/genesis/vigia`, que o vigia
+mantém na versão da instalação aplicada: a `~/instalar-vigia.sh` é a que o comando de instalar baixou e fica na versão
+daquele dia (até a primeira implantação de um commit com o OP-B9 pelo vigia, a cópia em `/opt/genesis/vigia` ainda não
+existe: use a de `~`).
 
-**Desligar:** `bash ~/instalar-vigia.sh --desligar` desliga o timer: nada novo é implantado, e uma implantação que já
+**Desligar:** `bash /opt/genesis/vigia/instalar-vigia.sh --desligar` desliga o timer: nada novo é implantado, e uma implantação que já
 estava em andamento termina normalmente (o comando nunca a interrompe). Para religar, o comando de instalar de novo:
 a ponta da `main` que ainda não foi tratada é implantada na primeira rodada fora da janela; os pedidos **por tag**
 feitos enquanto o vigia esteve desligado **não** rodam, e um pedido por tag que estava esperando (como `recebido`)
@@ -548,7 +581,9 @@ saída pública da VPS**, por decisão do dono (D70).
 serve o `estado.json` (404 depois da troca): o resultado só o dono vê com `--estado`. Voltar por tag para um commit
 anterior ao OP-B7 troca o vigia pelo daquele commit (a autoatualização usa o vigia do commit implantado), que não
 implanta a `main` sozinho: depois, rode de novo o comando de instalar (ele traz o vigia da `main`, sem desfazer a
-volta: a ponta já foi tratada).
+volta: a ponta já foi tratada). Voltar por tag para um commit do OP-B7 ou do OP-B8 (anterior ao OP-B9) troca só o
+programa do vigia, como antes (a unidade e o timer instalados ficam); o próximo merge implantado traz de volta a
+instalação completa.
 
 **Se der errado:** um `falhou` deixa a VPS como o `implantar-sem-actions.sh` deixaria (a mensagem `ERRO:` diz em que
 etapa parou; antes da troca, a versão anterior continua no ar; a nova sem saúde volta sozinha). Se a VPS reiniciar no
@@ -560,10 +595,12 @@ pedido manual (acima).
 
 **Testado sem a VPS:** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id`, `systemctl` e `date`, o
 `git` de verdade sobre um repositório local com as tags e os merges, um `implantar-sem-actions.sh` falso; o
-`systemd-analyze verify` das unidades), o `--so-pdv` no `testar-implantar-sem-actions.sh` e
+`systemd-analyze verify` das unidades; a autoatualização completa do OP-B9 e a transição com o vigia do OP-B7 de
+verdade), o `--so-pdv` no `testar-implantar-sem-actions.sh` e
 `scripts/testar-acompanhar-implantacao.sh` (`curl` e `date` falsos); a rota do `estado.json` no `testar-local.sh`.
-Decisões em [Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026) e
-[Decisões técnicas (implantação automática da main)](#decisões-técnicas-implantação-automática-da-main-op-b7-25112026).
+Decisões em [Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026),
+[Decisões técnicas (implantação automática da main)](#decisões-técnicas-implantação-automática-da-main-op-b7-25112026) e
+[Decisões técnicas (o vigia se atualiza por inteiro)](#decisões-técnicas-o-vigia-se-atualiza-por-inteiro-op-b9-25112026).
 
 ---
 
@@ -587,7 +624,7 @@ Decisões em [Decisões técnicas (vigia da implantação)](#decisões-técnicas
 | Logs do backup | `docker logs genesis-backup --tail 100` (uma linha por banco; `FALHOU` quando algo deu errado) |
 | Restaurar (um banco ao lado, ou tudo num servidor vazio) | [Backup › Restaurar](#restaurar) |
 | Gerar ou trocar o token do monitoramento | `/opt/genesis/implantar.sh token-monitor` (o anterior para de valer na hora) |
-| Ver o vigia da implantação (timer, janela, último pedido, commits tratados, log) ou desligá-lo | `bash ~/instalar-vigia.sh --estado` / `bash ~/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
+| Ver o vigia da implantação (timer, janela, último pedido, commits tratados, instalação aplicada, log) ou desligá-lo | `bash /opt/genesis/vigia/instalar-vigia.sh --estado` / `bash /opt/genesis/vigia/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4-e-op-b7)) |
 | Ver o instalador do PDV publicado na página de download | `cat /opt/genesis/download/pdv/atual.json` (ou a linha "Página de download" do `implantar.sh estado`) |
 
 **A API reiniciou sozinha** (ex.: 04/11/2026, 18:05:42Z, no meio de uma importação). Primeiro a causa, depois o
@@ -1508,6 +1545,72 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   `main` antes do PDV, a interrompida e a ponta implantada pelo terminal), o
   `--so-pdv` no `testar-implantar-sem-actions.sh` e o `scripts/testar-acompanhar-implantacao.sh`. Decisão 218 do
   `apps/api/README.md`. Nada roda na produção até o dono reinstalar o vigia.
+
+## Decisões técnicas (o vigia se atualiza por inteiro, OP-B9, 25/11/2026)
+
+- **Por quê.** A sessão não tem SSH (D121): a rede dela fecha a porta 22 e não há onde guardar a chave com segurança.
+  Até o OP-B8, depois de um `ok` o vigia só trocava o próprio `vigia-implantacao.sh`; a unidade, o timer e o resto
+  do que o `instalar-vigia.sh` prepara só mudavam quando o dono reinstalava. Agora a reinstalação depois do PR-16b é a
+  última feita à mão.
+- **A cópia do instalador em `/opt/genesis/vigia`.** A `~/instalar-vigia.sh` é a que o comando de instalar baixou e
+  nada a atualiza; por isso a instalação (à mão e a autoatualização) deixa uma cópia do `instalar-vigia.sh` em
+  `/opt/genesis/vigia` (700), sempre a da instalação aplicada, e o README e o CLAUDE.md mandam usar essa no
+  `--estado` e no `--desligar`.
+- **Quem instala é o instalador do commit implantado.** Depois do `ok`, o vigia lê do clone parcial o
+  `instalar-vigia.sh` daquele commit e o roda com `--autoatualizar <commit>` (fora do terminal, `timeout` de 15
+  minutos). O instalador do próprio commit sabe o que aquela versão precisa (uma etapa nova da instalação vem com
+  ela). A linha `# genesis-vigia-autoatualizar: 1` diz ao vigia que ele aceita o `--autoatualizar`; sem ela (um
+  commit anterior ao OP-B9: uma volta do dono), o vigia faz como antes, só o programa do vigia, e não desfaz a
+  instalação. A trava do vigia passa ao instalador pelo descritor 9 (`GENESIS_VIGIA_TRAVA=herdada`): nenhuma rodada
+  começa no meio da troca. A cópia do `implantar-sem-actions.sh` vem da `main` (a mesma regra do vigia: o script de
+  implantar é o da `main`, não o do commit).
+- **Tudo conferido antes de trocar qualquer coisa.** Os cinco arquivos são lidos primeiro (os scripts com o
+  `#!/usr/bin/env bash` e o `bash -n`); a unidade e o timer passam pelo formato esperado (o serviço `oneshot` que roda
+  `/opt/genesis/vigia/vigia-implantacao.sh` com `KillMode=process`; o timer `Unit=genesis-vigia.service`, com
+  `OnUnitInactiveSec=` e `WantedBy=timers.target`: os mesmos nomes, nunca um segundo timer) e pelo
+  `systemd-analyze verify`, que recusa com erro **ou aviso** sobre eles (ele sai com 0 numa chave desconhecida ou num
+  valor que não entende: o systemd ignoraria a linha). A instalação à mão passou a fazer a mesma conferência.
+- **Só o que mudou (sha256), por rename, unidades primeiro.** Antes da primeira troca, ao lado de cada destino ficam
+  prontas a cópia nova e uma ligação (hard link) com o arquivo de antes: a troca e a volta são só renames, que não
+  pedem espaço em disco (o disco que enche no meio não deixa a instalação pela metade). As novas unidades entram por
+  rename, o `daemon-reload` roda, o timer que mudou leva um `try-restart` (que só mexe no timer ligado: o desligado
+  pelo dono continua desligado; nunca `enable` nem `start`) e o timer que estava ligado tem de continuar ligado; se
+  ele parou e não está mais habilitado, o dono o desligou no meio (o `--desligar` não espera a trava): não é falha e
+  ele continua desligado. Depois, os scripts por rename: a rodada em andamento continua lendo o arquivo antigo (o
+  bash lê o script aos poucos). Qualquer falha, nas unidades ou nos scripts, põe todos os arquivos de antes de volta
+  (rename, `daemon-reload` e o timer religado só se tinha caído e continua habilitado): fica tudo como estava
+  (`falhou`, código 1). Se nem a volta se completa (70), o registro fica `pendente` e a rodada seguinte refaz a
+  instalação inteira. O que falta das etapas 5 e 6 (a janela com o
+  padrão, as listas dos tratados, a pasta pública) é criado; o que existe não muda; a etapa 4 (os pedidos antigos por
+  vistos) não roda.
+- **O resultado fica em `vigia/instalacao`** (root 600: o commit, `ok`/`recusado`/`falhou`/`pendente`/
+  `sem-autoatualizar`/`sem-commit`/`instalacao`, quando e o sha256 do vigia instalado depois) e o motivo só no
+  `vigia.log`; nada vai ao `estado.json`. `recusado` e `falhou` não repetem (a próxima implantação `ok` tenta a dela);
+  `pendente` (o arquivo não veio do repositório público, a rede, ou a volta que não se completou) tenta de novo a
+  cada rodada, com uma linha no log, refeita como depois do `ok` que a deixou (numa volta a um commit anterior ao
+  OP-B9, troca o programa, como a volta teria feito); `sem-commit` (a versão no ar não está na `main` do clone, mesmo
+  depois de buscá-la: um commit implantado pelo terminal fora dela) deixa a instalação atual, sem nova tentativa até
+  a próxima implantação `ok`.
+- **A transição sem comando do dono.** O vigia do OP-B7 instalado, ao implantar o primeiro commit com o OP-B9, troca
+  só o programa (a regra dele). No começo de cada rodada, o vigia novo confere a instalação: se o `vigia/instalacao`
+  não existe ou o sha256 dele não é o do vigia instalado (outro vigia o trocou), aplica a instalação do commit no ar
+  (o `versoes/atual`, resolvido no clone e conferido na `main`). Uma volta do dono pelo terminal (`implantar.sh
+  voltar`) não troca o vigia, então não dispara nada; e o vigia novo nunca se troca sozinho, nessa conferência, por um
+  de um commit anterior ao OP-B9 (`sem-autoatualizar`). Sem o `instalar-vigia.sh` do commit (a rede), a conferência
+  não grava nada (não se sabe se o commit tem o `--autoatualizar`): a rodada seguinte decide de novo, com uma linha
+  no log só.
+- **Testes:** `testar-vigia-implantacao.sh` (a unidade e o timer que mudam, trocados e recarregados; só o service
+  mudado, sem o `try-restart` do timer; os iguais, sem nada regravado; o timer fora do formato e a unidade com aviso
+  do `systemd-analyze`, recusados, ficando as antigas, também na instalação à mão; o `daemon-reload` e o
+  `try-restart` que falham e o timer que não fica ligado, desfeitos; o rename de um script que falha depois das
+  unidades (o disco cheio), desfeito por inteiro, e a volta que também falha, `pendente` e refeita; o vigia desligado
+  que continua desligado, também com o `--desligar` no meio da troca; a volta a um commit sem o `--autoatualizar`, o
+  merge seguinte pelo vigia antigo e a rodada que compara o sha256 do registro; o arquivo que não veio, também numa
+  volta a um commit anterior ao OP-B9; a conferência com o commit no ar anterior ao OP-B9 (`sem-autoatualizar`, sem
+  trocar o vigia) e com a versão no ar fora da `main` (`sem-commit`); a cópia do `instalar-vigia.sh` em
+  `/opt/genesis/vigia`; a transição com o vigia do OP-B7 de verdade, o do `e539ed0`, quando o histórico o tem; nada
+  no `estado.json`). Decisão
+  219 do `apps/api/README.md`. Vale na VPS a partir da primeira implantação de um commit com o OP-B9 pelo vigia.
 
 ## Pendências
 

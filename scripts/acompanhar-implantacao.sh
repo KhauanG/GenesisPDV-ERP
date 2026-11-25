@@ -15,8 +15,8 @@
 # nosso não conta. Um "pdv" (a publicação só do PDV, gravada com a versão no ar) de um commit que inclui o nosso diz
 # que ele está no ar. Sai com 0 no ok, 1 no falhou/recusado (ou erro antes de acompanhar) e 3 no tempo limite (sem
 # resultado: a implantação ainda roda, a VPS está fora, o vigia está desligado ou o commit já tinha sido tratado, ex.:
-# uma volta do dono; o dono confere na VPS com `bash ~/instalar-vigia.sh --estado`). O tempo limite conta a partir do
-# fim da janela, quando o commit chega dentro dela: começando dentro dela, ou vendo o "recebido" do vigia já dentro
+# uma volta do dono; o dono confere na VPS com `bash /opt/genesis/vigia/instalar-vigia.sh --estado`). O tempo limite
+# conta a partir do fim da janela, quando o commit chega dentro dela: começando dentro dela, ou vendo o "recebido" do vigia já dentro
 # dela (o acompanhamento começou fora, e o vigia só viu o commit depois das 17:00). Dá para rodar em segundo plano: a implantação leva de 5 a 15
 # minutos, mais até 2 minutos para o vigia ver o commit.
 #
@@ -178,13 +178,13 @@ while :; do
         exit 0
         ;;
       *:falhou | main:recusado)
-        dizer "implantação $resultado (pedido $pedido, commit $commit; o motivo fica no log do vigia na VPS: bash ~/instalar-vigia.sh --estado)"
+        dizer "implantação $resultado (pedido $pedido, commit $commit; o motivo fica no log do vigia na VPS: bash /opt/genesis/vigia/instalar-vigia.sh --estado)"
         exit 1
         ;;
     esac
   fi
   if [ "$SECONDS" -ge "$fim" ]; then
-    dizer "tempo limite sem o resultado; último estado: ${ultimo:-nenhum deste commit}. A implantação pode estar ainda rodando, a VPS fora do ar, o vigia desligado ou o commit já tratado antes (uma volta do dono não é desfeita). O dono confere na VPS: bash ~/instalar-vigia.sh --estado."
+    dizer "tempo limite sem o resultado; último estado: ${ultimo:-nenhum deste commit}. A implantação pode estar ainda rodando, a VPS fora do ar, o vigia desligado ou o commit já tratado antes (uma volta do dono não é desfeita). O dono confere na VPS: bash /opt/genesis/vigia/instalar-vigia.sh --estado."
     exit 3
   fi
   sleep "$INTERVALO"

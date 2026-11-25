@@ -130,13 +130,16 @@ scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o
   `infra/producao/implantar-sem-actions.sh` refaz o workflow Implantação na própria VPS (commit da `main`, imagens
   montadas lá, `instalar.sh` e `implantar.sh`); passo a passo no README de `infra/producao` › Implantar sem o GitHub
   Actions, decisões no README da API › decisão 215. A sessão não tem acesso à VPS.
-- **Vigia da implantação (OP-B4 e OP-B7, D70 e D119):** com o vigia instalado pelo dono
+- **Vigia da implantação (OP-B4, OP-B7 e OP-B9, D70, D119 e D121):** com o vigia instalado pelo dono
   (`infra/producao/vigia/instalar-vigia.sh`), a VPS implanta sozinha cada commit novo da `main` (uma vez por commit,
   fora das 17h à meia-noite, horário de Brasília) e publica o PDV do release novo na página de download; a tag
   `implantar/<AAAAMMDD-HHMMSS>` fica como pedido manual do dono. A sessão só acompanha:
   `scripts/acompanhar-implantacao.sh <commit>` lê `https://download.<domínio>/implantacao/estado.json` (a única
-  saída pública da VPS) e o `/saude` da API. README de `infra/producao` › Vigia da implantação; README da API ›
-  decisões 217 e 218.
+  saída pública da VPS) e o `/saude` da API. Depois de cada implantação `ok`, o vigia se atualiza por inteiro com o
+  `instalar-vigia.sh --autoatualizar` do commit implantado (o programa, a cópia do instalador que o dono usa no
+  `--estado`, a unidade e o timer, conferidos antes): uma
+  mudança em `infra/producao/vigia/` chega à VPS com o merge, sem comando do dono. README de `infra/producao` › Vigia
+  da implantação; README da API › decisões 217, 218 e 219.
 
 ## CI: o que roda quando
 

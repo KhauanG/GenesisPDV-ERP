@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Testes de unidade do vigia da implantação (OP-B4 e OP-B7; D70 e D119; README de infra/producao › Vigia da
+# Testes de unidade do vigia da implantação (OP-B4, OP-B7 e OP-B9; D70, D119 e D121; README de infra/producao › Vigia da
 # implantação): o vigia-implantacao.sh e o instalar-vigia.sh, sem rede, sem systemd e sem root. Dublês de `id`,
 # `systemctl` e `date` (a hora de Brasília controlada) no PATH,
 # o `git` de verdade (com um dublê que só registra a chamada) sobre um repositório local no lugar do público, com as
@@ -18,7 +18,18 @@
 # antes do release publicado (69) que espera sem mexer no estado.json e depois publica com o inicio da primeira
 # tentativa, a falha passageira (1) que tenta de novo, o release inválido (65) que não repete, a tag manual com
 # prioridade e fora da janela, a main antes do PDV, a implantação automática interrompida e a ponta que esperava como
-# recebido e foi implantada pelo terminal (o estado.json termina como ok).
+# recebido e foi implantada pelo terminal (o estado.json termina como ok). A autoatualização completa (OP-B9; D121):
+# a unidade e o timer que mudam no commit implantado, trocados por rename e recarregados (o timer ligado continua
+# ligado); só o service mudado (o daemon-reload, sem o try-restart do timer); os iguais, sem nada regravado; o timer
+# fora do formato e a unidade com aviso do systemd-analyze, recusados (também na instalação à mão), ficando as antigas
+# e o vigia de antes; a troca que falha (o daemon-reload, o try-restart, o timer que cai, o rename de um script depois
+# das unidades: o disco cheio), desfeita por inteiro, e a volta que também falha (pendente, refeita na rodada
+# seguinte); o vigia desligado pelo dono, que continua desligado, também com o --desligar no meio da troca; a volta a
+# um commit sem o --autoatualizar (só o programa, como antes), o merge seguinte pelo vigia antigo e a rodada que
+# compara o sha256 do registro; o arquivo que não veio (pendente, tenta na rodada seguinte), também numa volta (refeita
+# como depois do ok); a conferência com o commit no ar anterior ao OP-B9 (sem-autoatualizar, o vigia novo fica) e com a
+# versão no ar fora da main (sem-commit); a cópia do instalar-vigia.sh em vigia/; a transição com o vigia do OP-B7 de
+# verdade (o do e539ed0, quando o histórico o tem); nada no estado.json.
 #
 #   bash infra/producao/teste/testar-vigia-implantacao.sh
 # Precisa de bash, git, jq, coreutils e util-linux (flock); roda sem root.
@@ -31,7 +42,8 @@ trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/duble" "$T/systemd"
 GIT_REAL=$(command -v git)
 DATE_REAL=$(command -v date)
-export GIT_REAL DATE_REAL
+MV_REAL=$(command -v mv)
+export GIT_REAL DATE_REAL MV_REAL
 export DUBLE=$T/duble
 export GENESIS_PASTA=$T/pasta
 # file://, não o caminho: num clone local o git ignora o --filter=blob:none e copia todos os objetos; assim o clone é
@@ -60,21 +72,87 @@ cat >"$T/bin/id" <<'DUBLE'
 #!/usr/bin/env bash
 if [ "${1:-}" = -u ]; then cat "$DUBLE/uid" 2>/dev/null || echo 0; else exec /usr/bin/id "$@"; fi
 DUBLE
+# O systemctl falso da autoatualização (OP-B9): falha-daemon-reload e falha-try-restart (uma vez: o arquivo some) fazem
+# o daemon-reload ou o try-restart falhar (o try-restart que falha deixa o timer desligado); timer-cai-no-try-restart
+# deixa o timer desligado num try-restart que sai com 0; desligar-no-daemon-reload (uma vez) faz o que o --desligar do
+# dono faz no mesmo instante do daemon-reload (o disable --now: o timer parado e desabilitado). try-restart, restart e
+# start só ligam como o systemd: o try-restart só mexe no timer ligado. O is-enabled: habilitado sem
+# timer-desabilitado (o disable o cria, o enable o apaga).
 cat >"$T/bin/systemctl" <<'DUBLE'
 #!/usr/bin/env bash
 printf 'systemctl %s\n' "$*" >>"$DUBLE/ordem"
 case "$1" in
   is-active) [ -e "$DUBLE/timer-ativo" ] ;;
-  enable) touch "$DUBLE/timer-ativo" ;;
-  disable) rm -f "$DUBLE/timer-ativo" ;;
+  is-enabled) [ ! -e "$DUBLE/timer-desabilitado" ] ;;
+  enable)
+    touch "$DUBLE/timer-ativo"
+    rm -f "$DUBLE/timer-desabilitado"
+    ;;
+  disable)
+    rm -f "$DUBLE/timer-ativo"
+    touch "$DUBLE/timer-desabilitado"
+    ;;
+  daemon-reload)
+    if [ -e "$DUBLE/desligar-no-daemon-reload" ]; then
+      rm -f "$DUBLE/desligar-no-daemon-reload" "$DUBLE/timer-ativo"
+      touch "$DUBLE/timer-desabilitado"
+    fi
+    if [ -e "$DUBLE/falha-daemon-reload" ]; then
+      rm -f "$DUBLE/falha-daemon-reload"
+      exit 1
+    fi
+    ;;
+  try-restart)
+    if [ -e "$DUBLE/falha-try-restart" ]; then
+      rm -f "$DUBLE/falha-try-restart" "$DUBLE/timer-ativo"
+      exit 1
+    fi
+    if [ -e "$DUBLE/timer-cai-no-try-restart" ]; then
+      rm -f "$DUBLE/timer-cai-no-try-restart" "$DUBLE/timer-ativo"
+    fi
+    ;;
+  restart | start) touch "$DUBLE/timer-ativo" ;;
   *) ;;
 esac
 DUBLE
+# git: com $DUBLE/git-show-falha, o `git show` de um caminho que contém o texto dele falha (o arquivo que não veio
+# do repositório público: a rede).
 cat >"$T/bin/git" <<'DUBLE'
 #!/usr/bin/env bash
 printf 'git %s [prompt=%s]\n' "$*" "${GIT_TERMINAL_PROMPT:-}" >>"$DUBLE/ordem"
+if [ -s "$DUBLE/git-show-falha" ] && [[ " $* " == *" show "* ]] && [[ $* == *"$(cat "$DUBLE/git-show-falha")"* ]]; then
+  echo "fatal: dublê: sem rede" >&2
+  exit 128
+fi
 exec "$GIT_REAL" "$@"
 DUBLE
+# mv: com $DUBLE/mv-falha, o rename de uma cópia nova da autoatualização (.genesis-vigia.*, não a de antes) para um
+# destino que termina com o texto dele falha (o disco cheio, o sistema de arquivos com erro); com
+# $DUBLE/mv-falha-desfazer, o da cópia de antes (.genesis-vigia.antes.*), a volta.
+cat >"$T/bin/mv" <<'DUBLE'
+#!/usr/bin/env bash
+destino=${*: -1}
+origem=${*: -2:1}
+if [ -s "$DUBLE/mv-falha" ] && [[ $origem == */.genesis-vigia.* && $origem != */.genesis-vigia.antes.* ]] &&
+  [[ $destino == *"$(cat "$DUBLE/mv-falha")" ]]; then
+  echo "mv: dublê: sem espaço no disco" >&2
+  exit 1
+fi
+if [ -s "$DUBLE/mv-falha-desfazer" ] && [[ $origem == */.genesis-vigia.antes.* ]] &&
+  [[ $destino == *"$(cat "$DUBLE/mv-falha-desfazer")" ]]; then
+  echo "mv: dublê: sem espaço no disco" >&2
+  exit 1
+fi
+exec "$MV_REAL" "$@"
+DUBLE
+# Sem o systemd-analyze (fora do Ubuntu), um falso que aceita tudo: a autoatualização o exige; a conferência das
+# unidades pelo systemd-analyze de verdade fica pulada (abaixo e no OP-B9).
+if ! command -v systemd-analyze >/dev/null; then
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$T/bin/systemd-analyze"
+  SEM_ANALYZE=1
+else
+  SEM_ANALYZE=0
+fi
 # date: o `+%H` (a hora da janela) vem de $DUBLE/hora (padrão 10:00, fora da janela); o resto, o date de verdade.
 cat >"$T/bin/date" <<'DUBLE'
 #!/usr/bin/env bash
@@ -177,7 +255,7 @@ estado_e() {
 resultado_visto() { awk -v p="$1" '$1 == p { r = $2 } END { print r }' "$VIGIA/vistos"; }
 
 # --- Unidades do systemd ------------------------------------------------------------------------------------------
-if command -v systemd-analyze >/dev/null; then
+if [ "$SEM_ANALYZE" = 0 ]; then
   systemd-analyze verify "$VIGIA_DIR/genesis-vigia.service" "$VIGIA_DIR/genesis-vigia.timer" >"$T/verify" 2>&1 ||
     falha "systemd-analyze verify: $(cat "$T/verify")"
   [ ! -s "$T/verify" ] || falha "systemd-analyze verify com avisos: $(cat "$T/verify")"
@@ -204,11 +282,16 @@ mkdir -p "$GENESIS_PASTA/versoes"
 echo "${C4:0:12}" >"$GENESIS_PASTA/versoes/atual"
 rodar "$INSTALAR"
 sucesso "instalação"
-for f in vigia-implantacao.sh implantar-sem-actions.sh; do
+for f in vigia-implantacao.sh implantar-sem-actions.sh instalar-vigia.sh; do
   [ "$(stat -c %a "$VIGIA/$f")" = 700 ] || falha "$f instalado sem 700"
 done
 cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$C4:infra/producao/vigia/vigia-implantacao.sh") ||
   falha "o vigia instalado não é o da main"
+# A cópia do instalar-vigia.sh em vigia/ (a que o dono usa no --estado e no --desligar; a de ~ fica parada).
+cmp -s "$VIGIA/instalar-vigia.sh" <(g show "$C4:infra/producao/vigia/instalar-vigia.sh") ||
+  falha "a cópia do instalar-vigia.sh não é a da main"
+grep -qF "Estado: bash $VIGIA/instalar-vigia.sh --estado. Desligar: bash $VIGIA/instalar-vigia.sh --desligar." <<<"$SAIDA" ||
+  falha "o fim da instalação deveria apontar a cópia em vigia/: $(tail -n 1 <<<"$SAIDA")"
 cmp -s "$VIGIA/implantar-sem-actions.sh" <(g show "$C4:infra/producao/implantar-sem-actions.sh") ||
   falha "o implantar-sem-actions.sh instalado não é o da main"
 for f in genesis-vigia.service genesis-vigia.timer; do
@@ -240,9 +323,9 @@ confere "instalação: arquivos da main (700/644), daemon-reload e timer ligado,
 
 rodar "$INSTALAR"
 sucesso "reinstalação"
-[ "$(grep -c '(já estava na versão da main)' <<<"$SAIDA")" = 4 ] && ! grep -q '(atualizado)' <<<"$SAIDA" ||
-  falha "reinstalação deveria manter os quatro arquivos (o vigia, o implantar-sem-actions.sh e as duas unidades): $SAIDA"
-confere "reinstalação idempotente (nenhum dos quatro arquivos muda)"
+[ "$(grep -c '(já estava na versão da main)' <<<"$SAIDA")" = 5 ] && ! grep -q '(atualizado)' <<<"$SAIDA" ||
+  falha "reinstalação deveria manter os cinco arquivos (o vigia, o implantar-sem-actions.sh, o instalar-vigia.sh e as duas unidades): $SAIDA"
+confere "reinstalação idempotente (nenhum dos cinco arquivos muda)"
 
 # --- Pedido normal ------------------------------------------------------------------------------------------------
 g tag implantar/20261124-100000 "$C2"
@@ -764,5 +847,501 @@ rodada
 nao_implantou "ponta no ar sem recebido"
 cmp -s "$ESTADO" "$T/estado-antes" || falha "a ponta já no ar sem recebido dela não mexe no estado.json: $(cat "$ESTADO")"
 confere "a ponta que esperava como recebido e foi implantada pelo terminal: ja-no-ar, e o estado.json termina como ok (o mesmo inicio); sem o recebido dela, nada muda"
+
+# --- O vigia se atualiza por inteiro (OP-B9; D121) ----------------------------------------------------------------
+# O repositório "público" volta a ter os arquivos do vigia deste checkout (os scripts e as duas unidades); cada cenário
+# muda o que precisa e faz um merge na main (novo_commit).
+SYS=$GENESIS_SYSTEMD
+SERVICO=genesis-vigia.service
+TIMER=genesis-vigia.timer
+arquivos_do_checkout() {
+  cp "$VIGIA_DIR/vigia-implantacao.sh" "$VIGIA_DIR/instalar-vigia.sh" "$VIGIA_DIR/$SERVICO" "$VIGIA_DIR/$TIMER" \
+    "$R/infra/producao/vigia/"
+}
+instalacao_e() {
+  local c r
+  read -r c r _ <"$VIGIA/instalacao"
+  [ "$c" = "$1" ] && [ "$r" = "$2" ] || falha "$3: instalação esperada ($1 $2): $(cat "$VIGIA/instalacao")"
+  [ "$(stat -c %a "$VIGIA/instalacao")" = 600 ] || falha "$3: o registro da instalação sem 600"
+}
+iguais_ao_commit() {
+  local f
+  cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$1:infra/producao/vigia/vigia-implantacao.sh") || falha "$2: o vigia não é o do commit ${1:0:12}"
+  cmp -s "$VIGIA/instalar-vigia.sh" <(g show "$1:infra/producao/vigia/instalar-vigia.sh") || falha "$2: a cópia do instalar-vigia.sh não é a do commit ${1:0:12}"
+  [ "$(stat -c %a "$VIGIA/instalar-vigia.sh")" = 700 ] || falha "$2: a cópia do instalar-vigia.sh sem 700"
+  for f in $SERVICO $TIMER; do
+    cmp -s "$SYS/$f" <(g show "$1:infra/producao/vigia/$f") || falha "$2: $f não é o do commit ${1:0:12}"
+    [ "$(stat -c %a "$SYS/$f")" = 644 ] || falha "$2: $f sem 644"
+  done
+}
+guardar_instalados() {
+  rm -rf "${T:?}/antes"
+  mkdir -p "$T/antes"
+  cp -p "$VIGIA/vigia-implantacao.sh" "$VIGIA/instalar-vigia.sh" "$SYS/$SERVICO" "$SYS/$TIMER" "$T/antes/"
+  stat -c %i "$SYS/$SERVICO" "$SYS/$TIMER" >"$T/antes/inodes"
+}
+nada_trocado() {
+  local f
+  for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "$1: $f não deveria mudar"; done
+  cmp -s "$VIGIA/vigia-implantacao.sh" "$T/antes/vigia-implantacao.sh" || falha "$1: o vigia não deveria mudar"
+  cmp -s "$VIGIA/instalar-vigia.sh" "$T/antes/instalar-vigia.sh" || falha "$1: a cópia do instalar-vigia.sh não deveria mudar"
+  [ "$(stat -c %i "$SYS/$SERVICO" "$SYS/$TIMER")" = "$(cat "$T/antes/inodes")" ] || falha "$1: as unidades não deveriam ser regravadas"
+}
+sem_systemctl_de_troca() {
+  ! grep -qE '^systemctl (daemon-reload|try-restart|restart|start|enable)' "$DUBLE/ordem" ||
+    falha "$1: não deveria recarregar nem ligar nada: $(grep '^systemctl' "$DUBLE/ordem")"
+}
+sem_temporarios() {
+  [ -z "$(find "$VIGIA" "$SYS" -name '.autoatualizar.*' -o -name '.genesis-vigia.*' -o -name '.instalar.*')" ] ||
+    falha "$1: temporários da autoatualização ficaram: $(find "$VIGIA" "$SYS" -name '.autoatualizar.*' -o -name '.genesis-vigia.*' -o -name '.instalar.*')"
+}
+# O vigia de um commit anterior ao OP-B9 (o do OP-B7: troca só o programa depois de um ok e não conhece o
+# vigia/instalacao): o do commit e539ed0 deste repositório quando o histórico o tem; senão, o deste checkout com a
+# conferência da instalação, o --autoatualizar e o registro desligados.
+RAIZ=$(cd "$AQUI/../../.." && pwd)
+vigia_antigo() {
+  if "$GIT_REAL" -C "$RAIZ" cat-file -e e539ed0:infra/producao/vigia/vigia-implantacao.sh 2>/dev/null; then
+    "$GIT_REAL" -C "$RAIZ" show e539ed0:infra/producao/vigia/vigia-implantacao.sh >"$1"
+  else
+    sed -e 's/^conferir_instalacao() {$/conferir_instalacao() {\n  return 0/' \
+      -e 's/^marcar_instalacao() {$/marcar_instalacao() {\n  return 0/' \
+      -e 's/^  if \[ -n "$(git_repo ls-tree --name-only "$commit" -- infra\/producao\/vigia\/instalar-vigia.sh 2>\/dev\/null)" \]; then$/  if false; then/' \
+      "$VIGIA_DIR/vigia-implantacao.sh" >"$1"
+    [ "$(grep -c '^  return 0$\|^  if false; then$' "$1")" -ge 3 ] || falha "o vigia antigo simulado não desligou o OP-B9"
+  fi
+  bash -n "$1" || falha "o vigia antigo não é um script bash válido"
+}
+rm -f "$DUBLE/hora" "$DUBLE/sem-actions-codigo" "$DUBLE/timer-desabilitado"
+touch "$DUBLE/timer-ativo"
+
+# A instalação à mão (a reinstalação, com o timer ligado) registra o commit da main e o sha256 do vigia instalado.
+rodar "$INSTALAR"
+sucesso "reinstalação antes do OP-B9"
+read -r c r _ sha <"$VIGIA/instalacao"
+[ "$c $r" = "$C16 instalacao" ] && [ "$sha" = "$(sha256sum "$VIGIA/vigia-implantacao.sh" | cut -d' ' -f1)" ] ||
+  falha "o registro da instalação à mão sem o commit da main, o resultado ou o sha256 do vigia: $(cat "$VIGIA/instalacao")"
+grep -q 'Instalação do vigia aplicada por último' <(bash "$INSTALAR" --estado 2>&1) || falha "--estado sem a instalação aplicada"
+
+# 1. A unidade e o timer que mudam no commit implantado: trocados (por rename) e recarregados; o timer, ligado.
+arquivos_do_checkout
+echo '# mudança de teste da unidade (OP-B9)' >>"$R/infra/producao/vigia/$SERVICO"
+echo '# mudança de teste do timer (OP-B9)' >>"$R/infra/producao/vigia/$TIMER"
+guardar_instalados
+C17=$(novo_commit 'unidades mudadas')
+rodada
+implantou "$C17" "unidades mudadas"
+estado_e main "$C17" ok "unidades mudadas"
+so_campos "unidades mudadas"
+iguais_ao_commit "$C17" "unidades mudadas"
+[ "$(stat -c %i "$SYS/$SERVICO" "$SYS/$TIMER")" != "$(cat "$T/antes/inodes")" ] || falha "as unidades deveriam ser trocadas por rename"
+grep -qx 'systemctl daemon-reload' "$DUBLE/ordem" && grep -qx "systemctl try-restart $TIMER" "$DUBLE/ordem" ||
+  falha "unidades mudadas sem o daemon-reload e o try-restart do timer: $(grep '^systemctl' "$DUBLE/ordem")"
+[ "$(grep -c "^systemctl try-restart $TIMER" "$DUBLE/ordem")" = 1 ] && ! grep -qE '^systemctl (enable|start|restart) ' "$DUBLE/ordem" ||
+  falha "um try-restart só, sem ligar outro timer: $(grep '^systemctl' "$DUBLE/ordem")"
+[ -e "$DUBLE/timer-ativo" ] || falha "o timer deveria continuar ligado"
+instalacao_e "$C17" ok "unidades mudadas"
+grep -qF "vigia atualizado com o do commit ${C17:0:12} (instalação completa, OP-B9): trocados com os do commit ${C17:0:12}: $SERVICO $TIMER vigia-implantacao.sh; daemon-reload; o timer reiniciado e ligado" "$VIGIA/vigia.log" ||
+  falha "sem o registro da instalação completa: $(tail -n 3 "$VIGIA/vigia.log")"
+sem_temporarios "unidades mudadas"
+cp "$ESTADO" "$T/estado-antes"
+rodada
+nao_implantou "depois da instalação completa"
+sem_systemctl_de_troca "a rodada seguinte"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "a autoatualização não escreve no estado.json"
+confere "OP-B9: a unidade e o timer que mudam no commit implantado são trocados por rename, com o daemon-reload e um try-restart do timer ligado (que continua ligado); o registro em vigia/instalacao (600); nada no estado.json"
+
+# 2. Os iguais não mexem em nada.
+guardar_instalados
+C18=$(novo_commit 'nada do vigia mudou')
+rodada
+implantou "$C18" "nada do vigia mudou"
+nada_trocado "nada do vigia mudou"
+sem_systemctl_de_troca "nada do vigia mudou"
+instalacao_e "$C18" ok "nada do vigia mudou"
+! grep -q "vigia atualizado com o do commit ${C18:0:12}" "$VIGIA/vigia.log" || falha "nada mudou não vai ao log"
+confere "OP-B9: com o vigia, a unidade e o timer iguais aos do commit, nada é regravado nem recarregado"
+
+# 2b. Só o genesis-vigia.service muda (o timer igual): o daemon-reload, sem o try-restart do timer, que continua ligado.
+echo '# mudança de teste só da unidade (OP-B9)' >>"$R/infra/producao/vigia/$SERVICO"
+C=$(novo_commit 'só a unidade mudada')
+rodada
+implantou "$C" "só a unidade mudada"
+iguais_ao_commit "$C" "só a unidade mudada"
+grep -qx 'systemctl daemon-reload' "$DUBLE/ordem" || falha "só a unidade mudada: sem o daemon-reload"
+! grep -qE '^systemctl (try-restart|restart|start|enable)' "$DUBLE/ordem" ||
+  falha "só a unidade mudada: o timer, que não mudou, não leva try-restart: $(grep '^systemctl' "$DUBLE/ordem")"
+[ -e "$DUBLE/timer-ativo" ] || falha "só a unidade mudada: o timer deveria continuar ligado"
+instalacao_e "$C" ok "só a unidade mudada"
+grep -qxF "$(tail -n 1 "$VIGIA/vigia.log" | cut -d' ' -f1) vigia atualizado com o do commit ${C:0:12} (instalação completa, OP-B9): trocados com os do commit ${C:0:12}: $SERVICO; daemon-reload" "$VIGIA/vigia.log" ||
+  falha "só a unidade mudada: a linha do log sem o timer reiniciado: $(tail -n 1 "$VIGIA/vigia.log")"
+confere "OP-B9: só o genesis-vigia.service mudado: o daemon-reload, sem o try-restart do timer (que continua ligado), e a linha do log sem o timer reiniciado"
+
+# 3. A unidade inválida é recusada e a antiga fica (o vigia novo do mesmo commit também não entra: tudo ou nada).
+arquivos_do_checkout
+echo '# mudança de teste da unidade (OP-B9)' >>"$R/infra/producao/vigia/$SERVICO"
+echo '# mudança de teste do timer (OP-B9)' >>"$R/infra/producao/vigia/$TIMER"
+sed -i 's/^OnUnitInactiveSec=.*$/OnBootSec=5min/' "$R/infra/producao/vigia/$TIMER"
+echo '# vigia do commit com o timer fora do formato' >>"$R/infra/producao/vigia/vigia-implantacao.sh"
+guardar_instalados
+C19=$(novo_commit 'timer fora do formato')
+rodada
+implantou "$C19" "timer fora do formato"
+estado_e main "$C19" ok "timer fora do formato (a implantação continua ok)"
+so_campos "timer fora do formato"
+nada_trocado "timer fora do formato"
+sem_systemctl_de_troca "timer fora do formato"
+instalacao_e "$C19" recusado "timer fora do formato"
+grep -qF "instalação do vigia do commit ${C19:0:12} recusada: $TIMER fora do formato esperado" "$VIGIA/vigia.log" ||
+  falha "sem o motivo da recusa no vigia.log: $(tail -n 3 "$VIGIA/vigia.log")"
+! grep -q 'formato' "$ESTADO" || falha "o motivo não vai ao estado.json"
+cp "$ESTADO" "$T/estado-antes"
+rodada
+nao_implantou "depois da recusa"
+sem_systemctl_de_troca "a recusa não repete a cada rodada"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "a recusa não escreve no estado.json"
+instalacao_e "$C19" recusado "a recusa não repete"
+# A instalação à mão também confere: com o timer fora do formato na main, recusa sem trocar nada.
+rodar "$INSTALAR"
+recusa "instalação à mão com o timer fora do formato" "fora do formato esperado"
+nada_trocado "instalação à mão com o timer fora do formato"
+if [ "$SEM_ANALYZE" = 0 ]; then
+  # O formato certo e um aviso do systemd-analyze verify (a chave desconhecida, com saída 0): recusada também.
+  arquivos_do_checkout
+  sed -i 's/^Type=oneshot$/Type=oneshot\nChaveInventada=sim/' "$R/infra/producao/vigia/$SERVICO"
+  C20=$(novo_commit 'unidade com aviso do systemd-analyze')
+  rodada
+  implantou "$C20" "unidade com aviso"
+  estado_e main "$C20" ok "unidade com aviso"
+  nada_trocado "unidade com aviso"
+  instalacao_e "$C20" recusado "unidade com aviso"
+  grep -q "instalação do vigia do commit ${C20:0:12} recusada: o systemd-analyze verify recusou as unidades: .*ChaveInventada" "$VIGIA/vigia.log" ||
+    falha "sem o aviso do systemd-analyze no vigia.log: $(tail -n 3 "$VIGIA/vigia.log")"
+  confere "OP-B9: unidade com aviso do systemd-analyze verify (saída 0) recusada; ficam as antigas"
+fi
+confere "OP-B9: o timer fora do formato é recusado (também na instalação à mão): ficam a unidade, o timer e o vigia antigos, a implantação continua ok, o motivo só no vigia.log, e não repete a cada rodada"
+
+# 4. A troca que falha é desfeita: o daemon-reload que falha, o try-restart que falha (o timer cai) e o timer que não
+# fica ligado.
+for caso in falha-daemon-reload falha-try-restart timer-cai-no-try-restart; do
+  arquivos_do_checkout
+  echo "# mudança de teste do timer ($caso)" >>"$R/infra/producao/vigia/$TIMER"
+  echo "# vigia do commit ($caso)" >>"$R/infra/producao/vigia/vigia-implantacao.sh"
+  guardar_instalados
+  C=$(novo_commit "troca que falha: $caso")
+  touch "$DUBLE/$caso"
+  rodada
+  implantou "$C" "troca que falha ($caso)"
+  estado_e main "$C" ok "troca que falha ($caso)"
+  for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "$caso: $f deveria voltar ao de antes"; done
+  cmp -s "$VIGIA/vigia-implantacao.sh" "$T/antes/vigia-implantacao.sh" || falha "$caso: o vigia não deveria mudar"
+  [ -e "$DUBLE/timer-ativo" ] || falha "$caso: o timer deveria ficar ligado depois de desfeito"
+  instalacao_e "$C" falhou "troca que falha ($caso)"
+  grep -q "instalação do vigia do commit ${C:0:12} falhou (código 1): .*os arquivos de antes voltaram" "$VIGIA/vigia.log" ||
+    falha "$caso: sem a troca desfeita no vigia.log: $(tail -n 3 "$VIGIA/vigia.log")"
+  [ "$(grep -c '^systemctl daemon-reload' "$DUBLE/ordem")" = 2 ] || falha "$caso: um daemon-reload na troca e outro ao desfazer: $(grep '^systemctl' "$DUBLE/ordem")"
+  if [ "$caso" = falha-daemon-reload ]; then
+    ! grep -qE '^systemctl (try-restart|restart)' "$DUBLE/ordem" || falha "$caso: o timer ligado não precisa de restart"
+  else
+    [ "$(grep -c "^systemctl restart $TIMER" "$DUBLE/ordem")" = 1 ] || falha "$caso: o timer que caiu é religado uma vez: $(grep '^systemctl' "$DUBLE/ordem")"
+  fi
+  rm -f "${DUBLE:?}/${caso:?}"
+done
+confere "OP-B9: a troca que falha (o daemon-reload, o try-restart, o timer que não fica ligado) é desfeita: as unidades de antes voltam, o timer fica ligado (religado uma vez se caiu), o vigia não muda, a implantação continua ok"
+
+# 4b. O rename de um script que falha depois das unidades trocadas (o disco cheio): tudo volta, as unidades também
+# (as cópias e as ligações com os de antes preparadas antes da troca: a volta é só rename); e a volta que também falha
+# (70): "pendente", e a rodada seguinte refaz a instalação inteira.
+arquivos_do_checkout
+echo '# mudança de teste do timer (o script que falha)' >>"$R/infra/producao/vigia/$TIMER"
+echo '# vigia do commit (o script que falha)' >>"$R/infra/producao/vigia/vigia-implantacao.sh"
+echo '# instalador do commit (o script que falha)' >>"$R/infra/producao/vigia/instalar-vigia.sh"
+guardar_instalados
+C=$(novo_commit 'o rename do script que falha')
+echo /instalar-vigia.sh >"$DUBLE/mv-falha"
+rodada
+rm -f "$DUBLE/mv-falha"
+implantou "$C" "o rename do script que falha"
+estado_e main "$C" ok "o rename do script que falha"
+nada_trocado "o rename do script que falha"
+[ -e "$DUBLE/timer-ativo" ] || falha "o rename do script que falha: o timer deveria continuar ligado"
+[ "$(grep -c '^systemctl daemon-reload' "$DUBLE/ordem")" = 2 ] && ! grep -qE '^systemctl (restart|start|enable)' "$DUBLE/ordem" ||
+  falha "o rename do script que falha: um daemon-reload na troca e outro ao desfazer, sem religar: $(grep '^systemctl' "$DUBLE/ordem")"
+instalacao_e "$C" falhou "o rename do script que falha"
+grep -q "instalação do vigia do commit ${C:0:12} falhou (código 1): .*não foi possível gravar $VIGIA/instalar-vigia.sh: nada fica trocado os arquivos de antes voltaram" "$VIGIA/vigia.log" ||
+  falha "o rename do script que falha: sem a troca desfeita no vigia.log: $(tail -n 2 "$VIGIA/vigia.log")"
+sem_temporarios "o rename do script que falha"
+rodada
+nao_implantou "depois do rename que falha"
+sem_systemctl_de_troca "o falhou com tudo de volta não repete a cada rodada"
+arquivos_do_checkout
+echo '# mudança de teste do timer (a volta que falha)' >>"$R/infra/producao/vigia/$TIMER"
+echo '# vigia do commit (a volta que falha)' >>"$R/infra/producao/vigia/vigia-implantacao.sh"
+echo '# instalador do commit (a volta que falha)' >>"$R/infra/producao/vigia/instalar-vigia.sh"
+guardar_instalados
+C=$(novo_commit 'a volta que falha')
+echo /instalar-vigia.sh >"$DUBLE/mv-falha"
+echo /vigia-implantacao.sh >"$DUBLE/mv-falha-desfazer"
+rodada
+rm -f "$DUBLE/mv-falha" "$DUBLE/mv-falha-desfazer"
+implantou "$C" "a volta que falha"
+estado_e main "$C" ok "a volta que falha"
+for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "a volta que falha: $f deveria voltar ao de antes"; done
+instalacao_e "$C" pendente "a volta que falha"
+grep -q "instalação do vigia do commit ${C:0:12}: .*não foi possível gravar $VIGIA/instalar-vigia.sh: nada fica trocado .*ATENÇÃO: os arquivos de antes não voltaram por inteiro" "$VIGIA/vigia.log" ||
+  falha "a volta que falha: sem o registro no vigia.log: $(tail -n 2 "$VIGIA/vigia.log")"
+sem_temporarios "a volta que falha"
+rodada
+nao_implantou "a volta que falha, a rodada seguinte"
+iguais_ao_commit "$C" "a volta que falha, a rodada seguinte"
+instalacao_e "$C" ok "a volta que falha, a rodada seguinte"
+[ -e "$DUBLE/timer-ativo" ] || falha "a volta que falha: o timer deveria continuar ligado"
+confere "OP-B9: o rename de um script que falha depois das unidades trocadas desfaz tudo (as unidades também; só renames, sem pedir espaço) e não repete; a volta que também falha fica pendente (70), e a rodada seguinte aplica a instalação inteira"
+
+# 5. O --desligar do dono é respeitado: com o timer desligado (no meio da rodada), a troca não o liga.
+arquivos_do_checkout
+echo '# mudança de teste do timer (desligado)' >>"$R/infra/producao/vigia/$TIMER"
+C21=$(novo_commit 'timer mudado com o vigia desligado')
+rm -f "$DUBLE/timer-ativo"
+rodada
+implantou "$C21" "vigia desligado"
+iguais_ao_commit "$C21" "vigia desligado"
+grep -qx 'systemctl daemon-reload' "$DUBLE/ordem" || falha "vigia desligado: as unidades novas com o daemon-reload"
+! grep -qE '^systemctl (try-restart|restart|start|enable)' "$DUBLE/ordem" && [ ! -e "$DUBLE/timer-ativo" ] ||
+  falha "o vigia desligado pelo dono deveria continuar desligado: $(grep '^systemctl' "$DUBLE/ordem")"
+instalacao_e "$C21" ok "vigia desligado"
+grep -q "vigia atualizado com o do commit ${C21:0:12} .*o timer continua desligado" "$VIGIA/vigia.log" || falha "sem o timer desligado no log"
+touch "$DUBLE/timer-ativo"
+confere "OP-B9: o vigia desligado pelo dono (--desligar) continua desligado depois da troca (daemon-reload, sem try-restart, enable nem start)"
+
+# 5b. O dono desliga (--desligar, que não espera a trava) no meio da troca, com o timer ligado no começo: a troca vale e
+# o timer continua desligado, sem restart; com a troca que falha no mesmo instante, as de antes voltam, também sem
+# religar.
+for caso in sem-falha falha-daemon-reload; do
+  arquivos_do_checkout
+  echo "# mudança de teste do timer (desligado no meio, $caso)" >>"$R/infra/producao/vigia/$TIMER"
+  guardar_instalados
+  C=$(novo_commit "desligado no meio da troca: $caso")
+  touch "$DUBLE/timer-ativo" "$DUBLE/desligar-no-daemon-reload"
+  [ "$caso" = sem-falha ] || touch "$DUBLE/$caso"
+  rodada
+  rm -f "$DUBLE/desligar-no-daemon-reload" "$DUBLE/falha-daemon-reload"
+  implantou "$C" "desligado no meio ($caso)"
+  [ ! -e "$DUBLE/timer-ativo" ] && ! grep -qE '^systemctl (restart|start|enable)' "$DUBLE/ordem" ||
+    falha "desligado no meio ($caso): o timer desligado pelo dono deveria continuar desligado: $(grep '^systemctl' "$DUBLE/ordem")"
+  if [ "$caso" = sem-falha ]; then
+    iguais_ao_commit "$C" "desligado no meio"
+    instalacao_e "$C" ok "desligado no meio"
+    grep -q "vigia atualizado com o do commit ${C:0:12} .*o timer foi desligado durante a troca e continua desligado" "$VIGIA/vigia.log" ||
+      falha "desligado no meio: sem o registro no log: $(tail -n 1 "$VIGIA/vigia.log")"
+  else
+    for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "desligado no meio ($caso): $f deveria voltar ao de antes"; done
+    instalacao_e "$C" falhou "desligado no meio ($caso)"
+    grep -q "instalação do vigia do commit ${C:0:12} falhou (código 1): .*o $TIMER foi desligado durante a troca; continua desligado" "$VIGIA/vigia.log" ||
+      falha "desligado no meio ($caso): sem o registro no log: $(tail -n 1 "$VIGIA/vigia.log")"
+  fi
+done
+rm -f "$DUBLE/timer-desabilitado"
+touch "$DUBLE/timer-ativo"
+confere "OP-B9: o --desligar do dono no meio da troca é respeitado: o timer continua desligado (sem restart), com a troca feita ou, se ela falhou no mesmo instante, desfeita"
+
+# 6. A volta a um commit cujo instalar-vigia.sh não tem o --autoatualizar (anterior ao OP-B9, com o vigia do OP-B7):
+# como antes, só o programa do vigia; a unidade e o timer instalados ficam.
+arquivos_do_checkout
+sed -i '/^# genesis-vigia-autoatualizar: 1$/d' "$R/infra/producao/vigia/instalar-vigia.sh"
+echo '# mudança de teste do timer (sem o --autoatualizar)' >>"$R/infra/producao/vigia/$TIMER"
+vigia_antigo "$R/infra/producao/vigia/vigia-implantacao.sh"
+echo '# vigia de um commit anterior ao OP-B9' >>"$R/infra/producao/vigia/vigia-implantacao.sh"
+C22=$(novo_commit 'commit sem o --autoatualizar')
+arquivos_do_checkout
+C23=$(novo_commit 'a main de volta com o OP-B9')
+echo "${C23:0:12}" >"$GENESIS_PASTA/versoes/atual"
+rodada
+nao_implantou "a ponta já no ar"
+guardar_instalados
+g tag implantar/20261125-030000 "$C22"
+rodada
+implantou "$C22" "volta a um commit sem o --autoatualizar"
+estado_e implantar/20261125-030000 "$C22" ok "volta a um commit sem o --autoatualizar"
+cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$C22:infra/producao/vigia/vigia-implantacao.sh") || falha "volta: o vigia do commit, como antes"
+for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "volta: $f não deveria mudar"; done
+sem_systemctl_de_troca "volta a um commit sem o --autoatualizar"
+instalacao_e "$C22" sem-autoatualizar "volta a um commit sem o --autoatualizar"
+grep -q "só o programa do vigia: o commit é anterior ao OP-B9" "$VIGIA/vigia.log" || falha "volta: sem o registro no log"
+rodada
+nao_implantou "depois da volta"
+sem_systemctl_de_troca "depois da volta (a instalação não é desfeita nem refeita)"
+instalacao_e "$C22" sem-autoatualizar "depois da volta"
+# O merge seguinte, com o OP-B9 de novo e a unidade e o timer mudados: o vigia antigo instalado pela volta o implanta e
+# troca só o programa, sem tocar no registro da volta (o sha256 dele é o do vigia antigo); a rodada seguinte, já com o
+# vigia novo, vê o sha256 do registro diferente do dele e aplica a instalação completa.
+cp "$VIGIA/instalacao" "$T/instalacao-da-volta"
+arquivos_do_checkout
+echo '# mudança de teste do timer (depois da volta)' >>"$R/infra/producao/vigia/$TIMER"
+echo '# mudança de teste da unidade (depois da volta)' >>"$R/infra/producao/vigia/$SERVICO"
+C24=$(novo_commit 'merge depois da volta')
+rodada
+implantou "$C24" "merge depois da volta (o vigia antigo)"
+cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$C24:infra/producao/vigia/vigia-implantacao.sh") ||
+  falha "merge depois da volta: o vigia antigo troca o programa pelo do commit"
+for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "merge depois da volta: o vigia antigo não mexe em $f"; done
+cmp -s "$VIGIA/instalacao" "$T/instalacao-da-volta" || falha "merge depois da volta: o vigia antigo não mexe no registro: $(cat "$VIGIA/instalacao")"
+read -r _ _ _ sha <"$VIGIA/instalacao"
+[ "$sha" != "$(sha256sum "$VIGIA/vigia-implantacao.sh" | cut -d' ' -f1)" ] || falha "merge depois da volta: o sha256 do registro deveria ser o do vigia antigo"
+rodada
+nao_implantou "merge depois da volta (o vigia novo)"
+iguais_ao_commit "$C24" "merge depois da volta"
+grep -qx "systemctl try-restart $TIMER" "$DUBLE/ordem" || falha "merge depois da volta: sem o try-restart do timer mudado"
+instalacao_e "$C24" ok "merge depois da volta"
+grep -q "instalação do vigia: o vigia instalado não é o da última instalação completa .*aplica a do commit no ar ${C24:0:12}" "$VIGIA/vigia.log" ||
+  falha "merge depois da volta: sem o registro no log: $(tail -n 3 "$VIGIA/vigia.log")"
+rodada
+sem_systemctl_de_troca "merge depois da volta: a rodada seguinte"
+confere "OP-B9: a volta a um commit sem o --autoatualizar só troca o programa do vigia (como antes), não mexe na unidade nem no timer e não é refeita a cada rodada; no merge seguinte, o vigia antigo troca só o programa e a rodada seguinte (o sha256 do registro não é o do vigia instalado) aplica a instalação completa"
+
+# 7. O arquivo que não veio (a rede): pendente, uma linha no log, e a rodada seguinte tenta de novo.
+arquivos_do_checkout
+echo '# mudança de teste do timer (pendente)' >>"$R/infra/producao/vigia/$TIMER"
+guardar_instalados
+C25=$(novo_commit 'instalação pendente')
+echo 'instalar-vigia.sh' >"$DUBLE/git-show-falha"
+rodada
+implantou "$C25" "instalação pendente"
+estado_e main "$C25" ok "instalação pendente"
+nada_trocado "instalação pendente"
+instalacao_e "$C25" pendente "instalação pendente"
+rodada
+nada_trocado "pendente, ainda sem rede"
+[ "$(grep -c "instalação do vigia do commit ${C25:0:12}: o instalar-vigia.sh não veio" "$VIGIA/vigia.log")" = 1 ] ||
+  falha "a espera da rede deveria ir ao log uma vez só"
+echo "$TIMER" >"$DUBLE/git-show-falha"
+rodada
+nada_trocado "pendente, a unidade sem rede"
+instalacao_e "$C25" pendente "pendente, a unidade sem rede"
+rm -f "$DUBLE/git-show-falha"
+cp "$ESTADO" "$T/estado-antes"
+rodada
+nao_implantou "pendente com a rede de volta"
+iguais_ao_commit "$C25" "pendente com a rede de volta"
+instalacao_e "$C25" ok "pendente com a rede de volta"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "a instalação pendente não escreve no estado.json"
+confere "OP-B9: o arquivo que não vem do repositório (a rede) deixa a instalação pendente, nada trocado, uma linha no log; com a rede de volta, a rodada seguinte a aplica"
+
+# 8. A transição: o vigia do OP-B7 instalado (o que o dono reinstala depois do PR-16b) implanta o primeiro commit com
+# o OP-B9 e troca só o programa; a rodada seguinte, já com o vigia novo, aplica a instalação completa do commit no ar,
+# sem comando do dono. Com o vigia do OP-B7 de verdade (o do commit e539ed0 deste repositório) quando o histórico o
+# tem; senão, o mesmo estado que ele deixa (o vigia novo sem o registro da instalação).
+arquivos_do_checkout
+echo '# mudança de teste do timer (transição)' >>"$R/infra/producao/vigia/$TIMER"
+echo '# mudança de teste da unidade (transição)' >>"$R/infra/producao/vigia/$SERVICO"
+C26=$(novo_commit 'primeiro commit com o OP-B9')
+if "$GIT_REAL" -C "$RAIZ" cat-file -e e539ed0:infra/producao/vigia/vigia-implantacao.sh 2>/dev/null; then
+  "$GIT_REAL" -C "$RAIZ" show e539ed0:infra/producao/vigia/vigia-implantacao.sh >"$VIGIA/vigia-implantacao.sh"
+  ! grep -q conferir_instalacao "$VIGIA/vigia-implantacao.sh" || falha "o vigia do e539ed0 não deveria ter o OP-B9"
+  rm -f "$VIGIA/instalacao"
+  guardar_instalados
+  rodada
+  implantou "$C26" "transição: o vigia do OP-B7 implanta"
+  estado_e main "$C26" ok "transição: o vigia do OP-B7 implanta"
+  cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$C26:infra/producao/vigia/vigia-implantacao.sh") ||
+    falha "transição: o vigia do OP-B7 troca o programa pelo do commit"
+  for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "transição: o vigia do OP-B7 não mexe em $f"; done
+  [ ! -e "$VIGIA/instalacao" ] || falha "transição: o vigia do OP-B7 não registra a instalação"
+  transicao="o vigia do OP-B7 (e539ed0) implanta e troca só o programa"
+else
+  printf '\033[1;33m-\033[0m o histórico não tem o e539ed0: a transição começa do estado que o vigia do OP-B7 deixa\n'
+  guardar_instalados
+  rodada
+  implantou "$C26" "transição (simulada)"
+  for f in $SERVICO $TIMER; do cp -p "$T/antes/$f" "$SYS/$f"; done
+  rm -f "$VIGIA/instalacao"
+  transicao="o estado que o vigia do OP-B7 deixa (simulado)"
+fi
+cp "$ESTADO" "$T/estado-antes"
+rodada
+nao_implantou "transição: a rodada do vigia novo"
+iguais_ao_commit "$C26" "transição: a rodada do vigia novo"
+grep -qx 'systemctl daemon-reload' "$DUBLE/ordem" && grep -qx "systemctl try-restart $TIMER" "$DUBLE/ordem" ||
+  falha "transição: sem o daemon-reload e o try-restart: $(grep '^systemctl' "$DUBLE/ordem")"
+[ -e "$DUBLE/timer-ativo" ] || falha "transição: o timer deveria continuar ligado"
+instalacao_e "$C26" ok "transição"
+grep -q "instalação do vigia: o vigia instalado não é o da última instalação completa .*aplica a do commit no ar ${C26:0:12}" "$VIGIA/vigia.log" ||
+  falha "transição: sem o registro no log: $(tail -n 3 "$VIGIA/vigia.log")"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "transição: nada no estado.json"
+rodada
+sem_systemctl_de_troca "transição: a rodada seguinte"
+confere "OP-B9: transição: $transicao; a rodada seguinte (o vigia novo, sem o registro da instalação) aplica a instalação completa do commit no ar, sem comando do dono, e não repete"
+
+# 9. A versão no ar fora da main do clone (o C3, do branch "outra": implantado pelo dono no terminal) e o registro
+# ausente: "sem-commit" (fica a instalação atual), nada trocado, uma linha no log, e não repete.
+echo "${C3:0:12}" >"$GENESIS_PASTA/versoes/atual"
+rm -f "$VIGIA/instalacao"
+guardar_instalados
+rodada
+nao_implantou "versão no ar fora da main"
+nada_trocado "versão no ar fora da main"
+sem_systemctl_de_troca "versão no ar fora da main"
+instalacao_e "${C3:0:12}" sem-commit "versão no ar fora da main"
+rodada
+sem_systemctl_de_troca "versão no ar fora da main, a rodada seguinte"
+[ "$(grep -c "instalação do vigia: a versão no ar ${C3:0:12} não está na main do clone do vigia; fica a instalação atual" "$VIGIA/vigia.log")" = 1 ] ||
+  falha "versão no ar fora da main: uma linha no log, uma vez só"
+confere "OP-B9: a versão no ar fora da main do clone fica sem-commit (a instalação atual, nada trocado), uma linha no log, sem repetir"
+
+# 10. A conferência do começo da rodada com o commit no ar anterior ao OP-B9 (o C22) e o registro ausente ou de outro
+# vigia: o vigia novo não se troca sozinho pelo antigo ("sem-autoatualizar", nada trocado). Sem o instalar-vigia.sh
+# (a rede), o registro fica como está (não "pendente": sem o instalador não se sabe se o commit tem o
+# --autoatualizar), uma linha no log, e a rodada seguinte decide de novo.
+echo "${C22:0:12}" >"$GENESIS_PASTA/versoes/atual"
+for registro in ausente outro-vigia; do
+  if [ "$registro" = ausente ]; then
+    rm -f "$VIGIA/instalacao"
+  else
+    printf '%s ok 2026-11-25T00:00:00Z %064d\n' "$C26" 0 >"$VIGIA/instalacao"
+  fi
+  guardar_instalados
+  rodada
+  nao_implantou "commit no ar sem o --autoatualizar ($registro)"
+  nada_trocado "commit no ar sem o --autoatualizar ($registro)"
+  sem_systemctl_de_troca "commit no ar sem o --autoatualizar ($registro)"
+  instalacao_e "$C22" sem-autoatualizar "commit no ar sem o --autoatualizar ($registro)"
+  rodada
+  nada_trocado "commit no ar sem o --autoatualizar ($registro), a rodada seguinte"
+done
+[ "$(grep -c "o commit no ar ${C22:0:12} é anterior ao OP-B9 (sem o --autoatualizar); fica a instalação atual" "$VIGIA/vigia.log")" = 2 ] ||
+  falha "commit no ar sem o --autoatualizar: uma linha no log por registro, sem repetir a cada rodada"
+rm -f "$VIGIA/instalacao"
+linhas_antes=$(grep -c "o vigia instalado não é o da última instalação completa .*aplica a do commit no ar ${C22:0:12}" "$VIGIA/vigia.log")
+echo 'instalar-vigia.sh' >"$DUBLE/git-show-falha"
+rodada
+rodada
+nada_trocado "commit no ar sem o instalador (a rede)"
+[ ! -e "$VIGIA/instalacao" ] || falha "a conferência sem o instalador não grava o registro (nem pendente): $(cat "$VIGIA/instalacao")"
+[ "$(grep -c "instalação do vigia do commit ${C22:0:12}: o instalar-vigia.sh não veio" "$VIGIA/vigia.log")" = 1 ] &&
+  [ "$(grep -c "o vigia instalado não é o da última instalação completa .*aplica a do commit no ar ${C22:0:12}" "$VIGIA/vigia.log")" = $((linhas_antes + 1)) ] ||
+  falha "a conferência sem o instalador: uma linha de cada no log, sem repetir a cada rodada: $(tail -n 4 "$VIGIA/vigia.log")"
+rm -f "$DUBLE/git-show-falha"
+rodada
+nada_trocado "commit no ar sem o instalador, com a rede de volta"
+instalacao_e "$C22" sem-autoatualizar "commit no ar sem o instalador, com a rede de volta"
+confere "OP-B9: na conferência do começo da rodada, o commit no ar anterior ao OP-B9 (registro ausente ou de outro vigia) não troca o vigia novo pelo antigo (sem-autoatualizar); sem o instalador, o registro fica como está e a rodada seguinte decide de novo"
+
+# 11. A volta pelo GitHub a esse commit com o instalar-vigia.sh sem vir (a rede): "pendente"; com a rede de volta, a
+# rodada seguinte a refaz como depois do ok da volta: o programa do vigia do commit, como a volta teria feito.
+guardar_instalados
+echo 'instalar-vigia.sh' >"$DUBLE/git-show-falha"
+g tag implantar/20261125-040000 "$C22"
+rodada
+rm -f "$DUBLE/git-show-falha"
+implantou "$C22" "volta com o instalador sem vir"
+estado_e implantar/20261125-040000 "$C22" ok "volta com o instalador sem vir"
+nada_trocado "volta com o instalador sem vir"
+instalacao_e "$C22" pendente "volta com o instalador sem vir"
+rodada
+nao_implantou "volta pendente com a rede de volta"
+cmp -s "$VIGIA/vigia-implantacao.sh" <(g show "$C22:infra/producao/vigia/vigia-implantacao.sh") ||
+  falha "volta pendente com a rede de volta: o programa do vigia do commit, como a volta teria feito"
+for f in $SERVICO $TIMER; do cmp -s "$SYS/$f" "$T/antes/$f" || falha "volta pendente com a rede de volta: $f não deveria mudar"; done
+instalacao_e "$C22" sem-autoatualizar "volta pendente com a rede de volta"
+confere "OP-B9: a volta a um commit anterior ao OP-B9 que ficou pendente (a rede) é refeita como depois do ok: o programa do vigia do commit, sem mexer na unidade nem no timer"
 
 printf '\n\033[1;32mVigia da implantação: todos os testes passaram.\033[0m\n'

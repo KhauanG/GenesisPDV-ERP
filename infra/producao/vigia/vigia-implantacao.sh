@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Genesis: vigia da implantação na VPS (OP-B4 e OP-B7; D70 e D119; README desta pasta › Vigia da implantação). Uma
-# rodada: lê a main e as tags do repositório público (só leitura, sem token) e, havendo o que fazer, chama o
-# implantar-sem-actions.sh. O genesis-vigia.timer (systemd) roda uma rodada a cada 2 minutos; o instalar-vigia.sh
-# instala, atualiza, desliga e mostra o estado.
+# Genesis: vigia da implantação na VPS (OP-B4, OP-B7 e OP-B9; D70, D119 e D121; README desta pasta › Vigia da
+# implantação). Uma rodada: lê a main e as tags do repositório público (só leitura, sem token) e, havendo o que fazer,
+# chama o implantar-sem-actions.sh. O genesis-vigia.timer (systemd) roda uma rodada a cada 2 minutos; o
+# instalar-vigia.sh instala, atualiza, desliga e mostra o estado.
 #
 #   bash /opt/genesis/vigia/vigia-implantacao.sh      # uma rodada (o que o genesis-vigia.service roda)
 #
@@ -44,14 +44,30 @@
 #   e. o implantar-sem-actions.sh da main de agora (a mesma regra do README: o script vem da main, não do commit) e a
 #      chamada, fora do terminal como sempre; estado "em_andamento" e depois "ok" ou "falhou" (o código 75 do
 #      implantar-sem-actions.sh, a trava pega no mesmo instante, volta a "recebido");
-#   f. depois de um "ok" de uma implantação, o vigia se atualiza com o vigia-implantacao.sh do commit implantado, só
-#      se mudou (sha256), por rename (a rodada em andamento continua lendo o arquivo antigo); falhar aqui não desfaz a
-#      implantação.
+#   f. depois de um "ok" de uma implantação, o vigia se atualiza por inteiro com o commit implantado (OP-B9; D121):
+#      roda o instalar-vigia.sh daquele commit com --autoatualizar <commit> (fora do terminal, com a trava do vigia
+#      herdada), que troca só o que mudou, por rename (a rodada em andamento continua lendo os arquivos antigos): o
+#      vigia-implantacao.sh, a cópia do implantar-sem-actions.sh, a do instalar-vigia.sh (a que o dono usa no --estado
+#      e no --desligar), o genesis-vigia.service e o genesis-vigia.timer
+#      (conferidos antes: o formato e o systemd-analyze verify), com o daemon-reload; o timer desligado continua
+#      desligado. Recusada ou com a troca desfeita, fica tudo como estava e o vigia segue no agendamento antigo; o
+#      motivo vai só ao vigia.log, e falhar aqui não desfaz a implantação. Um commit cujo instalar-vigia.sh não aceita
+#      o --autoatualizar (anterior ao OP-B9: uma volta do dono) faz como antes, só o programa do vigia. O resultado
+#      fica em $PASTA/vigia/instalacao (o commit, o resultado, quando e o sha256 do vigia instalado);
+#   g. a conferência da instalação no começo da rodada (depois de a.): o vigia-implantacao.sh instalado não é o que a
+#      última instalação completa deixou (um vigia anterior ao OP-B9 o trocou depois de implantar o primeiro commit
+#      com ele; é a transição, sem comando do dono) ou a última ficou pendente (o arquivo não veio, a rede, ou a troca
+#      não voltou por inteiro): a do commit no ar roda como em f., mas sem trocar o vigia pelo de um commit anterior
+#      ao OP-B9 ("sem-autoatualizar"); a pendente, a do commit dela, como depois do "ok" que a deixou. A versão no ar
+#      fora da main do clone fica "sem-commit" (a instalação atual, sem nova tentativa até a próxima implantação ok).
 #
 # Estado: $PASTA/vigia (root 700): vistos (os pedidos manuais: o nome, o resultado e quando), main-tratados (os
 # commits da main: o commit, o resultado e quando), pdv-tratados (a tag, o commit dela, o resultado e quando), janela,
 # vigia.log (o que cada rodada fez; 1 MB no máximo), ultima-implantacao.log (a saída da última chamada do
-# implantar-sem-actions.sh), a cópia do implantar-sem-actions.sh e o repo.git. A única saída pública é
+# implantar-sem-actions.sh), a cópia do implantar-sem-actions.sh e a do instalar-vigia.sh, instalacao (a instalação
+# aplicada por último, OP-B9: o commit, o resultado, quando e o sha256 do vigia instalado; resultado é ok, recusado,
+# falhou, pendente, sem-autoatualizar, sem-commit ou instalacao), as marcas das linhas do log escritas uma vez só
+# (.instalacao-aviso, .instalacao-conferencia e as outras com ponto) e o repo.git. A única saída pública é
 # $PASTA/download/implantacao/estado.json (servido em https://<DOWNLOAD_DOMINIO>/implantacao/estado.json, por decisão
 # do dono, D70) com só {pedido, commit (12), resultado, inicio, fim}: pedido é o nome da tag, "main" (o automático)
 # ou "pdv" (a publicação só do PDV, com o commit da versão no ar; escrita só quando a página mudou ou o release tem
@@ -92,6 +108,12 @@ TRAVA=$VIGIA/.vigia.lock
 # O vigia instalado (o que o genesis-vigia.service roda) e a cópia do implantar-sem-actions.sh que ele chama.
 VIGIA_INSTALADO=$VIGIA/vigia-implantacao.sh
 SEM_ACTIONS=$VIGIA/implantar-sem-actions.sh
+# A instalação completa aplicada por último (OP-B9): "<commit> <resultado> <quando> <sha256 do vigia instalado>".
+INSTALACAO=$VIGIA/instalacao
+AVISO_INSTALACAO=$VIGIA/.instalacao-aviso
+AVISO_CONFERENCIA=$VIGIA/.instalacao-conferencia
+# A linha do instalar-vigia.sh que aceita o --autoatualizar (OP-B9).
+MARCA_AUTOATUALIZAR='# genesis-vigia-autoatualizar: 1'
 PUBLICO=$PASTA/download/implantacao
 ESTADO=$PUBLICO/estado.json
 PAGINA_PDV=$PASTA/download/pdv/atual.json
@@ -305,16 +327,109 @@ instalar_de() {
   mv -f "$temp" "$destino"
 }
 
-# Depois de um "ok": o vigia do commit implantado (mesmo numa volta a um commit antigo: o que vale é o que está no
-# ar; a próxima implantação da main traz o de hoje). Sem o arquivo no commit (anterior ao OP-B4), fica o atual.
+sha_vigia() { sha256sum "$VIGIA_INSTALADO" 2>/dev/null | cut -d' ' -f1; }
+# marcar_instalacao <commit> <resultado>: a instalação aplicada (ou tentada), com o sha256 do vigia de agora.
+marcar_instalacao() {
+  local temp
+  temp=$(mktemp "$VIGIA/.instalacao.XXXXXX")
+  printf '%s %s %s %s\n' "$1" "$2" "$(agora)" "$(sha_vigia)" >"$temp"
+  mv -f "$temp" "$INSTALACAO"
+  rm -f "$AVISO_CONFERENCIA"
+}
+
+# autoatualizar <commit> [rodada]: depois de um "ok", a instalação do commit implantado (mesmo numa volta a um commit
+# antigo: o que vale é o que está no ar; a próxima implantação da main traz a de hoje), pelo instalar-vigia.sh dele
+# com --autoatualizar (f. no começo do arquivo). Sem esse instalador no commit (anterior ao OP-B9), como antes: só o
+# vigia-implantacao.sh do commit (sem ele, anterior ao OP-B4, fica o atual); com "rodada" (a conferência do começo da
+# rodada, não um "ok"), nem isso: um vigia novo não se troca sozinho por um antigo. O instalar-vigia.sh que não veio
+# (a rede): depois de um "ok", "pendente", e a rodada seguinte refaz a deste "ok" (conferir_instalacao); na
+# conferência, o registro fica como está (sem o instalador não se sabe se o commit tem o --autoatualizar, e o
+# "pendente" seria refeito como depois de um "ok"), e a conferência da rodada seguinte decide de novo.
 autoatualizar() {
-  local codigo=0
-  instalar_de "$1:infra/producao/vigia/vigia-implantacao.sh" "$VIGIA_INSTALADO" || codigo=$?
+  local commit=$1 contexto=${2:-ok} temp codigo=0 saida
+  if [ -n "$(git_repo ls-tree --name-only "$commit" -- infra/producao/vigia/instalar-vigia.sh 2>/dev/null)" ]; then
+    temp=$(mktemp "$VIGIA/.instalar.XXXXXX")
+    if ! git_repo show "$commit:infra/producao/vigia/instalar-vigia.sh" >"$temp" 2>/dev/null; then
+      rm -f "$temp"
+      [ "$contexto" = rodada ] || marcar_instalacao "$commit" pendente
+      registrar_uma_vez "$AVISO_INSTALACAO" "instalação do vigia do commit ${commit:0:12}: o instalar-vigia.sh não veio do repositório público (rede da VPS ou o GitHub fora do ar?); tenta de novo na próxima rodada"
+      return 0
+    fi
+    if [ "$(head -c 19 "$temp")" = '#!/usr/bin/env bash' ] && bash -n "$temp" 2>/dev/null &&
+      grep -qxF "$MARCA_AUTOATUALIZAR" "$temp"; then
+      # O descritor 9 (a trava do vigia) fica aberto para o instalador: ele a confere sem abrir outra.
+      saida=$(GENESIS_PASTA=$PASTA GENESIS_VIGIA_TRAVA=herdada timeout 900 bash "$temp" --autoatualizar "$commit" </dev/null 2>&1) ||
+        codigo=$?
+      rm -f "$temp"
+      saida=$(printf '%s' "$saida" | tr '\n' ' ' | tr -s ' ')
+      case "$codigo" in
+        0)
+          rm -f "$AVISO_INSTALACAO"
+          marcar_instalacao "$commit" ok
+          [[ $saida == 'nada mudou'* ]] || registrar "vigia atualizado com o do commit ${commit:0:12} (instalação completa, OP-B9): $saida"
+          ;;
+        69 | 70)
+          # O arquivo que não veio (69) ou a troca que não voltou por inteiro (70): a rodada seguinte refaz. O commit
+          # tem o --autoatualizar, então refazer como depois de um "ok" é o mesmo que na conferência.
+          marcar_instalacao "$commit" pendente
+          registrar_uma_vez "$AVISO_INSTALACAO" "instalação do vigia do commit ${commit:0:12}: $saida; tenta de novo na próxima rodada"
+          ;;
+        65)
+          rm -f "$AVISO_INSTALACAO"
+          marcar_instalacao "$commit" recusado
+          registrar "instalação do vigia do commit ${commit:0:12} recusada: $saida (ficam o vigia, a unidade e o timer atuais, no agendamento de antes; a implantação continua ok; a próxima implantação ok tenta a dela)"
+          ;;
+        *)
+          rm -f "$AVISO_INSTALACAO"
+          marcar_instalacao "$commit" falhou
+          registrar "instalação do vigia do commit ${commit:0:12} falhou (código $codigo): $saida (a implantação continua ok; a próxima implantação ok tenta a dela)"
+          ;;
+      esac
+      return 0
+    fi
+    rm -f "$temp"
+  fi
+  if [ "$contexto" = rodada ]; then
+    marcar_instalacao "$commit" sem-autoatualizar
+    registrar "instalação do vigia: o commit no ar ${commit:0:12} é anterior ao OP-B9 (sem o --autoatualizar); fica a instalação atual"
+    return 0
+  fi
+  instalar_de "$commit:infra/producao/vigia/vigia-implantacao.sh" "$VIGIA_INSTALADO" || codigo=$?
   case "$codigo" in
-    0) registrar "vigia atualizado com o do commit ${1:0:12} (sha256 $(sha256sum "$VIGIA_INSTALADO" | cut -d' ' -f1))" ;;
+    0) registrar "vigia atualizado com o do commit ${commit:0:12} (sha256 $(sha_vigia); só o programa do vigia: o commit é anterior ao OP-B9, a unidade e o timer ficam)" ;;
     2) ;;
-    *) registrar "o commit ${1:0:12} não tem um vigia-implantacao.sh válido: fica o vigia atual" ;;
+    *) registrar "o commit ${commit:0:12} não tem um vigia-implantacao.sh válido: fica o vigia atual" ;;
   esac
+  marcar_instalacao "$commit" sem-autoatualizar
+}
+
+# g. A conferência da instalação no começo da rodada: o vigia instalado não é o que a última instalação completa deixou
+# (o sha256 dela; sem o registro, a transição de um vigia anterior ao OP-B9, que trocou só o programa depois de
+# implantar o primeiro commit com ele) ou a última ficou pendente. Sem clone ou sem versão no ar, nada.
+conferir_instalacao() {
+  [ -d "$REPO" ] && [ -f "$VIGIA_INSTALADO" ] || return 0
+  local commit='' resultado='' sha='' no_ar
+  [ ! -f "$INSTALACAO" ] || read -r commit resultado _ sha <"$INSTALACAO" || true
+  # A pendente é sempre a de um "ok" (a conferência não a grava): refeita como depois do "ok", o que numa volta a um
+  # commit anterior ao OP-B9 troca o programa do vigia, como a volta teria feito.
+  if [ "$resultado" = pendente ] && [[ $commit =~ ^[0-9a-f]{40}$ ]]; then
+    autoatualizar "$commit"
+    return 0
+  fi
+  if [ -n "$resultado" ] && [ "$sha" = "$(sha_vigia)" ]; then return 0; fi
+  no_ar=$(versao_no_ar)
+  [ -n "$no_ar" ] || return 0
+  # O commit no ar que o clone ainda não tem (implantado pelo dono no terminal depois do último fetch): a main de agora.
+  if ! git_repo rev-parse --verify --quiet "$no_ar^{commit}" >/dev/null 2>&1; then buscar_main || return 0; fi
+  if ! commit=$(git_repo rev-parse --verify --quiet "$no_ar^{commit}" 2>/dev/null) || ! na_main "$commit"; then
+    marcar_instalacao "$no_ar" sem-commit
+    registrar "instalação do vigia: a versão no ar $no_ar não está na main do clone do vigia; fica a instalação atual"
+    return 0
+  fi
+  # Uma linha só enquanto o registro não muda (marcar_instalacao apaga a marca): sem rede, a conferência se repete a
+  # cada rodada sem gravar nada.
+  registrar_uma_vez "$AVISO_CONFERENCIA" "instalação do vigia: o vigia instalado não é o da última instalação completa (a primeira rodada depois de um vigia anterior ao OP-B9 se trocar); aplica a do commit no ar ${commit:0:12}"
+  autoatualizar "$commit" rodada
 }
 
 # buscar_main: a main do repositório público no clone do vigia; volta 1 (já registrado) se a rede falhou (tenta na
@@ -551,6 +666,7 @@ rodada() {
     return 0
   fi
   retomar_interrompida || return 0
+  conferir_instalacao || registrar "a conferência da instalação do vigia falhou; fica a instalação atual"
 
   local lista
   if ! lista=$(git_publico ls-remote --heads --tags "$REPOSITORIO" 2>&1); then
