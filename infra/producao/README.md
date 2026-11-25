@@ -21,18 +21,23 @@ Internet ──443──▶ Traefik v3 (rede "proxy")
 
 | Container | Imagem | Memória (teto) | Observação |
 |---|---|---|---|
-| `genesis-api` | `genesis-api:<versão>` (apps/api/Dockerfile) | 2 GB (heap do Node 1,5 GB) | Usuário `node`, sistema de arquivos só leitura, healthcheck em `/saude` |
+| `genesis-api` | `genesis-api:<versão>` (apps/api/Dockerfile) | 1984 MB (heap do Node 1,5 GB) | Usuário `node`, sistema de arquivos só leitura, healthcheck em `/saude` |
 | `genesis-web` | `genesis-web:<versão>` (apps/erp-web/Dockerfile) | 128 MB | nginx sem root (uid 101), ERP estático e a página de download (o instalador do PDV vem de uma pasta do host, só leitura) |
 | `genesis-cloudsql-proxy` | `gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.21.0-alpine` | 192 MB | Usuário nonroot (65532), healthcheck em `/readiness` |
 | `genesis-backup` | `genesis-backup:<versão>` (backup/Dockerfile) | 64 MB | Usuário `postgres` (70), clientes do PostgreSQL 18; `pg_dump` diário às 04:30 para o bucket |
-| `genesis-tarefa` | a mesma da API | 128 MB (heap do Node 96 MB), só enquanto roda | Migrações na implantação e comandos (`admin-criar`, `empresa-criar`...) |
+| `genesis-tarefa` | a mesma da API | 192 MB (heap do Node 128 MB), só enquanto roda | Migrações na implantação e comandos (`admin-criar`, `empresa-criar`...); sem o healthcheck da imagem |
 
 Soma dos limites: **2,5 GB** (decisão do dono, 03/11/2026: limite somado dos containers), contando a tarefa — ela
-roda com a API no ar (na implantação, a versão anterior continua no ar durante as migrações): 2048 + 128 + 192 + 64 +
-128 = 2560 MiB. No I1 o proxy tinha 256 MB; no I1b ele cedeu 64 MB ao backup (o pico medido do proxy é de dezenas de
-MB; [Decisões técnicas (I1b)](#decisões-técnicas-i1b)). Sem swap além do limite: se um container estourar, ele
-reinicia (`restart: unless-stopped`; a tarefa só falha) em vez de deixar a VPS lenta. Nenhuma porta é publicada no host
-e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy` e se anuncia ao Traefik por labels.
+roda com a API no ar (na implantação, a versão anterior continua no ar durante as migrações): 1984 + 128 + 192 + 64 +
+192 = 2560 MiB. No I1 o proxy tinha 256 MB; no I1b ele cedeu 64 MB ao backup (o pico medido do proxy é de dezenas de
+MB; [Decisões técnicas (I1b)](#decisões-técnicas-i1b)). A API tinha 2 GB; no OP-B5 ela cedeu 64 MB à tarefa, que
+passava dos 128 MB ao migrar 4 empresas
+([Decisões técnicas (memória da tarefa, OP-B5)](#decisões-técnicas-memória-da-tarefa-op-b5-24112026)); só na primeira
+implantação depois dele (e na seguinte a um `voltar` para uma versão anterior ao OP-B5) a soma passa por alguns
+minutos a 2624 MiB, porque as migrações rodam com a tarefa nova enquanto a API antiga, de 2 GB, continua no ar. Sem
+swap além do limite: se um container estourar, ele reinicia (`restart: unless-stopped`; a tarefa só falha) em vez de
+deixar a VPS lenta. Nenhuma porta é publicada no host e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy`
+e se anuncia ao Traefik por labels.
 
 ## Arquivos desta pasta
 
@@ -43,8 +48,10 @@ e nada do projeto `icebeer` é tocado; o Genesis só entra na rede `proxy` e se 
 | `genesis.env.exemplo` | Modelo do `/opt/genesis/genesis.env`: configuração **não secreta** da API (AMBIENTE, TRUST_PROXY, CORS...) |
 | `instalar.sh` | Preparação da VPS, idempotente: confere pré-requisitos, gera os segredos da aplicação, acerta permissões |
 | `implantar.sh` | `implantar <versão>`, `voltar`, `estado`, `tarefa <comando>`, `backup <...>`, `token-monitor`, `pdv <atual\|publicar\|retirar>`, `logs [guardar]` |
+| `implantar-sem-actions.sh` | Implantação pela própria VPS, sem o GitHub Actions (D70): baixa o commit da `main`, monta as imagens na VPS e roda o `instalar.sh` e o `implantar.sh` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)) |
+| `vigia/` | Vigia da implantação (D70, OP-B4): `vigia-implantacao.sh` (uma rodada: a tag de pedido do repositório público → `implantar-sem-actions.sh`), `genesis-vigia.service` + `genesis-vigia.timer` (a cada 2 minutos) e `instalar-vigia.sh` (instalar, `--estado`, `--desligar`) ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
 | `backup/` | Imagem do `genesis-backup` (`Dockerfile`), o script `genesis-backup.sh` (agendar, agora, estado, listar, restaurar) e os testes de unidade dele (`testar-genesis-backup.sh`, sem Docker; rodam no CI) |
-| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`, sem Docker; rodam no CI) |
+| `teste/` | Teste local da stack (override com PostgreSQL 18, Traefik e S3 locais, `testar-local.sh`; com `--sem-actions`, também o ensaio do `implantar-sem-actions.sh`) e os testes de unidade dos logs guardados pelo `implantar.sh` (`testar-implantar-logs.sh`), do `implantar-sem-actions.sh` (`testar-implantar-sem-actions.sh`) e do vigia da implantação (`testar-vigia-implantacao.sh`), sem Docker; rodam no CI e no `scripts/verificar-local.sh` |
 
 Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
 
@@ -55,6 +62,10 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
   docker-compose.yml  ->   releases/<versão atual>/docker-compose.yml
   implantar.sh        ->   releases/<versão atual>/implantar.sh
   releases/<versão>/       # arquivos desta pasta, um por versão (guarda as 5 últimas)
+  fonte/                   # root 700: clone do repositório público, só do implantar-sem-actions.sh (D70)
+  vigia/                   # root 700: o vigia da implantação (OP-B4): vigia-implantacao.sh, a cópia do
+                           # implantar-sem-actions.sh, repo.git (clone parcial da main), vistos, vigia.log e
+                           # ultima-implantacao.log
   versoes/atual, anterior, historico
   logs/                    # root 700: api-<AAAAMMDDTHHMMSSZ>-<versão>.log (600), o log da API guardado antes de
                            # cada troca do container: o trecho em volta do último reinício pelo Docker (se houve)
@@ -63,6 +74,8 @@ Na VPS fica assim (o workflow cria tudo, menos os segredos do Google):
     pdv/                     # instalador do PDV da página de download, root:101 750, arquivos 640; montada só
                              # leitura no genesis-web (/srv/download/pdv): atual.json, GenesisPDV-Setup-X.Y.Z.exe
                              # e o .sha256 (o atual e o anterior)
+    implantacao/             # root:101 750: estado.json do vigia (640), montada só leitura no genesis-web
+                             # (/srv/download/implantacao): a única saída pública da VPS (D70)
     .recebendo.*/            # temporários do `implantar.sh pdv publicar` (root 700; somem no fim)
   segredos/                # root, 700
     genesis-google.env       # banco e armazenamento (gerado no Cloud Shell), 600
@@ -351,6 +364,159 @@ Formato da resposta e regras sugeridas de alerta em [Monitoramento](#monitoramen
 
 ---
 
+## Implantar sem o GitHub Actions (D70)
+
+Desde 24/11/2026 a cota do GitHub Actions acabou (decisão do dono **D70**) e o workflow **Implantação** não roda. Até
+a cota voltar (ou até o dono decidir outra coisa: pergunta **D70-Q1**, a opção (A) é o padrão até a confirmação), a
+implantação é **um comando colado no terminal da VPS**: o `implantar-sem-actions.sh` faz na própria VPS o que o
+workflow fazia no GitHub, com as mesmas conferências, e roda os mesmos `instalar.sh` e `implantar.sh`. Nada muda no
+`implantacao.yml`: quando a cota voltar, o workflow continua valendo.
+
+**Antes:** o que vai para a produção é um commit da `main` (o PR já juntado, com a verificação local verde). Anote o
+hash do commit (no GitHub, na lista de commits da `main`: os 7 primeiros caracteres bastam) ou deixe sem commit para
+implantar o último da `main`. Prefira um horário **fora do movimento das lojas**: as imagens são montadas na própria
+VPS, o que leva alguns minutos e usa a CPU e o disco dela (a versão em produção continua no ar durante a montagem).
+
+**Passo a passo:**
+
+1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (o navegador abre um terminal já como `root`).
+2. Cole o comando, trocando `COMMIT` pelo hash anotado (ou apagando-o, para o último da `main`):
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/KhauanG/GenesisPDV-ERP/main/infra/producao/implantar-sem-actions.sh -o ~/implantar-sem-actions.sh && bash ~/implantar-sem-actions.sh --publicar-pdv COMMIT
+   ```
+
+   O primeiro trecho baixa o script da `main` do repositório público; o segundo roda. O `--publicar-pdv` faz o que o
+   campo `publicar_pdv` do workflow fazia: atualiza a página de download com o último GitHub Release do PDV (tire-o
+   para implantar sem mexer na página). Para só conferir, sem montar nem trocar nada, troque `--publicar-pdv` por
+   `--simular`.
+3. Espere o fim (de 5 a 15 minutos; a primeira vez demora mais, porque baixa o repositório e as imagens base). O
+   script mostra cada etapa com `==>` e termina com o resumo. **Se puder, não feche a aba até o resumo**, mas, se
+   ela fechar, a conexão cair ou o notebook dormir, a implantação **continua sozinha na VPS**: depois das
+   conferências ela roda fora do terminal (o terminal só mostra o andamento; o Ctrl+C também só para de mostrar).
+   Para ver de novo, abra o terminal da VPS e rode
+   `bash ~/implantar-sem-actions.sh --acompanhar`: mostra a implantação em andamento até o fim ou, se ela já
+   terminou, a saída inteira da última, com o resumo. A saída de cada implantação fica em
+   `/opt/genesis/logs/implantar-sem-actions-<data>.log` (as 10 últimas). Resumo:
+
+   ```
+   ### Implantação sem o Actions: 1a2b3c4d5e6f (7 min 40 s)
+   Versão: 1a2b3c4d5e6f no ar.
+   Página de download: PDV 0.13.0 (já publicado).
+   Estado da VPS (containers, memória, backup): bash /opt/genesis/implantar.sh estado
+   Voltar para a versão anterior, se precisar: /opt/genesis/implantar.sh voltar
+   Saída completa desta implantação: /opt/genesis/logs/implantar-sem-actions-20261124T220000Z-4242.log
+   ```
+
+4. Confira o ERP no navegador (`https://erp.grupoicebeer.com.br`). Se algo estiver errado depois de no ar, **volte
+   para a versão anterior** com `/opt/genesis/implantar.sh voltar` (segundos; as migrações não são desfeitas, como
+   sempre) e avise para a correção.
+
+**O que o script faz, na ordem do workflow** (`bash ~/implantar-sem-actions.sh --ajuda` lista as opções):
+
+| Etapa | O que faz |
+|---|---|
+| Conferências | Recusa se não for `root`, se o commit não tiver o formato do workflow (7 a 40 caracteres hexadecimais), se houver menos de **5 GB livres** no disco do Docker ou do `/opt/genesis` (`GENESIS_ESPACO_MINIMO_GB`) ou se outra implantação estiver rodando (a trava do `implantar.sh` ou outra execução deste script) |
+| 1. Commit | Clona (na primeira vez) ou atualiza o repositório público em `/opt/genesis/fonte` (root, 700; sem token: o repositório é público) e confere que o commit está no histórico da `main` (commit de outro branch ou de PR é recusado) |
+| 2. Versão | O commit em 12 caracteres, como no workflow: a tag das imagens e o nome da release |
+| 3. Imagens | `genesis-api`, `genesis-web` e `genesis-backup` `:<versão>`, com os mesmos Dockerfiles do workflow, montadas na VPS (no lugar do `docker save \| ssh docker load`), com `nice`/`ionice` |
+| 4. Arquivos | `docker-compose.yml`, `implantar.sh`, `instalar.sh` e os dois modelos do commit em `/opt/genesis/releases/<versão>` |
+| 5. PDV (com `--publicar-pdv`) | Antes da troca: o instalador do GitHub Release `pdv-vX.Y.Z` publicado de versão mais alta e o `.sha256`, baixados e conferidos (sha256 errado ou `.sha256` fora do formato param aqui, com a produção intacta; GitHub fora do ar é só um aviso) |
+| 6. Implantação | `instalar.sh` e `implantar.sh implantar <versão>`: o mesmo de sempre (proxy do banco, migrações, troca, saúde e a volta automática se a nova não ficar saudável) |
+| 7. Página (com `--publicar-pdv`) | `implantar.sh pdv publicar` (ou `pdv retirar`, sem release publicado), como o workflow |
+| 8. URLs públicas | A API, o ERP, o painel do monitoramento (401 sem token) e a página de download pelos domínios do `/opt/genesis/.env` (`--sem-conferir-url` pula) |
+| Limpeza | Imagens do Genesis além das 3 mais recentes de cada (nunca a atual nem a anterior, as do `voltar`) e o cache do build com mais de uma semana |
+
+**Se der errado:** a mensagem `ERRO:` diz em que etapa parou e o que fazer (se a aba fechou antes, o
+`--acompanhar` mostra a saída com o erro e o resumo). Até a etapa 5 nada mudou na produção.
+Na etapa 6 vale o de sempre: falha antes da troca (migração, trava) deixa a versão anterior no ar; a nova sem saúde
+volta sozinha para a anterior, com o log da API guardado (`bash /opt/genesis/releases/<versão>/implantar.sh logs`).
+Rodar de novo o mesmo comando é seguro (o `instalar.sh` é idempotente e a montagem reaproveita o cache).
+
+**Testado sem a VPS:** `infra/producao/teste/testar-implantar-sem-actions.sh` (dublês, sem Docker nem rede; roda no
+`scripts/verificar-local.sh`) e o ensaio de ponta a ponta `sudo infra/producao/teste/testar-local.sh --sem-actions`
+([Teste local da stack](#teste-local-da-stack)). Decisões em
+[Decisões técnicas (implantação sem o Actions)](#decisões-técnicas-implantação-sem-o-actions-d70-24112026).
+
+## Vigia da implantação (D70, OP-B4)
+
+O dono autorizou a sessão do Claude Code a **implantar sozinha um commit que já está na `main`** (D70, 24/11/2026),
+mas a sessão não abre conexão com a VPS e não recebe credencial nenhuma dela. O **vigia** inverte o sentido: a
+própria VPS, a cada 2 minutos, olha as tags do repositório **público** (só leitura, sem token) e, quando aparece um
+**pedido** novo, roda o mesmo `implantar-sem-actions.sh` da seção acima. O merge na `main` continua só com a
+liberação do dono; o vigia só implanta o que já entrou nela.
+
+**Quem pode pedir:** só quem tem permissão de escrita no repositório (criar tag exige isso, a mesma permissão de
+juntar na `main`). O pedido é uma tag com o nome `implantar/<AAAAMMDD-HHMMSS>` (implantar) ou
+`implantar-pdv/<AAAAMMDD-HHMMSS>` (implantar e publicar o PDV do último release, o `--publicar-pdv`), apontando para
+um commit da `main`. Commit de outro branch é **recusado** sem rodar nada. Roda só o pedido **mais novo** que o vigia
+ainda não viu; os anteriores ficam como pulados. Os pedidos que já existiam quando o vigia foi instalado nunca rodam.
+Um commit mais velho que o que está no ar é permitido (é a "volta").
+
+**Limite da volta para antes deste bloco:** a rota do `estado.json` (no nginx do `genesis-web`) e a pasta montada
+(no `docker-compose.yml`) chegaram com o OP-B4. Numa volta para um commit anterior a ele, o vigia implanta
+normalmente, mas, depois da troca de versão, o `genesis-web` antigo responde 404 no `estado.json`: o resultado
+(`ok`, `falhou`) fica só no host e no log do vigia, e a sessão não o vê até a próxima implantação de um commit com o
+bloco. Por isso o `scripts/pedir-implantacao.sh` recusa esse commit, a não ser com `--sem-estado`: aí acompanha só até
+a API reiniciar (o `no_ar_desde` do `/saude`) e sai com 2, e o dono confere o resultado com
+`bash ~/instalar-vigia.sh --estado`.
+
+**Instalar (uma vez, no terminal da VPS):**
+
+1. Abra o terminal da VPS: **Hostinger › VPS › Terminal** (já entra como `root`).
+2. Cole o comando:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/KhauanG/GenesisPDV-ERP/main/infra/producao/vigia/instalar-vigia.sh -o ~/instalar-vigia.sh && bash ~/instalar-vigia.sh
+   ```
+
+3. O que esperar: seis etapas com `==>` (menos de um minuto) e, no fim, `Vigia da implantação instalado.` O
+   script baixa a `main` do repositório público para `/opt/genesis/vigia/repo.git`, instala o vigia e o
+   `implantar-sem-actions.sh` em `/opt/genesis/vigia`, as duas unidades do systemd (`genesis-vigia.service` e
+   `genesis-vigia.timer`), marca os pedidos antigos como vistos e liga o timer. **Nada é implantado na instalação.**
+   Rodar o mesmo comando de novo atualiza o vigia para a versão da `main` (sem perder o que já foi visto).
+4. A página pública do resultado (`https://download.grupoicebeer.com.br/implantacao/estado.json`) passa a responder
+   depois da primeira implantação com este bloco (é ela que monta a pasta no `genesis-web`); até lá, 404.
+
+**Ver o que o vigia fez:** `bash ~/instalar-vigia.sh --estado` mostra o timer (ligado ou não), a última rodada, o
+estado público e as 20 últimas linhas do log (`/opt/genesis/vigia/vigia.log`, uma linha por pedido: recebido, em
+andamento, ok, falhou, recusado, pulado). A saída completa da última implantação pedida fica em
+`/opt/genesis/vigia/ultima-implantacao.log`, e a da implantação em andamento (ou a última, com o resumo) aparece com
+`bash /opt/genesis/vigia/implantar-sem-actions.sh --acompanhar`.
+
+**Desligar:** `bash ~/instalar-vigia.sh --desligar` desliga o timer: nenhum pedido novo é atendido, e uma implantação
+que já estava em andamento termina normalmente (o comando nunca a interrompe). Para religar, o comando de instalar de
+novo; os pedidos feitos enquanto o vigia esteve desligado **não** rodam (a sessão pede de novo), e um pedido que
+estava esperando (como `recebido`) fica `recusado` no `estado.json`, com o fim (o motivo vai ao log do vigia). O
+mesmo vale se a pasta `/opt/genesis/vigia` (ou só a lista `vistos`) se perder, mesmo com o timer ligado: o vigia
+para de implantar e pede o comando de instalar, que marca todas as tags existentes como vistas (as tags ficam no
+repositório depois de atendidas; sem isso, o pedido mais novo do histórico rodaria de novo, uma volta sem ninguém
+pedir).
+
+**Como a sessão pede e confere** (`scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`, CLAUDE.md): confere que
+o commit está na `origin/main`, cria a tag pela API REST do GitHub e acompanha o `estado.json` e o `/saude` da API
+(o `no_ar_desde` muda quando a versão nova sobe) até `ok`, `falhou` ou `recusado` (sai com 0 no `ok`, 1 no
+`falhou`, `recusado` ou pulado, 2 na volta com `--sem-estado` quando a API reinicia e 3 no tempo limite de 1 hora:
+sem resultado, a implantação ainda roda, a VPS está fora ou o vigia está desligado, e o dono confere com
+`--estado`). O `estado.json` tem **só**
+`{pedido, commit (12 caracteres), resultado, inicio, fim}`: o nome da tag e o commit já são públicos no repositório;
+nenhum log, versão de software, estado da VPS ou mensagem de erro sai da VPS (isso fica no `vigia.log`, que só o
+dono vê). É a **única saída pública da VPS**, por decisão do dono (D70).
+
+**Se der errado:** um `falhou` deixa a VPS como o `implantar-sem-actions.sh` deixaria (a mensagem `ERRO:` diz em que
+etapa parou; antes da troca, a versão anterior continua no ar; a nova sem saúde volta sozinha). Se a VPS reiniciar no
+meio de uma implantação, o pedido fica como `falhou` na rodada seguinte (confira com `bash /opt/genesis/implantar.sh
+estado`). Com outra implantação em andamento (o dono pelo terminal, por exemplo), o pedido espera, como `recebido`,
+e roda na rodada seguinte à que ela terminar.
+
+**Testado sem a VPS:** `infra/producao/teste/testar-vigia-implantacao.sh` (dublês de `id` e `systemctl`, o `git` de
+verdade sobre um repositório local com as tags de pedido, um `implantar-sem-actions.sh` falso; o `systemd-analyze
+verify` das unidades) e `scripts/testar-pedir-implantacao.sh` (`gh` e `curl` falsos); a rota do `estado.json` no
+`testar-local.sh`. Decisões em
+[Decisões técnicas (vigia da implantação)](#decisões-técnicas-vigia-da-implantação-op-b4-24112026).
+
+---
+
 ## Operação no dia a dia (na VPS)
 
 | Para | Comando |
@@ -371,6 +537,7 @@ Formato da resposta e regras sugeridas de alerta em [Monitoramento](#monitoramen
 | Logs do backup | `docker logs genesis-backup --tail 100` (uma linha por banco; `FALHOU` quando algo deu errado) |
 | Restaurar (um banco ao lado, ou tudo num servidor vazio) | [Backup › Restaurar](#restaurar) |
 | Gerar ou trocar o token do monitoramento | `/opt/genesis/implantar.sh token-monitor` (o anterior para de valer na hora) |
+| Ver o vigia da implantação (timer, último pedido, log) ou desligá-lo | `bash ~/instalar-vigia.sh --estado` / `bash ~/instalar-vigia.sh --desligar` ([Vigia da implantação](#vigia-da-implantação-d70-op-b4)) |
 | Ver o instalador do PDV publicado na página de download | `cat /opt/genesis/download/pdv/atual.json` (ou a linha "Página de download" do `implantar.sh estado`) |
 
 **A API reiniciou sozinha** (ex.: 04/11/2026, 18:05:42Z, no meio de uma importação). Primeiro a causa, depois o
@@ -408,19 +575,19 @@ nesta ordem:
    horas antes da troca). Só o último reinício tem o trecho; dos anteriores, o `RestartCount` diz só quantos foram.
 4. **A memória agora**: `processo` do `/api/saude/detalhada` (heap usado, reservado e o teto do V8, RSS, em MiB) e
    `memoria` (o container, como no `docker stats`).
-5. **O kernel**, para o SIGKILL do OOM (o container passou dos 2 GB). O `docker inspect` não guarda o motivo de um
+5. **O kernel**, para o SIGKILL do OOM (o container passou do limite: 1984 MiB desde o OP-B5; 2 GB até ele). O `docker inspect` não guarda o motivo de um
    reinício feito pelo `restart: unless-stopped`: ao subir de novo, o Docker zera `State.ExitCode` e
    `State.OOMKilled`; o que fica é o `RestartCount` (e o `StartedAt`). O `journalctl` lê `--since` no fuso da VPS,
    então ponha `UTC` no horário:
 
 ```bash
 docker inspect genesis-api --format '{{.State.StartedAt}} reinícios={{.RestartCount}}'   # reinícios > 0: o container caiu e voltou
-journalctl -k --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|killed process'   # OOM do kernel/cgroup (mem_limit 2g)
+journalctl -k --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|killed process'   # OOM do kernel/cgroup (mem_limit 1984m)
 journalctl -u docker -u containerd --since '2026-11-04 17:50 UTC' --until '2026-11-04 18:10 UTC' | grep -i -E 'oom|exit|die|restart'   # saída do container, com o código
 docker logs genesis-api --since '2026-11-04T17:50:00Z' --until '2026-11-04T18:06:00Z' 2>&1 | tail -n 100
 ```
 
-Linha `oom-kill`/`Killed process … (node)` no `journalctl -k` (saída 137, SIGKILL) = o container passou dos 2 GB;
+Linha `oom-kill`/`Killed process … (node)` no `journalctl -k` (saída 137, SIGKILL) = o container passou do limite;
 saída 134 com `JavaScript heap out of memory` no log = o heap do Node (1,5 GB) acabou antes; saída 1 com a linha
 `"level":60` = erro do código. O `docker events` não serve para o passado (o daemon só guarda os últimos eventos em
 memória, e os healthchecks os renovam o tempo todo): use-o para acompanhar a próxima queda ao vivo,
@@ -454,10 +621,12 @@ anterior funciona com o schema novo; apps/api/README.md › Migrações). Para v
 anterior, rode o workflow manualmente na `main` informando a versão no campo **“Commit a implantar”**: serve o hash
 de 12 caracteres que aparece em `implantar.sh estado`, em `/opt/genesis/versoes/historico` e na tag das imagens, ou
 o hash completo. O commit tem de estar na `main` (o workflow recusa outro). O build sai daquele commit; as migrações
-já aplicadas continuam, pelo mesmo motivo. Uma falha de migração de empresa deixa só aquela empresa em manutenção (503) e a versão anterior no ar; o
+já aplicadas continuam, pelo mesmo motivo (sem a cota do Actions, D70: `bash ~/implantar-sem-actions.sh <hash>`
+na VPS, [Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)). Uma falha de migração de empresa deixa só aquela empresa em manutenção (503) e a versão anterior no ar; o
 `implantar.sh` para antes de trocar a API.
 
-**Implantar sem o GitHub** (emergência, de um computador com Docker e o repositório):
+**Implantar sem o GitHub** (emergência, de um computador com Docker e o repositório; sem a cota do Actions, o
+caminho normal é o da própria VPS, [Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)):
 
 ```bash
 V=$(git rev-parse --short=12 HEAD)
@@ -603,6 +772,10 @@ foi publicado.
 2. **Actions › Implantação › Run workflow** (branch `main`, campos padrão): a implantação publica o release novo na
    página (ou espere a próxima implantação automática, se ela estiver ligada).
 3. Confira `https://download.grupoicebeer.com.br` (versão e sha256) ou, na VPS, `cat /opt/genesis/download/pdv/atual.json`.
+
+Sem cota do Actions (D70), o passo 1 é da sessão do Claude Code (`apps/pdv/instalador/linux-wine/gerar-instalador.sh`,
+`testar-instalador.sh` e `publicar-release.sh X.Y.Z`: README do PDV › decisão 93), e o passo 2 é a implantação com
+`--publicar-pdv` ([Implantar sem o GitHub Actions](#implantar-sem-o-github-actions-d70)).
 
 **Tirar uma versão da página** (ex.: saiu com defeito): no GitHub, edite o release e marque **“Set as a
 pre-release”** (ou apague o release) e rode a Implantação (com **“publicar_pdv”** marcado): a página volta para o
@@ -798,7 +971,7 @@ Consultar a cada 1 a 5 minutos é o esperado. **Formato exato** (exemplo):
   "empresas_sem_resposta": 0,
   "ultimo_backup": { "status": "ok", "data": "2026-11-10T07:31:10Z", "tamanho_bytes": 1843200,
                      "ultimo_sucesso_em": "2026-11-10T07:31:10Z" },
-  "memoria": { "usada_bytes": 412090368, "limite_bytes": 2147483648 },
+  "memoria": { "usada_bytes": 412090368, "limite_bytes": 2080374784 },
   "processo": { "no_ar_segundos": 10036, "heap_usado_mb": 182.4, "heap_total_mb": 214.1, "heap_limite_mb": 1584,
                 "rss_mb": 356.7 }
 }
@@ -816,7 +989,7 @@ Consultar a cada 1 a 5 minutos é o esperado. **Formato exato** (exemplo):
 | `empresas_sem_resposta` | Empresas cujo banco não respondeu (em manutenção ou fora do ar) |
 | `ultimo_backup.status` | `ok`, `falhou`, `ausente` (nunca houve backup) ou `indisponivel` (o bucket não respondeu) |
 | `ultimo_backup.data` / `tamanho_bytes` / `ultimo_sucesso_em` | Fim do último backup (UTC), o tamanho somado dos arquivos e o fim do último backup sem falha |
-| `memoria.usada_bytes` / `limite_bytes` | Memória do container da API (como no `docker stats`) e o limite (2 GiB) |
+| `memoria.usada_bytes` / `limite_bytes` | Memória do container da API (como no `docker stats`) e o limite (1984 MiB; 2 GiB até o OP-B5) |
 | `processo.no_ar_segundos` | Há quantos segundos este processo da API está no ar (volta para perto de zero a cada reinício) |
 | `processo.heap_usado_mb` / `heap_total_mb` / `heap_limite_mb` | Heap do Node (V8) em MiB: o usado, o reservado e o teto (`--max-old-space-size=1536` mais o espaço novo); passar do teto derruba a API com `JavaScript heap out of memory` |
 | `processo.rss_mb` | Memória do processo no sistema (heap, buffers, código), em MiB |
@@ -845,7 +1018,7 @@ venda e nenhum segredo aparecem na resposta (teste de integração `apps/api/tes
 
 - `genesis-cloudsql-proxy` vira um **PostgreSQL 18** com o mesmo nome na rede interna e o usuário `genesis` com os
   privilégios do Cloud SQL (`CREATEDB` e `CREATEROLE`, **sem SUPERUSER**); o `genesis_control` não existe antes
-  (a migração cria, como em produção);
+  (a migração cria, como em produção); os dados ficam num tmpfs, que conta na memória do container (1536 MiB);
 - um **Traefik v3** local (imagem com a versão fixada no override) na porta `127.0.0.1:18443`, lendo os mesmos labels;
 - um **S3 local** (RustFS, o mesmo do desenvolvimento) no lugar do bucket do GCS, com a mesma assinatura (I1b).
 
@@ -856,12 +1029,14 @@ Traefik com os domínios de produção: `/saude` nos domínios da API e do ERP, 
 `index.html`, HSTS), a página de download (CSP, `/pdv/atual.json` 404 sem instalador; `implantar.sh pdv publicar`
 com instaladores de mentira: download inteiro com `attachment`, `.sha256`, recusa de sha256 errado sem tocar na página
 nem deixar temporário, e a retenção da atual e da anterior), `/sync/*` só no domínio da API, o login no ERP pela origem do ERP com o cookie
-`Secure` + `SameSite=Strict`, os limites de memória (a soma do compose de produção com a tarefa ≤ 2560 MiB e o
-pico do `referencias` no limite de 128 MiB), os usuários sem root, uma segunda versão seguida de `voltar` e o bloco
+`Secure` + `SameSite=Strict`, os limites de memória (a soma do compose de produção com a tarefa ≤ 2560 MiB; a tarefa
+sem o healthcheck da imagem e o pico de cada comando dela no limite de 192 MiB — `migrar-controle`, três
+`empresa-criar` até 4 empresas, o lote das migrações, `migrar-empresas`, `referencias` e `particoes`; OP-B5), os
+usuários sem root, uma segunda versão seguida de `voltar` e o bloco
 do Cloud Shell colado de novo (o `estado` avisa da chave `root:root 600`; o `instalar.sh` devolve `root:65532 640`).
 Do I1b: o `genesis-backup` healthy e sem root; `backup agora`/`listar`/`estado` com os dois bancos no bucket e o pico
 de memória dentro dos 64 MiB; o `token-monitor` (recusa sem terminal, grava só o hash, a troca invalida o anterior) e
-o `/api/saude/detalhada` (401 sem token, 200 nos dois domínios com o último backup e a memória de 2 GiB do
+o `/api/saude/detalhada` (401 sem token, 200 nos dois domínios com o último backup e a memória de 1984 MiB do
 container); o **ensaio de desastre** (API parada, backup, o PostgreSQL trocado por um vazio, `restaurar todos`,
 contagens de linhas de todas as tabelas e a colação iguais às de antes, `--como` ao lado, recusa por cima,
 `migrar-empresas` e o login no ERP); e o pico do Cloud SQL Auth Proxy de verdade com 192 MiB (sem o Google: só a
@@ -871,9 +1046,17 @@ Roda **como root** (`sudo`), como na VPS: o `instalar.sh` exige root e põe a ch
 65532 (`chown`). Estar no grupo `docker` não basta; o script recusa logo no começo, antes do build.
 
 ```bash
-sudo infra/producao/teste/testar-local.sh            # builda as imagens genesis-*:teste-local
-sudo infra/producao/teste/testar-local.sh --manter   # deixa a stack no ar para olhar
+sudo infra/producao/teste/testar-local.sh                 # builda as imagens genesis-*:teste-local
+sudo infra/producao/teste/testar-local.sh --manter        # deixa a stack no ar para olhar
+sudo infra/producao/teste/testar-local.sh --sem-actions   # e o ensaio do implantar-sem-actions.sh (D70)
 ```
+
+Com `--sem-actions`, depois da volta atrás, o `implantar-sem-actions.sh` implanta o commit atual (`HEAD`, numa `main`
+local no lugar do repositório público; o que não foi commitado não entra): `--simular` primeiro (nada muda), depois
+o build das 3 imagens pelo script, a troca pelo `implantar.sh` (as migrações de verdade), as URLs públicas pelo Traefik
+local (os domínios de produção levados a `127.0.0.1`), a API no ar com a versão do commit
+(`/api/saude/detalhada`) e o `voltar` para a `teste-local`. As opções de build (`TESTE_BUILD_OPCOES` e as imagens
+base) valem também para ele.
 
 Precisa de `docker`, `openssl`, `curl` e `jq` na máquina. Atrás de um proxy corporativo com CA própria, passe imagens
 base que confiem nela e, se o build só sai pelo proxy, as opções do `docker build`:
@@ -895,11 +1078,11 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
 - **Migrações antes da troca, num container de tarefa** (`genesis-tarefa`, perfil `tarefa`): controle, depois
   empresas (canário e lotes). Falha → para e a versão anterior continua; nova versão sem saúde em 240 s → volta
   sozinha para a anterior.
-- **Tarefa com 128 MB, dentro do teto de 2,5 GB**: ela roda com a API no ar, então conta no limite somado da
-  decisão do dono e ocupa a folga de 128 MB (heap do Node 96 MB). Pico medido no teste local: 82 MiB no
-  `referencias` (migra todas as empresas, recarrega as referências nacionais e o seed; inclui o cache de arquivos).
-  Com mais empresas o pico pode subir; um estouro derruba só a tarefa (a implantação para antes da troca e a versão
-  anterior continua) e aí o limite volta a ser conversa com o dono. O `genesis-backup` do I1b (64 MB) coube tirando
+- **Tarefa dentro do teto de 2,5 GB**: ela roda com a API no ar, então conta no limite somado da decisão do dono.
+  No I1, 128 MB (heap do Node 96 MB), com o pico de 82 MiB medido no `referencias`; desde o OP-B5, **192 MB (heap
+  128 MB)**, com os 64 MB tirados da API, e sem o healthcheck da imagem
+  ([Decisões técnicas (memória da tarefa, OP-B5)](#decisões-técnicas-memória-da-tarefa-op-b5-24112026)). Um estouro
+  derruba só a tarefa (a implantação para antes da troca e a versão anterior continua). O `genesis-backup` do I1b (64 MB) coube tirando
   64 MB do proxy do Cloud SQL ([Decisões técnicas (I1b)](#decisões-técnicas-i1b)).
 - **Commit da implantação sempre da `main`**: o checkout traz o histórico inteiro, o workflow resolve o hash curto
   (o `actions/checkout` só aceita SHA completo em `ref`) e exige `git merge-base --is-ancestor <commit> origin/main`.
@@ -1033,6 +1216,177 @@ sudo TESTE_IMAGEM_NODE=<node com a CA> TESTE_IMAGEM_ALPINE=<alpine:3.24 com a CA
   variável com um IP de documentação (`203.0.113.10`, da faixa reservada para exemplos) a trocar, para o comando não
   rodar pela metade com um `<` que o shell lê como redirecionamento. O Traefik aparece só como "Traefik v3"; o teste
   local fixa a imagem dele para ser reprodutível.
+
+## Decisões técnicas (implantação sem o Actions, D70, 24/11/2026)
+
+- **As imagens são montadas na própria VPS.** Sem o runner, não há onde montar e de onde enviar (`docker save | ssh
+  docker load`); a VPS já tem o Docker com o Buildx, e o código vem do repositório público (sem token, sem segredo
+  novo, sem registry). Custo: alguns minutos de CPU e disco da VPS a cada implantação; por isso o aviso e a
+  recomendação de um horário fora do movimento. A montagem roda sob `nice -n 19` e `ionice -c 3` (o pedido do
+  plano), mas o trabalho pesado dos passos `RUN` é feito pelo BuildKit dentro do daemon do Docker, que não herda a
+  prioridade do comando: o `nice` vale para o cliente e o envio do contexto. Uma prioridade de verdade pediria um
+  construtor separado (`docker buildx create --driver docker-container` com limite de CPU e memória), com a imagem do
+  BuildKit baixada na VPS e o cache noutro lugar; fica para se a montagem atrapalhar as lojas. A versão em produção
+  continua no ar até a troca, e os limites de memória dos containers do Genesis não mudam.
+- **Mesmas conferências do workflow.** Commit com 7 a 40 hexadecimais (o `[0-9a-f]{7,40}` do workflow; o plano dizia
+  12 a 40, mas o objetivo era "o formato aceito pelo workflow", e o GitHub mostra os 7 primeiros), ancestral da
+  `origin/main` (só o branch `main` é buscado: um commit de outro branch pelo hash curto não é encontrado; pelo
+  completo, o clone parcial o busca sob demanda e a ancestralidade recusa), versão em 12 caracteres, os mesmos Dockerfiles, tags e `VERSAO`, os mesmos 5 arquivos na release
+  e o mesmo `instalar.sh`/`implantar.sh`. Sem commit, o último da `main` (como o disparo manual sem o campo).
+- **A fonte em `/opt/genesis/fonte`, root 700**, um clone parcial só da `main` e sem tags (`--single-branch --no-tags
+  --filter=blob:none`: o histórico inteiro da `main` para a ancestralidade, os arquivos só do commit implantado; nenhuma
+  tag que um hash curto pudesse casar), sem credencial (`credential.helper` vazio e
+  `GIT_TERMINAL_PROMPT=0`: um repositório que deixasse de ser público falharia em vez de pedir senha), com o endereço
+  do `origin` reposto a cada execução e o `checkout --force` + `clean -ffdx` antes do build (nada de sobra no
+  contexto).
+- **Duas travas.** O `implantar.sh` segura a dele (`.implantacao.lock`) só enquanto roda; o build vem antes, então o
+  script confere que ela está livre no começo (não segura: o `implantar.sh` a pega na etapa 6) e segura a sua
+  (`.implantar-sem-actions.lock`) do começo ao fim, para duas execuções não montarem e trocarem ao mesmo tempo.
+- **Fora do terminal.** O terminal da Hostinger é uma aba do navegador; no workflow, o `implantar.sh` rodava por um
+  SSH a partir de um runner estável. Fechar a aba, cair a conexão ou o notebook dormir mandaria SIGHUP ao script no
+  meio do `implantar.sh implantar` (as migrações ou a troca pela metade, sem a volta automática, sem a versão
+  registrada e sem o resumo para o dono saber). Por isso, depois das conferências (que respondem na hora, no
+  terminal), o script se roda de novo numa sessão própria (`setsid`: sem terminal, o SIGHUP e o Ctrl+C não chegam),
+  com a entrada em `/dev/null`, uma cópia de si mesmo (o comando do README baixa de novo por cima do
+  `~/implantar-sem-actions.sh`, e o bash lê o script aos poucos) e a trava herdada; a saída vai para
+  `logs/implantar-sem-actions-<data>.log` (pasta 700, arquivo 600, os 10 últimos; o link
+  `logs/implantar-sem-actions.log` é o da última) e o terminal só a mostra (`tail --pid`), saindo com o código dela.
+  `--acompanhar` volta a mostrar. Nem `trap '' HUP` sozinho (a escrita no terminal que caiu falharia e o `set -e`
+  pararia o script do mesmo jeito), nem `systemd-run` (a saída iria para o journal). O `--simular` roda no terminal.
+- **Espaço mínimo de 5 GB** (`GENESIS_ESPACO_MINIMO_GB`) no disco do Docker e no do `/opt/genesis`: as 3 imagens
+  somam ~700 MB, e o cache do build (dependências do pnpm, as camadas intermediárias) passa de 2 GB na primeira
+  montagem; com folga para os logs e o backup. Medido com `df` antes de qualquer coisa.
+- **jq sem instalar na VPS.** O `--publicar-pdv` lê a API pública do GitHub (sem token: 60 consultas por hora bastam)
+  com o `jq` da imagem `genesis-backup` que acabou de ser montada (`docker run --network none`), mantendo a decisão
+  "sem jq na VPS" da página de download. O download do release vai só por `https` (`--proto =https`, também nos
+  redirecionamentos). Mesmas regras do workflow: versão mais alta publicada, `.sha256` de uma linha, hash calculado
+  do arquivo, falha do GitHub = aviso, lista vazia = `retirar`.
+- **URLs públicas pelos domínios do `/opt/genesis/.env`** (o que o Traefik serve; o padrão do workflow se faltar;
+  `GENESIS_API_URL`/`GENESIS_ERP_URL`/`GENESIS_DOWNLOAD_URL` como as variáveis do environment), com as mesmas 20
+  tentativas de 6 s e as mesmas conferências.
+- **Limpeza:** depois de uma implantação boa, o `limpar` do `implantar.sh` já deixa só a atual e a anterior; o script
+  cobre a que falhou (ficam as 3 imagens mais recentes de cada nome, `GENESIS_MANTER_IMAGENS`, nunca a atual nem a
+  anterior) e o cache do build com mais de uma semana (`docker builder prune --filter until=168h`: o da semana fica,
+  para a próxima montagem ser rápida).
+- **O script vem da `main`** (raw.githubusercontent.com), não do commit implantado: é o mesmo nível de confiança do
+  código que vai para a produção, e um commit antigo é implantado com as regras de hoje. Voltar para a versão
+  anterior continua sendo o `implantar.sh voltar` (as imagens dela ficam); um commit anterior ao I1b (sem o
+  Dockerfile do backup) é recusado.
+- **Só para os testes:** `GENESIS_PASTA`, `GENESIS_REPOSITORIO` (um clone local), `GENESIS_BUILD_OPCOES` (o proxy de
+  uma sessão), `GENESIS_CONFERIR_TENTATIVAS`/`GENESIS_CONFERIR_INTERVALO`. O teste de unidade usa dublês de `docker`,
+  `curl`, `df`, `id`, `nice` e `ionice` e o `git` de verdade; o ensaio de ponta a ponta é o `testar-local.sh
+  --sem-actions`. Decisão 215 do `apps/api/README.md`.
+
+## Decisões técnicas (vigia da implantação, OP-B4, 24/11/2026)
+
+- **A VPS busca, a sessão nunca conecta.** A sessão só sai por HTTPS e não deve ter a chave SSH nem segredo da
+  produção (plano OP › Fora do escopo). O pedido é uma tag do repositório público (escrita = as mesmas pessoas que
+  juntam na `main`); a VPS lê com `git ls-remote --tags` sem credencial (`credential.helper` vazio,
+  `GIT_TERMINAL_PROMPT=0`, limite de 5 min por comando). Nenhum workflow dispara com essas tags (o `ci.yml` só no
+  push da `main`; o `pdv-release.yml` só nas `pdv-v*`).
+- **Escolha do pedido.** Nome exato `implantar/` ou `implantar-pdv/` + `AAAAMMDD-HHMMSS` (UTC; outro nome não é
+  pedido), a data e hora do nome ordena; a tag anotada vale pelo commit dela (`^{}`). Roda só o mais novo não visto;
+  os anteriores ficam "pulado" quando ele começa. A lista `vistos` (uma linha por pedido, só acrescentada) é criada
+  pelo `instalar-vigia.sh`, que marca as tags existentes como vistas na primeira instalação, depois de um
+  `--desligar` (pedido feito com o vigia desligado não roda de surpresa) e sempre que a lista não existia, mesmo com
+  o timer ligado (a pasta do vigia apagada ou restaurada sem ela); numa reinstalação com o timer ligado e a lista no
+  lugar, os pendentes continuam valendo. Sem a lista, o vigia não implanta nada: senão, toda tag antiga pareceria
+  nova (as tags não são apagadas depois de atendidas). Um pedido que esperava a trava (`recebido`) e fica como visto
+  na reinstalação passa a `recusado` no `estado.json`, com o fim, para a sessão não esperar para sempre.
+- **Volta para antes do OP-B4.** O vigia implanta, mas o `genesis-web` daquele commit não tem a rota nem a
+  montagem do `estado.json` (404 depois da troca). O `pedir-implantacao.sh` confere as duas no commit (`git show`
+  do `genesis.conf` e do `docker-compose.yml`) antes de criar a tag e recusa sem `--sem-estado`; com ele, acompanha
+  até a API reiniciar e sai com 2 (o resultado final, o dono vê com `--estado`).
+- **Recusa antes de chamar.** O vigia confere o commit num clone parcial próprio (`vigia/repo.git`, bare, só a
+  `main`, sem tags e sem os arquivos) e dá "recusado" ao que não descende da `main`, sem chamar o script (que também
+  recusaria). Rede fora: a rodada sai com 0 e tenta na seguinte (uma linha no log, não uma a cada 2 minutos).
+- **Trava ocupada = próxima rodada.** O vigia confere livres as travas do `implantar-sem-actions.sh` e do
+  `implantar.sh` antes de começar, e o `implantar-sem-actions.sh` passou a sair com **75** (EX_TEMPFAIL) quando a
+  recusa é pela trava (as outras falhas continuam com 1): se outra implantação pegar a trava no mesmo instante, o
+  pedido volta a "recebido", sem virar falha. O vigia tem a própria trava (uma rodada por vez).
+- **O `implantar-sem-actions.sh` da `main` de agora**, copiado para `vigia/` antes de cada chamada (só se mudou),
+  pela mesma regra da implantação sem o Actions ("um commit antigo é implantado com as regras de hoje"). A chamada é
+  a de sempre (fora do terminal, log em `logs/`), com a entrada em `/dev/null` e a saída em
+  `vigia/ultima-implantacao.log`.
+- **Autoatualização** depois de cada `ok`: o `vigia-implantacao.sh` do commit implantado, só se o sha256 mudou, e
+  só se for um script bash válido; gravado por rename (a rodada em andamento continua lendo o arquivo antigo). Numa
+  volta a um commit antigo, vale o vigia daquele commit (o que está no ar; a próxima implantação da `main` traz o de
+  hoje); commit sem o vigia (anterior ao OP-B4) mantém o atual. Falhar aqui não desfaz a implantação. As unidades do
+  systemd só mudam pelo `instalar-vigia.sh`.
+- **systemd:** `genesis-vigia.service` `Type=oneshot` com `Nice=10`, `IOSchedulingClass=idle`, `HOME=/root` e
+  `TimeoutStartSec=3h`; `KillMode=process`: parar o serviço (ou o limite) encerra o vigia, nunca a implantação que
+  ele chamou (o `implantar.sh` pela metade é o pior caso); a rodada seguinte espera ela terminar e dá o pedido como
+  "falhou" (interrompida), com a versão no ar no log. `genesis-vigia.timer`: 1 minuto depois de ligado ou do boot e
+  2 minutos depois do fim de cada rodada (`OnUnitInactiveSec`), então uma rodada que implanta nunca tem outra por
+  cima. Nada escuta porta: só o HTTPS de saída que a VPS já tem.
+- **Saída pública:** `download/implantacao/estado.json` (root:101 640, pasta 750, criada pelo `instalar.sh` e pelo
+  vigia), montada só leitura no `genesis-web` ao lado do `pdv/` e servida em `/implantacao/estado.json`
+  (`application/json`, `no-cache`; qualquer outro nome em `/implantacao` é 404, como no `/pdv`), gravada por arquivo
+  novo + rename. Campos fixos, valores validados por expressão antes de escrever (sem jq na VPS). `inicio` = quando o
+  vigia recebeu o pedido; `fim` = `null` até o resultado.
+- **Testes:** os da seção acima; o `testar-local.sh` confere a rota e as permissões da pasta. Decisão 217 do
+  `apps/api/README.md`.
+
+## Decisões técnicas (memória da tarefa, OP-B5, 24/11/2026)
+
+- **O que estourou.** No ensaio do OP-B2, o `empresa-criar` passou dos 128 MB do `genesis-tarefa` ("Memory cgroup
+  out of memory"). Medido de novo, comando por comando: a imagem da API montada como em produção, o PostgreSQL 18,
+  cada comando sozinho num container com folga (512 MiB) e depois no limite final. O número que importa é o pico do
+  cgroup (`memory.peak` no cgroup v2 da VPS, `memory.max_usage_in_bytes` no v1 da sessão: o que o kernel compara com
+  o limite, com o cache de arquivos); o anônimo e o heap do V8 foram medidos à parte.
+
+  | Comando | Pico do cgroup | Heap do V8 usado |
+  |---|---|---|
+  | `migrar-controle` | 92–100 MiB | 60 MB |
+  | `particoes` | 92–98 MiB | 60 MB |
+  | `admin-criar` | 110–121 MiB | 59 MB (mais os 19 MiB do argon2, fora do heap) |
+  | `empresa-criar` | 112–120 MiB | 71–76 MB (o argon2 da senha provisória, as migrações e as referências) |
+  | `migrar-empresas`, 1 empresa | 117 MiB | 72 MB |
+  | `migrar-empresas` e `referencias`, 4 ou mais empresas (4, 10, 11 e 31) | 124–138 MiB | 81–88 MB |
+
+  O pico para de subir a partir de 4 empresas: o lote padrão (`MIGRACAO_LOTE` = 4) migra 4 bancos em paralelo. Com
+  os 128 MB de antes, **o `migrar-empresas` da implantação estouraria assim que houvesse 4 empresas**, e o
+  `empresa-criar` passava perto (o OOM do ensaio).
+- **O que era da sessão e o que é da aplicação.** A suspeita do plano era o certificado do proxy da sessão nas imagens
+  base (`NODE_EXTRA_CA_CERTS` com 123 certificados): a mesma pasta `/app` sobre a base com o certificado e sobre a
+  `node` pura dá o mesmo pico (diferença dentro do ruído, ~2 MiB). Os 10 a 15 MiB a mais que apareciam vinham do
+  **`HEALTHCHECK` da imagem da API**, que o container de tarefa herdava: o Docker o roda a cada 5 s no período inicial
+  (40 s) e a cada 15 s depois, e cada verificação é um `node` a mais (~40 MB de RSS) dentro do mesmo limite, pedindo
+  um `/saude` que ninguém serve. Isso vale em produção também. Da aplicação: só carregar o grafo de serviços da API
+  (`criarServicos`, com Nest, AWS SDK, exceljs, pg-boss e os schemas do `@genesis/shared`) custa ~85 MiB do cgroup
+  (~55 MB de heap) antes de qualquer trabalho; o lote de 4 migrações em paralelo soma ~40 MiB; o argon2, 19 MiB nos
+  comandos que geram hash.
+- **A escolha: tirar o que era à toa e redistribuir, sem passar do teto.** O `genesis-tarefa` desliga o healthcheck
+  (`healthcheck: disable: true`) e fica com **192 MB e heap de 128 MB** (dois terços do container); a **API cede
+  64 MB e fica com 1984 MB**, com o heap de 1,5 GB sem mudança (sobram 448 MB fora do heap, eram 512; o pico de heap
+  medido na massa de carga de 4 milhões de movimentos foi de 348 MB, decisão 176 do README da API). Soma: 1984 + 128
+  + 192 + 64 + 192 = 2560 MiB, o teto da decisão do dono de 03/11/2026, que não muda (por isso sem pergunta nova). No
+  limite final, o maior pico medido foi 137 MiB de 192 (71 %), com o heap em 88 de 128 MB.
+- **A transição (aceita como transitória).** O `implantar.sh implantar` roda o `migrar-controle` e o `migrar-empresas`
+  com o compose da versão **nova** (a tarefa de 192 MB), e a `genesis-api` da versão em produção só é recriada no
+  passo 4/4, depois das migrações. Na **primeira implantação com o OP-B5**, a API ainda está com o limite antigo de
+  2048 MB enquanto as migrações rodam: por alguns minutos, os limites somados ficam em 2048 + 128 + 192 + 64 + 192 =
+  **2624 MiB**, 64 MiB acima do teto da D13. É só limite (não uso: a API usa bem menos que o limite), a VPS tem 8 GB, e
+  a partir da troca do passo 4/4 a soma volta a 2560 MiB; a mesma janela se repete na implantação seguinte a um
+  `voltar` para uma versão anterior ao OP-B5. Não vale um passo a mais no `implantar.sh` (recriar a API antiga com
+  1984 MB antes de migrar seria um reinício a mais da API em produção) por alguns minutos de folga de limite.
+- **`voltar` para uma versão anterior ao OP-B5.** O `voltar` sobe a versão anterior com o compose dela, e o
+  `implantar.sh tarefa` usa o compose da versão em produção: depois de voltar para uma release anterior ao OP-B5, a
+  API volta a 2048 MB e a tarefa a **128 MB, heap de 96 MB e o healthcheck herdado**. Com 4 empresas ou mais, um
+  `implantar.sh tarefa migrar-empresas` (ou `referencias`) estoura de novo, e o `empresa-criar` passa perto (o OOM
+  do ensaio do OP-B2). Nesse caso, implante de novo uma versão com o OP-B5 antes de rodar esses comandos à mão; a
+  migração da implantação seguinte já usa a tarefa nova.
+- **Fora, de propósito.** Um grafo de serviços enxuto para os CLIs (cada comando importando só o que usa) tiraria
+  ~35 MB de heap e ~50 MiB do pico, mas mexe no grafo que a API e os testes usam; fica para se a tarefa voltar a
+  apertar. Baixar o lote das migrações na tarefa cortaria parte dos ~40 MiB, mas alonga a implantação com muitas
+  empresas. O `recalcular-saldos` de uma empresa do tamanho da massa de carga (heap de 348 MB) não foi medido na
+  tarefa e não caberia no heap dela.
+- **Teste.** O `testar-local.sh` confere o healthcheck desligado e mede o pico de cada comando no limite de produção
+  com 4 empresas (`migrar-controle`, três `empresa-criar`, `migrar-empresas`, `referencias` e `particoes`); um
+  estouro é SIGKILL e falha o teste. O PostgreSQL do override passou de 512 para 1536 MiB: os dados ficam num tmpfs,
+  que conta na memória do container, e com as 4 empresas e a cópia do ensaio de restauração os 512 MiB derrubavam o
+  PostgreSQL de teste. Ensaio `testar-local.sh --sem-actions` em 24/11/2026: verde (picos de 92 a 134 MiB). Decisão
+  216 do `apps/api/README.md`.
 
 ## Pendências
 

@@ -7,16 +7,20 @@
 # empresa de teste com os CLIs e confere pelo Traefik: /saude da API nos dois domínios, o ERP (SPA), o download (a
 # página e a publicação do instalador do PDV com `implantar.sh pdv publicar`), o
 # /sync roteado, o login no ERP com o cookie Secure e os limites de memória (a soma do compose de produção, com o
-# backup e o container de tarefa, dentro dos 2,5 GB, e o pico de uma tarefa, do backup e do Cloud SQL Auth Proxy).
+# backup e o container de tarefa, dentro dos 2,5 GB, o pico de cada comando da tarefa com 4 empresas, OP-B5, e o do
+# backup e do Cloud SQL Auth Proxy).
 # I1b: backup lógico (genesis-backup) para um S3 local, o token de monitoramento e o /api/saude/detalhada, e o
 # ensaio de desastre: o PostgreSQL é trocado por um vazio, tudo é restaurado do bucket, as contagens de linhas e a
 # colação conferem com as de antes, e o ERP volta a entrar.
 #
 # Como root (sudo), como o instalar.sh na VPS: ele exige root e põe a chave da conta de serviço no grupo 65532.
 #
-#   sudo infra/producao/teste/testar-local.sh [--sem-build] [--manter]
-#     --sem-build  usa as imagens genesis-api, genesis-web e genesis-backup :teste-local já existentes
-#     --manter     não derruba a stack no fim (para olhar; derrube depois com o comando que o script imprime)
+#   sudo infra/producao/teste/testar-local.sh [--sem-build] [--manter] [--sem-actions]
+#     --sem-build    usa as imagens genesis-api, genesis-web e genesis-backup :teste-local já existentes
+#     --manter       não derruba a stack no fim (para olhar; derrube depois com o comando que o script imprime)
+#     --sem-actions  também o ensaio de ponta a ponta do implantar-sem-actions.sh (D70, OP-B2): uma main local com o
+#                    commit atual (HEAD) no lugar do repositório público, o build das 3 imagens pelo script, a troca
+#                    de versão pelo implantar.sh, as URLs públicas pelo Traefik local e a volta (`voltar`)
 # Variáveis: TESTE_IMAGEM_NODE e TESTE_IMAGEM_ALPINE (imagens base do build, ex.: com a CA de um proxy
 #            corporativo), TESTE_BUILD_OPCOES (opções extras do `docker build`, ex.:
 #            "--network host --build-arg https_proxy=http://127.0.0.1:3128" para o `apk add` do backup atrás de um
@@ -35,12 +39,15 @@ PROJETO=genesis-teste
 export TESTE_PORTA_HTTPS=${TESTE_PORTA_HTTPS:-18443}
 BUILD=1
 MANTER=0
+SEM_ACTIONS=0
+VERSAO_C=
 for arg in "$@"; do
   case "$arg" in
     --sem-build) BUILD=0 ;;
     --manter) MANTER=1 ;;
+    --sem-actions) SEM_ACTIONS=1 ;;
     *)
-      echo "uso: $0 [--sem-build] [--manter]" >&2
+      echo "uso: $0 [--sem-build] [--manter] [--sem-actions]" >&2
       exit 2
       ;;
   esac
@@ -95,6 +102,9 @@ limpar() {
     docker image rm "genesis-api:$VERSAO_A" "genesis-web:$VERSAO_A" "genesis-backup:$VERSAO_A" >/dev/null 2>&1 || true
   fi
   docker image rm "genesis-api:$VERSAO_B" "genesis-web:$VERSAO_B" "genesis-backup:$VERSAO_B" >/dev/null 2>&1 || true
+  if [ -n "$VERSAO_C" ]; then
+    docker image rm "genesis-api:$VERSAO_C" "genesis-web:$VERSAO_C" "genesis-backup:$VERSAO_C" >/dev/null 2>&1 || true
+  fi
   rm -rf "$T"
   echo "containers, rede, volumes, imagens de teste e $T removidos"
   exit $codigo
@@ -146,6 +156,8 @@ REDE_PROXY=$REDE bash "$T/releases/$VERSAO_A/instalar.sh" >/dev/null
 [ "$(stat -c %a "$T/segredos/genesis-app.env")" = 600 ] || falha "genesis-app.env sem 600"
 [ "$(stat -c %a:%g "$T/segredos/gcp-conta-servico.json")" = 640:65532 ] || falha "chave da conta de serviço sem 640 e grupo 65532"
 [ "$(stat -c %a:%U:%g "$T/download/pdv")" = 750:root:101 ] || falha "pasta download/pdv sem root:101 750 (o nginx, uid 101, só lê)"
+[ "$(stat -c %a:%U:%g "$T/download/implantacao")" = 750:root:101 ] ||
+  falha "pasta download/implantacao sem root:101 750 (o estado.json do vigia; o nginx só lê)"
 grep -q '^CLOUDSQL_INSTANCIA=projeto-teste:southamerica-east1:genesis-teste$' "$T/.env" || falha ".env sem a instância"
 confere "segredos gerados uma vez, permissões e .env"
 
@@ -289,8 +301,30 @@ bash "$T/releases/$VERSAO_A/implantar.sh" pdv retirar >/dev/null
 [ -z "$(find "$T/download/pdv" -name 'GenesisPDV-Setup-*')" ] || falha "pdv retirar deixou instaladores"
 [ -z "$(bash "$T/releases/$VERSAO_A/implantar.sh" pdv atual)" ] || falha "pdv atual depois do retirar deveria vir vazio"
 bash "$T/releases/$VERSAO_A/implantar.sh" pdv retirar >/dev/null || falha "pdv retirar sem nada publicado deveria passar"
-req "$DOWNLOAD" "$(url "$DOWNLOAD" /)" | grep -q 'pagina.js' || falha "download: página fora do ar depois do retirar"
+# A página guardada antes do grep: o `grep -q` acha o pagina.js já no comentário do começo e sai, e o curl, ainda
+# escrevendo, morreria de SIGPIPE (com o pipefail, a falha seria do curl, não da página).
+pagina=$(req "$DOWNLOAD" "$(url "$DOWNLOAD" /)")
+grep -q 'pagina.js' <<<"$pagina" || falha "download: página fora do ar depois do retirar"
 confere ".sha256 de duas linhas recusado; versão menor apaga a retirada; pdv retirar volta a página para \"não publicado\""
+# Estado público do vigia da implantação (OP-B4): 404 sem pedido atendido; o estado.json gravado como o vigia grava
+# (root:101 640), servido como JSON sem cache; qualquer outro nome em /implantacao é 404.
+[ "$(req "$DOWNLOAD" -o /dev/null -w '%{http_code}' "$(url "$DOWNLOAD" /implantacao/estado.json)")" = 404 ] ||
+  falha "download: /implantacao/estado.json deveria ser 404 sem pedido atendido"
+printf '{\n  "pedido": "implantar/20261124-100000",\n  "commit": "1a2b3c4d5e6f",\n  "resultado": "ok",\n  "inicio": "2026-11-24T10:00:00Z",\n  "fim": "2026-11-24T10:09:00Z"\n}\n' \
+  >"$T/download/implantacao/estado.json"
+chgrp 101 "$T/download/implantacao/estado.json"
+chmod 640 "$T/download/implantacao/estado.json"
+touch "$T/download/implantacao/.estado.temporario"
+cabecalhos=$(req "$DOWNLOAD" -D - -o "$T/estado-baixado.json" "$(url "$DOWNLOAD" /implantacao/estado.json)")
+grep -q '"resultado": "ok"' "$T/estado-baixado.json" || falha "download: estado.json não servido: $(cat "$T/estado-baixado.json")"
+grep -qi '^content-type: application/json' <<<"$cabecalhos" && grep -qi '^cache-control: no-cache' <<<"$cabecalhos" ||
+  falha "download: estado.json sem application/json e no-cache: $cabecalhos"
+for caminho in /implantacao/.estado.temporario /implantacao/ /implantacao; do
+  [ "$(req "$DOWNLOAD" -o /dev/null -w '%{http_code}' "$(url "$DOWNLOAD" "$caminho")")" = 404 ] ||
+    falha "download: $caminho deveria ser 404"
+done
+rm -f "$T/download/implantacao/estado.json" "$T/download/implantacao/.estado.temporario"
+confere "estado do vigia: /implantacao/estado.json 404 sem pedido, servido como JSON sem cache; outros nomes em /implantacao são 404"
 sync=$(req "$API" -o /dev/null -w '%{http_code} %{content_type}' "$(url "$API" /sync/estado)")
 [[ $sync =~ ^4[0-9][0-9]\ application/json ]] || falha "api: /sync/estado sem credenciais deveria ser recusado pela API (veio: $sync)"
 [ "$(req "$ERP" -o /dev/null -w '%{http_code}' "$(url "$ERP" /sync/estado)")" = 200 ] || falha "erp: /sync não deveria ir para a API"
@@ -378,7 +412,7 @@ jq -e '.status == "ok" and .banco.status == "ok" and .api.ambiente == "producao"
   falha "detalhada: $(head -c 400 <<<"$saude")"
 jq -e --arg dia "$DIA" '.ultimo_backup.status == "ok" and (.ultimo_backup.tamanho_bytes > 0) and .ultimo_backup.ultimo_sucesso_em != null' <<<"$saude" >/dev/null ||
   falha "detalhada sem o último backup: $(jq -c .ultimo_backup <<<"$saude")"
-jq -e '.memoria.limite_bytes == 2147483648 and .memoria.usada_bytes > 0 and .terminais == [] and .eventos_fila_decisao == 0' <<<"$saude" >/dev/null ||
+jq -e '.memoria.limite_bytes == 2080374784 and .memoria.usada_bytes > 0 and .terminais == [] and .eventos_fila_decisao == 0' <<<"$saude" >/dev/null ||
   falha "detalhada: memória/terminais: $(jq -c '{memoria, terminais, eventos_fila_decisao}' <<<"$saude")"
 # Memória do processo (apps/api/README.md, decisão 166): o teto do heap do V8 vem do --max-old-space-size=1536.
 jq -e '.processo.heap_limite_mb >= 1536 and .processo.heap_usado_mb > 0 and .processo.rss_mb > 0 and .processo.no_ar_segundos >= 0' <<<"$saude" >/dev/null ||
@@ -394,7 +428,7 @@ detalhada "$API" | jq -e '.status == "ok"' >/dev/null || falha "o token novo nã
 # Cada token-monitor recria a API e guarda antes o log dela (decisão 166): dois arquivos de A com o motivo no cabeçalho.
 [ "$(logs_guardados "$VERSAO_A" token-monitor | wc -l)" = 2 ] ||
   falha "o token-monitor deveria guardar o log da API antes de recriá-la (um por troca): $(ls -l "$T/logs" 2>&1)"
-confere "401 sem token; --arquivo só num arquivo novo (já existente ou link: recusa sem trocar o token); token só como hash no genesis-app.env; 200 nos dois domínios com o último backup, a memória do container (2 GiB) e a troca do token"
+confere "401 sem token; --arquivo só num arquivo novo (já existente ou link: recusa sem trocar o token); token só como hash no genesis-app.env; 200 nos dois domínios com o último backup, a memória do container (1984 MiB) e a troca do token"
 
 passo "Ensaio de desastre: PostgreSQL vazio, restauração do bucket e o ERP de volta"
 pg() { docker exec -i genesis-cloudsql-proxy psql -U postgres -v ON_ERROR_STOP=1 -Atq "$@"; }
@@ -458,19 +492,43 @@ for c in genesis-api genesis-web genesis-backup genesis-cloudsql-proxy; do
   printf '  %-24s %5d MiB\n' "$c" $((m / 1048576))
   [ "$c" = genesis-cloudsql-proxy ] || total=$((total + m))
 done
-[ $((total / 1048576)) = 2240 ] || falha "API + ERP + backup deveriam somar 2240 MiB"
-confere "API 2048 MiB + ERP 128 MiB + backup 64 MiB no ar (aqui o PostgreSQL de teste, no lugar do proxy de 192 MiB, usa 512 MiB)"
+[ $((total / 1048576)) = 2176 ] || falha "API + ERP + backup deveriam somar 2176 MiB"
+confere "API 1984 MiB + ERP 128 MiB + backup 64 MiB no ar (aqui o PostgreSQL de teste, no lugar do proxy de 192 MiB, usa 1536 MiB com os dados em tmpfs)"
 # O compose de produção sem override, com o perfil da tarefa: ela roda com a API no ar (migrações da implantação,
 # implantar.sh tarefa), então a soma de todos os limites tem de caber nos 2,5 GB.
 soma=$(GENESIS_VERSAO=$VERSAO_A docker compose --project-directory "$T" -f "$T/releases/$VERSAO_A/docker-compose.yml" \
   --profile tarefa config --format json | grep -o '"mem_limit": *"[0-9]*"' | grep -o '[0-9]*' | awk '{s += $1} END {print s / 1048576}')
 [ "$soma" -le 2560 ] || falha "limites do compose de produção, com a tarefa, somam $soma MiB (teto: 2560)"
-confere "compose de produção: API 2048 + ERP 128 + proxy 192 + backup 64 + tarefa 128 = $soma MiB (teto 2560 MiB)"
-# Pico de memória de uma tarefa (referencias: todas as empresas, referências nacionais e seed) no limite de produção.
-pico=$(compose_teste run --rm -T --entrypoint sh genesis-tarefa -c \
-  'node dist/cli/referencias.js >/dev/null || exit 1; cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes') ||
-  falha "referencias no container de tarefa (limite de 128 MiB)"
-confere "pico da tarefa referencias: $((pico / 1048576)) MiB (limite 128 MiB)"
+confere "compose de produção: API 1984 + ERP 128 + proxy 192 + backup 64 + tarefa 192 = $soma MiB (teto 2560 MiB)"
+# OP-B5: a tarefa sem o HEALTHCHECK da imagem da API (um `node` a cada 5 s, sem servidor para responder, dentro do
+# mesmo limite) e o pico de cada comando no limite de produção (192 MiB), com 4 empresas: o lote padrão das migrações
+# (MIGRACAO_LOTE) migra 4 em paralelo, o pior caso do migrar-empresas e do referencias. Estourar o limite é SIGKILL
+# (saída 137) e falha aqui. O pico é o do cgroup (o que o kernel compara com o limite), com o cache de arquivos.
+compose_teste --profile tarefa config --format json | jq -e '.services["genesis-tarefa"].healthcheck.disable == true' >/dev/null ||
+  falha "o genesis-tarefa deveria desligar o healthcheck da imagem"
+limite_tarefa=$(compose_teste --profile tarefa config --format json | jq '.services["genesis-tarefa"].mem_limit | tonumber')
+pico_tarefa() {
+  compose_teste run --rm -T --entrypoint sh genesis-tarefa -c \
+    '"$@" >/dev/null || exit 1; cat /sys/fs/cgroup/memory.peak 2>/dev/null || cat /sys/fs/cgroup/memory/memory.max_usage_in_bytes' \
+    sh node "dist/cli/$1.js" "${@:2}"
+}
+picos=()
+medir_tarefa() {
+  local rotulo=$1 pico
+  shift
+  pico=$(pico_tarefa "$@") || falha "$rotulo no container de tarefa (limite de $((limite_tarefa / 1048576)) MiB)"
+  picos+=("$pico")
+  printf '  %-34s %4d MiB (%d %% do limite)\n' "$rotulo" $((pico / 1048576)) $((pico * 100 / limite_tarefa))
+}
+medir_tarefa migrar-controle migrar-controle
+for n in 2 3 4; do
+  medir_tarefa "empresa-criar (empresa $n de 4)" empresa-criar --razao-social "Empresa Teste Memoria $n Ltda" --cnpj 11222333000181
+done
+medir_tarefa "migrar-empresas (4 empresas)" migrar-empresas
+medir_tarefa "referencias (4 empresas)" referencias
+medir_tarefa particoes particoes
+maior=$(printf '%s\n' "${picos[@]}" | sort -n | tail -n 1)
+confere "tarefa sem healthcheck; maior pico $((maior / 1048576)) MiB de $((limite_tarefa / 1048576)) MiB (migrar-controle, empresa-criar, migrar-empresas, referencias e particoes)"
 docker inspect -f '{{.Config.User}}' genesis-api | grep -qx node || falha "API não roda como node"
 docker inspect -f '{{.Config.User}}' genesis-web | grep -qx 101 || falha "ERP não roda como 101"
 confere "API e ERP sem root"
@@ -505,6 +563,49 @@ done
 saida=$(bash "$T/implantar.sh" logs)
 grep -q "api-.*-$VERSAO_B.log" <<<"$saida" || falha "implantar.sh logs não lista o log de $VERSAO_B"
 confere "logs da API guardados antes de cada troca (implantar.sh logs)"
+
+if [ "$SEM_ACTIONS" = 1 ]; then
+  passo "Implantação sem o Actions (implantar-sem-actions.sh, D70): main local, build pelo script, troca e volta"
+  # O repositório público vira um clone local com a main no commit atual (HEAD); o que não foi commitado não entra
+  # (o script implanta commit, como o workflow).
+  ORIGEM=$T/origem.git
+  git clone --quiet --bare "$RAIZ" "$ORIGEM"
+  COMMIT_C=$(git -C "$RAIZ" rev-parse HEAD)
+  git -C "$ORIGEM" update-ref refs/heads/main "$COMMIT_C"
+  VERSAO_C=$(git -C "$ORIGEM" rev-parse --short=12 "$COMMIT_C")
+  # As URLs públicas (os domínios de produção do .env, porta 443) chegam ao Traefik local.
+  mkdir -p "$T/bin-sem-actions"
+  printf '#!/usr/bin/env bash\nexec %q -k --noproxy "*" --connect-to "::127.0.0.1:%s" "$@"\n' \
+    "$(command -v curl)" "$TESTE_PORTA_HTTPS" >"$T/bin-sem-actions/curl"
+  chmod +x "$T/bin-sem-actions/curl"
+  opcoes_build=${TESTE_BUILD_OPCOES:-}
+  [ -z "${TESTE_IMAGEM_NODE:-}" ] || opcoes_build+=" --build-arg IMAGEM_NODE=$TESTE_IMAGEM_NODE"
+  [ -z "${TESTE_IMAGEM_ALPINE:-}" ] || opcoes_build+=" --build-arg IMAGEM_ALPINE=$TESTE_IMAGEM_ALPINE"
+  sem_actions() {
+    PATH=$T/bin-sem-actions:$PATH GENESIS_REPOSITORIO=$ORIGEM GENESIS_BUILD_OPCOES=$opcoes_build \
+      bash "$PRODUCAO/implantar-sem-actions.sh" "$@"
+  }
+  sem_actions --simular "$COMMIT_C" >"$T/sem-actions-simular.log" 2>&1 ||
+    falha "implantar-sem-actions.sh --simular: $(tail -n 20 "$T/sem-actions-simular.log")"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_A" ] && [ ! -e "$T/releases/$VERSAO_C" ] &&
+    ! docker image inspect "genesis-api:$VERSAO_C" >/dev/null 2>&1 || falha "--simular mudou a versão, criou a release ou montou imagem"
+  confere "--simular: commit $VERSAO_C conferido na main, nada montado nem trocado"
+  sem_actions "$VERSAO_C" || falha "implantar-sem-actions.sh $VERSAO_C"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_C" ] && [ "$(cat "$T/versoes/anterior")" = "$VERSAO_A" ] ||
+    falha "versões depois do implantar-sem-actions.sh: atual $(cat "$T/versoes/atual"), anterior $(cat "$T/versoes/anterior")"
+  for img in genesis-api genesis-web genesis-backup; do
+    docker image inspect "$img:$VERSAO_C" >/dev/null || falha "imagem $img:$VERSAO_C não montada"
+  done
+  # A implantação rodou fora do terminal (setsid), com a saída no log da pasta.
+  grep -q "Versão: $VERSAO_C no ar." "$T/logs/implantar-sem-actions.log" || falha "log da implantação sem o Actions sem o resumo"
+  [ "$(stat -c %a "$T/fonte")" = 700 ] || falha "fonte sem 700"
+  [ -x "$T/releases/$VERSAO_C/implantar.sh" ] && [ -x "$T/releases/$VERSAO_C/instalar.sh" ] || falha "releases/$VERSAO_C sem os .sh executáveis"
+  detalhada "$API" | jq -e --arg v "$VERSAO_C" '.status == "ok" and .api.versao == $v' >/dev/null ||
+    falha "a API no ar não é a $VERSAO_C: $(detalhada "$API" | head -c 300)"
+  bash "$T/implantar.sh" voltar >/dev/null || falha "voltar depois do implantar-sem-actions.sh"
+  [ "$(cat "$T/versoes/atual")" = "$VERSAO_A" ] || falha "voltar não devolveu a $VERSAO_A"
+  confere "implantar-sem-actions.sh $VERSAO_C: imagens montadas pelo script, troca pelo implantar.sh, URLs públicas pelo Traefik, API $VERSAO_C no ar e o voltar para $VERSAO_A"
+fi
 
 passo "Bloco do Cloud Shell colado de novo (chave da conta de serviço volta a root:root 600)"
 chown root:root "$T/segredos/gcp-conta-servico.json"

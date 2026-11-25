@@ -28,6 +28,8 @@ apps/pdv/
 ├── instalador/                   # implantação I3 (decisão 62; "Instalar na loja")
 │   ├── windows/                  #   GenesisPDV.iss (Inno Setup 6), gerar-instalador.ps1 e testar-instalador.ps1 (CI);
 │   │                             #   preparar-impressora-teste.ps1 (impressora RAW do teste do spooler, I4)
+│   ├── linux-wine/               #   o mesmo instalador do Windows gerado no Linux (Inno Setup no Wine), a conferência
+│   │                             #   dele e o GitHub Release pela sessão, sem o Actions (OP-B3, decisão 93); teste/
 │   └── linux/                    #   gerar-pacote.sh/gerar-deb.sh (.deb), testar-deb.sh, postinst/postrm e o .desktop
 │                                 #   (sem uso na CI nem no release desde a decisão 80; ficam como referência)
 ├── src/
@@ -239,13 +241,16 @@ confere o executável publicado).
 ## Instalar na loja
 
 O caixa da loja usa o **instalador do Windows** (`GenesisPDV-Setup-x.y.z.exe`): as lojas são todas Windows (D21). Ele
-sai do CI e do workflow **PDV release** (decisão 62). Desde 05/11/2026 não há pacote para Linux (decisão 80).
+sai do CI e do workflow **PDV release** (decisão 62) ou, **sem cota do GitHub Actions (D70)**, da própria sessão do
+Claude Code, que gera o mesmo instalador no Linux pelo Wine, confere e publica o release (decisão 93 e "Sem o GitHub
+Actions", abaixo). Desde 05/11/2026 não há pacote para Linux (decisão 80).
 
 **Na loja, baixe sempre pela página de download: <https://download.grupoicebeer.com.br>.** É o endereço que a loja
 conhece (sem procurar o arquivo certo no GitHub); a página oferece o instalador do release `pdv-vX.Y.Z` mais novo
 publicado, com a versão, o tamanho, o sha256 e estas instruções resumidas. Ela só passa a oferecer uma versão nova **depois da
 próxima implantação**: publique com **Actions › PDV release** e depois rode **Actions › Implantação**
-(infra/producao/README.md › Página de download do PDV).
+(infra/producao/README.md › Página de download do PDV); sem o Actions, o release sai do `publicar-release.sh` e a
+página é atualizada pela implantação com `--publicar-pdv` (infra/producao/README.md › Implantar sem o GitHub Actions).
 
 **Requisitos mínimos** (PDV 32.7): Windows 10 64 bits 22H2 ou Windows 11 (o instalador recusa versões mais antigas e
 32 bits), 2 núcleos, 4 GB de memória, SSD com 20 GB livres, tela 1024×768, internet só para ativar (depois o caixa
@@ -317,6 +322,40 @@ apagar de vez, confira antes no ERP (PDVs / Terminais) que o caixa não tem nada
 
 O instalador dá ao grupo **Usuários** permissão de modificar `C:\ProgramData\GenesisPDV` (o caixa roda com a conta
 comum da loja). Só um GenesisPDV abre por computador: o segundo avisa "já está aberto".
+
+### Sem o GitHub Actions: gerar, conferir e publicar pela sessão (D70-Q2, decisão 93)
+
+Quem faz é a sessão do Claude Code (o dono autorizou em 24/11/2026), num commit que **já está na `main`** e com a
+árvore do `apps/pdv` limpa; nada disso vai para o repositório (a saída fica em `apps/pdv/publish/`, ignorada):
+
+```bash
+apps/pdv/instalador/linux-wine/gerar-instalador.sh         # publica win-x64, compila o GenesisPDV.iss no Wine (~1 min)
+apps/pdv/instalador/linux-wine/testar-instalador.sh        # confere contra a publicação e o último release (~1 min)
+apps/pdv/instalador/linux-wine/publicar-release.sh X.Y.Z --simular   # só as conferências e o que faria
+apps/pdv/instalador/linux-wine/publicar-release.sh X.Y.Z   # tag pdv-vX.Y.Z, release com o .exe e o .exe.sha256
+```
+
+Precisa do Wine com 32 bits e do `osslsigncode` (`dpkg --add-architecture i386 && apt-get install wine64 wine32:i386
+osslsigncode`), de ~2 GB livres e, para o release, do `gh` com permissão de escrita no repositório. O release só sai do
+instalador conferido contra o **último release publicado** (o padrão do teste) e com a URL da API de produção; os dois
+scripts sem opções fazem isso. **Criar a tag dispara o workflow "PDV release"** (`pdv-release.yml`, em todo push de tag
+`pdv-v*`): enquanto durar a D70 ele fica desligado no GitHub (D70-Q3, padrão até a confirmação do dono), e o
+`publicar-release.sh` recusa criar a tag com ele ligado (`--aceitar-disparo` cria assim mesmo; decisão 93). Depois do
+release, a página de download só muda com a implantação `--publicar-pdv`; a atualização dos caixas continua com o dono,
+um de cada vez.
+
+**Conferência no primeiro caixa (o que só o Windows de verdade confere).** O `testar-instalador.sh` instala,
+atualiza, reinstala e desinstala num Windows simulado (Wine), mas não confere a permissão das pastas, o PDV aberto
+nem o aviso de "PDV aberto". Enquanto o release sair sem o runner Windows, no **primeiro caixa** atualizado:
+
+1. Atualize como sempre (passo a passo acima: feche o PDV pelo programa, instale por cima).
+2. **Entre com a conta comum do caixa** e abra o GenesisPDV pelo atalho: ele abre já ativado, com as vendas de antes.
+   (Se aparecer erro de banco ou de permissão em `C:\ProgramData\GenesisPDV`, pare aqui e chame o suporte antes de
+   atualizar outro caixa: os dados continuam na pasta.)
+3. No rodapé (ou na Central › Sobre o terminal), a versão é a nova.
+4. Com o PDV **aberto**, dê dois cliques no mesmo instalador: ele tem de dizer "O instalador encontrou o GenesisPDV
+   aberto neste computador". Clique em **Cancelar** (nada muda).
+5. Feche o PDV com Alt+F4 e abra de novo: abre normalmente. Se os quatro passos deram certo, siga para os outros caixas.
 
 ### Linux (.deb) — sem distribuição desde a decisão 80
 
@@ -479,7 +518,8 @@ TM-T88 V/VI) ou **Bematech MP-4200 TH**; sem impressora configurada o caixa **ve
   `Directory.Packages.props`, rode `dotnet restore GenesisPDV.slnx --force-evaluate` e versione os lock files. O
   `GenesisPDV.App` declara `RuntimeIdentifiers` `win-x64;linux-x64`, mas o `dotnet publish -r win-x64` ainda edita os
   lock files (acrescenta `Microsoft.NET.ILLink.Tasks` e seções `net10.0/win-x64`): **não versione essas mudanças**;
-  depois de publicar, rode `git checkout -- '**/packages.lock.json'`.
+  depois de publicar, rode `git checkout -- '**/packages.lock.json'` (o `instalador/linux-wine/gerar-instalador.sh`
+  já os devolve como estavam: decisão 93).
 
 ## Decisões de implementação
 
@@ -4004,3 +4044,115 @@ reimpresso continua o original, com o número do caixa.
     - Testes: `BackupLocalTests.Restaurar_backup_de_antes_da_ordem_do_erp_mantem_o_status_e_o_caixa_nao_vende_nem_abre`
       (desativando e revogado, banco em uso legível e corrompido) e
       `Restaurar_com_o_terminal_ativo_fica_ativo_e_a_maior_hora_vista_mais_nova_vale`.
+
+93. **Instalador do Windows e GitHub Release sem o runner Windows: o Inno Setup no Wine e a API REST pelo `gh`**
+    (OP-B3; D70-Q2 = (A), decidida pelo dono em 24/11/2026 com autonomia para a sessão, roadmap §16; plano
+    `docs/planos/operacao-sem-actions-plano.md` › OP-B3; decisões 62 e 80). Sem cota do Actions, o `pdv-release.yml`
+    não roda (e fica desligado no GitHub enquanto durar a D70: D70-Q3, abaixo); os scripts de `instalador/linux-wine/` fazem o mesmo caminho no Linux da sessão, com o mesmo
+    `GenesisPDV.iss` (sem mudança) e sem tirar nada do caminho do Windows, que volta a valer quando a cota voltar:
+    - **`gerar-instalador.sh [--versao X.Y.Z] [--url-api URL] [--runtime 10.0.N]`**: o `dotnet publish` `win-x64`
+      autocontido e de arquivo único com as opções do `gerar-instalador.ps1` (a versão do `Directory.Build.props`, a
+      URL `https://api.grupoicebeer.com.br`), os `packages.lock.json` guardados antes e devolvidos depois (o
+      `publish -r` os edita; "Restore travado"), a conferência do `--info-build` rodando o exe no Wine, e o ISCC do
+      **Inno Setup 6.4.3** (o `$VersaoInnoSetup` fixo do script do Windows) num prefixo do Wine próprio, apagado no fim
+      mesmo com falha. O instalador do Inno vem dos releases imutáveis do projeto no GitHub (desde março de 2026 o
+      `files.jrsoftware.org` só guarda as assinaturas `.issig` e manda para lá), com o **sha256 fixado no script**
+      (`f3c42116…723b`, o mesmo `file-hash` do `innosetup-6.4.3.exe.issig` do `files.jrsoftware.org`, conferido em
+      24/11/2026), conferido antes de cada uso (o download errado nem roda, nem fica no cache). Saída em
+      `publish/instalador/`: o `.exe`, o `.exe.sha256` no formato do `sha256sum` (o do release e o que o
+      `implantar.sh pdv publicar` confere) e o `.exe.origem.json` (versão, URL da API, commit, árvore do `apps/pdv`
+      limpa ou não, Inno Setup e .NET), que o release confere. **Árvore limpa** quer dizer: nada no `git status` do
+      `apps/pdv`, nenhum arquivo ignorado pelo git nele fora de `bin/`, `obj/` e `publish/` (o build lê sozinho alguns
+      deles: o `<projeto>.csproj.user`, que o MSBuild importa, um `.props`, `.targets` ou `.rsp` local) e, acima do
+      `apps/pdv` até a raiz do disco, nenhum `Directory.Build.*` ou `nuget.config` fora do git (o MSBuild e o NuGet os
+      procuram para cima); o que sujou sai na tela. O runner do workflow fazia um checkout limpo; aqui é conferido.
+    - **O .NET embutido é a última correção do .NET 10 do nuget.org** (`-p:RuntimeFrameworkVersion`, o pacote
+      `Microsoft.NETCore.App.Runtime.win-x64`): o SDK 10.0.100 da sessão (o do `global.json`) embutiria o 10.0.0 de
+      novembro de 2025, e o runner Windows monta com o SDK mais novo da faixa (`rollForward: latestFeature`) — o
+      `pdv-v0.13.0` publicado tem o 10.0.15. Com isso o exe gerado aqui tem o mesmo runtime do publicado (versão de
+      arquivo `10.0.1526.53008` nos dois); `--runtime` fixa outro. O compilador continua o do SDK da sessão.
+    - **Sem assinatura**, como o release atual: o `osslsigncode verify` no `GenesisPDV-Setup-0.13.0.exe` publicado diz
+      "No signature found". O certificado da decisão 62 só existe no caminho do Windows: com `PDV_CERT_PFX_BASE64` no
+      ambiente, o script recusa em vez de gerar sem assinar em silêncio, e o teste falha se o publicado de referência
+      estiver assinado e o gerado não. O `osslsigncode` é **obrigatório** no `testar-instalador.sh` (sem ele, essa
+      conferência sumiria em silêncio), e as duas assinaturas vão para o `.conferido`: o release recusa o que não diz
+      "nenhuma" nas duas.
+    - **Wine:** o Setup e o ISCC do Inno Setup 6 são de 32 bits (no Ubuntu, `wine64` e `wine32:i386`); o prefixo é
+      `win64` com o driver gráfico `null` (sem tela) e sem Mono/Gecko; o Inno se instala com `/ALLUSERS` (no modo "só
+      para mim" o Setup não acha a pasta `{autopf}` no Wine) e só depois do `wineserver -w` (sem esperar o fim do
+      `wineboot`, ele falha em "Error reading FPreparingMemo.Lines.Strings"); o Wine 9 do Ubuntu sem `/run/user/<uid>`
+      aborta ("free(): invalid pointer"), e como root os scripts criam a pasta. O Wine **não isola** o programa do
+      Windows do resto da máquina (o disco do Linux aparece como `Z:`): só rodam nele o Inno Setup de sha256 fixado,
+      o exe que acabou de ser publicado aqui e o instalador do próprio release do repositório (a referência do teste).
+    - **`testar-instalador.sh`** confere sem instalar o que dá (o `.sha256`, o PE e o VERSIONINFO lidos pelo
+      `ler-versao-pe.py` — FileVersion X.Y.Z.0, ProductVersion X.Y.Z —, o Inno Setup do cabeçalho, a assinatura e a
+      origem) e, num prefixo descartável, o resto. O `innoextract` previsto no plano não serve: o do Ubuntu (1.9) só lê
+      até o Inno Setup 6.0.5 e o master dele até o 6.4.0, nem o 6.4.3 fixado nem o **6.7.0** com que o runner montou o
+      `pdv-v0.13.0` (o `gerar-instalador.ps1` usa o Inno da imagem do runner quando ele é 6.3 ou mais novo). Por isso a
+      lista de arquivos sai da instalação silenciosa no Wine, que é mais forte: instala o último release publicado
+      (a lista de releases da API pública, sem rascunho nem pre-release, como o `implantar-sem-actions.sh` escolhe: a
+      tag de um release que parou no meio não conta; o `.exe` baixado do release com o `.sha256` conferido; ou
+      `--referencia-release pdv-vX.Y.Z`, `--referencia <exe>`, `--sem-referencia`), anota o que ficou (o programa, as pastas de dados, os dois atalhos, o "Iniciar com o
+      Windows" e o registro de desinstalação: 22 itens), atualiza por cima com o gerado (o caminho das lojas; com a
+      referência mais nova, confere que o gerado desiste), desinstala, instala o gerado do zero e exige a **mesma
+      lista** (só a versão muda); o `GenesisPDV.exe` instalado é, byte a byte, o da publicação `win-x64` (que tem só
+      ele), com a ProductVersion `X.Y.Z+<commit>` da origem e o .NET embutido igual ou mais novo que o do publicado; o
+      `--info-build` do instalado; reinstala por cima sem mexer no `pdv.db`; um instalador "mais antigo" que o
+      instalado (DisplayVersion 99.0.0, como o `testar-instalador.ps1`) desiste sem mexer; desinstala e os dados de
+      `%ProgramData%\GenesisPDV` ficam; a URL da origem tem de ser a do `--url-api` da conferência. Verde, grava o
+      `.exe.conferido`: o sha256 conferido, a URL da API, a versão e o sha256 da referência, o .NET embutido deste e o
+      dela e as duas assinaturas, que o release exige e confere.
+    - **Diferenças esperadas em relação ao `pdv-v0.13.0` publicado:** o Inno Setup (6.4.3 × 6.7.0 do runner), os bytes
+      e o tamanho do instalador (a compressão e o exe de outro commit) e mais nada na lista do que a instalação deixa.
+      Atualizar por cima de um caixa instalado pelo 6.7.0 foi conferido no Wine: o 6.4.3 acrescenta ao log de
+      desinstalação existente e mantém o `unins000.exe` mais novo; desinstalar depois funciona.
+    - **`publicar-release.sh X.Y.Z [--simular] [--commit <sha>] [--aceitar-referencia X.Y.Z] [--aceitar-disparo]`**: as
+      recusas do workflow e mais algumas, todas antes de qualquer escrita no GitHub — sem o `.sha256` conferido, o
+      `.conferido` e a origem deste mesmo arquivo; árvore suja na geração; a URL padrão da API, na origem ou na
+      conferência, diferente da de produção (`https://api.grupoicebeer.com.br`; `GENESIS_URL_API_RELEASE` troca, como o
+      `vars.PDV_URL_API_PADRAO` do workflow: um instalador de homologação nunca sai como oficial); assinatura diferente
+      de "nenhuma"; a conferência sem referência, ou contra outra que não o **último release publicado** (fora este
+      mesmo, sem rascunho nem pre-release; `--aceitar-referencia` aceita outro publicado, com aviso; sem nenhum
+      publicado, só sem referência), ou com um instalador de referência cujo sha256 não é o do `.sha256` desse release
+      (uma cópia local antiga não serve); o .NET embutido mais velho que o da referência; commit da origem fora da
+      `origin/main` (o script faz `git fetch origin main` antes); `<Version>` do `Directory.Build.props` desse commit
+      diferente; tag `pdv-vX.Y.Z` (leve ou anotada) em outro commit; release publicado que já tem arquivos (o workflow
+      só os trocava com "substituir" marcado; aqui nunca: suba a versão).
+    - **A tag dispara o "PDV release" (D70-Q3, padrão até a confirmação do dono: recomendação (A)).** O GitHub só deixa
+      de disparar workflows nos eventos do `GITHUB_TOKEN`; a tag criada pela API com o login de uma pessoa é um push de
+      tag, e o `pdv-release.yml` roda em todo push de tag `pdv-v*`, já com a publicação ligada. Sem cota, fica uma
+      execução falhada no histórico público a cada release; com cota, o runner monta outro instalador (assinado, se o
+      ambiente `release-pdv` tiver o certificado), e o job do release dele falha com "já tem arquivos" ou, se a sessão
+      parou no meio, sobe os binários dele no rascunho (que a próxima execução do script apagaria). Por isso, enquanto
+      durar a D70, o workflow fica **desligado** no GitHub (o arquivo continua no repositório):
+      `gh api --method PUT repos/KhauanG/GenesisPDV-ERP/actions/workflows/pdv-release.yml/disable` (e `/enable` quando
+      a cota voltar, junto com a volta do release pelo Windows). Antes de criar a tag, o script lê o estado do workflow
+      (`GET actions/workflows/pdv-release.yml`): ligado, recusa; `--aceitar-disparo` cria a tag assim mesmo, com o
+      aviso. Com a tag já criada (o rascunho de uma execução anterior), nada é disparado de novo.
+      Depois, pela API REST (`gh api`; a GraphQL é bloqueada nas sessões): a tag no commit, o release **em rascunho**
+      (ninguém o vê nem baixa), o `.exe` e o `.exe.sha256` por `uploads.github.com`, a conferência dos dois (nome,
+      tamanho e estado), a publicação do rascunho e o download público de volta com o sha256 conferido. As notas e o
+      título são os do workflow. Uma execução interrompida deixa o release em rascunho, invisível; rodar de novo
+      reaproveita o rascunho (tira os arquivos parciais). Um release **publicado sem arquivos** (criado à mão, ou um
+      workflow que parou antes dos envios) volta para rascunho antes dos envios: uma falha no meio não deixa à vista um
+      release só com o `.exe`, e rodar de novo continua dali. `--simular` só lê e diz o que faria (inclusive o estado do
+      workflow). A página de download
+      só muda com a implantação `--publicar-pdv` (OP-B2; depois, o vigia do OP-B4).
+    - **Testes:** `teste/testar-gerar-instalador.sh` (dublês do dotnet, Wine e curl: as opções do publish, os lock files
+      devolvidos — também pelo trap, com o publish que falha depois de editá-los —, o sha256 do Inno conferido antes de
+      rodar, o cache adulterado, o `--info-build` que não confere, os `/D` do ISCC, a origem com a árvore limpa ou suja
+      — o `.csproj.user` ignorado e o `Directory.Build.targets` acima sujam; `bin/` e `obj/` não — e as recusas) e
+      `teste/testar-publicar-release.sh` (`gh` e `curl` falsos sobre um clone com um `origin` local: a ordem das
+      chamadas, o `--simular` só com leituras, cada recusa sem escrita — inclusive a URL de homologação, a assinatura,
+      o .NET, a referência ausente, antiga ou local e o workflow ligado —, o `--aceitar-referencia`, o
+      `--aceitar-disparo`, o primeiro release, a tag anotada, o release publicado sem arquivos com e sem falha no
+      envio, o rascunho interrompido, a falha no envio e o download que não confere), no job `scripts` do `scripts/verificar-local.sh`, com o `shellcheck` deles. O job novo
+      **`pdv-instalador`** do `verificar-local.sh` gera o instalador da versão do `Directory.Build.props` e o confere
+      contra o último release; sem o Wine instalado, sai da rodada como "pulado (sem o Wine)", com o aviso.
+    - **Não coberto** (só o Windows de verdade: o `testar-instalador.ps1` no runner, quando a cota voltar, ou o
+      roteiro "Conferência no primeiro caixa" de "Instalar na loja"): a permissão MODIFICAR do grupo Usuários nas pastas
+      de dados (o Wine não tem ACL), o PDV instalado aberto até "Banco local pronto", o AppMutex com o PDV aberto, a
+      DPAPI, o SmartScreen e o Windows 10 22H2 de verdade (o prefixo do teste diz Windows 11).
+    - Rodada na sessão em 24/11/2026: o instalador do **0.13.0** gerado no Wine e conferido contra o `pdv-v0.13.0`
+      publicado, verde (as mesmas 22 linhas na lista, o mesmo .NET 10.0.15). **Nenhum release nem tag criados por este
+      bloco.** Nada muda no C#, no `GenesisPDV.iss`, nos workflows, no protocolo (`versoes_schema`) nem na versão do PDV.

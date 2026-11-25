@@ -46,13 +46,15 @@ commit.
 ## Pull requests
 
 - Título no mesmo formato do commit; descrição com o que muda, como testar e as seções dos documentos afetadas.
-- **CI verde obrigatório** (`.github/workflows/ci.yml`): formatação, lint, tipos, testes unitários, a integração da API
+- **CI verde obrigatório** (`.github/workflows/ci.yml`; sem cota do Actions, D70, vale a verificação local completa
+  no lugar dela, com a tabela no corpo do PR: [Sem o GitHub Actions](#sem-o-github-actions-d70)): formatação, lint, tipos, testes unitários, a integração da API
   no PostgreSQL 18 (o do Cloud SQL de produção, job em paralelo; desde 05/11/2026 só nele, não mais também no 16, decidido
   pelo dono, roadmap D59), conferência schema Drizzle × migrações, build, o build das imagens Docker de
   produção (API, ERP e backup) com o `docker compose config` de `infra/producao` (e a soma dos limites de memória ≤ 2,5
   GB), o `shellcheck` dos scripts de `infra/producao` e os testes de unidade do script de backup
   (`infra/producao/backup/testar-genesis-backup.sh`) e dos logs guardados pelo `implantar.sh`
-  (`infra/producao/teste/testar-implantar-logs.sh`),
+  (`infra/producao/teste/testar-implantar-logs.sh`) e da implantação sem o Actions
+  (`infra/producao/teste/testar-implantar-sem-actions.sh`),
   o PDV no Windows (build, testes, impressora de teste do spooler e o instalador instalado, aberto e desinstalado de
   verdade), a formatação do C# (`dotnet format`) num job leve no Linux e o e2e PDV ↔ API. Cada job só roda
   quando muda algo que ele confere ([CI: o que roda quando](#ci-o-que-roda-quando)).
@@ -66,12 +68,66 @@ commit.
 ## Antes de abrir o PR
 
 Os checks locais continuam **obrigatórios antes de cada push**, mesmo com o CI filtrando por caminho: o CI é a
-segunda conferência, não a primeira, e cada rodada dele ocupa a fila e deixa um log público.
+segunda conferência, não a primeira, e cada rodada dele ocupa a fila e deixa um log público. **Enquanto não houver
+cota do Actions (D70), a verificação local completa substitui o CI** ([Sem o GitHub Actions](#sem-o-github-actions-d70)).
 
 ```bash
 pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 cd apps/pdv && dotnet format GenesisPDV.slnx && dotnet test --solution GenesisPDV.slnx
 ```
+
+## Sem o GitHub Actions (D70)
+
+**Desde 24/11/2026 (decisão do dono, D70: "minha cota de Actions acabou, continue o projeto, usando sandbox para
+testes"), o portão antes de cada PR e antes de cada merge na `main` é a verificação local completa**, rodada na sessão
+do Claude Code (ou numa máquina Linux de desenvolvimento com Docker, PostgreSQL 16, Node/pnpm e o .NET SDK do
+`apps/pdv/global.json`):
+
+```bash
+scripts/verificar-local.sh                         # ou: pnpm verificar:local
+scripts/verificar-local.sh --so ts,imagens         # só estes jobs
+scripts/verificar-local.sh --pular e2e-sync        # todos menos estes
+scripts/verificar-local.sh --mudancas origin/main  # só os jobs do que mudou (o mapa do mudancas.sh, abaixo)
+```
+
+- Reproduz, na ordem do `ci.yml` e com os mesmos comandos, todos os jobs que rodam em Linux: `ts`, a integração da
+  API no PostgreSQL 16 local **e** no 18 (container `postgres:18-alpine` numa porta livre, removido no fim mesmo com
+  falha ou `Ctrl+C`), `imagens`, o PDV no Linux (`pdv`: restore, build e testes; `pdv-formatacao`) e o `e2e-sync`,
+  mais os jobs locais `pdv-instalador` (o instalador do Windows gerado pelo Wine e conferido contra o último release;
+  sem o Wine instalado, sai da rodada como pulado, com o aviso) e `scripts` (o `shellcheck`, o teste do próprio
+  script e os do instalador pelo Wine). Sobe o `dockerd` e o PostgreSQL 16 se faltarem. Logs em
+  `.verificacao-local/<job>.log`.
+- No fim imprime a tabela job × resultado × tempo (também em `.verificacao-local/resumo.md`) e sai com ≠ 0 se algum
+  job falhou. **A tabela vai no corpo do PR**, e é a de uma rodada completa: cada rodada apaga os logs e o resumo da
+  anterior, e `--so`/`--pular` servem para repetir um job depois de uma correção (os outros saem como pulados). Na
+  sessão do Claude Code a rodada completa (~40 min) passa do tempo limite de um comando: rode-a em segundo plano e
+  espere o fim. Antes do merge na `main`, a rodada é repetida no branch atualizado.
+- Um job vermelho conhecido como sensível a tempo (`carga-terminais`, `Terminais.test.tsx`, o heap do
+  `recalcular-saldos`) se confere rodando o arquivo sozinho (`CLAUDE.md` › Checks); o resultado repetido vai junto na
+  descrição do PR.
+- **Não coberto** (só o Windows de verdade: o runner, quando a cota voltar, ou o primeiro caixa): a impressora de
+  teste do spooler (`SpoolerWindowsTests`) e, do instalador, o que o Wine não reproduz — a permissão das pastas de
+  dados, o PDV instalado aberto até "Banco local pronto" e o AppMutex (roteiro "Conferência no primeiro caixa" do
+  README do PDV › Instalar na loja). O resumo lembra disso em toda rodada.
+- **Release do PDV sem o Actions (OP-B3, D70-Q2):** `apps/pdv/instalador/linux-wine/gerar-instalador.sh` monta no
+  Linux, pelo Inno Setup no Wine, o mesmo instalador do `pdv-release.yml`; `testar-instalador.sh` o confere;
+  `publicar-release.sh X.Y.Z` cria a tag `pdv-vX.Y.Z` num commit da `main` e o GitHub Release com o `.exe` e o
+  `.exe.sha256` (`--simular` só confere). A sessão faz isso sozinha, por autorização do dono; README do PDV ›
+  decisão 93 e "Instalar na loja". Criar a tag `pdv-v*` dispararia o "PDV release" (`pdv-release.yml`, em todo push
+  de tag): por isso ele fica desligado no GitHub enquanto durar a D70 (D70-Q3, padrão até a confirmação do dono), e o
+  `publicar-release.sh` recusa criar a tag com ele ligado (`--aceitar-disparo` cria assim mesmo, com o aviso).
+- Os workflows de `.github/workflows` ficam no repositório, sem mudança, para quando a cota voltar; nenhum é
+  disparado. Decisões técnicas do script: README da API › decisão 214.
+- **Implantação sem o Actions (OP-B2, D70-Q1):** o dono cola um comando no terminal da VPS e o
+  `infra/producao/implantar-sem-actions.sh` refaz o workflow Implantação na própria VPS (commit da `main`, imagens
+  montadas lá, `instalar.sh` e `implantar.sh`); passo a passo no README de `infra/producao` › Implantar sem o GitHub
+  Actions, decisões no README da API › decisão 215. A sessão não tem acesso à VPS.
+- **Vigia da implantação (OP-B4, D70):** com o vigia instalado pelo dono (`infra/producao/vigia/instalar-vigia.sh`),
+  a sessão pede a implantação de um commit da `main` com `scripts/pedir-implantacao.sh <commit> [--publicar-pdv]`:
+  cria a tag `implantar/<AAAAMMDD-HHMMSS>` no repositório público, a VPS a busca a cada 2 minutos e roda o
+  `implantar-sem-actions.sh`; o resultado sai só em `https://download.<domínio>/implantacao/estado.json` (numa volta
+  para um commit anterior ao OP-B4, que não serve esse arquivo, só com `--sem-estado`). README de
+  `infra/producao` › Vigia da implantação; README da API › decisão 217.
 
 ## CI: o que roda quando
 

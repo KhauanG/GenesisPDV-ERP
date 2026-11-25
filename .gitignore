@@ -9,6 +9,8 @@ coverage/
 # Playwright (e2e do ERP web)
 test-results/
 playwright-report/
+# Logs da verificação local (scripts/verificar-local.sh, D70)
+.verificacao-local/
 # Estado dos servidores do e2e do PDV (o do ensaio leva a amostra do catálogo real: nunca vai para o Git)
 e2e-pdv-estado.json
 ensaio-piloto-estado.json

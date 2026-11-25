@@ -15,7 +15,8 @@
 #   4. Cria /opt/genesis/.env (interpolação do Compose) e /opt/genesis/genesis.env (configuração não secreta) a partir
 #      dos modelos, se ainda não existirem.
 #   5. Cria a pasta do instalador do PDV da página de download (/opt/genesis/download/pdv, root:101 750, arquivos 640:
-#      o nginx do genesis-web, uid/gid 101, só lê; README › Página de download do PDV).
+#      o nginx do genesis-web, uid/gid 101, só lê; README › Página de download do PDV) e a do estado público do vigia
+#      da implantação (/opt/genesis/download/implantacao, as mesmas permissões; README › Vigia da implantação).
 # Variáveis (só para o teste local da stack, que também roda como root): GENESIS_PASTA (padrão /opt/genesis),
 # REDE_PROXY (padrão: a do .env ou `proxy`).
 # Rodar de novo depois de colar outra vez o bloco do Cloud Shell (README › Passo 1): o bloco recria a chave da conta
@@ -134,7 +135,7 @@ else
   ok "genesis.env criado a partir do modelo (confira os domínios em CORS_ORIGENS e ERP_URL)"
 fi
 
-passo "5/5 Pasta da página de download ($PASTA/download/pdv)"
+passo "5/5 Pastas da página de download ($PASTA/download/pdv e implantacao)"
 # download/ (root 755) guarda o pdv/, montado só leitura no genesis-web, e os temporários do `implantar.sh pdv
 # publicar` (.recebendo.*, root 700, fora da montagem e no mesmo disco: a troca é um `mv`, nunca um arquivo pela
 # metade). Rodar de novo devolve as permissões, sem apagar nada.
@@ -149,6 +150,11 @@ if [ -s "$PASTA/download/pdv/atual.json" ]; then
 else
   ok "pasta pronta (ainda sem instalador: a Implantação publica o último GitHub Release do PDV)"
 fi
+# O estado.json do vigia da implantação (OP-B4), montado só leitura ao lado do pdv/; quem grava é o vigia, como root.
+mkdir -p "$PASTA/download/implantacao"
+chown -R root:"$GID_NGINX" "$PASTA/download/implantacao"
+chmod 750 "$PASTA/download/implantacao"
+find "$PASTA/download/implantacao" -mindepth 1 -type f -exec chmod 640 {} +
 
 if ! grep -q '^MONITOR_TOKEN_SHA256=.' "$APP_ENV"; then
   aviso "sem token de monitoramento: o /api/saude/detalhada responde 401. Depois da implantação, no terminal da VPS: $PASTA/implantar.sh token-monitor (README › Monitoramento)."

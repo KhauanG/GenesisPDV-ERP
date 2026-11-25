@@ -256,3 +256,46 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
 - **Para o dono:** a execução real que fecha a Fase 2 na loja piloto (importação, carga do Nuvem3, contagens, NF-e
   reais, transferência, conferência e `db:recalcular-saldos`) está em `docs/implantacao/checklist-fechamento-fase2.md`;
   o resultado de cada passo é anotado lá e no `docs/andamento.md`, sem dado real.
+
+## Operação sem o GitHub Actions (24/11/2026)
+
+- **D70 — RESPONDIDA (24/11/2026):** "minha cota de Actions acabou, continue o projeto, usando sandbox para testes,
+  para não precisarmos dos actions". A verificação local completa na sessão (OP-B1) passa a ser o portão no lugar da
+  CI; os workflows ficam no repositório para quando a cota voltar. Plano: `docs/planos/operacao-sem-actions-plano.md`.
+  - **D70-Q1 = (A) e D70-Q2 = (A) — RESPONDIDAS (24/11/2026), com autonomia:** "Eu autorizo você a fazer as duas
+    coisas de forma autonoma, usar o VPS para os comandos de terminal e tambem tudo relacionado ao release no
+    GitHub". Efeito:
+    - **Implantação (D70-Q1):** pela VPS, com o `infra/producao/implantar-sem-actions.sh` (OP-B2). Como a sessão não
+      alcança a VPS por SSH (a rede da sessão só sai por HTTPS), o dono instala **uma vez** o vigia da implantação
+      (OP-B4): a VPS confere de tempos em tempos o repositório público e implanta o commit da `main` que a sessão
+      marcar com uma tag `implantar/…`. A sessão passa a poder pedir a implantação de um commit **que já está na
+      `main`** sem esperar o dono; o merge na `main` continua só com a liberação explícita do dono, PR a PR.
+    - **Release do PDV (D70-Q2):** a sessão monta o instalador pelo Wine (OP-B3), confere e cria o GitHub Release
+      `pdv-vX.Y.Z` (tag na `main`) com o `.exe` e o `.exe.sha256`, e pede a publicação na página de download pelo
+      vigia. A atualização dos caixas nas lojas continua com o dono, um caixa de cada vez.
+- **D71 — ABERTA (24/11/2026): desligar o workflow "PDV release" enquanto durar a D70?** A tag `pdv-vX.Y.Z` criada
+  pela sessão (OP-B3, `publicar-release.sh`) é um push de tag e dispara o `pdv-release.yml` (`on: push: tags`).
+  ★(A) **recomendada**: a sessão desliga só esse workflow pela API do GitHub (reversível: "Enable workflow" na aba
+  Actions, ou a sessão religa quando a cota voltar) na hora do primeiro release sem o Actions, e avisa. (B) manter
+  ligado e criar a tag mesmo assim (`--aceitar-disparo`): uma execução fica na fila ou falha sem cota, e se rodar
+  pode tentar publicar no mesmo release. Padrão até a resposta: o `publicar-release.sh` recusa enquanto o workflow
+  estiver ligado (README do PDV › decisão 93); nenhum release está previsto antes do PDV 0.14.0 (Fase 3).
+  - **D70-Q3 — SEM RESPOSTA (24/11/2026; levantada na revisão do OP-B3): vale a recomendação (A), padrão até a
+    confirmação do dono.** Quando a sessão cria a tag `pdv-vX.Y.Z` para o release (`publicar-release.sh`), o GitHub
+    dispara sozinho o workflow "PDV release" (`pdv-release.yml`, que roda em todo push de tag `pdv-v*`; a tag criada
+    com o login de uma pessoa conta como push). Sem cota, cada release deixa uma execução falhada no histórico público
+    do Actions; com cota, o Windows monta outro instalador ao mesmo tempo, e o job do release dele falha ("já tem
+    arquivos") ou, se o da sessão parou no meio, sobe os binários dele no rascunho. O que fazer?
+    - **(A) recomendada:** desligar o workflow "PDV release" no GitHub enquanto durar a D70 (o arquivo continua no
+      repositório, só fica "desabilitado"; um comando o liga de novo quando a cota voltar, junto com a volta do release
+      pelo Windows). Desligado, a tag não dispara nada. Até a resposta, o `publicar-release.sh` confere o estado do
+      workflow (só leitura) e **recusa** criar a tag com ele ligado; `--aceitar-disparo` cria assim mesmo, com o aviso.
+      Com a resposta (A), a sessão o desliga uma vez (comando no README do PDV › decisão 93).
+    - (B) aceitar a execução disparada como esperada: o script só avisa, e cada release deixa uma execução vermelha do
+      "PDV release" no histórico público.
+    - (C) cancelar pela API a execução disparada logo depois de criar a tag: ela fica no histórico como cancelada e,
+      com cota, pode já ter começado.
+  - **Servidor da Oracle oferecido pelo dono (24/11/2026; ARM Ampere, 2 CPU, 12 GB):** não usado agora, pela
+    recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
+    sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
+    na sessão. Fica como opção para um ambiente de homologação na Fase 3.

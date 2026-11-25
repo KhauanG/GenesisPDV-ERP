@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm --filter @genesis/shared run build && pnpm -r --workspace-concurrency=1 run test",
-    "dev:shared": "pnpm --filter @genesis/shared run dev"
+    "dev:shared": "pnpm --filter @genesis/shared run dev",
+    "verificar:local": "bash scripts/verificar-local.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -214,7 +214,7 @@ jobs:
       # (o shellcheck do runner marca como info o `teste && teste || falha` que os scripts usam de propósito, e a
       # versão mais nova já não marca).
       - name: Scripts de produção (shellcheck)
-        run: shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/teste/*.sh
+        run: shellcheck -x -S warning infra/producao/*.sh infra/producao/backup/*.sh infra/producao/vigia/*.sh infra/producao/teste/*.sh
 
       # Sem Docker nem bucket: senha do DATABASE_URL, estado ausente × bucket indisponível, manifesto antes do
       # estado.json e retenção num bucket versionado (dublês do s3 e do pg_dump).
@@ -226,6 +226,18 @@ jobs:
       # `implantar.sh logs` (decisão 166 do README da API).
       - name: Logs do implantar.sh (testes de unidade)
         run: bash infra/producao/teste/testar-implantar-logs.sh
+
+      # Sem Docker nem rede (dublês de docker, curl, df, id, nice e ionice; git de verdade num repositório local): a
+      # implantação pela VPS sem o Actions (D70-Q1, OP-B2): formato e ancestralidade do commit, recusas, a ordem das
+      # etapas, --simular e o --publicar-pdv com sha256 certo e errado.
+      - name: Implantação sem o Actions (testes de unidade)
+        run: bash infra/producao/teste/testar-implantar-sem-actions.sh
+
+      # Sem rede, systemd nem root (dublês de id e systemctl; git de verdade num repositório local com as tags de
+      # pedido): o vigia da implantação (OP-B4): a escolha do pedido, a trava ocupada, a recusa fora da main, o
+      # estado.json só com os campos permitidos, a autoatualização, o instalar-vigia.sh e o systemd-analyze verify.
+      - name: Vigia da implantação (testes de unidade)
+        run: bash infra/producao/teste/testar-vigia-implantacao.sh
 
       - name: Compose de produção válido (e dentro dos 2,5 GB somados, com o backup e o container de tarefa)
         run: |

@@ -24,8 +24,21 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   achados confirmados corrigidos no próprio PR.
 - **PR por fatia do plano** (ex.: PR-5 = F2-B18..B21). **Merge só com a liberação explícita do dono**, e nunca push direto
   na `main`.
-- **Deploy em produção é do dono** (workflow Implantação). Não dispare workflows do GitHub sem necessidade (a fila e
-  o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
+- **Deploy em produção:** sem cota do Actions (D70), pelo `infra/producao/implantar-sem-actions.sh` na VPS. O dono
+  autorizou a sessão (24/11/2026) a **implantar sozinha um commit que já está na `main`** (pelo vigia da VPS, OP-B4:
+  tag `implantar/…`) e a **criar o GitHub Release do PDV** (OP-B3). Continua do dono: a liberação de cada merge na
+  `main` e a atualização dos caixas nas lojas. Avise o dono antes e depois de cada implantação, com o resultado
+  conferido pelas URLs públicas. **Como pedir:** `scripts/pedir-implantacao.sh <commit da main> [--publicar-pdv]`
+  (em segundo plano: leva de 5 a 15 min, mais até 2 min para o vigia ver) confere a `origin/main`, cria a tag
+  `implantar/<AAAAMMDD-HHMMSS>` (ou `implantar-pdv/…`) pela API REST e acompanha
+  `https://download.grupoicebeer.com.br/implantacao/estado.json` e o `no_ar_desde` do `/saude` da API até `ok`,
+  `falhou` ou `recusado` (o motivo de uma falha fica só no log do vigia, que o dono vê na VPS:
+  `bash ~/instalar-vigia.sh --estado`). **Volta para um commit anterior ao OP-B4:** o `genesis-web` dele não serve o
+  `estado.json` (404 depois da troca), então o script a recusa sem `--sem-estado`; com ele, acompanha só até a API
+  reiniciar (sai com 2) e o resultado final o dono confere na VPS. Tempo limite (sai com 3) não garante que o pedido
+  ainda vá rodar: com o vigia desligado, ele não roda; peça ao dono o `--estado`. Só depois de o dono instalar o vigia (README de `infra/producao` › Vigia da
+  implantação). Não crie tag `implantar*` à mão nem apague as que existem. Não dispare workflows do GitHub sem
+  necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
 - Nunca commitar: `.env`, `.db`, `bin/`, `obj/`, `dist/`, `publish/`, instaladores, `.pfx`, planilhas/dados reais, testes
   temporários. Sem identificador de modelo em commits, PRs ou código.
 - O repositório é **público** (D60, 06/11/2026): tudo que entra fica visível para qualquer pessoa, inclusive o
@@ -33,7 +46,9 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   XML de nota real, log de produção, IP ou credencial; fixtures e exemplos sempre inventados (CNPJ/CPF de teste,
   `<IP_DA_VPS>`, `<terminal_id>.<segredo>`). Os XMLs reais de fornecedores que o dono mandar **não** entram: ficam
   em `apps/api/test/fixtures/nfe/reais/` só na máquina de quem testa (está no `.gitignore`) e o teste com eles roda só
-  localmente. Workflow não imprime saída da VPS (estado, logs, versões): isso se vê na própria VPS.
+  localmente. Workflow não imprime saída da VPS (estado, logs, versões): isso se vê na própria VPS. A **única saída
+  pública da VPS** é o `estado.json` do vigia da implantação (por decisão do dono, D70), com só
+  `{pedido, commit, resultado, inicio, fim}`: nada de log, versão, estado da VPS ou mensagem de erro nele.
 - O sistema "Hermes" é somente leitura.
 
 ## Mapa do repositório
@@ -66,6 +81,19 @@ cd apps/pdv && dotnet restore GenesisPDV.slnx --locked-mode && dotnet build Gene
 dotnet format GenesisPDV.slnx --verify-no-changes --no-restore   # com o SDK do global.json (10.0.100), igual à CI
 ```
 
+**Sem cota do GitHub Actions (D70, 24/11/2026):** a verificação local completa é o portão antes de cada PR e de cada
+merge na `main`, no lugar da CI: `scripts/verificar-local.sh` (ou `pnpm verificar:local`; `--so`, `--pular`,
+`--mudancas <base>`) roda todos os jobs Linux da CI (inclusive a integração no PostgreSQL 16 e no 18, as imagens
+Docker e o e2e) e imprime a tabela job × resultado × tempo, que vai no corpo do PR. A rodada completa leva ~40 min,
+mais que o tempo limite de um comando da sessão (cada integração sozinha já passa dele, ~10–13 min): rode o script
+**inteiro, em segundo plano** (`run_in_background`), espere o aviso de fim e cole a tabela do
+`.verificacao-local/resumo.md`. Cada rodada apaga os logs e o resumo da anterior, então `--so`/`--pular` servem para
+repetir um job depois de uma correção, não para montar a tabela do PR em partes (a de uma rodada parcial mostra os
+outros jobs como pulados). O instalador do PDV sai pelo Wine (OP-B3: job `pdv-instalador`; o release pela sessão com
+`apps/pdv/instalador/linux-wine/publicar-release.sh`, README do PDV › decisão 93); o que só o Windows de verdade cobre
+(spooler, a permissão das pastas, o PDV instalado aberto e o AppMutex) fica **não coberto**, com o roteiro do primeiro
+caixa. CONTRIBUTING.md › Sem o GitHub Actions.
+
 - Postgres local: `pg_ctlcluster 16 main start` se não estiver no ar. dotnet: `export PATH=$HOME/.dotnet:$PATH DOTNET_ROOT=$HOME/.dotnet`.
 - Testes sensíveis a tempo (`carga-terminais` p95, `Terminais.test.tsx`, heap do `recalcular-saldos`) podem falhar sob
   carga paralela: rode o arquivo sozinho antes de concluir que é defeito.
@@ -77,6 +105,9 @@ dotnet format GenesisPDV.slnx --verify-no-changes --no-restore   # com o SDK do 
   `jq -n --rawfile b corpo.md '{title:"…",head:"<branch>",base:"main",body:$b}' | gh api repos/KhauanG/GenesisPDV-ERP/pulls --input -`
 - Merge (só com a liberação do dono): `PUT repos/KhauanG/GenesisPDV-ERP/pulls/<n>/merge` com `merge_method: "merge"`
   (PRs empilhados: nunca squash).
+- **Sem cota do Actions (D70, 24/11/2026): nenhum workflow roda nem é disparado.** O `scripts/verificar-local.sh`
+  completo, verde, substitui a CI antes de cada PR e de cada merge (a tabela no corpo do PR); os workflows ficam no
+  repositório para quando a cota voltar. As regras abaixo valem para quando ela voltar.
 - **Actions (decisões do dono, 05/11 e 06/11/2026):** com o repositório público (D60), os runners padrão do GitHub
   não cobram minutos. Continua valendo, porque é bom de qualquer jeito: a CI roda **só no push da `main`** (e à mão),
   não em PR — os checks do PR rodam localmente antes de abri-lo — e só os jobs do que mudou

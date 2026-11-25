@@ -9,11 +9,14 @@
 # Variáveis de interpolação (domínios, versão, instância do Cloud SQL) vêm do /opt/genesis/.env (compose.env.exemplo);
 # as da aplicação, de genesis.env (não secretas) e de segredos/*.env (root, 600; nunca no repositório).
 #
-# Memória (decisão do dono, 03/11/2026): 2,5 GB somados — API 2 GB (heap do Node 1,5 GB), ERP 128 MB, proxy 192 MB,
-# backup 64 MB e o container de tarefa (128 MB, só enquanto roda; ele roda com a API no ar). Soma dos limites, com a
-# tarefa: 2048 + 128 + 192 + 64 + 128 = 2560 MiB (o CI e o teste local conferem). O proxy era 256 MB no I1 e cedeu
-# 64 MB ao backup (I1b; README › Decisões técnicas). Sem swap além do limite (memswap = mem): estourar reinicia o
-# container (ou derruba só a tarefa) em vez de deixar a VPS lenta.
+# Memória (decisão do dono, 03/11/2026): 2,5 GB somados — API 1984 MB (heap do Node 1,5 GB), ERP 128 MB, proxy
+# 192 MB, backup 64 MB e o container de tarefa (192 MB, só enquanto roda; ele roda com a API no ar). Soma dos limites,
+# com a tarefa: 1984 + 128 + 192 + 64 + 192 = 2560 MiB (o CI e o teste local conferem). O proxy era 256 MB no I1 e
+# cedeu 64 MB ao backup (I1b); a API era 2048 MB e cedeu 64 MB à tarefa (OP-B5; README › Decisões técnicas).
+# Exceção transitória: na primeira implantação com este compose (e na seguinte a um `voltar` para uma versão
+# anterior ao OP-B5) as migrações já rodam nesta tarefa com a API antiga, de 2048 MB, no ar: por alguns minutos,
+# 2624 MiB. Sem swap além do limite (memswap = mem): estourar reinicia o container (ou derruba só a tarefa) em vez
+# de deixar a VPS lenta.
 name: genesis
 
 x-logs: &logs
@@ -78,8 +81,10 @@ services:
       genesis-cloudsql-proxy:
         condition: service_healthy
     networks: [interna, proxy]
-    mem_limit: 2g
-    memswap_limit: 2g
+    # 1984 MB (OP-B5): 64 MB dos 2 GB do I1 foram para a tarefa; o heap de 1,5 GB continua com 448 MB de folga para
+    # o código, os buffers e o nativo (argon2, sharp).
+    mem_limit: 1984m
+    memswap_limit: 1984m
     read_only: true
     tmpfs: ['/tmp:size=64m']
     cap_drop: [ALL]
@@ -115,9 +120,11 @@ services:
     container_name: genesis-web
     # Instalador do PDV da página de download (README › Página de download do PDV): pasta do host, só leitura,
     # relativa ao /opt/genesis (o --project-directory do implantar.sh). root:101 750/640 (instalar.sh): o nginx (uid
-    # 101) só lê; quem grava é o `implantar.sh pdv publicar`, como root, fora do container.
+    # 101) só lê; quem grava é o `implantar.sh pdv publicar`, como root, fora do container. Ao lado, o estado.json do
+    # vigia da implantação (README › Vigia da implantação; OP-B4), na mesma pasta do host e com as mesmas permissões.
     volumes:
       - ./download/pdv:/srv/download/pdv:ro
+      - ./download/implantacao:/srv/download/implantacao:ro
     networks: [proxy]
     mem_limit: 128m
     memswap_limit: 128m
@@ -176,15 +183,18 @@ services:
 
   # Container de tarefa (perfil "tarefa": nunca sobe com o `up`): migrações na implantação e os comandos da API
   # (admin-criar, empresa-criar, particoes...) com a imagem da versão atual. Roda ao lado da API (na implantação, a
-  # versão anterior continua no ar durante as migrações), então entra no teto de 2,5 GB: 128 MB, a folga da decisão
-  # do dono. Pico medido no teste local: 82 MiB (README › Decisões técnicas).
+  # versão anterior continua no ar durante as migrações), então entra no teto de 2,5 GB: 192 MB, heap do Node 128 MB
+  # (OP-B5). Picos medidos (24/11/2026, cgroup do container, imagem de produção, PostgreSQL 18, sem o healthcheck):
+  # migrar-controle 95 MiB, particoes 97, admin-criar 110, empresa-criar 120, migrar-empresas e referencias 137 com 4
+  # ou mais empresas (o lote de 4 migra em paralelo; com 31 empresas, o mesmo). Só carregar o grafo de serviços da API
+  # já custa ~85 MiB. Com os 128 MB de antes, o migrar-empresas de 4 empresas estouraria (README › Decisões técnicas).
   genesis-tarefa:
     image: genesis-api:${GENESIS_VERSAO:?defina GENESIS_VERSAO (o implantar.sh define)}
     profiles: [tarefa]
     init: true
     env_file: *env-api
     environment:
-      NODE_OPTIONS: --max-old-space-size=96
+      NODE_OPTIONS: --max-old-space-size=128
       # Aparece como `cli:implantacao` em executado_por (migracoes_empresas, auditoria_plataforma).
       USER: implantacao
     command: ['node', 'dist/cli/migrar-controle.js']
@@ -192,8 +202,12 @@ services:
       genesis-cloudsql-proxy:
         condition: service_healthy
     networks: [interna]
-    mem_limit: 128m
-    memswap_limit: 128m
+    # O HEALTHCHECK da imagem é o da API (um `node` que pede o /saude a cada 5 s no início, 15 s depois): aqui não há
+    # servidor, e cada um desses processos somava 10 a 15 MiB ao pico da tarefa, dentro do mesmo limite (OP-B5).
+    healthcheck:
+      disable: true
+    mem_limit: 192m
+    memswap_limit: 192m
     read_only: true
     tmpfs: ['/tmp:size=16m']
     cap_drop: [ALL]

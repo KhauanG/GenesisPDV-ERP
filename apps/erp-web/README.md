@@ -92,7 +92,9 @@ Na raiz: `pnpm lint`, `pnpm format`, `pnpm typecheck`, `pnpm test`, `pnpm build`
 (sem cache), `/assets/*` com cache de 1 ano (nomes com hash), cabeçalhos de segurança (HSTS, `nosniff`,
 `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`) e `/saude-web` para o healthcheck. O mesmo nginx atende
 `download.<domínio>` (página em `nginx/download/`, com CSP própria; o instalador do PDV vem de uma pasta do host
-montada em `/srv/download/pdv`, publicada pela implantação: infra/producao/README.md › Página de download do PDV). **A API fica na mesma origem**:
+montada em `/srv/download/pdv`, publicada pela implantação: infra/producao/README.md › Página de download do PDV;
+ao lado, em `/implantacao/estado.json`, o resultado do último pedido ao vigia da implantação, de outra pasta do host
+montada em `/srv/download/implantacao`: infra/producao/README.md › Vigia da implantação). **A API fica na mesma origem**:
 o Traefik da VPS manda `erp.<domínio>/api/*` e `/saude` direto para a API, como o proxy do Vite em desenvolvimento —
 o build não leva URL de API e o cookie de refresh (`SameSite=Strict`) funciona sem CORS. `VITE_AMBIENTE` (faixa de
 ambiente) é argumento de build, vazio em produção. Passo a passo em `infra/producao/README.md`.

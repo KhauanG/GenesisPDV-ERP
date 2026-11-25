@@ -1,0 +1,17 @@
+# Genesis: vigia da implantação a cada 2 minutos (OP-B4; D70; README de infra/producao › Vigia da implantação).
+# Instalado e ligado pelo instalar-vigia.sh; `bash instalar-vigia.sh --desligar` o desliga.
+[Unit]
+Description=Genesis: vigia da implantação a cada 2 minutos
+Documentation=https://github.com/KhauanG/GenesisPDV-ERP/blob/main/infra/producao/README.md
+
+[Timer]
+# 1 minuto depois de ligado ou do boot e, depois, 2 minutos depois do fim de cada rodada (uma rodada que implanta
+# leva minutos: a seguinte nunca começa por cima dela).
+OnActiveSec=1min
+OnBootSec=1min
+OnUnitInactiveSec=2min
+AccuracySec=15s
+Unit=genesis-vigia.service
+
+[Install]
+WantedBy=timers.target
