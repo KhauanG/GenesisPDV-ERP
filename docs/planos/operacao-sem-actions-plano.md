@@ -182,3 +182,57 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
   em seguida, repetido muitas vezes, ou com um dublê de `kill`/`tail` que force a ordem ruim) e falha com o código
   antigo; o cenário "Fora do terminal" continua verde; shellcheck.
 - **Pronto:** testes verdes; o README da produção e a decisão 215 do README da API atualizados.
+
+### OP-B7 — Vigia: implantar cada commit novo da `main` (D119 = A)
+
+- **Por quê:** em 25/11/2026 a sessão não conseguiu criar a tag `implantar/…` (a rede da sessão recusa escrita no
+  caminho `git/refs` da API do GitHub; criar e juntar PR funcionam). O dono decidiu (D119 = A): o merge que ele libera
+  vale também como "pode implantar".
+- **Regras do vigia (`infra/producao/vigia/vigia-implantacao.sh`):**
+  - a cada rodada, `git fetch` só da `main` do repositório público (como hoje); se a ponta da `main` é um commit que o
+    vigia **ainda não tratou**, ele o implanta com o `implantar-sem-actions.sh <commit>`. **Uma vez por commit**: um
+    commit que falhou, foi recusado ou foi implantado não roda de novo sozinho (o próximo merge, sim). Isso também
+    impede que o vigia desfaça uma volta feita pelo dono (`implantar.sh voltar`): a ponta da `main` já foi tratada.
+  - **janela:** não começa implantação automática entre **17:00 e 23:59** no horário de Brasília
+    (`TZ=America/Sao_Paulo`); configurável num arquivo do vigia (root 600, padrão `17-24`), com o formato conferido.
+    Uma implantação que já começou não é interrompida.
+  - **instalação:** se a versão no ar (o `versoes/atual` do `implantar.sh`) já é a ponta da `main`, marca a ponta como
+    tratada; senão, deixa pendente e a implanta na próxima rodada dentro da janela (é o caso logo depois do merge deste
+    bloco: o dono reinstala o vigia e a `main` nova entra no ar sozinha).
+  - **PDV:** quando o release `pdv-vX.Y.Z` publicado mais novo (não rascunho, não pré-release; a mesma regra do
+    `--publicar-pdv` de hoje) tem sha256 diferente do que a página de download serve, publica-o — junto com a
+    implantação, se houver uma, ou sozinho, **sem** remontar nem trocar a versão (crie no `implantar-sem-actions.sh`
+    uma opção só para isso, com as mesmas conferências do `--publicar-pdv`, ou chame o `implantar.sh pdv publicar` da
+    versão atual com o download e o sha256 conferidos como hoje). Um release com arquivo inválido não é tentado de novo
+    a cada rodada (fica registrado no log e no estado).
+  - **tag de pedido do dono:** continua aceita como hoje (pedido manual: forçar ou voltar uma versão), roda na hora
+    (fora da janela também) e tem prioridade sobre o automático da mesma rodada.
+  - o `estado.json` continua só com `{pedido, commit, resultado, inicio, fim}`; no automático, `pedido` = `main` (ou
+    `pdv` na publicação só do PDV). Nada de log, versão de software ou erro nele.
+  - a autoatualização do vigia continua (depois de um `ok`, com o script do commit implantado).
+- **Lado da sessão:** `scripts/pedir-implantacao.sh` vira só acompanhamento (o nome pode mudar para
+  `scripts/acompanhar-implantacao.sh`; deixe o antigo avisando): dado um commit da `main`, espera o `estado.json`
+  mostrar esse commit com `ok`/`falhou`/`recusado` (e o `no_ar_desde` do `/saude` mudar), imprime a hora prevista
+  quando estiver dentro da janela, e nunca cria tag. Atualize o CLAUDE.md (Regras de trabalho › Deploy em produção):
+  depois de cada merge liberado pelo dono, a sessão avisa o dono, acompanha e conta o resultado.
+- **Teste:** os do vigia e do acompanhamento com dublês (git real num repositório local; `date`/`TZ` controlados):
+  ponta nova implantada uma vez só; falha não repete; volta do dono não é desfeita; janela (16:59 roda, 17:00 e 23:59
+  esperam, 00:00 roda); instalação com a versão no ar igual ou diferente da ponta; PDV novo publicado sozinho, sem
+  rebuild; release inválido não repete; tag manual com prioridade e fora da janela; `estado.json` só com os campos
+  permitidos; shellcheck; `systemd-analyze verify`.
+- **Documentação:** README da produção › Vigia da implantação (o que o dono faz: reinstalar uma vez depois do merge;
+  como desligar; como forçar ou voltar com a tag pelo site do GitHub), README da API (decisão nova), CLAUDE.md.
+- **Pronto:** testes verdes; nada roda na produção até o dono reinstalar o vigia.
+
+### OP-B8 — Release do PDV pelo site do GitHub (D120)
+
+- **Objetivo:** documentar e preparar o caminho do próximo release (PDV 0.14.0) sem a sessão escrever no GitHub:
+  `apps/pdv/instalador/linux-wine/preparar-release-manual.sh X.Y.Z` (ou uma opção do `publicar-release.sh`) faz as
+  mesmas conferências de antes de publicar (commit da `main`, versão do `Directory.Build.props`, árvore limpa, o
+  `.conferido` e o sha256) e deixa numa pasta os dois arquivos a anexar e o texto das notas do release; o README do
+  PDV ganha o passo a passo do dono (desligar o workflow "PDV release" na aba Actions — D71 —, Releases › Draft a new
+  release, a tag `pdv-vX.Y.Z` nova na `main` no commit indicado, anexar os dois arquivos, publicar) e o que a sessão
+  confere depois (a API pública de releases e, depois do vigia, o `pdv/atual.json`). O `publicar-release.sh` continua
+  para quando a sessão tiver escrita no GitHub (aviso claro quando a escrita é recusada pela rede da sessão).
+- **Teste:** com dublês, as recusas do preparo (fora da `main`, versão errada, sem conferência) e o conteúdo da pasta.
+- **Pronto:** teste verde; o roteiro no README do PDV; CONTRIBUTING.md e CLAUDE.md apontam para ele.

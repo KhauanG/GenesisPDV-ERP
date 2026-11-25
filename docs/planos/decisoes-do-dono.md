@@ -300,6 +300,19 @@ nos blocos F2-B22..B26; nada muda no código, só deixam de ser "padrão até a 
     recomendação: a sessão já roda todos os testes de Linux; ele é ARM (as imagens da produção x86 não sairiam dele
     sem montagem cruzada) e não roda os testes que só o Windows cobre; dar acesso a ele exigiria uma credencial nova
     na sessão. Fica como opção para um ambiente de homologação na Fase 3.
+- **D119 = (A) — RESPONDIDA (25/11/2026):** "Opção A (recomendada)". A rede da sessão recusa escrita no caminho
+  `git/refs` da API do GitHub (HTTP 403 do proxy da sessão; criar e juntar PR continua funcionando), então a sessão
+  não cria a tag `implantar/…` do OP-B4. Decisão: o vigia passa a implantar **sozinho cada commit novo da `main`**
+  (cada merge que o dono libera vale também como "pode implantar"), **uma vez por commit**, **fora das 17h à
+  meia-noite** (horário de Brasília; o merge nesse horário é implantado depois da meia-noite), e publica na página de
+  download o PDV do release mais novo quando ele for diferente do que a página serve. A tag continua valendo como
+  pedido manual do dono (forçar ou voltar uma versão). Bloco OP-B7.
+- **D120 — release do PDV sem a sessão escrever no GitHub (25/11/2026, "Faça o que você recomendar"):** pela mesma
+  recusa da rede da sessão, o `publicar-release.sh` não cria o release daqui. Recomendação seguida: a sessão gera e
+  confere o instalador (OP-B3) e manda os dois arquivos (`.exe` e `.exe.sha256`) ao dono; o dono cria o release
+  `pdv-vX.Y.Z` pelo site do GitHub (Releases › Draft a new release, tag nova na `main`) com o passo a passo da sessão,
+  e, antes, desliga o workflow "PDV release" pela aba Actions (a D71, feita pelo dono porque a sessão também não
+  consegue). O vigia publica o release na página de download (D119). Bloco OP-B8.
 
 ## Fase 3 — perguntas F3-Q1 a F3-Q48 (25/11/2026)
 
