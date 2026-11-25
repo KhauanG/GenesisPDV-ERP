@@ -9,6 +9,15 @@ import { TABELAS_DOS_FLUXOS } from '../../sync/fluxos.js';
 export const TABELAS_FN_VERSAO: readonly string[] = TABELAS_DOS_FLUXOS;
 
 /**
+ * Tabelas que já nascem com `fn_versao` e `ix_<tabela>_versao` porque vão descer ao PDV, mas cujo fluxo do pull entra
+ * num bloco seguinte (o `Esquema.g.cs` só muda junto do fluxo, numa só volta de cursor por release; padrões da Fase 3).
+ * Fora de `TABELAS_FN_VERSAO` (que gera os espelhos do PDV); o `test:sync-triggers` confere o trigger, o índice e que
+ * nenhuma está num fluxo. Quando o fluxo entrar, a tabela sai daqui.
+ * - `vales` (0029, F3-B1; MD 3.13.2, C ↕): o fluxo `pessoas` com o filtro da D90 é do F3-B7.
+ */
+export const TABELAS_FN_VERSAO_SEM_FLUXO = ['vales'] as const;
+
+/**
  * Colunas isentas de versão (argumentos do trigger `tg_<tabela>_versao`, migrações 0011, 0012 e 0016; MD 1.5; T3/T10
  * da 1C): se só elas mudam, a linha fica com a mesma `versao` e não desce. Só projeção mantida pelo banco e que nunca vai
  * ao PDV: toda coluna daqui fica no `omitir` do fluxo da tabela. Coluna editada no ERP **nunca** entra (o 409 do ERP
@@ -74,6 +83,11 @@ export const TABELAS_FN_VERSAO_LOCAL = [
   // pelo fluxo `estoque`
   'transferencias_estoque',
   'itens_transferencia',
+  // Fase 3: trocas e movimentos de vale (MD 3.13, F3-B1) sobem por evento (↑); as reservas de vale não saem da nuvem (—)
+  'trocas',
+  'itens_troca',
+  'movimentos_vale',
+  'reservas_vale',
 ] as const;
 
 /** Tabelas com bloco AU (`criado_por_id`, `atualizado_por_id` → usuarios). */

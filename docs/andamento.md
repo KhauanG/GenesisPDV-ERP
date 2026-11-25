@@ -40,7 +40,8 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | **2 (produtos e estoque completos)** | código e documentação concluídos (blocos F2-B1..B53 do `docs/planos/fase2-plano.md`, PR-1..PR-14; as variações F2-B48..B50 e a base de GTIN F2-B47 no backlog); **falta a execução real com o dono** (checklist `docs/implantacao/checklist-fechamento-fase2.md`), que demonstra a Definição de pronto, e a auditoria de segurança (D64) |
 | Central do PDV (engrenagem ⚙, diagnóstico no caixa) | **concluída** e em produção (PDV 0.10.0) |
 | Repositório público (D60) | **concluído** em 06/11/2026 (falta só o SSH da VPS, ver Pendências) |
-| 3, 4, 5 e 3F (fiscal por último) | não iniciadas |
+| **3 (PDV com a operação completa e vendas no ERP, sem a parte fiscal)** | **em andamento**: plano `docs/planos/fase3-plano.md` (F3-Q1..Q48 respondidas pelo dono em 25/11/2026, D72..D118 e D15); PR-17 (F3-B1..B8) começou no branch `claude/blissful-cray-cvroui`, ver "PR-17 — blocos" |
+| 4, 5 e 3F (fiscal por último) | não iniciadas |
 
 ### Fase 2 — PRs
 
@@ -63,6 +64,16 @@ _Última atualização: 13/11/2026 (PR-9 juntado na `main` e implantado em 11/11
 | PR-15 segurança (D64/D69) | SEG-B01..B16 | concluído (#12, juntado em 17/11/2026 com a liberação do dono; revisão por bloco com 3 lentes; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); API e ERP implantados em 17/11/2026 (Implantação manual de `9a61480`, verde, migração **0006** do controle; a CI da `main` ficou verde ao repetir só o job TypeScript, que falhou no `Terminais.test.tsx`, já conhecido como sensível a tempo); release **`pdv-v0.13.0`** publicado e posto na página de download em 17/11/2026 (Implantação com `publicar_pdv`, verde); **falta** atualizar os caixas, um de cada vez |
 | PR-16 operação sem o GitHub Actions (D70) | OP-B1..B5 | concluído (#13, juntado em 25/11/2026 com a liberação do dono; verificação local completa verde, 9 jobs, 38 min; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **em produção** desde 25/11/2026 13:18 UTC (`fea7cc1`, implantado pelo dono com o `implantar-sem-actions.sh` no terminal da VPS: a sessão não consegue criar a tag de pedido, a rede da sessão recusa escrita em `git/refs`; vigia instalado pelo dono no mesmo dia); a CI da `main` ficou vermelha só no teste do `--acompanhar` (corrigido no OP-B6); D119 = (A): o vigia passa a implantar cada commit novo da `main` (OP-B7) |
 | PR-16b vigia implanta cada commit da `main` e release do PDV pelo site (D119, D120) | OP-B6..B8 | concluído (#14, juntado em 25/11/2026 com a liberação do dono, merge `e539ed0`; verificação local completa verde, 9 jobs, 39 min; revisão de segurança do PR inteiro, D63: nenhum achado médio ou alto); **em produção** desde 25/11/2026 17:09 UTC (`e539ed0`): o dono reinstalou o vigia e o vigia novo o implantou sozinho, a primeira implantação automática da `main` (D119; `estado.json` ok, de 17:05:07 a 17:09:50 UTC) |
+
+### PR-17 — blocos (Fase 3: base do protocolo e do esquema)
+
+Plano `docs/planos/fase3-plano.md` › PR-17. **Antes do PR:** o dono confere no ERP › Terminais a versão de cada caixa
+ativo; a lista vai no corpo do PR-17. Até lá, toda matriz de compatibilidade trata o PDV mais antigo em uso como o
+**0.10.0** (as tags `pdv-v0.10.0` a `pdv-v0.13.0` existem).
+
+| Bloco | Situação |
+|---|---|
+| F3-B1 esquema da nuvem 1: vales, trocas, reservas e requisições (migração de empresa **`0029_fase3_vales_trocas`** com snapshot e journal; `apps/api/src/database/empresa/schema/trocas-vales.ts`: `trocas` com a `seq_codigo_trocas`, `itens_troca`, `vales` (`ck_vales_codigo`, `uq_vales_codigo`, saldo sem `CHECK >= 0`, `conferencia_hash` anulável pela D96), `movimentos_vale` (`uq_movimentos_vale_pagamento`, `ck_movimentos_vale_valor`, sinal por tipo), `reservas_vale` (`uq_reservas_vale_pagamento`) e `requisicoes_terminal` (pk terminal + requisição, com `corpo_sha256`); `fn_versao` + `ix_vales_versao` em `vales` (na lista nova `TABELAS_FN_VERSAO_SEM_FLUXO` até o fluxo do F3-B7) e `fn_versao_local` nas outras; imutabilidade de `trocas` (livres `venda_nova_id` uma vez, `status` registrada → cancelada e o cancelamento), `itens_troca` e `movimentos_vale`, com exclusão física proibida; `tg_itens_venda_imutavel`: com a venda finalizada ou cancelada só muda `quantidade_devolvida`, sem exclusão, e o rascunho fica livre; sem FK nova nas colunas que o PDV envia; seed `ESTORNO_VASILHAME_EMPRESTADO` e `ESTORNO_BAIXA_INTERNA` e a numeração `vale` do caixa 0 (em `garantirNumeracoesLoja` e, nas lojas existentes, pela migração); diagnóstico só de leitura na preparação da 0029 (pagamentos com vale, vendas com orçamento e itens com promoção; aviso na VPS se ≠ 0); `Esquema.g.cs` e PDV sem mudança; teste `migracao-vales-trocas.test.ts` sobre uma base da 0028 com vendas, sem nenhuma linha diferente depois; README da API › decisão 220, MD 3.11.3, 3.13, 3.15.5 e 7.3, SYNC 20.4) | implementado, aguardando a verificação e o commit do bloco |
 
 ### PR-6 — blocos
 

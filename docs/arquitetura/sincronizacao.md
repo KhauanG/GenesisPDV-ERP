@@ -4362,7 +4362,7 @@ Resposta `429 LIMITE_TAXA` com `Retry-After`.
 |---|---|
 | Push | TLS + idempotência: repetir um lote não tem efeito (8.4) |
 | Pull, heartbeat, estado | Leitura/telemetria: repetir é inofensivo |
-| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h e devolve a **mesma resposta** para a mesma requisição. Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
+| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h em `requisicoes_terminal` (modelo-de-dados.md 3.15.5) e devolve a **mesma resposta** para a mesma requisição. Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
 | Ativação | Código de uso único + `requisicao_ativacao_id` (3.4) |
 | Token roubado | Revogação imediata; rotação periódica idempotente; uso do token anterior após troca gera alerta (3.7); uso de outra máquina → `HARDWARE_ALTERADO` sem segredos (20.5) |
 | Renovação de token | `requisicao_id` guardado em `terminais_pdv.token_renovacao_requisicao_id`; repetição sem efeito (3.7) |

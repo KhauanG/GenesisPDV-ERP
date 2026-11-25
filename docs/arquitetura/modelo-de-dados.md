@@ -3455,6 +3455,11 @@ Venda do PDV (nasce no PDV, chega por evento) ou do ERP (Venda.aspx). Mesmas col
   `ck_itens_venda_devolvida (quantidade_devolvida between 0 and quantidade)`; `ck_itens_venda_origem_preco`;
   `ck_itens_venda_origem_entrada (origem_entrada is null or origem_entrada in ('leitor','teclado','balanca','etiqueta','busca','cardapio'))`;
   `ck_itens_venda_kit ((kit_grupo_id is null) = (kit_produto_id is null) and (kit_grupo_id is null) = (kit_componente_id is null) and (kit_grupo_id is null or (kit_quantidade > 0 and kit_preco_unitario >= 0 and kit_descricao is not null)) and (kit_alternativa_id is null or kit_grupo_id is not null) and kit_acrescimo >= 0)`.
+- **Imutável com a venda fechada** (`tg_itens_venda_imutavel`, migração 0029, F3-B1): com a venda do item `finalizada`
+  ou `cancelada` (fora dos estados abertos), só mudam `quantidade_devolvida` (projeção das trocas), `versao` e
+  `atualizado_em`, e a exclusão é recusada (`DOCUMENTO_IMUTAVEL`); com a venda aberta (o rascunho do ERP) incluir,
+  alterar e excluir são livres. O INSERT não passa pelo trigger: o `venda.finalizada` grava o cabeçalho já finalizado e
+  depois as linhas.
 
 `fiscal_snapshot` (`schema_fiscal: 2`; o 1 era o bloco plano anterior e é lido por upcaster, sincronizacao.md 17.5).
 Valores monetários em string decimal, percentuais em string com 4 casas; blocos ausentes = tributo não aplicável.
@@ -3967,7 +3972,13 @@ trazidos, cobrados e emprestados **numa venda** não usam esta tabela: vão no b
   `ck_trocas_venda_origem (venda_origem_id is not null or sem_venda_origem)`;
   `ck_trocas_origem (origem in ('pdv','erp'))`;
   `ck_trocas_pdv (origem = 'erp' or (terminal_id is not null and sessao_caixa_id is not null))`;
-  `ck_trocas_erp (origem = 'pdv' or (venda_origem_id is not null and resolucao <> 'troca_imediata'))`.
+  `ck_trocas_erp (origem = 'pdv' or (venda_origem_id is not null and resolucao <> 'troca_imediata'))`;
+  `ck_trocas_valor (valor_total >= 0)`; `ck_trocas_cancelada (status <> 'cancelada' or cancelada_em is not null)`.
+- FKs: `loja_id`, `caixa_id`, `terminal_id`, `sessao_caixa_id`, `cliente_id`, `operador_id`, `autorizado_por_id`,
+  `vale_id` e `movimento_caixa_id` (as duas últimas sobem no mesmo `troca.registrada`) e `venda_nova_id` (preenchida
+  pela nuvem). `venda_origem_id` **sem FK**: a venda de origem pode ser de outro terminal e chegar depois.
+- Imutável depois de gravada (migração 0029): só mudam `venda_nova_id` (uma vez, de nulo para a venda), `status`
+  (`registrada` → `cancelada`, terminal) e as colunas de cancelamento; exclusão física proibida.
   Devolução do ERP: estoque `DEVOLUCAO_ERP` (+) ao `itens_venda.custo_unitario` do item de origem; cancelamento
   (`status = 'cancelada'`) gera `ESTORNO_DEVOLUCAO_ERP` e é bloqueado se o vale gerado já foi utilizado.
 
@@ -3975,7 +3986,10 @@ trazidos, cobrados e emprestados **numa venda** não usam esta tabela: vão no b
 `produto_id uuid not null`, `variacao_id uuid null`, `lote_id uuid null`, `quantidade numeric(15,3) not null`,
 `valor_unitario numeric(15,4) not null` (valor líquido unitário pago), `valor_total numeric(15,2) not null`,
 `destino varchar(8) not null` (`estoque`, `avaria`), `motivo varchar(255) null`.
-`uq_itens_troca_sequencia (troca_id, sequencia)`; `ck_… (quantidade > 0)`, `ck_itens_troca_destino`.
+`uq_itens_troca_sequencia (troca_id, sequencia)`; `ck_itens_troca_quantidade (quantidade > 0)`,
+`ck_itens_troca_valores (valor_unitario >= 0 and valor_total >= 0)`, `ck_itens_troca_destino`. `item_venda_origem_id`
+sem FK (como a venda de origem); `lote_id` → `produtos_lotes` (o handler anula o lote desconhecido, com alerta).
+Imutável e sem exclusão física (0029).
 
 #### 3.13.2 `vales` (C, ↕) e `movimentos_vale` (D, ↑)
 
@@ -4001,19 +4015,27 @@ emitidos no ERP usam o caixa `00` (dono `nuvem`).
 | `validade` | `date` | não | — | Emissão + `pdv.vale_compra_validade_dias` |
 | `status` | `varchar(10)` | não | `'ativo'` | `ativo`, `utilizado`, `expirado`, `cancelado` |
 | `origem_tipo` | `varchar(8)` | não | — | `troca`, `manual`, `venda` |
-| `origem_id` | `uuid` | sim | — | |
+| `origem_id` | `uuid` | sim | — | Troca ou venda de origem (sem FK) |
+| `conferencia_hash` | `varchar(100)` | sim | — | Resumo criptográfico do código de conferência de 4 dígitos impresso no vale (D96, `pdv.vale_exige_conferencia`); o código em si nunca é guardado. Nulo = vale sem conferência. Formato do F3-B41 |
 | `emitido_em` | `timestamptz` | não | — | |
 | `emitido_por_id` | `uuid` | não | — | |
 | `cancelado_em`, `cancelado_por_id`, `motivo_cancelamento` | | sim | — | |
 
-- `uq_vales_codigo (codigo)`; `ix_vales_pessoa_id`; `ck_vales_codigo (codigo ~ '^VC[0-9]{12}$')`, `ck_vales_tipo`, `ck_vales_status`.
+- `uq_vales_codigo (codigo)`; `ix_vales_pessoa_id`; `ck_vales_codigo (codigo ~ '^VC[0-9]{12}$')`, `ck_vales_tipo`, `ck_vales_status`,
+  `ck_vales_origem_tipo`, `ck_vales_valor_original (valor_original > 0)`,
+  `ck_vales_cancelado (status <> 'cancelado' or cancelado_em is not null)`. **Sem** `CHECK (saldo >= 0)`.
+  `fn_versao` e `ix_vales_versao` desde a migração 0029 (desce ao caixa no fluxo `pessoas`, F3-B7).
 
 `movimentos_vale`: CP, `vale_id uuid not null`, `tipo varchar(20) not null` (`emissao`, `utilizacao`,
 `estorno_utilizacao`, `cancelamento`, `expiracao`, `ajuste`), `valor numeric(15,2) not null` (emissão +, utilização −),
 `venda_id uuid null`, `pagamento_venda_id uuid null`, `troca_id uuid null`, `terminal_id uuid null`,
 `usuario_id uuid null`, `ocorrido_em timestamptz not null`, `evento_id uuid null`.
 `ix_movimentos_vale_vale_id`; `uq_movimentos_vale_pagamento (pagamento_venda_id, tipo) where pagamento_venda_id is not null`;
-`ck_movimentos_vale_tipo`, `ck_movimentos_vale_valor (valor <> 0)`.
+`ck_movimentos_vale_tipo`, `ck_movimentos_vale_valor (valor <> 0)`,
+`ck_movimentos_vale_sinal ((tipo not in ('emissao','estorno_utilizacao') or valor > 0) and (tipo <> 'utilizacao' or valor < 0))`
+(o cancelamento, −saldo, fica livre: o saldo pode estar negativo). FKs só em `vale_id`, `terminal_id` e `usuario_id`;
+`venda_id`, `pagamento_venda_id` e `troca_id` sem FK (documento de outro evento). Imutável e sem exclusão física (0029):
+a correção é um movimento novo (`ajuste`).
 
 `reservas_vale` (C, —) — reservas de saldo feitas por caixas **online** antes de lançar o pagamento com vale
 (sincronizacao.md 14.4). Várias reservas ativas por vale (uso parcial em caixas diferentes).
@@ -4331,6 +4353,26 @@ o evento que referencia uma entidade cujo evento criador está em `erro`/`retido
 - `uq_entidades_evento (entidade_tipo, entidade_id, evento_id)`; `ix_entidades_evento_evento_id (evento_id)`.
 - Alimentada com **toda linha criada pelo payload** do evento, na transação que o aplica **e** na que o grava como
   `erro` ou `retido` (lida do payload, sem aplicar). Sem `versao`: não desce ao PDV.
+
+#### 3.15.5 `requisicoes_terminal` (L mutável, —)
+
+Requisições online do caixa que alteram estado (reservas de vale e de orçamento, sincronizacao.md 20.4; migração 0029,
+F3-B1; o uso é do F3-B6): a mesma requisição devolve a mesma resposta.
+
+| Coluna | Tipo | Nulo | Padrão | Descrição |
+|---|---|---|---|---|
+| `terminal_id` | `uuid` | não | — | → `terminais` |
+| `requisicao_id` | `uuid` | não | — | `X-Requisicao-Id` |
+| `endpoint` | `varchar(80)` | não | — | Rota chamada |
+| `corpo_sha256` | `varchar(64)` | sim | — | Resumo do corpo: o mesmo id com outro corpo é recusado |
+| `status_http` | `smallint` | sim | — | Nulo enquanto em andamento |
+| `resposta` | `jsonb` | sim | — | Resposta gravada no mesmo commit do efeito |
+| `criada_em` | `timestamptz` | não | `now()` | |
+| `concluida_em` | `timestamptz` | sim | — | |
+
+- PK `(terminal_id, requisicao_id)`; `ix_requisicoes_terminal_criada_em` (retenção de 24 h);
+  `ck_requisicoes_terminal_status_http (status_http is null or status_http between 100 and 599)`,
+  `ck_requisicoes_terminal_concluida ((concluida_em is null) = (status_http is null))`. Sem `versao`.
 
 ---
 
@@ -5157,9 +5199,14 @@ gera um `acertos_estoque` com a `origem` correspondente, por isso esses tipos t�
 | `ESTORNO_VASILHAME_DEVOLVIDO` | Estorno de devolução de vasilhame | -1 | `venda` | — | — |
 | `VASILHAME_VENDIDO` | Venda de vasilhame (casco) | -1 | `venda` | — | — |
 | `VASILHAME_EMPRESTADO` | Empréstimo de vasilhame (comodato) | -1 | `venda` | — | — |
+| `ESTORNO_VASILHAME_EMPRESTADO` | Estorno de empréstimo de vasilhame (comodato) | 1 | `venda` | — | — |
+| `ESTORNO_BAIXA_INTERNA` | Estorno de baixa interna | 1 | `venda` | — | — |
 
 `DEVOLUCAO_ERP`/`ESTORNO_DEVOLUCAO_ERP`: troca com `origem = 'erp'` (3.13.1, ERP 15.4.3). `BAIXA_INTERNA`: venda paga com
 forma `tipo_forma = 'consumo_interno'`, no lugar do `VENDA_PDV` (ERP 10.2); fica fora dos relatórios de vendas e lucro.
+Os dois estornos da Fase 3 (migração 0029, F3-B1; o gerador é dos blocos do comodato e da baixa interna):
+`ESTORNO_VASILHAME_EMPRESTADO` devolve o empréstimo ao `vasilhame_vazio` no cancelamento da venda com cascos emprestados
+(D85) e `ESTORNO_BAIXA_INTERNA` desfaz a `BAIXA_INTERNA` no cancelamento (D102), ambos com `estorno_de_id`.
 
 Vasilhames (PDV 10.12): `VASILHAME_DEVOLVIDO` entra no tipo de estoque `vasilhame_vazio` (bloco `vasilhames` do
 `venda.finalizada`, com `documento_tipo = 'venda'`, ou `vasilhame.movimentado`, cujo documento é o movimento avulso

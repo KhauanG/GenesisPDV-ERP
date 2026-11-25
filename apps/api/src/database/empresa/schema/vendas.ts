@@ -7,7 +7,9 @@
  *
  * Imutabilidade de `vendas` depois de `finalizada` (`fn_protege_imutavel`) e as FKs de autoria ficam na migração
  * customizada (0012). Colunas que apontam para tabelas que ainda não existem (orçamentos, comandas, pedidos,
- * promoções, vales, complementos, contas financeiras) ficam sem FK até a tabela entrar.
+ * promoções, contas financeiras) ficam sem FK até a tabela entrar; as que o PDV envia (`orcamento_id`, `promocao_id`,
+ * `vale_id`, `item_orcamento_id`) ficam sem FK mesmo depois (padrões da Fase 3; README da API › decisão 220). Com a
+ * venda finalizada ou cancelada, o item só muda em `quantidade_devolvida` (`tg_itens_venda_imutavel`, 0029).
  */
 import { sql } from 'drizzle-orm';
 import {
@@ -643,7 +645,9 @@ export const pagamentosVenda = pgTable(
     idTerminalPagamento: varchar('id_terminal_pagamento', { length: 40 }),
     tefTransacaoId: uuid('tef_transacao_id'),
     pixCobrancaId: uuid('pix_cobranca_id'),
-    // → `vales` (Fase 3) e `contas_financeiras` (Fase 4): FK quando as tabelas existirem.
+    // → `vales` (0029, F3-B1) sem FK: o PDV envia o id, e a ordem entre terminais não é garantida (um 23503
+    // recusaria um fato consumado); o handler da venda confere e abre alerta (padrões da Fase 3, decisão 220).
+    // `contas_financeiras` (Fase 4): FK quando a tabela existir.
     valeId: uuid('vale_id'),
     transferidoDeId: uuid('transferido_de_id'),
     autorizadoPorId: uuid('autorizado_por_id'),

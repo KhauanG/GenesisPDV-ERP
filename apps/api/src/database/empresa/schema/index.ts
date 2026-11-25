@@ -9,4 +9,5 @@ export * from './produtos.js';
 export * from './referencias.js';
 export * from './sincronizacao.js';
 export * from './sistema.js';
+export * from './trocas-vales.js';
 export * from './vendas.js';

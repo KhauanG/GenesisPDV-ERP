@@ -138,7 +138,8 @@ export const movimentosCaixa = pgTable(
     infAdicionais: varchar('inf_adicionais', { length: 255 }),
     ocorridoEm: timestamptz('ocorrido_em').notNull(),
     autorizadoPorId: uuid('autorizado_por_id'),
-    // → `trocas` (Fase 3) e `movimentos_conta_corrente` (Fase 4): FK quando as tabelas existirem.
+    // → `trocas` (0029, F3-B1) sem FK: o PDV envia o id (padrões da Fase 3, decisão 220); quem aponta com FK é a
+    // troca (`trocas.movimento_caixa_id`). `movimentos_conta_corrente` (Fase 4): FK quando a tabela existir.
     trocaId: uuid('troca_id'),
     cancelado: boolean('cancelado').notNull().default(false),
     canceladoEm: timestamptz('cancelado_em'),
@@ -338,7 +339,7 @@ export const movimentosVasilhame = pgTable(
     produtoVasilhameId: uuid('produto_vasilhame_id').notNull(),
     quantidade: quantidade('quantidade').notNull(),
     destino: varchar('destino', { length: 14 }).notNull(),
-    // → `vales` (Fase 3): FK quando a tabela existir.
+    // → `vales` (0029, F3-B1) sem FK: o PDV envia o id (padrões da Fase 3, decisão 220).
     valeId: uuid('vale_id'),
     ocorridoEm: timestamptz('ocorrido_em').notNull(),
     cancelado: boolean('cancelado').notNull().default(false),

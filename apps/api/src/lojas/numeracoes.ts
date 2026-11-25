@@ -51,7 +51,7 @@ async function garantir(tx: DbEmpresa, lojaId: string, e: Escopo): Promise<void>
 }
 
 /**
- * Numerações da loja (MD 7.13, 3.1.4), idempotente: `venda` do caixa 0 (dono `nuvem`), `nfe` da série da loja,
+ * Numerações da loja (MD 7.13, 3.1.4), idempotente: `venda` e `vale` do caixa 0 (dono `nuvem`), `nfe` da série da loja,
  * e para cada caixa de PDV `venda`, `vale` e `nfce` da série do caixa no ambiente da loja (dono `terminal`). Série ou
  * ambiente trocados criam a numeração nova; a antiga fica (histórico da série).
  */
@@ -65,14 +65,18 @@ export async function garantirNumeracoesLoja(tx: DbEmpresa, lojaId: string): Pro
     .orderBy(caixas.numero);
   for (const c of lista) {
     if (c.sistema) {
-      await garantir(tx, lojaId, {
-        tipo: 'venda',
-        caixaId: c.id,
-        modelo: null,
-        serie: null,
-        ambiente: null,
-        dono: 'nuvem',
-      });
+      // `vale` do caixa 0 (Fase 3, F3-B1): os vales emitidos no ERP usam o caixa `00` (MD 3.13.2); a migração 0029
+      // grava a das lojas que já existiam.
+      for (const tipo of ['venda', 'vale'] as const) {
+        await garantir(tx, lojaId, {
+          tipo,
+          caixaId: c.id,
+          modelo: null,
+          serie: null,
+          ambiente: null,
+          dono: 'nuvem',
+        });
+      }
       continue;
     }
     for (const tipo of ['venda', 'vale'] as const) {

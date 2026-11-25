@@ -7431,6 +7431,70 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        primeira implantação de um commit com o OP-B9 pelo vigia; nenhuma tag, release ou ref criada. Sem migração;
        API, ERP e PDV sem mudança.
 
+### Fase 3 – PR-17 base do protocolo e do esquema (API)
+
+220. **Esquema da nuvem 1 da Fase 3: trocas, vales, reservas e requisições do terminal** (F3-B1; plano
+     `docs/planos/fase3-plano.md`; MD 3.13, 3.11.3; SYNC 9.16, 9.17, 14.4, 20.4; D87 a D97; migração
+     `0029_fase3_vales_trocas`; `src/database/empresa/schema/trocas-vales.ts`). Só o esquema: os eventos
+     `troca.registrada` e `vale.*`, as reservas, as consultas e a idempotência usam estas tabelas sem migração nova
+     (F3-B6, B41 a B45), e o fluxo que leva `vales` ao caixa é do F3-B7. Escolhas técnicas, sem pergunta ao dono:
+     - **Tabelas.** `trocas` (`codigo` pela `seq_codigo_trocas`, criada antes das tabelas; nulo no MD porque o PDV não
+       numera, mas o default sempre preenche na nuvem), `itens_troca`, `vales`, `movimentos_vale`, `reservas_vale` e
+       `requisicoes_terminal` (pk `(terminal_id, requisicao_id)`, log técnico sem `versao`; `status_http`/`resposta`
+       nulos enquanto a requisição está em andamento, `ck_requisicoes_terminal_concluida`; a coluna `corpo_sha256`,
+       além do plano, deixa o F3-B6 recusar o mesmo `X-Requisicao-Id` com outro corpo sem migração nova; retenção de
+       24 h pelo `ix_requisicoes_terminal_criada_em`). CHECKs da MD mais os que a descrição dela já implicava:
+       `ck_vales_valor_original` (> 0), `ck_vales_origem_tipo`, `ck_vales_cancelado` e `ck_trocas_cancelada`
+       (cancelado com a data), `ck_trocas_valor` e `ck_itens_troca_valores` (≥ 0) e o `ck_movimentos_vale_sinal`
+       (emissão e estorno da utilização positivos, utilização negativa; o cancelamento, −saldo, fica livre porque o
+       saldo pode ser negativo). **Saldo do vale sem `CHECK >= 0`** (D89: o mesmo vale em dois caixas sem internet
+       aplica e alerta, nunca recusa). `vales.conferencia_hash` (D96) anulável: o formato do resumo e a chave
+       `pdv.vale_exige_conferencia` são do F3-B41.
+     - **FKs.** Só para cadastro (loja, caixa, terminal, sessão, usuário, pessoa, produto, variação, lote) e para a
+       linha que sobe no **mesmo** evento (`trocas.vale_id` e `trocas.movimento_caixa_id`, SYNC 9.16; o handler grava
+       o vale e o movimento antes da troca; `trocas.venda_nova_id` é preenchida pela própria nuvem). **Sem FK** nas
+       colunas que o PDV envia e que apontam para documento de outro evento (`trocas.venda_origem_id`,
+       `itens_troca.item_venda_origem_id`, `movimentos_vale.venda_id`/`pagamento_venda_id`/`troca_id`,
+       `reservas_vale.venda_id`/`pagamento_venda_id`, `vales.origem_id`), e as que já existiam continuam sem FK
+       (`pagamentos_venda.vale_id`, `movimentos_caixa.troca_id`, `movimentos_vasilhame.vale_id`): a ordem entre
+       terminais não é garantida e um 23503 recusaria um fato consumado (padrões da Fase 3).
+     - **Versão.** `vales` (C, ↕) já nasce com `fn_versao` (a trava 7300001) e `ix_vales_versao`, mas fica fora de
+       `TABELAS_FN_VERSAO` (que gera os espelhos do PDV) até o fluxo entrar: a lista nova
+       `TABELAS_FN_VERSAO_SEM_FLUXO` (`versionamento.ts`) é conferida pelo `test:sync-triggers` (trigger, índice e
+       fora dos fluxos). As outras quatro: `fn_versao_local` (`TABELAS_FN_VERSAO_LOCAL`). O `Esquema.g.cs` **não
+       muda**: nenhuma tabela nova está num fluxo nem em `TABELAS_MOVIMENTO_PDV`; o PDV instalado (o mais antigo em
+       uso tratado como 0.10.0 até a lista do dono, que vai no corpo do PR-17) não vê diferença.
+     - **Imutabilidade.** `trocas`: só `venda_nova_id` (uma vez, de nulo para a venda), `status` (`registrada` →
+       `cancelada`, terminal) e as colunas de cancelamento (`tg_trocas_imutavel` com `fn_protege_imutavel` e
+       `tg_trocas_transicao`, como a `fn_vendas_transicao` da 0012). `itens_troca` e `movimentos_vale`: nada (o saldo
+       é a soma dos movimentos; a correção é um movimento novo). As três com exclusão física proibida
+       (`fn_exclusao_fisica_proibida` da 0028, `DELETE` e `TRUNCATE`).
+     - **Item da venda fechada** (`tg_itens_venda_imutavel`, `BEFORE UPDATE OR DELETE`): com a venda do item (a de
+       antes e a de depois, se o UPDATE troca a venda) fora de `STATUS_VENDA_ABERTOS` (argumento do trigger, conferido
+       pelo teste), só mudam `quantidade_devolvida`, `versao` e `atualizado_em`, e a exclusão é recusada
+       (`DOCUMENTO_IMUTAVEL`, que a API traduz para 422). No rascunho do ERP (F3-B56) incluir, alterar e excluir
+       continuam livres. O **INSERT fica de fora**: o handler do `venda.finalizada` grava o cabeçalho já finalizado e
+       depois as linhas (a ordem das FKs), e quem garante as linhas é a conferência do documento. As colunas de custo
+       **não** ficam livres: conferido com grep, nenhum `update` de `itens_venda` em `src` (o custo é gravado no
+       INSERT; o `recalcular-saldos` e a compensação do Definir não tocam no item). Sem trava no trigger: quem escreve
+       pega a venda (o rascunho do F3-B56, com `for update`).
+     - **Seed.** `ESTORNO_VASILHAME_EMPRESTADO` e `ESTORNO_BAIXA_INTERNA` (+1, `venda`; a lacuna do MD 7.3, D85 e
+       D102) em `TIPOS_MOVIMENTO_ESTOQUE` e, nas empresas existentes, pela própria migração (`on conflict do
+       nothing`; o `db:migrate:empresas` também recarrega as referências depois). A numeração `vale` do caixa 0 (dono
+       `nuvem`; os vales emitidos no ERP usam o caixa `00`, MD 3.13.2) em `garantirNumeracoesLoja` e, nas lojas que
+       já existiam, pela migração.
+     - **Diagnóstico antes da implantação** (a preparação da 0029, `PREPARACOES_MIGRACAO_EMPRESA`, só de leitura e
+       fora da transação, decisão 146): conta `pagamentos_venda.vale_id`, `vendas.orcamento_id` e
+       `itens_venda.promocao_id` preenchidos em cada banco de empresa. Deveria dar zero (nenhum PDV publicado os
+       preenche); diferente de zero vira aviso no terminal do `db:migrate:empresas` (só na VPS) e as três contagens
+       vão para a `auditoria_plataforma` (`migracao_preparada`). Não bloqueia: uma `raise` dentro da migração
+       deixaria um banco de empresa migrado e outro não, e a migração não toca nessas colunas.
+     - **Testes.** `test/integracao/migracao-vales-trocas.test.ts` (a empresa nova e a existente com a mesma
+       estrutura; a existente com venda finalizada, cancelada, rascunho, sessão e movimento de caixa da 0028 sem
+       nenhuma linha diferente depois; o diagnóstico; um caso inválido por CHECK; o saldo negativo aceito; as chaves
+       únicas; a imutabilidade e a exclusão proibida; o item da venda fechada e o do rascunho), o
+       `test:sync-triggers`, o `versionamento` e a numeração do caixa 0 no `estrutura`, nos PostgreSQL 16 e 18.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio
