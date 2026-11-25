@@ -24,21 +24,26 @@ Leia também **`docs/andamento.md`** (o estado atual: o que está pronto, PRs e 
   achados confirmados corrigidos no próprio PR.
 - **PR por fatia do plano** (ex.: PR-5 = F2-B18..B21). **Merge só com a liberação explícita do dono**, e nunca push direto
   na `main`.
-- **Deploy em produção:** sem cota do Actions (D70), pelo `infra/producao/implantar-sem-actions.sh` na VPS. O dono
-  autorizou a sessão (24/11/2026) a **implantar sozinha um commit que já está na `main`** (pelo vigia da VPS, OP-B4:
-  tag `implantar/…`) e a **criar o GitHub Release do PDV** (OP-B3). Continua do dono: a liberação de cada merge na
-  `main` e a atualização dos caixas nas lojas. Avise o dono antes e depois de cada implantação, com o resultado
-  conferido pelas URLs públicas. **Como pedir:** `scripts/pedir-implantacao.sh <commit da main> [--publicar-pdv]`
-  (em segundo plano: leva de 5 a 15 min, mais até 2 min para o vigia ver) confere a `origin/main`, cria a tag
-  `implantar/<AAAAMMDD-HHMMSS>` (ou `implantar-pdv/…`) pela API REST e acompanha
-  `https://download.grupoicebeer.com.br/implantacao/estado.json` e o `no_ar_desde` do `/saude` da API até `ok`,
-  `falhou` ou `recusado` (o motivo de uma falha fica só no log do vigia, que o dono vê na VPS:
-  `bash ~/instalar-vigia.sh --estado`). **Volta para um commit anterior ao OP-B4:** o `genesis-web` dele não serve o
-  `estado.json` (404 depois da troca), então o script a recusa sem `--sem-estado`; com ele, acompanha só até a API
-  reiniciar (sai com 2) e o resultado final o dono confere na VPS. Tempo limite (sai com 3) não garante que o pedido
-  ainda vá rodar: com o vigia desligado, ele não roda; peça ao dono o `--estado`. Só depois de o dono instalar o vigia (README de `infra/producao` › Vigia da
-  implantação). Não crie tag `implantar*` à mão nem apague as que existem. Não dispare workflows do GitHub sem
-  necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou re-run "para ver".
+- **Deploy em produção:** sem cota do Actions (D70), pelo `infra/producao/implantar-sem-actions.sh` na VPS. Desde a
+  **D119 (25/11/2026)**, o **vigia da VPS implanta sozinho cada commit novo da `main`** (OP-B7): o merge que o dono
+  libera vale também como "pode implantar", uma vez por commit, **fora das 17h à meia-noite** (horário de Brasília;
+  um merge nesse horário entra depois da meia-noite), e o vigia publica na página de download o PDV do release novo.
+  A sessão **não cria tag** (a rede dela recusa escrita em `git/refs`; não tente nem contorne). O dono autorizou a
+  sessão (24/11/2026) a **criar o GitHub Release do PDV** (OP-B3; sem escrita no GitHub, D120). Continua do dono: a
+  liberação de cada merge na `main`, os pedidos manuais por tag (forçar ou voltar uma versão) e a atualização dos
+  caixas nas lojas. **Depois de cada merge liberado pelo dono:** avise o dono de que o vigia vai implantar (e quando,
+  se for dentro da janela), acompanhe com `scripts/acompanhar-implantacao.sh <commit do merge>` (em segundo plano:
+  leva de 5 a 15 min, mais até 2 min para o vigia ver, ou até depois da meia-noite) e conte o resultado conferido
+  pelas URLs públicas. O script confere a `origin/main`, diz a hora prevista quando está dentro da janela e
+  acompanha `https://download.grupoicebeer.com.br/implantacao/estado.json` e o `no_ar_desde` do `/saude` da API até
+  `ok`, `falhou` ou `recusado` do commit ou de um merge depois dele (o vigia implanta a ponta da `main`); sai com 0,
+  1 ou 3 (tempo limite: a implantação ainda roda, a VPS está fora ou o vigia desligado). O motivo de uma falha fica só
+  no log do vigia, que o dono vê na VPS: `bash ~/instalar-vigia.sh --estado`. Um commit que falhou não roda de novo
+  sozinho (o próximo merge, ou um pedido manual do dono), e o vigia não desfaz uma volta do dono. O
+  `scripts/pedir-implantacao.sh` (OP-B4) ficou só avisando. Só depois de o dono reinstalar o vigia (README de
+  `infra/producao` › Vigia da implantação). Não crie tag `implantar*` nem apague as que existem. Não dispare workflows
+  do GitHub sem necessidade (a fila e o log público pesam, mesmo sem cobrar minutos): nada de `workflow_dispatch` ou
+  re-run "para ver".
 - Nunca commitar: `.env`, `.db`, `bin/`, `obj/`, `dist/`, `publish/`, instaladores, `.pfx`, planilhas/dados reais, testes
   temporários. Sem identificador de modelo em commits, PRs ou código.
 - O repositório é **público** (D60, 06/11/2026): tudo que entra fica visível para qualquer pessoa, inclusive o

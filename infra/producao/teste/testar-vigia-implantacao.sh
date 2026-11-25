@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Testes de unidade do vigia da implantação (OP-B4; D70; README de infra/producao › Vigia da implantação): o
-# vigia-implantacao.sh e o instalar-vigia.sh, sem rede, sem systemd e sem root. Dublês de `id` e `systemctl` no PATH,
+# Testes de unidade do vigia da implantação (OP-B4 e OP-B7; D70 e D119; README de infra/producao › Vigia da
+# implantação): o vigia-implantacao.sh e o instalar-vigia.sh, sem rede, sem systemd e sem root. Dublês de `id`,
+# `systemctl` e `date` (a hora de Brasília controlada) no PATH,
 # o `git` de verdade (com um dublê que só registra a chamada) sobre um repositório local no lugar do público, com as
 # tags de pedido criadas nele, e o implantar-sem-actions.sh falso dentro desse repositório (o vigia copia o da main,
 # como na VPS). Cobre: a instalação (arquivos da main, unidades, tags antigas vistas, timer ligado, pasta pública),
@@ -10,6 +11,14 @@
 # com os campos permitidos (e as permissões), a autoatualização (só depois de um ok, só se mudou, commit sem o
 # vigia), a implantação interrompida, sem rede, sem root, sem a lista de vistos, a reinstalação com o timer ligado e
 # desligado, o --desligar e o --estado; e o `systemd-analyze verify` das unidades (pulado sem o systemd-analyze).
+# A implantação automática da main (OP-B7): a ponta nova implantada uma vez só, a falha que não repete, a volta do dono
+# que não é desfeita, a janela (16:59 roda, 17:00 e 23:59 esperam, 00:00 roda; configurável, com o formato
+# conferido), a instalação com a versão no ar igual ou diferente da ponta, o PDV novo publicado sozinho (--so-pdv
+# --tag=<tag>, sem commit: sem montar nem trocar a versão), o "nada a publicar" que não mexe no estado.json, a tag
+# antes do release publicado (69) que espera sem mexer no estado.json e depois publica com o inicio da primeira
+# tentativa, a falha passageira (1) que tenta de novo, o release inválido (65) que não repete, a tag manual com
+# prioridade e fora da janela, a main antes do PDV, a implantação automática interrompida e a ponta que esperava como
+# recebido e foi implantada pelo terminal (o estado.json termina como ok).
 #
 #   bash infra/producao/teste/testar-vigia-implantacao.sh
 # Precisa de bash, git, jq, coreutils e util-linux (flock); roda sem root.
@@ -21,7 +30,8 @@ T=$(mktemp -d "${TMPDIR:-/tmp}/genesis-vigia-teste.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/duble" "$T/systemd"
 GIT_REAL=$(command -v git)
-export GIT_REAL
+DATE_REAL=$(command -v date)
+export GIT_REAL DATE_REAL
 export DUBLE=$T/duble
 export GENESIS_PASTA=$T/pasta
 # file://, não o caminho: num clone local o git ignora o --filter=blob:none e copia todos os objetos; assim o clone é
@@ -42,8 +52,10 @@ confere() { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 
 # --- Dublês -------------------------------------------------------------------------------------------------------
 # Cada chamada vai para $DUBLE/ordem. Arquivos de controle em $DUBLE: uid (o `id -u`), timer-ativo (o
-# `systemctl is-active`), sem-actions-codigo (o código do implantar-sem-actions.sh falso) e sem-actions-espera (ele
-# espera o arquivo sumir, com sem-actions-esperando criado).
+# `systemctl is-active`), hora (a hora "HH:MM" do `date +%H` do vigia, o horário de Brasília; o fuso pedido vai para
+# $DUBLE/fuso), sem-actions-codigo (o código do implantar-sem-actions.sh falso), sem-actions-espera (ele espera o
+# arquivo sumir, com sem-actions-esperando criado), so-pdv-codigo e so-pdv-sha (o --so-pdv falso: o código e o sha256
+# que ele "publica" no atual.json da página, com qualquer código).
 cat >"$T/bin/id" <<'DUBLE'
 #!/usr/bin/env bash
 if [ "${1:-}" = -u ]; then cat "$DUBLE/uid" 2>/dev/null || echo 0; else exec /usr/bin/id "$@"; fi
@@ -63,6 +75,17 @@ cat >"$T/bin/git" <<'DUBLE'
 printf 'git %s [prompt=%s]\n' "$*" "${GIT_TERMINAL_PROMPT:-}" >>"$DUBLE/ordem"
 exec "$GIT_REAL" "$@"
 DUBLE
+# date: o `+%H` (a hora da janela) vem de $DUBLE/hora (padrão 10:00, fora da janela); o resto, o date de verdade.
+cat >"$T/bin/date" <<'DUBLE'
+#!/usr/bin/env bash
+if [ "$#" = 1 ] && [ "$1" = +%H ]; then
+  printf '%s\n' "${TZ:-}" >"$DUBLE/fuso"
+  h=$(cat "$DUBLE/hora" 2>/dev/null || echo 10:00)
+  echo "${h%%:*}"
+  exit 0
+fi
+exec "$DATE_REAL" "$@"
+DUBLE
 chmod +x "$T/bin"/*
 
 # --- Repositório local no lugar do público ------------------------------------------------------------------------
@@ -81,14 +104,30 @@ cp "$VIGIA_DIR/vigia-implantacao.sh" "$VIGIA_DIR/instalar-vigia.sh" "$VIGIA_DIR/
   "$VIGIA_DIR/genesis-vigia.timer" "$R/infra/producao/vigia/"
 cat >"$R/infra/producao/implantar-sem-actions.sh" <<'DUBLE'
 #!/usr/bin/env bash
-# implantar-sem-actions.sh falso (o vigia o copia da main).
+# implantar-sem-actions.sh falso (o vigia o copia da main). Implantado com sucesso, grava o versoes/atual como o
+# implantar.sh; o --so-pdv "publica" o sha256 de $DUBLE/so-pdv-sha no atual.json da página (também quando sai com
+# outro código: a página trocada e a URL que não respondeu depois) e sai com o código de $DUBLE/so-pdv-codigo.
 printf 'implantar-sem-actions.sh %s [pasta=%s] [entrada=%s]\n' "$*" "$GENESIS_PASTA" "$(readlink /proc/$$/fd/0)" >>"$DUBLE/ordem"
 echo "saída do implantar-sem-actions.sh de teste: $*"
+if [ "${1:-}" = --so-pdv ]; then
+  codigo=$(cat "$DUBLE/so-pdv-codigo" 2>/dev/null || echo 0)
+  if [ -s "$DUBLE/so-pdv-sha" ]; then
+    mkdir -p "$GENESIS_PASTA/download/pdv"
+    printf '{\n  "versao": "0.0.0",\n  "sha256": "%s",\n  "publicado_em": "2026-11-25T00:00:00Z"\n}\n' "$(cat "$DUBLE/so-pdv-sha")" >"$GENESIS_PASTA/download/pdv/atual.json"
+    rm -f "$DUBLE/so-pdv-sha"
+  fi
+  exit "$codigo"
+fi
 if [ -e "$DUBLE/sem-actions-espera" ]; then
   touch "$DUBLE/sem-actions-esperando"
   while [ -e "$DUBLE/sem-actions-espera" ]; do sleep 0.1; done
 fi
-exit "$(cat "$DUBLE/sem-actions-codigo" 2>/dev/null || echo 0)"
+codigo=$(cat "$DUBLE/sem-actions-codigo" 2>/dev/null || echo 0)
+if [ "$codigo" = 0 ]; then
+  mkdir -p "$GENESIS_PASTA/versoes"
+  echo "${*: -1}" | cut -c1-12 >"$GENESIS_PASTA/versoes/atual"
+fi
+exit "$codigo"
 DUBLE
 g add -A
 g commit -q -m 'segundo, com o vigia'
@@ -160,6 +199,9 @@ rodar "$INSTALAR" --opcao-errada
 recusa "opção desconhecida" "opção desconhecida"
 rm -f "$DUBLE/uid"
 
+# A versão no ar é a ponta da main (C4): a instalação a dá como tratada (a implantação automática, mais abaixo).
+mkdir -p "$GENESIS_PASTA/versoes"
+echo "${C4:0:12}" >"$GENESIS_PASTA/versoes/atual"
 rodar "$INSTALAR"
 sucesso "instalação"
 for f in vigia-implantacao.sh implantar-sem-actions.sh; do
@@ -208,7 +250,7 @@ rodada
 sucesso "pedido normal"
 implantou "$C2" "pedido normal"
 git_sem_credencial "rodada que implanta"
-chamou '^git -c credential\.helper= ls-remote --tags ' && chamou '^git -c credential\.helper= --git-dir=.* fetch --quiet --prune --no-tags ' ||
+chamou '^git -c credential\.helper= ls-remote --heads --tags ' && chamou '^git -c credential\.helper= --git-dir=.* fetch --quiet --prune --no-tags ' ||
   falha "rodada sem o ls-remote --tags e o fetch --no-tags: $(grep '^git ' "$DUBLE/ordem")"
 estado_e implantar/20261124-100000 "$C2" ok "pedido normal"
 [ "$(jq -c 'keys' "$ESTADO")" = '["commit","fim","inicio","pedido","resultado"]' ] || falha "estado.json com outros campos: $(cat "$ESTADO")"
@@ -432,5 +474,295 @@ head -c 1100000 /dev/zero | tr '\0' 'x' | fold -w 100 >>"$VIGIA/vigia.log"
 rodada
 [ "$(stat -c %s "$VIGIA/vigia.log")" -le 1048576 ] || falha "o vigia.log deveria ser aparado"
 confere "vigia.log aparado acima de 1 MB"
+
+# --- Implantação automática da main (OP-B7; D119) ------------------------------------------------------------------
+# A VPS do zero (o vigia reinstalado com o timer desligado: as tags que existem ficam como vistas), sobre o mesmo
+# repositório. novo_commit = um merge na main (o vigia e o implantar-sem-actions.sh falso continuam nele).
+novo_commit() {
+  echo "$1" >>"$R/LEIAME"
+  g add -A
+  g commit -q -m "$1"
+  g rev-parse HEAD
+}
+main_resultado() { awk -v c="$1" '$1 == c { print $2; exit }' "$VIGIA/main-tratados"; }
+pdv_resultado() { awk -v t="$1" '$1 == t { r = $3 } END { print r }' "$VIGIA/pdv-tratados"; }
+so_campos() {
+  [ "$(jq -c 'keys' "$ESTADO")" = '["commit","fim","inicio","pedido","resultado"]' ] &&
+    [ "$(stat -c %a:%g "$ESTADO")" = "640:$GENESIS_GID_NGINX" ] || falha "$1: estado.json fora do formato: $(cat "$ESTADO")"
+}
+reinstalar_do_zero() {
+  rm -rf "$GENESIS_PASTA" "$DUBLE/timer-ativo"
+  mkdir -p "$GENESIS_PASTA/versoes"
+  echo "$1" >"$GENESIS_PASTA/versoes/atual"
+  rodar "$INSTALAR"
+  sucesso "instalação do zero (no ar: $1)"
+}
+rm -f "$DUBLE/hora" "$DUBLE/sem-actions-codigo"
+
+# Instalação com a versão no ar igual à ponta (C5): tratada, nada a implantar.
+reinstalar_do_zero "${C5:0:12}"
+grep -q "a ponta da main ${C5:0:12} já é a versão no ar" <<<"$SAIDA" || falha "instalação sem o aviso da ponta no ar: $SAIDA"
+[ "$(cat "$VIGIA/janela")" = 17-24 ] && [ "$(stat -c %a "$VIGIA/janela")" = 600 ] || falha "janela sem o padrão 17-24 ou sem 600"
+[ "$(stat -c %a "$VIGIA/main-tratados")" = 600 ] || falha "main-tratados sem 600"
+[ "$(main_resultado "$C5")" = no-ar-na-instalacao ] || falha "a ponta no ar deveria ficar tratada: $(cat "$VIGIA/main-tratados")"
+rodada
+sucesso "rodada com a ponta no ar"
+nao_implantou "ponta já no ar"
+confere "instalação com a versão no ar igual à ponta da main: tratada, nada implantado; janela padrão 17-24 (600)"
+
+# Instalação com a versão no ar diferente (um merge depois dela): pendente, implantada fora da janela.
+C6=$(novo_commit sexto)
+reinstalar_do_zero "${C5:0:12}"
+grep -q "a ponta da main ${C6:0:12} ainda não está no ar" <<<"$SAIDA" || falha "instalação sem o aviso da ponta pendente: $SAIDA"
+[ -z "$(main_resultado "$C6")" ] || falha "a ponta fora do ar não deveria ficar tratada"
+for hora in 17:00 23:59; do
+  echo "$hora" >"$DUBLE/hora"
+  rodada
+  sucesso "janela às $hora"
+  nao_implantou "dentro da janela ($hora)"
+  estado_e main "$C6" recebido "dentro da janela ($hora)"
+  [ "$(cat "$DUBLE/fuso")" = America/Sao_Paulo ] || falha "a janela deveria usar o horário de Brasília: TZ=$(cat "$DUBLE/fuso")"
+done
+[ "$(grep -c "main ${C6:0:12}: dentro da janela .*implanta a partir das 00:00" "$VIGIA/vigia.log")" = 1 ] ||
+  falha "a espera da janela deveria ir ao log uma vez, com a hora prevista: $(cat "$VIGIA/vigia.log")"
+so_campos "recebido na janela"
+inicio=2026-01-01T00:00:00Z
+sed -i "s/^  \"inicio\": \"[^\"]*\",\$/  \"inicio\": \"$inicio\",/" "$ESTADO"
+echo 00:00 >"$DUBLE/hora"
+rodada
+implantou "$C6" "meia-noite"
+estado_e main "$C6" ok "meia-noite"
+[ "$(campo inicio)" = "$inicio" ] || falha "o inicio da main deveria ser o do recebido ($inicio), não $(campo inicio)"
+so_campos "main ok"
+[ "$(main_resultado "$C6")" = ok ] || falha "C6 deveria ficar ok nos tratados"
+rodada
+nao_implantou "a mesma ponta de novo"
+confere "instalação com a versão no ar diferente da ponta: pendente; 17:00 e 23:59 esperam (recebido; a hora prevista no log, uma vez), 00:00 implanta a ponta (pedido main, o inicio do recebido); uma vez só"
+
+C7=$(novo_commit setimo)
+echo 16:59 >"$DUBLE/hora"
+rodada
+implantou "$C7" "16:59"
+estado_e main "$C7" ok "16:59"
+confere "16:59: fora da janela, implanta o merge novo"
+
+# Falha não repete; o merge seguinte, sim.
+C8=$(novo_commit oitavo)
+echo 1 >"$DUBLE/sem-actions-codigo"
+cp "$VIGIA/vigia-implantacao.sh" "$T/vigia-antes"
+rodada
+implantou "$C8" "main que falha"
+estado_e main "$C8" falhou "main que falha"
+[ "$(main_resultado "$C8")" = falhou ] || falha "C8 deveria ficar falhou nos tratados"
+rm -f "$DUBLE/sem-actions-codigo"
+rodada
+nao_implantou "main que falhou não repete"
+C9=$(novo_commit nono)
+rodada
+implantou "$C9" "merge depois da falha"
+estado_e main "$C9" ok "merge depois da falha"
+confere "a ponta que falhou não roda de novo sozinha; o merge seguinte, sim"
+
+# A volta do dono (implantar.sh voltar: o versoes/atual muda para a anterior) não é desfeita.
+echo "${C7:0:12}" >"$GENESIS_PASTA/versoes/atual"
+rodada
+nao_implantou "volta do dono"
+confere "a volta do dono (implantar.sh voltar) não é desfeita: a ponta já foi tratada"
+
+# Tag manual: na hora, fora da janela também, e o commit dela fica tratado na main.
+C10=$(novo_commit decimo)
+echo 18:00 >"$DUBLE/hora"
+g tag implantar/20261125-010000 "$C10"
+rodada
+implantou "$C10" "tag manual dentro da janela"
+estado_e implantar/20261125-010000 "$C10" ok "tag manual dentro da janela"
+[ "$(main_resultado "$C10")" = ok ] || falha "o commit da tag manual deveria ficar tratado na main"
+echo 00:00 >"$DUBLE/hora"
+rodada
+nao_implantou "a ponta que a tag manual implantou"
+# A tag manual tem prioridade sobre a ponta nova na mesma rodada; a ponta vem na rodada seguinte.
+C11=$(novo_commit decimo-primeiro)
+g tag implantar/20261125-020000 "$C9"
+rodada
+implantou "$C9" "tag manual com a ponta nova pendente"
+estado_e implantar/20261125-020000 "$C9" ok "tag manual primeiro"
+rodada
+implantou "$C11" "a ponta depois da tag manual"
+estado_e main "$C11" ok "a ponta depois da tag manual"
+confere "tag manual: roda na hora, dentro da janela também, tem prioridade sobre a ponta nova e deixa o commit dela tratado"
+
+# Janela configurável (passando pela meia-noite) e fora do formato.
+C12=$(novo_commit decimo-segundo)
+echo 22-6 >"$VIGIA/janela"
+echo 05:00 >"$DUBLE/hora"
+rodada
+nao_implantou "janela 22-6 às 05:00"
+grep -q "main ${C12:0:12}: dentro da janela .*implanta a partir das 06:00" "$VIGIA/vigia.log" || falha "sem a hora prevista da janela 22-6"
+echo 25-3 >"$VIGIA/janela"
+echo 18:00 >"$DUBLE/hora"
+rodada
+nao_implantou "janela fora do formato às 18:00 (vale o padrão)"
+grep -q "janela fora do formato em .* ('25-3'.*vale o padrão 17-24" "$VIGIA/vigia.log" || falha "sem o aviso da janela fora do formato"
+echo 22-6 >"$VIGIA/janela"
+echo 06:00 >"$DUBLE/hora"
+rodada
+implantou "$C12" "janela 22-6 às 06:00"
+rodar "$INSTALAR" --estado
+grep -q 'janela: das 22:00 às 06:00' <<<"$SAIDA" && grep -q "^$C12 ok " <<<"$SAIDA" || falha "--estado sem a janela e os commits tratados: $SAIDA"
+echo 17-24 >"$VIGIA/janela"
+echo 10:00 >"$DUBLE/hora"
+confere "janela configurável (22-6 passa pela meia-noite: 05:00 espera, 06:00 implanta); fora do formato vale o padrão, com o aviso no log; --estado mostra"
+
+# PDV: a tag pdv-vX.Y.Z de versão mais alta muda → --so-pdv --tag=<tag> (sem commit: nem montar nem trocar a versão).
+g tag pdv-v0.13.0 "$C12"
+cp "$ESTADO" "$T/estado-antes"
+rodada
+implantou "--so-pdv --tag=pdv-v0.13.0" "PDV: release já publicado"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "nada a publicar não deveria mexer no estado.json: $(cat "$ESTADO")"
+[ "$(pdv_resultado pdv-v0.13.0)" = ok ] || falha "pdv-v0.13.0 deveria ficar tratado: $(cat "$VIGIA/pdv-tratados")"
+grep -q 'pdv pdv-v0.13.0: nada a publicar' "$VIGIA/vigia.log" || falha "sem o nada a publicar no log"
+rodada
+nao_implantou "PDV já tratado"
+g tag pdv-v0.9.9 "$C12"
+rodada
+nao_implantou "tag de versão menor (0.9.9 < 0.13.0)"
+g tag -a -m 'release' pdv-v0.14.0 "$C12"
+printf 'a%.0s' $(seq 1 64) >"$DUBLE/so-pdv-sha"
+rodada
+implantou "--so-pdv --tag=pdv-v0.14.0" "PDV novo"
+estado_e pdv "$C12" ok "PDV novo (o commit da versão no ar)"
+so_campos "pdv ok"
+[ "$(campo fim)" != null ] || falha "pdv ok sem o fim"
+[ "$(main_resultado "$C12")" = ok ] || falha "o PDV não muda os tratados da main"
+[ "$(cat "$GENESIS_PASTA/versoes/atual")" = "${C12:0:12}" ] || falha "o --so-pdv não troca a versão"
+confere "PDV novo (tag anotada) publicado sozinho com --so-pdv --tag=<tag>, sem commit; estado.json {pdv, versão no ar, ok}; o já publicado não mexe no estado.json; tag de versão menor não conta"
+
+# A tag antes do release publicado (o publicar-release.sh e o workflow criam a tag, depois o rascunho, e só publicam
+# depois de enviar o instalador): o --so-pdv --tag sai com 69. A tag não fica tratada e o estado.json não muda (o
+# inicio e o fim fixos do passado: com a resolução de segundo do agora(), só o resultado não pegaria uma escrita).
+# Publicado o release, a página muda e o estado.json fica ok com o inicio da primeira tentativa, não o da publicação
+# do 0.14.0 (outro dia, a mesma versão no ar: o mesmo pedido e o mesmo commit).
+sed -i -e 's/^  "inicio": "[^"]*",$/  "inicio": "2026-01-01T00:00:00Z",/' -e 's/^  "fim": "[^"]*"$/  "fim": "2026-01-01T00:05:00Z"/' "$ESTADO"
+[ "$(campo inicio) $(campo fim)" = "2026-01-01T00:00:00Z 2026-01-01T00:05:00Z" ] || falha "não foi possível fixar o inicio e o fim: $(cat "$ESTADO")"
+cp "$ESTADO" "$T/estado-antes"
+g tag pdv-v0.15.0 "$C12"
+echo 69 >"$DUBLE/so-pdv-codigo"
+rodada
+implantou "--so-pdv --tag=pdv-v0.15.0" "tag sem o release publicado"
+[ -z "$(pdv_resultado pdv-v0.15.0)" ] || falha "o 69 não deveria marcar a tag"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "o 69 não escreve no estado.json: $(cat "$ESTADO")"
+grep -q 'pdv pdv-v0.15.0: o GitHub não respondeu, o release está incompleto ou ainda não foi publicado; tenta de novo em 15 minutos' "$VIGIA/vigia.log" ||
+  falha "sem a espera do 69 no log"
+read -r _ tag_espera antes_espera _ <"$VIGIA/.pdv-espera"
+[ "$tag_espera" = pdv-v0.15.0 ] && [ "$antes_espera" = "$(printf 'a%.0s' $(seq 1 64))" ] ||
+  falha "a espera sem a tag ou o sha256 que a página servia: $(cat "$VIGIA/.pdv-espera")"
+rm -f "$DUBLE/so-pdv-codigo"
+rodada
+nao_implantou "o 69: espera"
+# O release publicado; a espera vencida, com o inicio da primeira tentativa fixo (o que tem de ir ao estado.json).
+sed -i 's/^[0-9]* \(pdv-v0\.15\.0 [0-9a-f-]*\) .*$/0 \1 2026-02-02T00:00:00Z/' "$VIGIA/.pdv-espera"
+printf 'b%.0s' $(seq 1 64) >"$DUBLE/so-pdv-sha"
+rodada
+implantou "--so-pdv --tag=pdv-v0.15.0" "o release da tag publicado"
+estado_e pdv "$C12" ok "o release da tag publicado"
+[ "$(campo inicio)" = 2026-02-02T00:00:00Z ] ||
+  falha "o inicio do pdv deveria ser o da primeira tentativa desta tag (2026-02-02T00:00:00Z), não $(campo inicio)"
+[ "$(pdv_resultado pdv-v0.15.0)" = ok ] && [ ! -e "$VIGIA/.pdv-espera" ] || falha "depois de publicado, pdv-v0.15.0 ok e sem a espera"
+confere "tag antes do release publicado (69): não fica tratada, o estado.json não muda (nem o fim), espera $((900 / 60)) minutos; publicado, ok com o inicio da primeira tentativa (não o da publicação de outro dia na mesma versão no ar)"
+
+# Falha passageira (código 1: o Docker, o espaço, a URL que não respondeu): tenta de novo, sem marcar a tag nem
+# mexer no estado.json. Aqui a página já trocou (a URL falhou depois): a tentativa seguinte acha a página com o
+# release ("nada a publicar" pelo sha256 de agora), mas o de antes da primeira tentativa diz que ela mudou: ok.
+cp "$ESTADO" "$T/estado-antes"
+g tag pdv-v0.16.0 "$C12"
+echo 1 >"$DUBLE/so-pdv-codigo"
+printf 'c%.0s' $(seq 1 64) >"$DUBLE/so-pdv-sha"
+rodada
+implantou "--so-pdv --tag=pdv-v0.16.0" "falha passageira"
+[ -z "$(pdv_resultado pdv-v0.16.0)" ] || falha "a falha passageira (1) não deveria marcar a tag: $(cat "$VIGIA/pdv-tratados")"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "a falha passageira não escreve no estado.json: $(cat "$ESTADO")"
+grep -q 'pdv pdv-v0.16.0: não publicou (código 1: .*tenta de novo em 15 minutos' "$VIGIA/vigia.log" || falha "sem a falha passageira no log"
+rm -f "$DUBLE/so-pdv-codigo"
+rodada
+nao_implantou "falha passageira: espera"
+sed -i 's/^[0-9]* /0 /' "$VIGIA/.pdv-espera"
+rodada
+implantou "--so-pdv --tag=pdv-v0.16.0" "falha passageira: de novo"
+estado_e pdv "$C12" ok "falha passageira: a página trocou na primeira tentativa"
+[ "$(pdv_resultado pdv-v0.16.0)" = ok ] || falha "depois da falha passageira, pdv-v0.16.0 ok"
+confere "falha passageira do --so-pdv (1): não fica tratada nem mexe no estado.json; tenta de novo depois da espera, e a página trocada na primeira tentativa conta como ok"
+
+# Release com arquivo inválido (65): falhou, não tenta de novo esta tag.
+g tag pdv-v0.17.0 "$C12"
+echo 65 >"$DUBLE/so-pdv-codigo"
+rodada
+implantou "--so-pdv --tag=pdv-v0.17.0" "release inválido"
+estado_e pdv "$C12" falhou "release inválido"
+[ "$(pdv_resultado pdv-v0.17.0)" = falhou ] || falha "release inválido deveria ficar tratado como falhou"
+grep -q 'pdv pdv-v0.17.0: falhou (o release tem arquivo inválido' "$VIGIA/vigia.log" || falha "sem o arquivo inválido no log"
+rm -f "$DUBLE/so-pdv-codigo"
+rodada
+nao_implantou "release inválido não repete"
+confere "release com arquivo inválido (65): falhou, não tenta de novo"
+
+g tag pdv-v0.18.0 "$C12"
+echo 18:00 >"$DUBLE/hora"
+rodada
+nao_implantou "PDV dentro da janela"
+echo 10:00 >"$DUBLE/hora"
+rodada
+implantou "--so-pdv --tag=pdv-v0.18.0" "PDV fora da janela"
+# A main antes do PDV: o merge e o release novos na mesma rodada.
+C13=$(novo_commit decimo-terceiro)
+g tag pdv-v0.19.0 "$C13"
+rodada
+implantou "$C13" "main antes do PDV"
+rodada
+implantou "--so-pdv --tag=pdv-v0.19.0" "o PDV na rodada seguinte"
+confere "PDV dentro da janela espera; a ponta nova da main vem antes do PDV, que roda na rodada seguinte"
+
+# Implantação automática interrompida (a VPS reiniciou): espera a que ainda roda; depois, falhou, tratada.
+C14=$(novo_commit decimo-quarto)
+printf 'main %s 2026-11-25T03:00:00Z\n' "$C14" >"$VIGIA/em-andamento"
+exec 8>"$GENESIS_PASTA/.implantar-sem-actions.lock"
+flock -n 8
+rodada
+nao_implantou "main interrompida ainda rodando"
+exec 8>&-
+rodada
+nao_implantou "main interrompida"
+estado_e main "$C14" falhou "main interrompida"
+[ "$(main_resultado "$C14")" = falhou ] || falha "a main interrompida deveria ficar tratada como falhou"
+rodada
+nao_implantou "main interrompida não repete"
+confere "implantação automática interrompida: espera a que ainda roda; depois, falhou e tratada (não repete)"
+
+# A ponta que ficou "recebido" (a trava presa: o dono implanta pelo terminal) e virou a versão no ar por fora do vigia:
+# tratada sem implantar, e o estado.json termina (ok, com o fim e o mesmo inicio), em vez de ficar "recebido".
+C15=$(novo_commit decimo-quinto)
+exec 8>"$GENESIS_PASTA/.implantar-sem-actions.lock"
+flock -n 8
+rodada
+nao_implantou "ponta com a trava presa"
+estado_e main "$C15" recebido "ponta com a trava presa"
+inicio=2026-01-01T00:00:00Z
+sed -i "s/^  \"inicio\": \"[^\"]*\",\$/  \"inicio\": \"$inicio\",/" "$ESTADO"
+echo "${C15:0:12}" >"$GENESIS_PASTA/versoes/atual"
+exec 8>&-
+rodada
+nao_implantou "ponta implantada pelo terminal"
+estado_e main "$C15" ok "ponta implantada pelo terminal"
+[ "$(campo fim)" != null ] && [ "$(campo inicio)" = "$inicio" ] || falha "o ok da ponta já no ar sem o fim ou com outro inicio: $(cat "$ESTADO")"
+so_campos "ponta já no ar"
+[ "$(main_resultado "$C15")" = ja-no-ar ] || falha "a ponta já no ar deveria ficar ja-no-ar nos tratados"
+grep -q "main: a ponta ${C15:0:12} já é a versão no ar (implantada fora do vigia)" "$VIGIA/vigia.log" || falha "sem o registro da ponta já no ar"
+# Já no ar sem um "recebido" dela (a volta do dono, o merge seguinte ao do terminal): o estado.json não muda.
+cp "$ESTADO" "$T/estado-antes"
+C16=$(novo_commit decimo-sexto)
+echo "${C16:0:12}" >"$GENESIS_PASTA/versoes/atual"
+rodada
+nao_implantou "ponta no ar sem recebido"
+cmp -s "$ESTADO" "$T/estado-antes" || falha "a ponta já no ar sem recebido dela não mexe no estado.json: $(cat "$ESTADO")"
+confere "a ponta que esperava como recebido e foi implantada pelo terminal: ja-no-ar, e o estado.json termina como ok (o mesmo inicio); sem o recebido dela, nada muda"
 
 printf '\n\033[1;32mVigia da implantação: todos os testes passaram.\033[0m\n'

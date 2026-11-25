@@ -1,6 +1,7 @@
-# Genesis: vigia da implantação (OP-B4; D70; README de infra/producao › Vigia da implantação). Uma rodada do
-# vigia-implantacao.sh: lê as tags do repositório público e, havendo pedido novo da main, implanta pelo
-# implantar-sem-actions.sh. Instalado pelo instalar-vigia.sh em /etc/systemd/system; o genesis-vigia.timer a chama.
+# Genesis: vigia da implantação (OP-B4 e OP-B7; D70 e D119; README de infra/producao › Vigia da implantação). Uma
+# rodada do vigia-implantacao.sh: lê a main e as tags do repositório público e, havendo pedido manual, commit novo da
+# main (fora da janela) ou release novo do PDV, chama o implantar-sem-actions.sh. Instalado pelo instalar-vigia.sh em
+# /etc/systemd/system; o genesis-vigia.timer a chama.
 [Unit]
 Description=Genesis: vigia da implantação (uma rodada)
 Documentation=https://github.com/KhauanG/GenesisPDV-ERP/blob/main/infra/producao/README.md
