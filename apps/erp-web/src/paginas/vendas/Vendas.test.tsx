@@ -1,4 +1,9 @@
-import type { PaginaVendas, SessaoCaixaDetalhe, VendaDetalhe } from '@genesis/shared';
+import type {
+  PaginaVendas,
+  PreviaCancelamentoVenda,
+  SessaoCaixaDetalhe,
+  VendaDetalhe,
+} from '@genesis/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -143,6 +148,7 @@ const DETALHE: VendaDetalhe = {
   cancelamentoAutorizadoPorNome: 'GERENTE',
   motivoCancelamento: 'Cliente desistiu da compra apos o pagamento',
   cancelamentoOrigem: 'pdv',
+  formaDevolucaoCancelamento: null,
   itens: [
     {
       id: 'i1',
@@ -213,6 +219,269 @@ describe('<DetalheVenda> (ERP 15.4.2, C12)', () => {
     expect(within(pagamentos).getByText('estornado')).toBeInTheDocument();
     expect(within(pagamentos).getByText('Visa · NSU 123')).toBeInTheDocument();
     expect(screen.queryByText('Lucro')).not.toBeInTheDocument();
+  }, 30_000);
+});
+
+/** A venda do caixa finalizada, de sessão fechada, para o cancelamento pelo ERP (F3-B11). */
+const FINALIZADA: VendaDetalhe = {
+  ...DETALHE,
+  status: 'finalizada',
+  canceladaEm: null,
+  canceladaPorNome: null,
+  cancelamentoAutorizadoPorNome: null,
+  motivoCancelamento: null,
+  cancelamentoOrigem: null,
+  pagamentos: DETALHE.pagamentos.map((pg) => ({ ...pg, status: 'aprovado' })),
+};
+
+const PREVIA: PreviaCancelamentoVenda = {
+  podeCancelar: true,
+  bloqueio: null,
+  exigeFormaDevolucao: true,
+  formasDevolucao: ['dinheiro_cofre', 'estorno_cartao', 'estorno_pix'],
+  devolveVazios: true,
+  avisos: [],
+};
+
+/** A API do detalhe com a prévia e o cancelamento; `previa` troca a prévia e o POST devolve a venda cancelada. */
+function apiDoCancelamento(permissoes: string[], previa: PreviaCancelamentoVenda = PREVIA) {
+  return simularApi(...rotasSessao({ permissoes, lojas: LOJAS, todasLojas: true }), ({ url, metodo }) => {
+    if (url.pathname === `/api/vendas/${VENDA}/cancelamento`) return { corpo: previa };
+    if (url.pathname === `/api/vendas/${VENDA}/cancelar` && metodo === 'POST')
+      return {
+        corpo: {
+          ...FINALIZADA,
+          status: 'cancelada',
+          canceladaEm: '2026-11-26T15:00:00.000Z',
+          canceladaPorNome: 'MARIA SILVA',
+          motivoCancelamento: 'Venda registrada com erro no caixa',
+          cancelamentoOrigem: 'erp',
+          formaDevolucaoCancelamento: 'estorno_cartao',
+        } satisfies VendaDetalhe,
+      };
+    if (url.pathname === `/api/vendas/${VENDA}`) return { corpo: FINALIZADA };
+    return undefined;
+  });
+}
+
+describe('Cancelar venda pelo ERP (F3-B11; D112, D113)', () => {
+  it('sem vendas.cancelar a venda finalizada não mostra o botão', async () => {
+    apiDoCancelamento(['vendas.ver']);
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    expect(await screen.findByRole('heading', { name: 'Venda L01-C01-000002' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancelar venda' })).not.toBeInTheDocument();
+  }, 30_000);
+
+  it('com vendas.cancelar, a venda já cancelada (vinda da API) não mostra o botão', async () => {
+    simularApi(
+      ...rotasSessao({ permissoes: ['vendas.ver', 'vendas.cancelar'], lojas: LOJAS, todasLojas: true }),
+      ({ url }) => (url.pathname === `/api/vendas/${VENDA}` ? { corpo: DETALHE } : undefined),
+    );
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    expect(await screen.findByRole('heading', { name: 'Venda L01-C01-000002' })).toBeInTheDocument();
+    expect(screen.getByText('Venda cancelada')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancelar venda' })).not.toBeInTheDocument();
+  }, 30_000);
+
+  it('caixa fechado: motivo de 15 a 255 e a forma de devolução (o vale desabilitado); grava e mostra a forma', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = apiDoCancelamento(['vendas.ver', 'vendas.cancelar']);
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    await u.click(await screen.findByRole('button', { name: 'Cancelar venda' }));
+    const modal = await screen.findByRole('dialog', { name: 'Cancelar a venda L01-C01-000002' });
+    expect(
+      await within(modal).findByText(/os cascos vazios que o cliente trouxe voltam para ele/),
+    ).toBeInTheDocument();
+    const confirmar = within(modal).getByRole('button', { name: 'Cancelar venda' });
+    expect(confirmar).toBeDisabled();
+    expect(within(modal).getByRole('radio', { name: /Vale compra/ })).toBeDisabled();
+    await u.type(within(modal).getByRole('textbox', { name: /Motivo do cancelamento/ }), 'curto');
+    await u.click(within(modal).getByRole('radio', { name: 'Estorno no cartão' }));
+    expect(confirmar).toBeDisabled();
+    await u.type(
+      within(modal).getByRole('textbox', { name: /Motivo do cancelamento/ }),
+      ' demais? nao: registrada com erro',
+    );
+    expect(confirmar).toBeEnabled();
+    await u.click(confirmar);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const post = chamadas.find((c) => c.url.pathname.endsWith('/cancelar'))!;
+    expect(post.corpo).toEqual({
+      motivo: 'curto demais? nao: registrada com erro',
+      formaDevolucao: 'estorno_cartao',
+      confirmarAvisos: false,
+    });
+    expect(await screen.findByTestId('forma-devolucao')).toHaveTextContent(
+      'Devolução ao cliente: Estorno no cartão',
+    );
+    expect(screen.getByText(/no ERP por MARIA SILVA/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancelar venda' })).not.toBeInTheDocument();
+  }, 30_000);
+
+  it('caixa offline com eventos pendentes: o "estou ciente" libera o botão e vai na gravação; a versão só avisa', async () => {
+    const u = userEvent.setup();
+    const { chamadas } = apiDoCancelamento(['vendas.ver', 'vendas.cancelar'], {
+      ...PREVIA,
+      exigeFormaDevolucao: false,
+      avisos: [
+        {
+          codigo: 'terminal_offline',
+          mensagem:
+            'O caixa 01 (PC do balcão) está offline com 2 evento(s) pendente(s): um cancelamento feito lá ainda pode chegar.',
+          exigeConfirmacao: true,
+        },
+        {
+          codigo: 'versao_sem_status',
+          mensagem:
+            'O caixa 01 está no PDV 0.13.0: o caixa só fica sabendo do cancelamento a partir do PDV 0.14.0.',
+          exigeConfirmacao: false,
+        },
+      ],
+    });
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    await u.click(await screen.findByRole('button', { name: 'Cancelar venda' }));
+    const modal = await screen.findByRole('dialog');
+    expect(
+      await within(modal).findByText(/está offline com 2 evento\(s\) pendente\(s\)/),
+    ).toBeInTheDocument();
+    expect(within(modal).getByText(/PDV 0.13.0/)).toBeInTheDocument();
+    expect(within(modal).queryByRole('radiogroup')).not.toBeInTheDocument();
+    await u.type(
+      within(modal).getByRole('textbox', { name: /Motivo do cancelamento/ }),
+      'Venda registrada com erro no caixa',
+    );
+    const confirmar = within(modal).getByRole('button', { name: 'Cancelar venda' });
+    expect(confirmar).toBeDisabled();
+    await u.click(within(modal).getByRole('checkbox', { name: /Estou ciente/ }));
+    await u.click(confirmar);
+    await waitFor(() => expect(chamadas.some((c) => c.url.pathname.endsWith('/cancelar'))).toBe(true));
+    expect(chamadas.find((c) => c.url.pathname.endsWith('/cancelar'))!.corpo).toEqual({
+      motivo: 'Venda registrada com erro no caixa',
+      formaDevolucao: null,
+      confirmarAvisos: true,
+    });
+  }, 30_000);
+
+  it('409 de novo aviso a confirmar: relê a prévia e desmarca o "Estou ciente"', async () => {
+    const u = userEvent.setup();
+    const previa: PreviaCancelamentoVenda = {
+      ...PREVIA,
+      exigeFormaDevolucao: false,
+      avisos: [
+        {
+          codigo: 'eventos_pendentes',
+          mensagem: 'O caixa 01 está com 1 evento(s) pendente(s) para enviar.',
+          exigeConfirmacao: true,
+        },
+      ],
+    };
+    const { chamadas } = simularApi(
+      ...rotasSessao({ permissoes: ['vendas.ver', 'vendas.cancelar'], lojas: LOJAS, todasLojas: true }),
+      ({ url, metodo }) => {
+        if (url.pathname === `/api/vendas/${VENDA}/cancelamento`) return { corpo: previa };
+        if (url.pathname === `/api/vendas/${VENDA}/cancelar` && metodo === 'POST')
+          return {
+            status: 409,
+            corpo: {
+              codigo: 'CONFLITO',
+              mensagem: 'O caixa 01 está offline: um cancelamento feito lá ainda pode chegar.',
+              detalhes: { codigo: 'CONFIRMAR_AVISOS', avisos: previa.avisos },
+            },
+          };
+        if (url.pathname === `/api/vendas/${VENDA}`) return { corpo: FINALIZADA };
+        return undefined;
+      },
+    );
+    const previas = () => chamadas.filter((c) => c.url.pathname.endsWith('/cancelamento')).length;
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    await u.click(await screen.findByRole('button', { name: 'Cancelar venda' }));
+    const modal = await screen.findByRole('dialog');
+    await u.type(
+      await within(modal).findByRole('textbox', { name: /Motivo do cancelamento/ }),
+      'Venda registrada com erro no caixa',
+    );
+    const ciente = within(modal).getByRole('checkbox', { name: /Estou ciente/ });
+    await u.click(ciente);
+    expect(previas()).toBe(1);
+    await u.click(within(modal).getByRole('button', { name: 'Cancelar venda' }));
+    expect(await within(modal).findByText(/está offline: um cancelamento feito lá/)).toBeInTheDocument();
+    await waitFor(() => expect(previas()).toBe(2));
+    expect(ciente).not.toBeChecked();
+    expect(within(modal).getByRole('button', { name: 'Cancelar venda' })).toBeDisabled();
+  }, 30_000);
+
+  it('409 de venda já cancelada por outro usuário: o modal mostra o bloqueio e o detalhe atrás dele se atualiza', async () => {
+    const u = userEvent.setup();
+    let canceladaPorOutro = false;
+    const { chamadas } = simularApi(
+      ...rotasSessao({ permissoes: ['vendas.ver', 'vendas.cancelar'], lojas: LOJAS, todasLojas: true }),
+      ({ url, metodo }) => {
+        if (url.pathname === `/api/vendas/${VENDA}/cancelamento`)
+          return {
+            corpo: canceladaPorOutro
+              ? {
+                  ...PREVIA,
+                  podeCancelar: false,
+                  exigeFormaDevolucao: false,
+                  bloqueio: {
+                    codigo: 'ja_cancelada',
+                    mensagem: 'A venda L01-C01-000002 já está cancelada (no ERP).',
+                  },
+                }
+              : PREVIA,
+          };
+        if (url.pathname === `/api/vendas/${VENDA}/cancelar` && metodo === 'POST') {
+          canceladaPorOutro = true;
+          return {
+            status: 409,
+            corpo: {
+              codigo: 'CONFLITO',
+              mensagem: 'A venda L01-C01-000002 já está cancelada (no ERP).',
+              detalhes: { codigo: 'ja_cancelada' },
+            },
+          };
+        }
+        if (url.pathname === `/api/vendas/${VENDA}`)
+          return { corpo: canceladaPorOutro ? { ...DETALHE, cancelamentoOrigem: 'erp' } : FINALIZADA };
+        return undefined;
+      },
+    );
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    await u.click(await screen.findByRole('button', { name: 'Cancelar venda' }));
+    const modal = await screen.findByRole('dialog');
+    await u.type(
+      await within(modal).findByRole('textbox', { name: /Motivo do cancelamento/ }),
+      'Venda registrada com erro no caixa',
+    );
+    await u.click(within(modal).getByRole('radio', { name: 'Dinheiro do cofre' }));
+    await u.click(within(modal).getByRole('button', { name: 'Cancelar venda' }));
+    expect(await within(modal).findByText(/já está cancelada \(no ERP\)/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(chamadas.filter((c) => c.url.pathname === `/api/vendas/${VENDA}`).length).toBe(2),
+    );
+    await u.click(within(modal).getByRole('button', { name: 'Fechar' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(await screen.findByText('Venda cancelada')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancelar venda' })).not.toBeInTheDocument();
+  }, 30_000);
+
+  it('sessão ainda aberta: o modal mostra o bloqueio ("cancele no caixa") e não oferece o formulário', async () => {
+    const u = userEvent.setup();
+    apiDoCancelamento(['vendas.ver', 'vendas.cancelar'], {
+      ...PREVIA,
+      podeCancelar: false,
+      exigeFormaDevolucao: false,
+      bloqueio: {
+        codigo: 'sessao_aberta',
+        mensagem: 'A sessão do caixa 01 desta venda ainda está aberta: cancele no caixa.',
+      },
+    });
+    renderizarComSessao(<DetalheVenda />, `/vendas/${VENDA}`, 'vendas/:id/:aba?');
+    await u.click(await screen.findByRole('button', { name: 'Cancelar venda' }));
+    const modal = await screen.findByRole('dialog');
+    expect(await within(modal).findByText(/cancele no caixa/)).toBeInTheDocument();
+    expect(within(modal).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(within(modal).queryByRole('button', { name: 'Cancelar venda' })).not.toBeInTheDocument();
   }, 30_000);
 });
 

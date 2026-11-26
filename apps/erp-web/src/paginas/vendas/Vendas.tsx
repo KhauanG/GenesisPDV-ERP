@@ -3,6 +3,7 @@ import {
   decTexto,
   DEVOLUCOES_FILTRO_VENDA,
   ROTULOS_DEVOLUCAO_VENDA,
+  ROTULOS_FORMA_DEVOLUCAO_CANCELAMENTO,
   ROTULOS_STATUS_VENDA,
   ROTULOS_TIPO_VENDA,
   SITUACOES_FILTRO_VENDA,
@@ -15,6 +16,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Button,
   Group,
   SimpleGrid,
   Skeleton,
@@ -25,9 +27,9 @@ import {
   Title,
 } from '@mantine/core';
 import { useDocumentTitle } from '@mantine/hooks';
-import { IconAlertTriangle, IconArrowLeft } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowLeft, IconBan } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { segmento } from '../../api/caminho';
 import { apiErp } from '../../api/clientes';
@@ -37,6 +39,7 @@ import { Historico } from '../../componentes/FormularioEntidade';
 import { formatarDecimal } from '../../componentes/grade/decimal';
 import { Listagem, type ConfigListagem, type FiltroListagem } from '../../componentes/listagem/Listagem';
 import { formatarData, formatarDataHora, formatarInteiro } from '../../util/formato';
+import { ModalCancelarVenda } from './CancelarVenda';
 import {
   Bloco,
   Campo,
@@ -223,9 +226,10 @@ const ABAS = ['dados', 'financeiro', 'fiscal', 'historico'] as const;
 const qtd = (v: string) => formatarDecimal(Number(v), 3);
 
 /**
- * Venda (ERP 15.4.2) só de leitura: abas Dados gerais (cabeçalho, cliente e itens), Financeiro (pagamentos, totais e
- * o lucro com `vendas.ver_lucro`), Documento fiscal (vazio até a 1D) e Histórico. Cancelar, devolução e emitir NF-e
- * não aparecem: a venda do PDV é imutável no ERP nesta fase.
+ * Venda (ERP 15.4.2): abas Dados gerais (cabeçalho, cliente e itens), Financeiro (pagamentos, totais e o lucro com
+ * `vendas.ver_lucro`), Documento fiscal (vazio até a fase fiscal) e Histórico. Desde o F3-B11, o botão "Cancelar venda"
+ * (`vendas.cancelar`, na venda do caixa finalizada) abre o modal do cancelamento pelo ERP (`CancelarVenda.tsx`); a
+ * venda cancelada no ERP mostra a forma de devolução registrada. Devolução e emitir NF-e ainda não aparecem.
  */
 export function DetalheVenda() {
   const { id, aba } = useParams();
@@ -237,6 +241,7 @@ export function DetalheVenda() {
     enabled: !!id,
   });
   const v = r.data;
+  const [cancelando, setCancelando] = useState(false);
   useDocumentTitle(`${v ? `Venda ${v.numeroExibicao}` : 'Venda'} · GenesisPDV`);
   const atual = (ABAS as readonly string[]).includes(aba ?? '') ? aba! : 'dados';
   if (r.isError) return <Alert color="red">{(r.error as Error).message}</Alert>;
@@ -258,13 +263,31 @@ export function DetalheVenda() {
             Loja de treino
           </Badge>
         )}
+        {v.status === 'finalizada' && v.tipo === 'pdv' && pode('vendas.cancelar') && (
+          <Button
+            ml="auto"
+            color="red"
+            variant="light"
+            leftSection={<IconBan size={16} />}
+            onClick={() => setCancelando(true)}
+          >
+            Cancelar venda
+          </Button>
+        )}
       </Group>
+      <ModalCancelarVenda venda={v} aberto={cancelando} aoFechar={() => setCancelando(false)} />
       {v.status === 'cancelada' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Venda cancelada">
           {formatarDataHora(v.canceladaEm)} no {v.cancelamentoOrigem === 'erp' ? 'ERP' : 'PDV'}
           {v.canceladaPorNome ? ` por ${v.canceladaPorNome}` : ''}
           {v.cancelamentoAutorizadoPorNome ? `, autorizado por ${v.cancelamentoAutorizadoPorNome}` : ''}.{' '}
           Motivo: {v.motivoCancelamento ?? '—'}
+          {v.formaDevolucaoCancelamento && (
+            <Text size="sm" mt={4} data-testid="forma-devolucao">
+              Devolução ao cliente: {ROTULOS_FORMA_DEVOLUCAO_CANCELAMENTO[v.formaDevolucaoCancelamento]}{' '}
+              (registrada; o lançamento no financeiro chega com a Fase 4).
+            </Text>
+          )}
         </Alert>
       )}
       {!v.relogioConfiavel && (

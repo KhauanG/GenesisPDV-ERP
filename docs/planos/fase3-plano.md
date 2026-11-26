@@ -825,6 +825,19 @@ corpo do PR-17.
   `recalcular-saldos` idêntico; vitest do modal.
 - **Pronto:** as vendas de caixa fechado "registradas com erro" desde a 1C podem ser canceladas.
 - **Depende de:** F3-B10.
+- [**Feito (F3-B11)** (README da API › decisão 229, README do ERP › decisão 90; ERP 15.4.3; SYNC 10.4): como descrito,
+  com a prévia `GET /vendas/:id/cancelamento` para o modal (o bloqueio, os avisos e se pede a forma, pelas mesmas funções
+  da gravação, sem travar). Escolhas técnicas: a 7300001 primeiro (`travaVersao`) e só então a venda com `for update`, a
+  ordem do push; uma forma de devolução para a venda inteira, pedida só na sessão fechada com total acima de zero e
+  guardada na auditoria (`pendente_fase_4`); a venda com documento fiscal (`status_fiscal` ≠ `nao_aplicavel`) bloqueada
+  até a fase fiscal; os pagamentos aprovados passam a `estornado`; o aviso da versão que não lê a projeção (abaixo do
+  0.14.0) só informa, e o de offline ou eventos pendentes, só do terminal de origem, pede o "Estou ciente"
+  (`confirmarAvisos`, 409 `CONFIRMAR_AVISOS` sem ele). O "Definir posterior" testado é o efetivado com a contagem logo
+  depois do cancelamento (a folga de 5 min do relógio). Da revisão: o `CANCELAMENTO_PENDENTE_NO_CAIXA` vale também para o
+  `venda.cancelada` do caixa que chegou à nuvem e parou em `erro`/`retido` (ou ainda `recebido`), lido de
+  `eventos_recebidos`, porque o **PDV ainda não envia** `vendas_cancelamento_pendente` no heartbeat (o campo fica `[]`;
+  a API já o lê, e fazê-lo enviar é trabalho do PDV, sem bloco no plano ainda); o `POST` exige também `vendas.ver`,
+  porque devolve o detalhe.]
 
 #### F3-B12 – Parâmetros-PDV completo, aba Vendas (9.10), Lojas › Parâmetros (10.3.9) e trava por versão
 - **Tamanho:** M · **Rigor:** enxuto (tela de configuração), com a numeração do caixa 0 e a trava revisadas com atenção

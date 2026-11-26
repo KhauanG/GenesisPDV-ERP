@@ -1618,6 +1618,26 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     decisão do dono). Testes: `src/paginas/vendas/ConferenciaCaixa.test.tsx` (as vias, a impressão automática com
     `imprimir=1` e a marca de treino).
 
+90. **Cancelar venda pelo ERP: o botão e o modal** (Fase 3, F3-B11; ERP 15.4.3; D112, D113; README da API › decisão 229;
+    `src/paginas/vendas/CancelarVenda.tsx`, `Vendas.tsx`). O botão "Cancelar venda" aparece no cabeçalho do detalhe só
+    na venda do caixa finalizada e com `vendas.cancelar`; o modal lê a prévia da API (`GET /vendas/:id/cancelamento`)
+    a cada abertura e não repete as regras: com bloqueio (sessão ainda aberta, "cancele no caixa"; o caixa já cancelou
+    e não sincronizou; venda com troca ou com documento fiscal; já cancelada) mostra só a mensagem; senão, o motivo (15
+    a 255, com o contador; o botão só libera dentro da faixa), a forma de devolução em botões de opção na venda de caixa
+    fechado (o vale aparece desabilitado, "disponível quando os vales entrarem", e a descrição diz que até a Fase 4 a
+    forma só fica registrada), os avisos do caixa de origem (offline ou com eventos pendentes em laranja, com o "Estou
+    ciente" obrigatório que vai como `confirmarAvisos`; a versão que não lê a projeção em amarelo, só informativa) e,
+    com a chave ligada, que os cascos vazios voltam ao cliente. O 409/422 sem campo (a situação mudou entre a prévia e a
+    gravação: novo aviso, o cancelamento do caixa chegou, outro usuário já cancelou) relê a prévia, desmarca o "Estou
+    ciente" e invalida o detalhe e a listagem atrás do modal (sem isso a página seguia com a venda "Finalizada" e o
+    botão até recarregar). Gravado, o detalhe é trocado pela resposta, a
+    listagem e o Histórico são invalidados, e a venda cancelada no ERP mostra "Devolução ao cliente: …
+    (registrada; o lançamento no financeiro chega com a Fase 4)". Testes: `src/paginas/vendas/Vendas.test.tsx` (sem a
+    permissão sem o botão; a venda já cancelada, com a permissão, também sem ele; a forma e o motivo travando o botão, o vale desabilitado, o corpo enviado e a forma no
+    detalhe depois; o "Estou ciente" com o aviso de offline; o 409 `CONFIRMAR_AVISOS` relendo a prévia e desmarcando o "Estou
+    ciente"; o 409 `ja_cancelada` mostrando o bloqueio e atualizando o detalhe atrás do modal; o bloqueio da sessão
+    aberta sem o formulário).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

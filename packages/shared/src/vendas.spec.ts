@@ -2,8 +2,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { dec, decTexto } from './decimal.js';
 import {
+  cancelarVendaSchema,
   CANAIS_POR_TIPO_VENDA,
   conferirSessaoSchema,
+  FORMAS_DEVOLUCAO_CANCELAMENTO,
+  FORMAS_DEVOLUCAO_DISPONIVEIS,
   diaOperacionalEm,
   diferencaConferencia,
   filtroReforcosSchema,
@@ -179,5 +182,37 @@ describe('conferência do fechamento (F3-B9; D114)', () => {
     expect(SITUACOES_SESSAO_CAIXA).toEqual(['aberta', 'fechada', 'conferida', 'divergente']);
     expect(filtroSessoesCaixaSchema.parse({ situacao: 'divergente' }).situacao).toBe('divergente');
     expect(filtroSessoesCaixaSchema.safeParse({ situacao: 'fechada_forcado' }).success).toBe(false);
+  });
+});
+
+describe('cancelar venda pelo ERP (F3-B11; D112, D113)', () => {
+  it('motivo de 15 a 255 sem os espaços das pontas, como no caixa (O6); forma e confirmação com padrão', () => {
+    expect(cancelarVendaSchema.parse({ motivo: '  Venda registrada com erro  ' })).toEqual({
+      motivo: 'Venda registrada com erro',
+      formaDevolucao: null,
+      confirmarAvisos: false,
+    });
+    for (const motivo of ['curto demais', `   ${'x'.repeat(14)}   `, 'x'.repeat(256), undefined])
+      expect(cancelarVendaSchema.safeParse({ motivo }).success, String(motivo)).toBe(false);
+    expect(cancelarVendaSchema.safeParse({ motivo: 'x'.repeat(255) }).success).toBe(true);
+    expect(
+      cancelarVendaSchema.parse({
+        motivo: 'Cliente devolveu tudo no dia seguinte',
+        formaDevolucao: 'estorno_pix',
+        confirmarAvisos: true,
+      }),
+    ).toMatchObject({ formaDevolucao: 'estorno_pix', confirmarAvisos: true });
+    expect(
+      cancelarVendaSchema.safeParse({
+        motivo: 'Cliente devolveu tudo no dia seguinte',
+        formaDevolucao: 'cheque',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('o vale existe no contrato, mas só passa a valer com os vales (F3-B50)', () => {
+    expect(FORMAS_DEVOLUCAO_CANCELAMENTO).toContain('vale');
+    expect(FORMAS_DEVOLUCAO_DISPONIVEIS).not.toContain('vale');
+    expect(FORMAS_DEVOLUCAO_DISPONIVEIS.every((f) => FORMAS_DEVOLUCAO_CANCELAMENTO.includes(f))).toBe(true);
   });
 });

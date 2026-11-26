@@ -13,7 +13,11 @@ import { z } from 'zod';
 import { textoOpcional } from './campos.js';
 import { dec, decTexto, type Valor } from './decimal.js';
 import { paginacaoQuerySchema } from './paginacao.js';
-import { CANAIS_VENDA } from './sync/eventos.js';
+import {
+  CANAIS_VENDA,
+  MOTIVO_CANCELAMENTO_VENDA_MAX,
+  MOTIVO_CANCELAMENTO_VENDA_MIN,
+} from './sync/eventos.js';
 
 // Data de calendário de verdade (`2026-02-31` não passa): a consulta faz `::date` no PostgreSQL, que recusaria a data
 // impossível com erro interno (500) em vez da validação (422).
@@ -270,10 +274,121 @@ export interface VendaDetalhe {
   cancelamentoAutorizadoPorNome: string | null;
   motivoCancelamento: string | null;
   cancelamentoOrigem: string | null;
+  /**
+   * Como a devolução ao cliente foi feita no cancelamento pelo ERP da venda de caixa fechado (D113; F3-B11), lida da
+   * auditoria do cancelamento: só registrada até a Fase 4. `null` sem cancelamento pelo ERP ou sem devolução.
+   */
+  formaDevolucaoCancelamento: FormaDevolucaoCancelamento | null;
   itens: ItemVendaDetalhe[];
   pagamentos: PagamentoVendaDetalhe[];
   /** `null` sem `vendas.ver_lucro` (ERP 15.4.2, aba Financeiro: custo, lucro R$ e margem %). */
   lucro: { custo: string; lucro: string; margemPct: string | null } | null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Cancelar venda pelo ERP (ERP 15.4.3; SYNC 10.4, 16.3; Fase 3, F3-B11; D112, D113)
+
+/**
+ * Forma de devolução ao cliente no cancelamento pelo ERP da venda de **caixa já fechado** (D113 = F3-Q43 (A)): o
+ * dinheiro sai do cofre (a gaveta da sessão já foi fechada), o estorno no cartão ou no PIX é feito na maquininha ou no
+ * banco, ou o cliente leva um vale. Até a Fase 4 só fica **registrada** (na auditoria do cancelamento): nenhuma conta
+ * corrente nem movimento de caixa é lançado.
+ */
+export const FORMAS_DEVOLUCAO_CANCELAMENTO = [
+  'dinheiro_cofre',
+  'estorno_cartao',
+  'estorno_pix',
+  'vale',
+] as const;
+export type FormaDevolucaoCancelamento = (typeof FORMAS_DEVOLUCAO_CANCELAMENTO)[number];
+export const ROTULOS_FORMA_DEVOLUCAO_CANCELAMENTO: Record<FormaDevolucaoCancelamento, string> = {
+  dinheiro_cofre: 'Dinheiro do cofre',
+  estorno_cartao: 'Estorno no cartão',
+  estorno_pix: 'Devolução por PIX',
+  vale: 'Vale compra',
+};
+/**
+ * As formas que já valem: o vale só vira vale de verdade quando os vales entrarem no ERP (F3-B50); até lá a opção
+ * aparece desabilitada e a API a recusa.
+ */
+export const FORMAS_DEVOLUCAO_DISPONIVEIS: readonly FormaDevolucaoCancelamento[] = [
+  'dinheiro_cofre',
+  'estorno_cartao',
+  'estorno_pix',
+];
+
+/**
+ * A versão do PDV que lê a projeção `vendas_status_pdv` na Gestão de vendas (F12; F3-B29, release R3): abaixo dela (ou
+ * sem versão conhecida), o caixa não fica sabendo do cancelamento feito no ERP e ainda mostra a venda como finalizada
+ * (só aviso: a venda de caixa fechado já não se cancela no caixa, PC-1).
+ */
+export const VERSAO_PDV_LE_STATUS_VENDA = '0.14.0';
+
+/**
+ * `POST /vendas/:id/cancelar` (`vendas.ver` e `vendas.cancelar`, porque devolve o detalhe): o motivo (15 a 255
+ * caracteres sem os espaços das pontas, a mesma regra do caixa, O6), a forma de devolução (obrigatória na venda de caixa fechado com total acima de zero, D113) e
+ * `confirmarAvisos` (o caixa de origem offline ou com eventos pendentes: um cancelamento feito lá ainda pode chegar,
+ * SYNC 10.4; sem a confirmação, 409 com os avisos).
+ */
+export const cancelarVendaSchema = z.object({
+  motivo: z
+    .string('Informe o motivo')
+    .trim()
+    .min(
+      MOTIVO_CANCELAMENTO_VENDA_MIN,
+      `Informe o motivo com ${MOTIVO_CANCELAMENTO_VENDA_MIN} a ${MOTIVO_CANCELAMENTO_VENDA_MAX} caracteres`,
+    )
+    .max(
+      MOTIVO_CANCELAMENTO_VENDA_MAX,
+      `Informe o motivo com ${MOTIVO_CANCELAMENTO_VENDA_MIN} a ${MOTIVO_CANCELAMENTO_VENDA_MAX} caracteres`,
+    ),
+  formaDevolucao: z
+    .enum(FORMAS_DEVOLUCAO_CANCELAMENTO, 'Forma de devolução inválida')
+    .nullable()
+    .default(null),
+  confirmarAvisos: z.boolean().default(false),
+});
+export type CancelarVenda = z.infer<typeof cancelarVendaSchema>;
+export type CancelarVendaEntrada = z.input<typeof cancelarVendaSchema>;
+
+/**
+ * Por que a venda não se cancela pelo ERP (o `codigo` vai também em `detalhes.codigo` do erro da API):
+ * `ja_cancelada` (409), `nao_finalizada`, `nao_pdv` (a venda ERP ganha o cancelamento com ela, F3-B57),
+ * `documento_fiscal` (fase fiscal), `sessao_aberta` (D112: "cancele no caixa"), `cancelamento_pendente_no_caixa` (o
+ * caixa já cancelou e ainda não sincronizou, SYNC 10.4) e `com_troca` ("cancele a troca primeiro", Padrões da Fase 3).
+ */
+export const BLOQUEIOS_CANCELAMENTO_VENDA = [
+  'ja_cancelada',
+  'nao_finalizada',
+  'nao_pdv',
+  'documento_fiscal',
+  'sessao_aberta',
+  'cancelamento_pendente_no_caixa',
+  'com_troca',
+] as const;
+export type BloqueioCancelamentoVenda = (typeof BLOQUEIOS_CANCELAMENTO_VENDA)[number];
+
+/**
+ * Aviso do cancelamento (não impede): `terminal_offline` e `eventos_pendentes` pedem a confirmação (um cancelamento
+ * feito no caixa ainda pode chegar e virar `CANCELAMENTO_DUPLO`, SYNC 10.4); `versao_sem_status` só informa (o caixa
+ * abaixo do `VERSAO_PDV_LE_STATUS_VENDA` continua mostrando a venda como finalizada).
+ */
+export interface AvisoCancelamentoVenda {
+  codigo: 'terminal_offline' | 'eventos_pendentes' | 'versao_sem_status';
+  mensagem: string;
+  exigeConfirmacao: boolean;
+}
+
+/** `GET /vendas/:id/cancelamento` (`vendas.cancelar`): o que o modal mostra antes de cancelar. */
+export interface PreviaCancelamentoVenda {
+  podeCancelar: boolean;
+  bloqueio: { codigo: BloqueioCancelamentoVenda; mensagem: string } | null;
+  /** A venda de caixa fechado com total acima de zero pede a forma de devolução (D113). */
+  exigeFormaDevolucao: boolean;
+  formasDevolucao: FormaDevolucaoCancelamento[];
+  /** `pdv.cancelamento_devolve_vazios` da loja (D29): os vazios trazidos na venda voltam ao cliente. */
+  devolveVazios: boolean;
+  avisos: AvisoCancelamentoVenda[];
 }
 
 // ---------------------------------------------------------------------------------------------------------------

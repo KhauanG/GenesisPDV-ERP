@@ -7956,6 +7956,85 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        nuvem grava o estado atual e o repetido não gera versão; o de outro terminal grava e o do próprio, depois,
        atualiza; o caixa puxa as duas linhas pelo fluxo `operacao`).
 
+229. **Cancelar pelo ERP a venda do caixa, inclusive a de caixa fechado** (F3-B11; plano `docs/planos/fase3-plano.md`;
+     ERP 15.4.3; SYNC 10.4, 16.3; D112 = F3-Q42 (A), D113 = F3-Q43 (A); PC-1/D23; `vendas/cancelamento-erp.ts`,
+     `vendas/vendas.controller.ts`, `packages/shared/src/vendas.ts`). Sem migração e sem PDV (o caixa novo lê a projeção
+     no F3-B29). Escolhas técnicas, sem pergunta ao dono:
+     - **Duas rotas**: `GET /vendas/:id/cancelamento` (`vendas.cancelar`; a prévia do modal: o bloqueio, os avisos, se
+       pede a forma de devolução, as formas disponíveis e o `pdv.cancelamento_devolve_vazios` da loja) e
+       `POST /vendas/:id/cancelar` (`cancelarVendaSchema`: `motivo` de 15 a 255 sem os espaços das pontas, a mesma regra
+       do caixa, O6; `formaDevolucao`; `confirmarAvisos`), que devolve o detalhe da venda e por isso exige
+       **`vendas.ver` e `vendas.cancelar`**: o controlador chama `detalhar` direto, sem o guard da rota dele, e o perfil
+       personalizado com só `vendas.cancelar` leria por aqui os itens, os pagamentos (NSU, autorização), o cliente e o
+       operador (o ERP cancela a partir do detalhe, que já exige `vendas.ver`; o mesmo padrão do
+       `POST /sessoes-caixa/:id/conferir`, decisão 227, fica para revisão própria). A prévia roda as mesmas
+       funções sem travar; a gravação confere tudo de novo. Loja fora das permitidas é 403 (como a conferência,
+       decisão 227); venda inexistente ou rascunho, 404.
+     - **Travas.** A transação começa pela 7300001 (`travaVersao`, a regra de toda gravação do ERP em tabela que desce:
+       o push pega a do terminal, a 7300001 e só então as linhas, então o ERP não pode travar a venda antes dela) e
+       trava a linha da venda (`for update`). É ela que põe em fila este cancelamento, o `venda.cancelada` do caixa e a
+       troca (F3-B43); dois cancelamentos ao mesmo tempo: um grava, o outro é 409.
+     - **Bloqueios, nesta ordem** (`bloqueioCancelamento`, o código também em `detalhes.codigo`): já cancelada → 409
+       `CONFLITO` (`ja_cancelada`); não finalizada; sem terminal (`nao_pdv`: a venda ERP ganha o cancelamento com ela,
+       F3-B57); `status_fiscal` diferente de `nao_aplicavel` (`documento_fiscal`: o cancelamento da venda com nota é da
+       fase fiscal, que cancela também a nota; nada fiscal antes dela); o cancelamento do caixa que **já chegou à nuvem e
+       não foi aplicado** (`cancelamentoNaFila`: um `venda.cancelada` do terminal de origem para a venda em
+       `eventos_recebidos` com `recebido`, `erro` de qualquer código ou `retido`; o `ix_eventos_recebidos_agregado`
+       atende) → `CANCELAMENTO_PENDENTE_NO_CAIXA` ("parou na sincronização: resolva-o na aba 'Eventos com erro' do
+       terminal"; o `recebido`, "aguarde a sincronização"). Sem ele, o caixa que cancelou na sessão aberta e devolveu o
+       dinheiro, com o evento recusado na nuvem (`PAYLOAD_INVALIDO`, dependência), deixava a venda finalizada, a sessão
+       fechada (o `caixa.fechado` aplica com o turno em erro, só o alerta) e o terminal online com `eventos_pendentes = 0`
+       (o caixa tira o recusado dos não confirmados e o conta só em `eventos_rejeitados`): sem bloqueio nem aviso, e o
+       cliente recebia a devolução de novo. Descartado pelo suporte, o evento deixa de contar. Depois, o terminal de
+       origem com a venda em `vendas_cancelamento_pendente` no último heartbeat, o mesmo código ("o caixa já cancelou
+       esta venda; aguarde a sincronização", SYNC 10.4; só o terminal de origem conta: outro não cancela a venda dele).
+       **O PDV ainda não envia esse campo** (`MontarHeartbeatTravadoAsync` o deixa `[]`): a API fica pronta para quando
+       o caixa passar a enviá-lo, e até lá a prevenção pelo que ainda não saiu do caixa são só os avisos de offline e
+       de eventos pendentes; a sessão da venda ainda não `fechada` na nuvem (`sessao_aberta`, D112: "cancele no caixa"; o texto diz também
+       para esperar o fechamento chegar, quando o caixa já fechou offline); item com `quantidade_devolvida > 0`
+       (`com_troca`: "cancele a troca primeiro", Padrões da Fase 3). Os demais bloqueios são 422 `REGRA_NEGOCIO`.
+     - **Avisos** (`avisosCancelamento`). O terminal de origem, enquanto não revogado (o revogado não envia mais nada),
+       **offline** pelo limiar do ERP 12.1 (último contato há 2 min ou mais, ou nenhum: `statusConexao` do shared) ou
+       **online com eventos pendentes** no último heartbeat pede a confirmação (`confirmarAvisos`; sem ela, 409
+       `CONFLITO` com `detalhes.codigo = 'CONFIRMAR_AVISOS'` e a lista, e nada é gravado). O terminal de origem e o ativo
+       do mesmo caixa (o que substituiu o de origem e recebe a projeção pelo caixa) abaixo de
+       `VERSAO_PDV_LE_STATUS_VENDA` (0.14.0, a R3 do F3-B29) ou sem versão conhecida dão o aviso `versao_sem_status`,
+       **só informativo**: a venda de caixa fechado já não se cancela no caixa (PC-1), e o caixa antigo só continua
+       mostrando a venda como finalizada na Gestão de vendas. Os avisos confirmados vão na auditoria.
+     - **Forma de devolução (D113)**: obrigatória na venda de sessão fechada com total acima de zero (422 no campo
+       `formaDevolucao`); **uma** forma para a venda inteira (`dinheiro_cofre`, `estorno_cartao`, `estorno_pix`; o
+       `vale` está no contrato e na tela, desabilitado, e a API o recusa até o F3-B50). Só **registrada** até a Fase 4:
+       nenhum `movimentos_caixa` (a sessão fechou e a conferência do F3-B9 continua valendo pelo que o caixa mandou),
+       nenhuma conta corrente. Fica na auditoria (`depois.forma_devolucao` e `pendente_fase_4`: a forma, o valor e os
+       pagamentos estornados com forma e valor) e aparece no detalhe (`formaDevolucaoCancelamento`, lida da auditoria
+       `cancelar` de origem `erp`).
+     - **Efeitos.** O estoque pelo núcleo do F3-B10 (decisão 228): `movimentosParaEstornar` com os vazios pela chave da
+       **loja da venda**, `linhasDeEstorno` com a data do cancelamento, o usuário do ERP e sem terminal nem evento
+       (`CANC_VENDA_PDV`/`ESTORNO_BAIXA_INSUMO`/`ESTORNO_VASILHAME_DEVOLVIDO` ao custo da saída, T20; o `CANC_VENDA_ERP`
+       é da venda ERP, F3-B57) e `estornarEstoqueDaVenda` com a compensação do "Definir" efetivado com contagem
+       posterior (a contagem informada até 5 min no futuro, a folga do `dataContagemSchema`). A venda: `cancelada`,
+       `cancelada_em`, `cancelada_por_id` = quem cancelou, `cancelamento_autorizado_por_id` nulo (não há liberação no
+       ERP), `cancelamento_origem = 'erp'`; os pagamentos `aprovado` → `estornado` (o ERP mostra o pagamento estornado,
+       como no caixa; o `pendente` fica). Depois de tudo, `registrarStatusPdv(tx, venda, 'nuvem')`: a linha da projeção
+       desce ao caixa da venda no fluxo `operacao`. A auditoria `cancelar` (origem `erp`) não conta como o
+       cancelamento do caixa no `CANCELAMENTO_DUPLO` (o handler só olha a de origem `pdv` presa ao evento).
+     - **A corrida com o caixa** continua no handler (`aplicarCancelamentoDuplo`): o `venda.cancelada` que chega depois
+       aplica só o físico (a gaveta, o TEF) e abre `CANCELAMENTO_DUPLO`, sem estornar o estoque de novo.
+     - **Testes.** `vendas/cancelamento-erp.spec.ts` (a ordem dos bloqueios, cada caso com as condições de todos os
+       seguintes também verdadeiras, para a troca de dois deles derrubar o teste; o cancelamento na fila em `erro`,
+       `retido` e `recebido`; a pendência só do terminal de origem, a forma exigida, os avisos offline, pendentes, de
+       outro terminal e de versão); `packages/shared/src/vendas.spec.ts` (o corpo e o vale fora das disponíveis);
+       `test/integracao/cancelamento-erp.test.ts` (a venda de sessão fechada com o custo médio já mudado: o estorno ao
+       custo original, a média refeita, o pagamento estornado, sem movimento de caixa, a auditoria com a forma e o
+       `pendente_fase_4`, a projeção gravada e puxada pelo terminal de origem no `operacao`, a prévia, a forma faltando,
+       o vale e o motivo curto 422, a já cancelada 409; a sessão aberta 422; o pendente no caixa pelo heartbeat e o
+       `venda.cancelada` do caixa em `erro` na nuvem com o terminal em dia, que deixa de bloquear depois de descartado;
+       o offline com eventos pendentes e a versão 0.13.0 — 409 sem a confirmação, 200 com ela e o `venda.cancelada` do
+       caixa depois como `CANCELAMENTO_DUPLO` com a gaveta e sem estoque; o "Definir" posterior com a compensação; a
+       troca e o documento fiscal bloqueados sem projeção; dois cancelamentos ao mesmo tempo; 403 sem a permissão e com
+       a loja não permitida, 404; a gravação 403 com só `vendas.cancelar`, a prévia 200; o razão e o `recalcular-saldos`
+       idênticos no fim).
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio
