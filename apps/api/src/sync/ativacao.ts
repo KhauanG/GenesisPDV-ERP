@@ -47,6 +47,7 @@ import { ErroSync } from './erros.js';
 import { FLUXOS } from './fluxos.js';
 import { dentroDaMargem, margemNumeracaoCaixa } from './numeracao.js';
 import { fecharSessoesDoTerminal } from './sessoes-caixa.js';
+import { PROTOCOLO_ATUAL } from './terminal.js';
 import { compararVersoes } from './versoes-app.js';
 
 export const AAD_CHAVE_BACKUP = 'terminais_pdv.chave_backup_cifrada';
@@ -546,7 +547,8 @@ export class AtivacaoTerminais {
       fluxos: [...FLUXOS],
       chave_backup_cifrada: cifrarParaTerminal(chaveBackupPublica, 'x25519', chaveBackup).toString('base64'),
       intervalos: INTERVALOS_PADRAO,
-      versao_protocolo: 1,
+      // O mesmo `protocolo.atual` do heartbeat e do estado: a janela do protocolo num ponto só (decisão 224).
+      versao_protocolo: PROTOCOLO_ATUAL,
       agora_servidor: new Date().toISOString(),
     };
   }

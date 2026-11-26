@@ -4065,7 +4065,7 @@ emitidos no ERP usam o caixa `00` (dono `nuvem`).
 | `status` | `varchar(10)` | não | `'ativo'` | `ativo`, `utilizado`, `expirado`, `cancelado` |
 | `origem_tipo` | `varchar(8)` | não | — | `troca`, `manual`, `venda` |
 | `origem_id` | `uuid` | sim | — | Troca ou venda de origem (sem FK) |
-| `conferencia_hash` | `varchar(100)` | sim | — | Resumo criptográfico do código de conferência de 4 dígitos impresso no vale (D96, `pdv.vale_exige_conferencia`); o código em si nunca é guardado. Nulo = vale sem conferência. Formato do F3-B41 |
+| `conferencia_hash` | `varchar(100)` | sim | — | Resumo criptográfico do código de conferência de 4 dígitos impresso no vale (D96, `pdv.vale_exige_conferencia`); o código em si nunca é guardado. Nulo = vale sem conferência. Formato `pbkdf2-sha256$<iterações>$<sal>$<resumo>` sobre `<código>:<4 dígitos>` (F3-B5, `packages/shared/src/vales.ts`; SYNC 13.4) |
 | `emitido_em` | `timestamptz` | não | — | |
 | `emitido_por_id` | `uuid` | não | — | |
 | `cancelado_em`, `cancelado_por_id`, `motivo_cancelamento` | | sim | — | |

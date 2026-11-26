@@ -96,7 +96,7 @@ export class SyncController {
     @Req() req: RequisicaoGenesis,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const cabecalhos = lerCabecalhos(req.headers);
+    const cabecalhos = lerCabecalhos(req.headers, 'ativar');
     const r = await this.s.ativacao.ativar(validarSync(ativarSchema, corpo), {
       ip: req.ip ?? '0.0.0.0',
       requisicaoId: cabecalhos.requisicaoId,

@@ -1,0 +1,523 @@
+{
+  "descricao": "Vetores dos códigos do vale (VC…) e do cupom de troca (CT…) e do código de conferência do vale (D96), F3-B5; SYNC 13.4, MD 3.13.2. Conferidos pelo Vitest de packages/shared (vales.spec.ts) e pelo CodigoValeVetoresTests do PDV (GenesisPDV.Core.Tests). Os códigos e os resumos foram conferidos fora das duas implementações (Luhn e PBKDF2-HMAC-SHA-256 do Python).",
+  "vale": {
+    "montar": [
+      {
+        "descricao": "exemplo da SYNC 13.4",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 8,
+        "codigo": "VC010200000080"
+      },
+      {
+        "descricao": "vale do ERP (caixa 00), primeiro sequencial",
+        "loja": 1,
+        "caixa": 0,
+        "sequencial": 1,
+        "codigo": "VC010000000017"
+      },
+      {
+        "descricao": "maiores loja, caixa e sequencial (VALE_NUMERO_MAXIMO)",
+        "loja": 99,
+        "caixa": 99,
+        "sequencial": 9999999,
+        "codigo": "VC999999999991"
+      },
+      {
+        "descricao": "sequencial depois do salto de +1000 da ativação",
+        "loja": 12,
+        "caixa": 5,
+        "sequencial": 123456,
+        "codigo": "VC120501234567"
+      },
+      {
+        "descricao": "zeros à esquerda",
+        "loja": 7,
+        "caixa": 0,
+        "sequencial": 4200,
+        "codigo": "VC070000042005"
+      }
+    ],
+    "montar_recusado": [
+      {
+        "descricao": "caixa 100",
+        "loja": 1,
+        "caixa": 100,
+        "sequencial": 8
+      },
+      {
+        "descricao": "caixa negativo",
+        "loja": 1,
+        "caixa": -1,
+        "sequencial": 8
+      },
+      {
+        "descricao": "loja 0",
+        "loja": 0,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "loja 100",
+        "loja": 100,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "sequencial 0",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 0
+      },
+      {
+        "descricao": "sequencial acima de VALE_NUMERO_MAXIMO",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 10000000
+      }
+    ],
+    "conferir": [
+      {
+        "descricao": "exemplo da SYNC",
+        "lido": "VC010200000080",
+        "valido": true,
+        "codigo": "VC010200000080",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "espaços nas pontas e prefixo minúsculo",
+        "lido": "  vc010200000080 ",
+        "valido": true,
+        "codigo": "VC010200000080",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "caixa 00 (ERP)",
+        "lido": "VC010000000017",
+        "valido": true,
+        "codigo": "VC010000000017",
+        "loja": 1,
+        "caixa": 0,
+        "sequencial": 1
+      },
+      {
+        "descricao": "maiores valores",
+        "lido": "VC999999999991",
+        "valido": true,
+        "codigo": "VC999999999991",
+        "loja": 99,
+        "caixa": 99,
+        "sequencial": 9999999
+      },
+      {
+        "descricao": "DV errado",
+        "lido": "VC010200000081",
+        "valido": false,
+        "motivo": "DIGITO_VERIFICADOR"
+      },
+      {
+        "descricao": "um dígito trocado (caixa 2 → 3)",
+        "lido": "VC010300000080",
+        "valido": false,
+        "motivo": "DIGITO_VERIFICADOR"
+      },
+      {
+        "descricao": "dois dígitos vizinhos invertidos",
+        "lido": "VC010200000800",
+        "valido": false,
+        "motivo": "DIGITO_VERIFICADOR"
+      },
+      {
+        "descricao": "loja 00 com DV certo",
+        "lido": "VC000200000081",
+        "valido": false,
+        "motivo": "LOJA"
+      },
+      {
+        "descricao": "sequencial 0 com DV certo",
+        "lido": "VC010200000007",
+        "valido": false,
+        "motivo": "NUMERO"
+      },
+      {
+        "descricao": "um dígito a menos",
+        "lido": "VC01020000008",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "um dígito a mais",
+        "lido": "VC0102000000800",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "prefixo errado",
+        "lido": "VX010200000080",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "letra O no lugar do zero",
+        "lido": "VC01020000008O",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "cupom de troca lido como vale",
+        "lido": "CT01020000000000012",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "vazio",
+        "lido": "",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "LF e CR LF nas pontas (o Enter do leitor)",
+        "lido": "\nVC010200000080\r\n",
+        "valido": true,
+        "codigo": "VC010200000080",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "tab nas pontas",
+        "lido": "\tvc010200000080\t",
+        "valido": true,
+        "codigo": "VC010200000080",
+        "loja": 1,
+        "caixa": 2,
+        "sequencial": 8
+      },
+      {
+        "descricao": "BOM (U+FEFF) no começo: só espaço, tab, CR e LF saem das pontas",
+        "lido": "\uFEFFVC010200000080",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "NEL (U+0085) no fim",
+        "lido": "VC010200000080\u0085",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "espaço sem quebra (U+00A0) no fim",
+        "lido": "VC010200000080\u00A0",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "quebra de linha no meio",
+        "lido": "VC0102\n00000080",
+        "valido": false,
+        "motivo": "FORMATO"
+      }
+    ]
+  },
+  "cupom_troca": {
+    "montar": [
+      {
+        "descricao": "primeira venda do caixa 02 da loja 01",
+        "loja": 1,
+        "caixa": 2,
+        "numero": 1,
+        "codigo": "CT01020000000000012"
+      },
+      {
+        "descricao": "venda do ERP (caixa 00) na faixa de renumeração",
+        "loja": 1,
+        "caixa": 0,
+        "numero": 9000001,
+        "codigo": "CT01000000090000017"
+      },
+      {
+        "descricao": "maiores valores (NUMERO_VENDA_MAXIMO)",
+        "loja": 99,
+        "caixa": 99,
+        "numero": 999999999999,
+        "codigo": "CT99999999999999996"
+      },
+      {
+        "descricao": "número do meio",
+        "loja": 3,
+        "caixa": 4,
+        "numero": 123456789,
+        "codigo": "CT03040001234567893"
+      }
+    ],
+    "montar_recusado": [
+      {
+        "descricao": "caixa 100",
+        "loja": 1,
+        "caixa": 100,
+        "numero": 1
+      },
+      {
+        "descricao": "loja 0",
+        "loja": 0,
+        "caixa": 2,
+        "numero": 1
+      },
+      {
+        "descricao": "número 0",
+        "loja": 1,
+        "caixa": 2,
+        "numero": 0
+      },
+      {
+        "descricao": "número acima de NUMERO_VENDA_MAXIMO",
+        "loja": 1,
+        "caixa": 2,
+        "numero": 1000000000000
+      }
+    ],
+    "conferir": [
+      {
+        "descricao": "cupom certo",
+        "lido": "CT03040001234567893",
+        "valido": true,
+        "codigo": "CT03040001234567893",
+        "loja": 3,
+        "caixa": 4,
+        "numero": 123456789
+      },
+      {
+        "descricao": "espaços e minúsculas",
+        "lido": " ct01020000000000012 ",
+        "valido": true,
+        "codigo": "CT01020000000000012",
+        "loja": 1,
+        "caixa": 2,
+        "numero": 1
+      },
+      {
+        "descricao": "maiores valores",
+        "lido": "CT99999999999999996",
+        "valido": true,
+        "codigo": "CT99999999999999996",
+        "loja": 99,
+        "caixa": 99,
+        "numero": 999999999999
+      },
+      {
+        "descricao": "um dígito do número da venda trocado",
+        "lido": "CT03040001834567893",
+        "valido": false,
+        "motivo": "DIGITO_VERIFICADOR"
+      },
+      {
+        "descricao": "dois dígitos vizinhos invertidos",
+        "lido": "CT03040001234567983",
+        "valido": false,
+        "motivo": "DIGITO_VERIFICADOR"
+      },
+      {
+        "descricao": "loja 00 com DV certo",
+        "lido": "CT00000000000000018",
+        "valido": false,
+        "motivo": "LOJA"
+      },
+      {
+        "descricao": "número 0 com DV certo",
+        "lido": "CT01020000000000004",
+        "valido": false,
+        "motivo": "NUMERO"
+      },
+      {
+        "descricao": "um dígito a menos",
+        "lido": "CT0304000123456789",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "vale lido como cupom de troca",
+        "lido": "VC010200000080",
+        "valido": false,
+        "motivo": "FORMATO"
+      },
+      {
+        "descricao": "CR LF no fim",
+        "lido": "CT03040001234567893\r\n",
+        "valido": true,
+        "codigo": "CT03040001234567893",
+        "loja": 3,
+        "caixa": 4,
+        "numero": 123456789
+      },
+      {
+        "descricao": "BOM (U+FEFF) no começo",
+        "lido": "\uFEFFCT03040001234567893",
+        "valido": false,
+        "motivo": "FORMATO"
+      }
+    ]
+  },
+  "conferencia": {
+    "digitos": 4,
+    "iteracoes_padrao": 100000,
+    "iteracoes_minimo": 10000,
+    "iteracoes_maximo": 1000000,
+    "resumir": [
+      {
+        "descricao": "iterações padrão",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "sal_hex": "000102030405060708090a0b0c0d0e0f",
+        "iteracoes": 100000,
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY"
+      },
+      {
+        "descricao": "sal só com 0xff (base64url com - e _)",
+        "codigo_vale": "VC120501234567",
+        "conferencia": "9999",
+        "sal_hex": "ffffffffffffffffffffffffffffffff",
+        "iteracoes": 100000,
+        "resumo": "pbkdf2-sha256$100000$_____________________w$H1G5SzMxHiJiSzrdA15n1VGqn6tYqNGQLEGmwsbYfcc"
+      },
+      {
+        "descricao": "vale do ERP, conferência 0000 e o mínimo de iterações",
+        "codigo_vale": "VC010000000017",
+        "conferencia": "0000",
+        "sal_hex": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "iteracoes": 10000,
+        "resumo": "pbkdf2-sha256$10000$obLD1OX2BxgpOktcbX6PkA$gWd2h4hhiV96Iqg3E5iN3SfubZGI0Gwi568-FpVAR1U"
+      }
+    ],
+    "resumir_recusado": [
+      {
+        "descricao": "código do vale com LF no fim",
+        "codigo_vale": "VC010200000080\n",
+        "conferencia": "0427"
+      },
+      {
+        "descricao": "conferência com LF no fim",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427\n"
+      },
+      {
+        "descricao": "conferência com 3 dígitos",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "427"
+      },
+      {
+        "descricao": "código do vale curto",
+        "codigo_vale": "VC0102",
+        "conferencia": "0427"
+      },
+      {
+        "descricao": "código do vale em minúsculas (o resumo usa o código normalizado)",
+        "codigo_vale": "vc010200000080",
+        "conferencia": "0427"
+      }
+    ],
+    "conferir": [
+      {
+        "descricao": "dígitos certos",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": true
+      },
+      {
+        "descricao": "dígitos certos, iterações mínimas",
+        "codigo_vale": "VC010000000017",
+        "conferencia": "0000",
+        "resumo": "pbkdf2-sha256$10000$obLD1OX2BxgpOktcbX6PkA$gWd2h4hhiV96Iqg3E5iN3SfubZGI0Gwi568-FpVAR1U",
+        "valido": true
+      },
+      {
+        "descricao": "um dígito errado",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0428",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "resumo de outro vale (o código entra no resumo)",
+        "codigo_vale": "VC010000000017",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "conferência com 3 dígitos",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "conferência com letra",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "04a7",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "iterações abaixo do mínimo, mesmo com o resumo certo",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$9999$AAECAwQFBgcICQoLDA0ODw$3Qof-vkh-GhMhllmauGSJ-hhrgr5Ef9ZG9StVQKwsMw",
+        "valido": false
+      },
+      {
+        "descricao": "iterações acima do máximo, mesmo com o resumo certo",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$1000001$AAECAwQFBgcICQoLDA0ODw$d7YOHC2zvi01NOLSViGa8ef_3IPSoxLLK5YwP-PIydM",
+        "valido": false
+      },
+      {
+        "descricao": "outro algoritmo",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha512$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "resumo cortado",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJ",
+        "valido": false
+      },
+      {
+        "descricao": "resumo vazio",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "",
+        "valido": false
+      },
+      {
+        "descricao": "resumo com LF no fim",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY\n",
+        "valido": false
+      },
+      {
+        "descricao": "código do vale com LF no fim",
+        "codigo_vale": "VC010200000080\n",
+        "conferencia": "0427",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      },
+      {
+        "descricao": "conferência com LF no fim",
+        "codigo_vale": "VC010200000080",
+        "conferencia": "0427\n",
+        "resumo": "pbkdf2-sha256$100000$AAECAwQFBgcICQoLDA0ODw$ikJeRxkRQc7UOPfs4DsxnbzhKgJRKFj4QIXFxhkGzJY",
+        "valido": false
+      }
+    ]
+  }
+}

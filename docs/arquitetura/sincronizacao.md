@@ -3769,6 +3769,14 @@ antigo e o primeiro vale do novo teriam o mesmo código (violação de `uq_vales
 caixa `00`. A composição está no modelo 3.13.2 (`vales.codigo`) e no PDV 23.2; um "UUID v7 encurtado + DV" não
 garantiria unicidade em 11 dígitos.
 
+| Regra (F3-B5) | Detalhe |
+|---|---|
+| Onde está | `packages/shared/src/vales.ts` (`montarCodigoVale`, `conferirCodigoVale`) e `GenesisPDV.Core/Vales/CodigoVale.cs`, com os mesmos vetores (`packages/shared/testes/sync/vale.codigo.vetores.json`) |
+| Limites | Loja 1–99, caixa 0–99, sequencial 1 a `VALE_NUMERO_MAXIMO` (9.999.999); montar fora deles é erro de programação |
+| Leitura | Sem espaço, tab, CR e LF nas pontas (só esses: o BOM e o NEL não saem, igual na nuvem e no caixa) e com o prefixo em qualquer caixa de letra; o DV (Luhn sobre os 11 dígitos) é conferido antes dos limites, para um dígito trocado aparecer sempre como erro de digitação; loja `00` e sequencial 0 são recusados |
+| Cupom de troca (D95) | `CT` + loja (2) + caixa (2) + número da venda (12, até `NUMERO_VENDA_MAXIMO`, inclusive a faixa de renumeração) + DV Luhn sobre os 16 dígitos (`montarCupomTroca`, `conferirCupomTroca`): um erro de digitação não acha outra venda |
+| Código de conferência (D96) | 4 dígitos aleatórios impressos no vale, pedidos no uso com `pdv.vale_exige_conferencia`. A nuvem e o caixa guardam só o resumo (`vales.conferencia_hash`): `pbkdf2-sha256$<iterações>$<sal>$<resumo>`, PBKDF2-HMAC-SHA-256 de `<código do vale>:<4 dígitos>` com sal de 16 bytes por vale (base64url sem `=`, 87 caracteres com as 100.000 iterações padrão; a conferência aceita de 10.000 a 1.000.000). README da API › decisão 224 |
+
 ### 13.5 Número de comanda
 
 | Modo | Regra |
@@ -4098,6 +4106,7 @@ antiga (cancelar, trocar) consultam a API quando online.
 | Mudanças compatíveis não mudam a versão | Campo novo opcional na resposta, tabela nova num fluxo, coluna nova numa projeção, tipo de evento novo, código de erro novo (o PDV trata código desconhecido pela classe HTTP) |
 | Janela de suporte | A API atende o protocolo atual e o anterior por pelo menos **12 meses**; `POST /sync/push` aceita o anterior ao anterior por **18 meses** (para esvaziar outboxes de caixas esquecidos) |
 | Fora da janela | `426 PROTOCOLO_NAO_SUPORTADO` em pull/heartbeat; push só pela recuperação assistida (22.3) |
+| Como a API conta (F3-B5) | `JANELA_PROTOCOLO` em `apps/api/src/sync/terminal.ts`: o atual e, para cada anterior, a data em que deixou de ser o atual (a API com o seguinte em produção). O anterior vale em todo endpoint por 12 meses dessa data; o push aceita também o anterior ao anterior, até 18 meses depois de cada um deixar de ser o atual. Um protocolo abaixo do atual sem data (o `0`, que nunca existiu) está fora: `426` com `protocolo_minimo`. O cabeçalho ausente, negativo ou não inteiro continua `400 REQUISICAO_INVALIDA`, e o inteiro acima de `Number.MAX_SAFE_INTEGER` passou a ser também (antes do F3-B5 era atendido como o atual); acima do atual, dentro desse limite, é atendido como o atual (a ordem de implantação não deixa acontecer). O `protocolo.minimo` do heartbeat é o do pull. Hoje só existe o protocolo `1` (README da API › decisão 224) |
 | Ordem de implantação | **API primeiro, PDV depois**: nenhuma versão do PDV é publicada antes de a API em produção aceitar seus `versao_schema` e protocolo |
 
 ### 17.3 Versão mínima do aplicativo

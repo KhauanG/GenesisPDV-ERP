@@ -89,7 +89,8 @@ describe('fixtures do protocolo de sincronização', () => {
     // `erros.json` tem teste próprio abaixo; `argon2.vetores.json` é conferido pela API (senhas.spec) e pelo PDV; os
     // payloads de evento (`*.payload.json`) e `eventos.conferencias.json` ficam com `eventos.spec.ts`, salvo o payload
     // da auditoria, que é da Fase 0 e só passa por aqui; `caixa.apuracao.vetores.json` é do `vendas.spec.ts`, do
-    // teste de integração das consultas (API) e do `ApuracaoVetoresTests` (PDV).
+    // teste de integração das consultas (API) e do `ApuracaoVetoresTests` (PDV); `vale.codigo.vetores.json` é do
+    // `vales.spec.ts` e do `CodigoValeVetoresTests` (PDV).
     const arquivos = readdirSync(pasta).filter(
       (f) => f.endsWith('.json') && (!f.endsWith('.payload.json') || f in SCHEMAS),
     );
@@ -100,6 +101,7 @@ describe('fixtures do protocolo de sincronização', () => {
         'argon2.vetores.json',
         'eventos.conferencias.json',
         'caixa.apuracao.vetores.json',
+        'vale.codigo.vetores.json',
       ].sort(),
     );
   });

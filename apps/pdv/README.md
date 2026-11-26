@@ -4314,3 +4314,24 @@ reimpresso continua o original, com o número do caixa.
       sem handshake, o recurso indisponível sem handshake e disponível com o anúncio, e o lote que leva a ação da R3 só
       depois do handshake que a anuncia, com o comodato ainda de fora) e o `CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem` (as ações da fase do caixa são as do shared).
       Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova do PDV; o PDV instalado não muda de comportamento.
+97. **Códigos do vale e do cupom de troca e o código de conferência do vale no Core** (F3-B5; SYNC 13.4, MD 3.13.2,
+    D95 e D96; README da API › decisão 224; `GenesisPDV.Core/Vales/CodigoVale.cs`). A mesma regra do
+    `packages/shared/src/vales.ts`, conferida pelos mesmos vetores (`vale.codigo.vetores.json`, ligado ao
+    `GenesisPDV.Core.Tests` como o da apuração): um código ou um resumo diferente entre o caixa e a nuvem faria o vale
+    emitido de um lado ser recusado do outro.
+    - **`CodigoVale`**: `MontarVale(loja, caixa, sequencial)` e `MontarCupomTroca(loja, caixa, numeroVenda)` (fora dos
+      limites, `ArgumentOutOfRangeException`), `ConferirVale`/`ConferirCupomTroca` (devolvem um `CodigoLido` com o
+      código normalizado e as partes, ou o `MotivoCodigoInvalido`: formato, DV, loja 00 ou número 0, o DV antes dos
+      limites) e `DigitoLuhn`. A leitura tira das pontas só espaço, tab, CR e LF (não o `Trim()`, que tira o NEL U+0085
+      e não o BOM, ao contrário do `trim()` do JS) e passa a maiúsculas só as letras ASCII; os padrões terminam em `\z`,
+      não em `$` (no .NET o `$` casa antes de um `\n` final, e no JS não).
+    - **`ConferenciaVale`**: `Gerar()` (4 dígitos do `RandomNumberGenerator.GetInt32`, sem viés), `Resumir` (PBKDF2 do
+      `Rfc2898DeriveBytes.Pbkdf2`, SHA-256, 100.000 iterações, sal de 16 bytes) e `Conferir` (iterações de 10.000 a
+      1.000.000, `CryptographicOperations.FixedTimeEquals`; entrada inválida dá `false`). Tudo da BCL: nenhum pacote novo.
+    - Só a regra: nenhuma tela, evento, migração EF, `Esquema.g.cs` nem versão do PDV muda (quem emite e lê o vale no
+      caixa é do F3-B41/F3-B46, pelo `RecursoDisponivel` da decisão 96). O PDV instalado não muda de comportamento. A
+      janela do protocolo da API (decisão 224 dela) não muda nada para o caixa: todos mandam o protocolo 1.
+    - **Testes.** `CodigoValeVetoresTests` (os vetores do vale, do cupom e da conferência; as constantes iguais às do
+      shared; qualquer dígito trocado recusado; o `\n` no fim, o BOM e o NEL recusados como no shared; o sorteio e o resumo
+      novo) e o `ContratosTests` do Sync, que agora sabe
+      que o arquivo novo da pasta é do Core.

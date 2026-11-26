@@ -42,10 +42,11 @@ public class ContratosTests
     {
         var arquivos = Directory.GetFiles(Fixtures.Pasta("sync"), "*.json").Select(Path.GetFileName).Order(StringComparer.Ordinal);
         // erros.json tem teste próprio, os *.payload.json e eventos.conferencias.json são do ContratosEventosTests,
-        // argon2.vetores.json é dos testes do login offline (LoginOfflineTests) e caixa.apuracao.vetores.json é do
-        // ApuracaoVetoresTests (GenesisPDV.Core.Tests).
+        // argon2.vetores.json é dos testes do login offline (LoginOfflineTests), caixa.apuracao.vetores.json é do
+        // ApuracaoVetoresTests e vale.codigo.vetores.json é do CodigoValeVetoresTests (os dois no GenesisPDV.Core.Tests).
         var cobertos = Mensagens.Select(m => m.Data.Item1)
             .Append("erros.json").Append("argon2.vetores.json").Append("eventos.conferencias.json").Append("caixa.apuracao.vetores.json")
+            .Append("vale.codigo.vetores.json")
             .Concat(ContratosEventosTests.Payloads)
             .Order(StringComparer.Ordinal);
         Assert.Equal(cobertos, arquivos);

@@ -2880,7 +2880,7 @@ estadual, municipal, fonte e chave).
 |---|---|---|
 | DANFE NFC-e | Toda venda em loja NFC-e (seção 18.5) | FISCAL |
 | Comprovantes TEF (via cliente / estabelecimento) | Após o cupom, por transação | PDV-3 |
-| **Cupom de troca** | Se **Imprime cupom de troca** ligado: após o cupom, automático; senão sob demanda (`Ctrl+Shift+T` logo após a venda ou pela Gestão de vendas). Sem preços; itens e quantidades; código de barras `CT` + id curto da venda; "Válido para troca até dd/mm/aaaa" = data da venda + **Dias de validade do cupom de troca** | PDV-2 |
+| **Cupom de troca** | Se **Imprime cupom de troca** ligado: após o cupom, automático; senão sob demanda (`Ctrl+Shift+T` logo após a venda ou pela Gestão de vendas). Sem preços; itens e quantidades; código de barras `CT` + loja (2) + caixa (2) + número da venda (12) + DV Luhn (sincronizacao.md 13.4; `GenesisPDV.Core/Vales/CodigoVale.cs`, F3-B5); "Válido para troca até dd/mm/aaaa" = data da venda + **Dias de validade do cupom de troca** | PDV-2 |
 | Comprovante de crediário / crédito funcionário | 2 vias com parcelas e assinatura | PDV-2 |
 | Vale-compra / vale-troca | Na emissão: código em barras, valor, saldo, validade, **frases de bloqueio e rodapé do vale compra** (aba Vendas) | PDV-2 |
 | Comprovantes de abertura, sangria, reforço | Se **Imprime sangria automaticamente** (2 vias com assinatura de operador e de quem retira); senão sob demanda | PDV-1 |
@@ -3305,7 +3305,9 @@ flowchart TD
   nova venda for menor que o crédito, o restante vira vale-troca impresso (ou dinheiro, com permissão).
 - **Vale-troca**: código = `VC` + `lojas.codigo` (2 dígitos) + `numero_caixa` (2) + `sequencias_locais['vale']`
   (7) + DV **Luhn** (1) sobre os 11 dígitos anteriores (sincronizacao.md 13.4; ex.: loja 1, caixa 2, sequencial 8 →
-  `VC010200000080`), único sem consultar a nuvem. Gravado na tabela `vales` (inserção local, `tipo = 'vale_troca'`,
+  `VC010200000080`; a regra e os vetores no `CodigoVale` do Core, F3-B5), único sem consultar a nuvem. Com
+  `pdv.vale_exige_conferencia` (D96), o vale sai também com o código de conferência de 4 dígitos (`ConferenciaVale`),
+  impresso e guardado só como resumo. Gravado na tabela `vales` (inserção local, `tipo = 'vale_troca'`,
   `origem_tipo = 'troca'`) + `movimentos_vale` (`emissao`). O vale de troca sobe **dentro do `troca.registrada`**
   (sem `vale.emitido`, que é só para emissão avulsa — senão a nuvem contaria a emissão duas vezes). Impresso com as
   **frases de bloqueio e rodapé do vale compra**. Validade = data de emissão + **Data de Expiração do Vale Compra**

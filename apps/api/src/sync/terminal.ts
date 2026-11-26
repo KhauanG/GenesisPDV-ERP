@@ -13,8 +13,64 @@ import type { ContextoEmpresa } from '../tenancy/contexto.js';
 import type { EmpresaResolvida, ResolvedorEmpresas } from '../tenancy/resolvedor.js';
 import { ErroSync } from './erros.js';
 
-export const PROTOCOLO_ATUAL = 1;
-export const PROTOCOLO_MINIMO = 1;
+/**
+ * Janela de suporte do protocolo de sincronização (SYNC 17.2; F3-B5, README da API › decisão 224). O protocolo só muda
+ * numa mudança incompatível de endpoint ou de envelope (raro); campo, tabela, tipo de evento ou código de erro novos
+ * não mudam a versão. Quando o atual passar a N + 1, a data em que a API com o N + 1 entrou em produção vai em
+ * `substituidoEm[N]`; a partir dela:
+ * - o protocolo anterior (N) continua atendido em todos os endpoints por pelo menos `MESES_PROTOCOLO_ANTERIOR`;
+ * - o `POST /sync/push` aceita também o anterior ao anterior (N − 1) até `MESES_PROTOCOLO_PUSH` depois de ele deixar de
+ *   ser o atual, para esvaziar a outbox de um caixa esquecido;
+ * - fora disso, `426 PROTOCOLO_NAO_SUPORTADO` (no push, o que sobrar vai pela recuperação assistida, SYNC 22.3).
+ * Um protocolo sem data em `substituidoEm` e abaixo do atual nunca existiu em produção (o 0, por exemplo): fora da
+ * janela. Acima do atual não acontece pela ordem de implantação (API primeiro, PDV depois) e é atendido como o atual,
+ * como sempre foi.
+ */
+export interface JanelaProtocolo {
+  atual: number;
+  /** Protocolo → quando deixou de ser o atual (ISO 8601). */
+  substituidoEm: Readonly<Record<number, string>>;
+}
+
+export const JANELA_PROTOCOLO: JanelaProtocolo = { atual: 1, substituidoEm: {} };
+export const MESES_PROTOCOLO_ANTERIOR = 12;
+export const MESES_PROTOCOLO_PUSH = 18;
+
+export const PROTOCOLO_ATUAL = JANELA_PROTOCOLO.atual;
+
+/** Endpoint para a janela do protocolo: os do terminal autenticado e a ativação (que ainda não tem terminal). */
+export type EndpointProtocolo = EndpointSync | 'ativar';
+
+function somarMeses(data: Date, meses: number): Date {
+  const d = new Date(data.getTime());
+  d.setUTCMonth(d.getUTCMonth() + meses);
+  return d;
+}
+
+/** O protocolo informado pelo PDV está na janela de suporte do endpoint (SYNC 17.2). */
+export function protocoloAceito(
+  protocolo: number,
+  endpoint: EndpointProtocolo,
+  agora: Date = new Date(),
+  janela: JanelaProtocolo = JANELA_PROTOCOLO,
+): boolean {
+  if (protocolo >= janela.atual) return true;
+  const substituido = janela.substituidoEm[protocolo];
+  if (substituido === undefined) return false;
+  const [anteriores, meses] = endpoint === 'push' ? [2, MESES_PROTOCOLO_PUSH] : [1, MESES_PROTOCOLO_ANTERIOR];
+  return janela.atual - protocolo <= anteriores && agora < somarMeses(new Date(substituido), meses);
+}
+
+/** O menor protocolo que o endpoint aceita agora (o `protocolo.minimo` do heartbeat é o do pull). */
+export function protocoloMinimo(
+  endpoint: EndpointProtocolo,
+  agora: Date = new Date(),
+  janela: JanelaProtocolo = JANELA_PROTOCOLO,
+): number {
+  let minimo = janela.atual;
+  while (minimo > 0 && protocoloAceito(minimo - 1, endpoint, agora, janela)) minimo -= 1;
+  return minimo;
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([A-Za-z0-9_-]{43})$/;
@@ -113,15 +169,27 @@ export interface TerminalAutenticado {
   ip: string | null;
 }
 
-/** Cabeçalhos obrigatórios do protocolo (SYNC 2.2). */
-export function lerCabecalhos(cabecalhos: IncomingHttpHeaders): CabecalhosSync {
+/**
+ * Cabeçalhos obrigatórios do protocolo (SYNC 2.2) e a janela do protocolo (17.2) para o endpoint. O
+ * `X-Genesis-Protocolo` ausente, negativo, que não é inteiro ou acima de `Number.MAX_SAFE_INTEGER` é cabeçalho
+ * inválido (400); um inteiro fora da janela, como o 0, é `426 PROTOCOLO_NAO_SUPORTADO`. O `agora` e a `janela` só são
+ * passados pelos testes (a regra do push chega pelo endpoint que o chamador informa).
+ */
+export function lerCabecalhos(
+  cabecalhos: IncomingHttpHeaders,
+  endpoint: EndpointProtocolo,
+  agora: Date = new Date(),
+  janela: JanelaProtocolo = JANELA_PROTOCOLO,
+): CabecalhosSync {
   const h = (nome: string) => {
     const v = cabecalhos[nome];
     return typeof v === 'string' ? v.trim() : '';
   };
   const faltando: string[] = [];
-  const protocolo = Number(h('x-genesis-protocolo'));
-  if (!Number.isInteger(protocolo) || protocolo < 1) faltando.push('X-Genesis-Protocolo');
+  const protocoloBruto = h('x-genesis-protocolo');
+  // O vazio não pode virar 0 (`Number('')`): ausente continua 400; o resto como sempre foi lido (`Number`).
+  const protocolo = protocoloBruto === '' ? Number.NaN : Number(protocoloBruto);
+  if (!Number.isSafeInteger(protocolo) || protocolo < 0) faltando.push('X-Genesis-Protocolo');
   const versaoApp = h('x-genesis-app-versao');
   if (!/^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/.test(versaoApp)) faltando.push('X-Genesis-App-Versao');
   const plataforma = h('x-genesis-plataforma');
@@ -135,9 +203,9 @@ export function lerCabecalhos(cabecalhos: IncomingHttpHeaders): CabecalhosSync {
   if (faltando.length) {
     throw ErroSync.invalida('Cabeçalhos do protocolo ausentes ou inválidos.', { cabecalhos: faltando });
   }
-  if (protocolo < PROTOCOLO_MINIMO) {
+  if (!protocoloAceito(protocolo, endpoint, agora, janela)) {
     throw new ErroSync('PROTOCOLO_NAO_SUPORTADO', 'Atualize o aplicativo do PDV.', {
-      protocolo_minimo: PROTOCOLO_MINIMO,
+      protocolo_minimo: protocoloMinimo(endpoint, agora, janela),
     });
   }
   return {
@@ -154,10 +222,12 @@ export class AutenticacaoTerminal {
   constructor(
     private readonly controle: BancoControle,
     private readonly resolvedor: ResolvedorEmpresas,
+    /** Só os testes trocam: a janela futura confere que a regra do push chega pelo endpoint de cada rota. */
+    private readonly janela: JanelaProtocolo = JANELA_PROTOCOLO,
   ) {}
 
   async autenticar(req: RequisicaoGenesis, endpoint: EndpointSync): Promise<TerminalAutenticado> {
-    const cabecalhos = lerCabecalhos(req.headers);
+    const cabecalhos = lerCabecalhos(req.headers, endpoint, new Date(), this.janela);
     const m = String(req.headers.authorization ?? '').match(/^Bearer\s+(\S+)$/i);
     const partes = m?.[1]?.match(TOKEN);
     if (!partes) throw ErroSync.token();

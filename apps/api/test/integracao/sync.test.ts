@@ -24,6 +24,7 @@ import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AAD_CHAVE_BACKUP } from '../../src/sync/ativacao.js';
 import { decifrarDoTerminal } from '../../src/seguranca/ecies.js';
+import { PROTOCOLO_ATUAL } from '../../src/sync/terminal.js';
 import { tocar } from '../../src/sync/toque.js';
 import {
   conectar,
@@ -216,7 +217,7 @@ describe('POST /sync/ativar (SYNC 3)', () => {
       numeracoes: { venda: { ultimo_numero: 0 }, vale: { ultimo_numero: 0 } },
       sequencia_terminal: { ultima_recebida: 0 },
       fluxos: ['configuracao', 'acesso', 'referencia', 'catalogo', 'estoque', 'pessoas', 'operacao'],
-      versao_protocolo: 1,
+      versao_protocolo: PROTOCOLO_ATUAL,
     });
     expect(JSON.stringify(r.body)).not.toContain(emp.nomeBanco);
     terminalId = r.body.terminal_id;

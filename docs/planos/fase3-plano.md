@@ -646,6 +646,14 @@ corpo do PR-17.
   `CT` com um dígito trocado recusado).
 - **Pronto:** vetores verdes na API e no PDV. (O `atualizar_ate` do heartbeat fica todo no F3-B31.)
 - **Depende de:** —.
+- [**Feito no F3-B5** (README da API › decisão 224, do PDV › 97): o resumo da conferência é
+  `pbkdf2-sha256$<iterações>$<sal>$<resumo>` (PBKDF2-HMAC-SHA-256 sobre `<código do vale>:<4 dígitos>`, sal de 16 bytes,
+  100.000 iterações; a conferência aceita de 10.000 a 1.000.000), pela Web Crypto no shared e pela BCL no Core
+  (`GenesisPDV.Core/Vales/CodigoVale.cs`); o F3-B41 usa o formato (a MD 3.13.2 já aponta para ele). A leitura do código
+  tira os espaços e aceita o prefixo minúsculo, e confere o DV antes dos limites (motivos `FORMATO`, `DIGITO_VERIFICADOR`,
+  `LOJA`, `NUMERO`). A janela do protocolo é `JANELA_PROTOCOLO` (o atual e a data em que cada anterior deixou de sê-lo) com
+  `protocoloAceito`/`protocoloMinimo`; o `X-Genesis-Protocolo: 0` passa de 400 a 426, o ausente continua 400. Versão do
+  PDV mais antiga em uso tratada como 0.10.0 até a lista do dono, que vai no corpo do PR-17 (todas mandam o protocolo 1).]
 
 #### F3-B6 – Idempotência das requisições online (SYNC 20.4)
 - **Tamanho:** M · **Rigor:** completo (protocolo, concorrência)

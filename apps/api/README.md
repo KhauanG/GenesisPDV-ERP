@@ -7689,6 +7689,60 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        reenvio; a v3 sem efeito). O `relogio.test.ts` trocou a ação inventada (que não é mais erro) por uma
        reservada ao servidor.
 
+224. **Códigos do vale e do cupom de troca, o código de conferência do vale e a janela do protocolo** (F3-B5; plano
+     `docs/planos/fase3-plano.md`; SYNC 13.4 e 17.2, MD 3.13.2; D95 e D96; `packages/shared/src/vales.ts`,
+     `sync/terminal.ts`). Só a regra e os vetores: nenhum evento, tela ou tabela muda (quem emite, lê e grava o vale é do
+     F3-B41 em diante). Escolhas técnicas, sem pergunta ao dono:
+     - **Vale** (`montarCodigoVale`/`conferirCodigoVale`): `VC` + loja (1–99) + caixa (0–99; o `00` é o caixa do sistema,
+       dos vales do ERP) + sequencial (1 a `VALE_NUMERO_MAXIMO`) + DV Luhn sobre os 11 dígitos, como a SYNC 13.4 e o
+       `ck_vales_codigo`. **Cupom de troca** (`montarCupomTroca`/`conferirCupomTroca`): `CT` + loja + caixa + número da
+       venda com 12 dígitos (1 a `NUMERO_VENDA_MAXIMO`, inclusive a faixa de renumeração) + DV Luhn sobre os 16. Montar
+       fora dos limites é erro de programação (`RangeError`); conferir o que foi lido nunca lança: devolve as partes ou o
+       motivo (`FORMATO`, `DIGITO_VERIFICADOR`, `LOJA` 00 ou `NUMERO` 0), com o DV conferido **antes** dos limites (um
+       dígito trocado sempre aparece como erro de digitação). A leitura tira das pontas só espaço, tab, CR e LF
+       (lista explícita: o `trim()` do JS e o `Trim()` do .NET divergem no BOM e no NEL) e aceita o prefixo em minúsculas
+       (leitor configurado de outro jeito ou digitação); o código devolvido é o normalizado. Os padrões do PDV terminam
+       em `\z` (o `$` do .NET casaria antes de um `\n` final, o do JS não), e os vetores cobrem o `\n` final, o BOM e o
+       NEL.
+     - **Código de conferência do vale** (D96): 4 dígitos sorteados pelo gerador criptográfico, sem viés
+       (`gerarCodigoConferenciaVale`), e o resumo `pbkdf2-sha256$<iterações>$<sal>$<resumo>` (PBKDF2-HMAC-SHA-256, sal
+       de 16 bytes por vale, resumo de 32 bytes, base64url sem `=`; 87 caracteres com as 100.000 iterações padrão, no
+       `varchar(100)` de `vales.conferencia_hash`) sobre `<código do vale>:<4 dígitos>`: o resumo copiado de um vale não
+       serve em outro. As iterações ficam no resumo e a conferência aceita de 10.000 a 1.000.000 (sobe o custo depois sem
+       invalidar vale impresso, e um resumo forjado não prende a CPU); a comparação é em tempo constante; entrada
+       inválida dá `false`. Com 10.000 combinações, quem tem o banco descobre os 4 dígitos de um vale por força bruta de
+       qualquer jeito; o PBKDF2 só encarece isso (minutos por vale em vez de milissegundos) e o sal impede uma tabela
+       pronta. A proteção da D96 é contra quem **não** tem o banco: o caixa pede os 4 dígitos que só o vale impresso
+       traz (o limite de tentativas no caixa é do F3-B46). A Web Crypto (`globalThis.crypto`) roda no Node e no
+       navegador, então o `@genesis/shared` continua servindo ao ERP; o resumo é assíncrono.
+     - **Vetores** em `packages/shared/testes/sync/vale.codigo.vetores.json` (o exemplo da SYNC `VC010200000080`, o
+       caixa 100 e o sequencial 0 recusados, o DV errado, um dígito trocado e dois vizinhos invertidos, o `CT` com um
+       dígito trocado, os resumos com sal fixo, o resumo de outro vale e as iterações fora da faixa). Os códigos e os
+       resumos foram conferidos fora das duas implementações (Luhn e `hashlib.pbkdf2_hmac` do Python) antes de entrar no
+       arquivo; o `vales.spec.ts` (shared) e o `CodigoValeVetoresTests` do PDV (README do PDV › decisão 97) leem o
+       mesmo arquivo.
+     - **Janela do protocolo** (SYNC 17.2): `JANELA_PROTOCOLO` (`atual` e, por protocolo anterior, a data em que deixou
+       de ser o atual) e `protocoloAceito(protocolo, endpoint)`: o anterior vale em todos os endpoints por 12 meses
+       (`MESES_PROTOCOLO_ANTERIOR`), e o `POST /sync/push` aceita também o anterior ao anterior, até 18 meses
+       (`MESES_PROTOCOLO_PUSH`) depois de cada um deixar de ser o atual; fora disso, `426 PROTOCOLO_NAO_SUPORTADO` com o
+       `protocolo_minimo` do endpoint. Protocolo abaixo do atual sem data (o 0, que nunca existiu) está fora; acima do
+       atual continua atendido como o atual (a ordem de implantação, API antes do PDV, não deixa acontecer). O
+       `protocolo.minimo` do heartbeat sai de `protocoloMinimo('pull')` e o `versao_protocolo` da resposta da ativação, do
+       mesmo `PROTOCOLO_ATUAL` (subir o protocolo é só trocar a `JANELA_PROTOCOLO`). **Duas mudanças de comportamento:**
+       o `X-Genesis-Protocolo: 0`, antes cabeçalho inválido (400), agora é 426, como a SYNC pede para fora da janela; e o
+       inteiro acima de `Number.MAX_SAFE_INTEGER` (`9007199254740993`, `1e21`), antes atendido como o atual, agora é 400
+       (o `Number.isSafeInteger` no lugar do `Number.isInteger`). O ausente continua 400 (o vazio não vira 0) e todo
+       inteiro de 1 até o `MAX_SAFE_INTEGER` é lido como antes. Hoje só existe o protocolo 1, então nada muda para o PDV
+       instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no corpo do PR-17: todos mandam
+       `1`). A ativação usa a regra dos endpoints comuns (12 meses).
+     - **Testes.** `packages/shared/src/vales.spec.ts` (os vetores, a volta de todo código montado, qualquer dígito
+       trocado recusado, o sorteio e o resumo novo), `sync/terminal.spec.ts` (o 0 em todos os endpoints, o ausente, o
+       negativo, o não inteiro e o inteiro grande em 400, e uma janela futura injetada com o 3 atual: o 2 por 12 meses em
+       todo endpoint e por 18 no push, o 1 só no push até os 18 meses, três atrás nunca; a mesma janela pelo
+       `lerCabecalhos` e pelo `AutenticacaoTerminal.autenticar`, que confere que cada rota repassa o seu endpoint) e, em `test/integracao/token.test.ts`, o
+       `X-Genesis-Protocolo: 0` pela API de verdade em estado, pull, heartbeat, push e ativação (426 no envelope do
+       protocolo), o ausente em 400 e o 1 atendido.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio
