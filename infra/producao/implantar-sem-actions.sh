@@ -243,13 +243,15 @@ processo_vivo() {
 # resumo). Aqui, a cada volta, a conferência do processo vem ANTES da leitura do que falta (um descritor aberto uma
 # vez só: o `cat` continua de onde a leitura anterior parou), e a última leitura é feita com ele já terminado: o que
 # ele escreveu antes de sair já está no arquivo. Falha (1) só se não der para abrir o log ou para escrever na saída
-# (o terminal que caiu); quem chama decide.
+# (o terminal que caiu); quem chama decide. A saída fechada é conferida à parte: o `cat` do coreutils em Rust (o
+# padrão do Ubuntu 26.04) sai com 0 quando ela está fechada (como todo programa em Rust, abre o /dev/null no lugar
+# dela), e o laço seguiria até o processo terminar.
 mostrar_ate_o_fim() {
   local pid=$1 log=$2 fd vivo=1
   exec {fd}<"$log" || return 1
   while [ "$vivo" = 1 ]; do
     processo_vivo "$pid" || vivo=0
-    if ! cat <&"$fd"; then
+    if ! cat <&"$fd" || [ ! -e /dev/fd/1 ]; then
       exec {fd}<&-
       return 1
     fi

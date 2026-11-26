@@ -707,8 +707,10 @@ declare -F processo_vivo mostrar_ate_o_fim >/dev/null || falha "o script sem as 
 FUNCOES_LOG=$(declare -f processo_vivo mostrar_ate_o_fim)
 SLEEP_REAL=$(command -v sleep)
 export FUNCOES_LOG SLEEP_REAL
-# mostrar_ate_o_fim <pid> <log> num bash à parte, com tempo limite (o de antes não terminava com o zumbi).
-seguir() { timeout 20 bash -c 'eval "$FUNCOES_LOG"; mostrar_ate_o_fim "$1" "$2"' _ "$@"; }
+# mostrar_ate_o_fim <pid> <log> num bash à parte, com tempo limite (o de antes não terminava com o zumbi). Com
+# FECHAR_SAIDA=1, a saída fecha dentro desse bash: fechada antes do `timeout`, o do coreutils em Rust (o do Ubuntu
+# 26.04) a reabre no /dev/null, como todo programa em Rust, e a saída fechada não chegaria à função.
+seguir() { timeout 20 bash -c '[ -z "${FECHAR_SAIDA:-}" ] || exec >&-; eval "$FUNCOES_LOG"; mostrar_ate_o_fim "$1" "$2"' _ "$@"; }
 # O processo $1 já terminou: sumiu ou é zumbi (o estado Z do /proc).
 terminou() { [ ! -e "/proc/$1" ] || [[ $(cat "/proc/$1/stat" 2>/dev/null) =~ \)\ [ZX]\  ]]; }
 L=$T/seguir.log
@@ -776,15 +778,29 @@ for i in $(seq 1 30); do
   [ "$(wc -l <<<"$SAIDA")" = 51 ] && [ "$(tail -n 1 <<<"$SAIDA")" = "fim $i" ] ||
     falha "rodada $i: o log inteiro, até o fim: $SAIDA"
 done
-# A saída que não aceita escrita (o terminal que caiu): para de mostrar com 1, sem esperar o processo.
-"$SLEEP_REAL" 30 &
-vivo=$!
-CODIGO=0
-seguir "$vivo" "$L" >&- 2>/dev/null || CODIGO=$?
-kill "$vivo" 2>/dev/null || true
-wait "$vivo" 2>/dev/null || true
-[ "$CODIGO" = 1 ] || falha "a saída fechada: esperava parar com 1 (saiu $CODIGO)"
-confere "o log até o fim: a conferência do processo antes de cada leitura e uma leitura depois do fim (a ordem ruim forçada e 30 rodadas), o zumbi conta como terminado e a saída fechada para de mostrar"
+# A saída que não aceita escrita (o terminal que caiu): para de mostrar com 1, sem esperar o processo. Fechada, com o
+# `cat` do sistema e com um dublê do `cat` do coreutils em Rust (o do Ubuntu 26.04, que sai com 0 quando a saída está
+# fechada: abre o /dev/null no lugar dela).
+mkdir -p "$T/bin-cat-rust"
+CAT_REAL=$(command -v cat)
+export CAT_REAL
+cat >"$T/bin-cat-rust/cat" <<'DUBLE'
+#!/usr/bin/env bash
+"$CAT_REAL" "$@" 2>/dev/null || [ ! -e /dev/fd/1 ]
+DUBLE
+chmod +x "$T/bin-cat-rust/cat"
+for qual in sistema rust; do
+  caminho=$PATH
+  [ "$qual" = sistema ] || caminho=$T/bin-cat-rust:$PATH
+  "$SLEEP_REAL" 30 &
+  vivo=$!
+  CODIGO=0
+  FECHAR_SAIDA=1 PATH=$caminho seguir "$vivo" "$L" 2>/dev/null || CODIGO=$?
+  kill "$vivo" 2>/dev/null || true
+  wait "$vivo" 2>/dev/null || true
+  [ "$CODIGO" = 1 ] || falha "a saída fechada (o cat do $qual): esperava parar com 1 (saiu $CODIGO; 124 = não parou)"
+done
+confere "o log até o fim: a conferência do processo antes de cada leitura e uma leitura depois do fim (a ordem ruim forçada e 30 rodadas), o zumbi conta como terminado e a saída fechada para de mostrar (também com o cat do coreutils em Rust)"
 
 # --- Fora do terminal ---------------------------------------------------------------------------------------------
 # O "terminal" (uma sessão própria, como a do terminal do navegador) morre por SIGHUP e SIGKILL com o implantar.sh no
