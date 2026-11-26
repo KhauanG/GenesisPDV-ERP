@@ -157,8 +157,107 @@ public sealed class GravadorOutboxTests
     [InlineData("não é json", "caixa.aberto", 1, false)]
     [InlineData(null, "auditoria.registros", 1, true)]
     [InlineData("{}", "terminal.configuracao_alterada", 1, true)]
+    // F3-B4: sem handshake só a v1; acima dela, só anunciada (também nos tipos da 1B).
+    [InlineData(null, "venda.finalizada", 2, false)]
+    [InlineData("", "venda.finalizada", 2, false)]
+    [InlineData(null, "auditoria.registros", 2, false)]
+    [InlineData("""{"auditoria.registros":[1,2]}""", "auditoria.registros", 2, true)]
     public void Tipo_anunciado_confere_tipo_e_versao(string? versoes, string tipo, int versao, bool aceito) =>
         Assert.Equal(aceito, GravadorOutbox.TipoAnunciado(versoes, tipo, versao));
+
+    [Theory]
+    // A maior versão comum: o caixa sabe montar 1, 2 e 3; a nuvem anunciou 1 e 2.
+    [InlineData("""{"venda.finalizada":[1,2]}""", "1,2,3", 2)]
+    // A nuvem já aceita a v3 e o caixa só monta até a v2 (a API vem antes do PDV, SYNC 17.2).
+    [InlineData("""{"venda.finalizada":[1,2,3]}""", "1,2", 2)]
+    // A v2 aceita pela API e ainda não anunciada (meio da onda) fica de fora: a v1.
+    [InlineData("""{"venda.finalizada":[1]}""", "1,2", 1)]
+    // Sem nenhum handshake: sempre a v1, mesmo que a API nova já aceite a v2.
+    [InlineData(null, "1,2,3", 1)]
+    [InlineData("", "1,2", 1)]
+    // Nenhuma versão comum: o tipo não é aplicado pela nuvem (nulo; a tela não deixa começar).
+    [InlineData("""{"caixa.aberto":[1]}""", "1,2", null)]
+    [InlineData("""{"venda.finalizada":[3]}""", "1,2", null)]
+    [InlineData(null, "2", null)]
+    public void Versao_para_gravar_e_a_maior_comum_anunciada(string? versoes, string conhecidas, int? esperada)
+    {
+        var lista = conhecidas.Split(',').Select(n => int.Parse(n, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+        Assert.Equal(esperada, GravadorOutbox.VersaoParaGravar(versoes, "venda.finalizada", lista));
+    }
+
+    [Theory]
+    [InlineData("""{"venda.finalizada":[1,2]}""", "venda.finalizada", 2, true)]
+    [InlineData("""{"venda.finalizada":[1]}""", "venda.finalizada", 2, false)]
+    [InlineData("""{"venda.finalizada":[1]}""", "venda.finalizada", 1, true)]
+    // Sem handshake, o recurso fica indisponível, ao contrário da gravação da v1.
+    [InlineData(null, "venda.finalizada", 2, false)]
+    [InlineData(null, "venda.finalizada", 1, false)]
+    [InlineData("não é json", "venda.finalizada", 1, false)]
+    [InlineData(null, "auditoria.registros", 1, true)]
+    public void Recurso_disponivel_so_com_o_anuncio(string? versoes, string tipo, int versao, bool disponivel) =>
+        Assert.Equal(disponivel, GravadorOutbox.RecursoDisponivel(versoes, tipo, versao));
+
+    [Fact]
+    public async Task Grava_a_maior_versao_comum_anunciada_e_sem_handshake_a_v1_com_o_recurso_indisponivel()
+    {
+        // Sem handshake: a fábrica escolhe a v1 e a tela nova da onda (venda.finalizada v2) fica fechada.
+        using (var semHandshake = await AmbienteSync.CriarAsync())
+        {
+            Assert.True((await semHandshake.AtivarAsync()).Ativado);
+            var caixa = Caixa(semHandshake);
+            Assert.Equal(1, await caixa.VersaoParaGravarAsync("venda.finalizada", [1, 2], Ct));
+            Assert.False(await caixa.RecursoDisponivelAsync("venda.finalizada", 2, Ct));
+            Assert.True(await caixa.TipoAceitoAsync("venda.finalizada", 1, Ct));
+            Assert.False(await caixa.TipoAceitoAsync("venda.finalizada", 2, Ct));
+        }
+
+        // A API anuncia a v2 no handshake: a fábrica passa a gravar a v2 e o recurso abre.
+        using var amb = await ProntoAsync(api => api.VersoesSchema["venda.finalizada"] = [1, 2]);
+        var depois = Caixa(amb);
+        Assert.Equal(2, await depois.VersaoParaGravarAsync("venda.finalizada", [1, 2, 3], Ct));
+        Assert.Equal(1, await depois.VersaoParaGravarAsync("caixa.aberto", [1, 2], Ct));
+        Assert.True(await depois.RecursoDisponivelAsync("venda.finalizada", 2, Ct));
+        Assert.False(await depois.RecursoDisponivelAsync("venda.finalizada", 3, Ct));
+    }
+
+    [Fact]
+    public async Task Acoes_de_auditoria_da_fase_3_so_sobem_com_o_recurso_da_onda_anunciado()
+    {
+        // A API de hoje (sem o venda.finalizada v2 anunciado): a venda suspensa fica no caixa e o login sobe.
+        using var amb = await ProntoAsync();
+        var daAtivacao = await amb.Outbox.AuditoriaPendenteAsync(Ct);
+        await amb.Terminal.RegistrarAuditoriaAsync("login", CaixaDaFixture.Maria, descricao: "Login de 'maria'", localizacao: "pdv.login", ct: Ct);
+        await amb.Terminal.RegistrarAuditoriaAsync("venda_suspensa", CaixaDaFixture.Maria, descricao: "Venda suspensa", localizacao: "pdv.venda", ct: Ct);
+        await amb.Terminal.RegistrarAuditoriaAsync("comodato_emprestado", CaixaDaFixture.Maria, descricao: "2 cascos", localizacao: "pdv.venda", ct: Ct);
+        Assert.Equal(daAtivacao + 1, await amb.Outbox.AuditoriaPendenteAsync(Ct));
+        Assert.True(await amb.Outbox.GerarAuditoriaAsync(forcar: true, ct: Ct));
+        var primeiro = Assert.Single(await AcoesDosLotesAsync(amb));
+        Assert.Contains("login", primeiro);
+        Assert.DoesNotContain("venda_suspensa", primeiro);
+        Assert.DoesNotContain("comodato_emprestado", primeiro);
+        Assert.False(await amb.Outbox.GerarAuditoriaAsync(forcar: true, ct: Ct));
+
+        // O handshake anuncia a onda R3: a venda suspensa sobe no próximo lote; o comodato (onda R4) continua no caixa.
+        amb.Api.VersoesSchema["venda.finalizada"] = [1, 2];
+        using (var ciclo = amb.CriarCiclo())
+        {
+            await ciclo.HandshakeAsync(Ct);
+        }
+
+        Assert.Equal(1, await amb.Outbox.AuditoriaPendenteAsync(Ct));
+        Assert.True(await amb.Outbox.GerarAuditoriaAsync(forcar: true, ct: Ct));
+        Assert.Equal(new[] { "venda_suspensa" }, (await AcoesDosLotesAsync(amb))[1]);
+        Assert.Equal(0, await amb.Outbox.AuditoriaPendenteAsync(Ct));
+    }
+
+    /// <summary>As ações de cada lote <c>auditoria.registros</c> gravado no outbox, na ordem dos lotes.</summary>
+    private static async Task<List<string[]>> AcoesDosLotesAsync(AmbienteSync amb)
+    {
+        await using var db = amb.Fabrica.CreateDbContext();
+        var lotes = await db.EventosSaida.AsNoTracking().Where(e => e.Tipo == OutboxSync.TipoAuditoria)
+            .OrderBy(e => e.SequenciaTerminal).Select(e => e.Payload).ToListAsync(Ct);
+        return [.. lotes.Select(p => JsonNode.Parse(p)!["registros"]!.AsArray().Select(r => r!["acao"]!.GetValue<string>()).ToArray())];
+    }
 
     [Fact]
     public async Task Hora_do_envelope_e_monotonica_e_marca_relogio_regrediu_quando_nao_aplica()

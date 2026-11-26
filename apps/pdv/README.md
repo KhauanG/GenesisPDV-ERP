@@ -4281,3 +4281,36 @@ reimpresso continua o original, com o número do caixa.
     da venda paga e a devolução em dinheiro. `venda_recuperada`, que o caixa já grava só localmente (a venda
     interrompida por uma queda), é também o nome da ação da venda suspensa recuperada (F3-B23): quando o caixa passar
     a enviá-la, sobem as duas. Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova.
+
+96. **A versão do evento, o portão dos recursos da onda e as ações de auditoria da Fase 3** (F3-B4; SYNC 17.5 e 9.22;
+    plano da Fase 3 › Padrões, "O PDV escolhe a versão"; README da API › decisão 223; `GravadorOutbox.cs`,
+    `OutboxSync.cs`). Só o mecanismo: nenhum evento do caixa muda de versão ainda.
+    - **A versão que a fábrica grava** é a **maior versão comum anunciada** (`GravadorOutbox.VersaoParaGravar`): a maior
+      das que o caixa sabe montar que está no `versoes_schema` do último handshake. Sem handshake (coluna nula ou vazia),
+      **sempre a v1**: a v1 nunca sai do anúncio, toda API que tem o tipo a aplica, e a versão nova só é anunciada no fim
+      da onda. Nenhuma versão comum dá nulo (a tela não deixa começar a função, como o T13). O `TipoAnunciado` (o portão
+      da gravação, decisão 51) continua aceitando a v1 sem handshake, e uma versão acima da v1 passa a exigir o anúncio,
+      também nos tipos da 1B (`TiposSempreAceitos` vale para a v1).
+    - **`RecursoDisponivel(tipo, versao)`** é o portão das telas novas de uma onda e das ações novas de auditoria que elas
+      gravam: o recurso existe só com o tipo na versão anunciado no último handshake. Ao contrário da gravação da v1, **sem
+      handshake o recurso fica indisponível**: o caixa recém-atualizado que abre sem internet continua como a versão
+      anterior até falar com a nuvem. O `RepositorioCaixa` expõe os dois (`RecursoDisponivelAsync`, com o terminal de
+      demonstração sempre disponível, e `VersaoParaGravarAsync`) para as telas dos blocos seguintes.
+    - **As ações de auditoria da Fase 3** (`CatalogosNuvem.AcoesAuditoriaFase3`) só sobem no lote com o recurso da onda
+      delas anunciado (`CatalogosNuvem.AcoesEnviaveis`, lido a cada lote): a onda R3 (preço, F8, acréscimo, lote vencido,
+      peso digitado, venda suspensa e recuperada, limite de valor) pelo `venda.finalizada` v2, e o comodato (onda R4) pelo
+      `vasilhame.movimentado` v2. Uma API anterior ao F3-B3 recusaria o lote inteiro com a ação; a API do F3-B4 grava a
+      desconhecida como `acao_desconhecida`, mas a ordem de publicação não garante que o caixa só fale com ela. Até o
+      anúncio, a ação gravada fica no caixa (a Central mostra "só local"; com o recurso anunciado e ainda sem lote, "a
+      enviar", pelo mesmo `versoes_schema` do último handshake, porque o próximo lote a leva; já num lote, pelo lote:
+      `DescritorAuditoria.Envio`, com o `versoes_schema` lido pelo `ConsultasAuditoriaLocal`). Isso inclui a
+      `venda_recuperada` que o caixa grava só localmente desde a 1C: as anteriores sobem juntas quando a R3 for
+      anunciada (o F3-B23 distingue a da venda suspensa pelo `depois`). A associação ação → recurso é escolha técnica do
+      bloco; o bloco que anunciar outra versão para uma ação muda aqui.
+    - **`acao_desconhecida`** entra no `CatalogosNuvem.AcoesAuditoria` (é do catálogo da nuvem e reservada ao servidor;
+      o caixa nunca a grava, e o Histórico de uso tem a frase dela, "Ação de outra versão registrada").
+    - **Testes.** `DescritorAuditoriaTests.Marca_de_envio_da_acao_da_fase3_pelo_recurso_anunciado` (só local antes do
+      anúncio, a enviar depois dele, pelo lote quando já num lote), `GravadorOutboxTests` (a maior versão comum, a v1
+      sem handshake, o recurso indisponível sem handshake e disponível com o anúncio, e o lote que leva a ação da R3 só
+      depois do handshake que a anuncia, com o comodato ainda de fora) e o `CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem` (as ações da fase do caixa são as do shared).
+      Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova do PDV; o PDV instalado não muda de comportamento.

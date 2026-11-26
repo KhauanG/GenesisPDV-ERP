@@ -118,6 +118,10 @@ export const ACOES_AUDITORIA = [
   // Projeção do saldo (ou o `custo_medio` do produto) refeita pelo razão no `db:recalcular-saldos --corrigir` (Fase 2,
   // F2-B3): a linha de saldo em `antes`/`depois`; nunca altera movimento.
   'recalcular_saldos',
+  // Ação do caixa que esta versão da nuvem não conhece (F3-B4; SYNC 9.22): o `auditoria.registros` grava a linha com
+  // esta ação e o texto original (até 64 caracteres) na descrição, e abre o `AUDITORIA_ACAO_DESCONHECIDA`, em vez de
+  // recusar o lote inteiro. Só o servidor a grava.
+  'acao_desconhecida',
   ...ACOES_AUDITORIA_FASE3,
 ] as const;
 export type AcaoAuditoria = (typeof ACOES_AUDITORIA)[number];
@@ -127,6 +131,12 @@ const CONJUNTO_ACOES_AUDITORIA: ReadonlySet<string> = new Set(ACOES_AUDITORIA);
 export function ehAcaoAuditoria(valor: unknown): valor is AcaoAuditoria {
   return typeof valor === 'string' && CONJUNTO_ACOES_AUDITORIA.has(valor);
 }
+
+/** A ação gravada no lugar da que a nuvem não conhece (F3-B4; README da API › decisão 223). */
+export const ACAO_AUDITORIA_DESCONHECIDA = 'acao_desconhecida' satisfies AcaoAuditoria;
+
+/** Até quantos caracteres da ação original do caixa ficam na auditoria (e o máximo que o lote aceita na `acao`). */
+export const ACAO_AUDITORIA_ORIGINAL_MAX = 64;
 
 /**
  * Ações do catálogo que só o servidor grava (SYNC 9.22): o estado da revogação do terminal, o token anterior
@@ -143,6 +153,7 @@ export const ACOES_AUDITORIA_SO_SERVIDOR = [
   'permissoes_alteradas',
   'pix_recebedor_alterado',
   'recalcular_saldos',
+  'acao_desconhecida',
 ] as const satisfies readonly AcaoAuditoria[];
 
 const CONJUNTO_ACOES_SO_SERVIDOR: ReadonlySet<string> = new Set(ACOES_AUDITORIA_SO_SERVIDOR);

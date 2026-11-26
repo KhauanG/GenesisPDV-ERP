@@ -1,5 +1,6 @@
 import {
   aceitaMarcarPerdido,
+  ALERTA_AUDITORIA_ACAO_DESCONHECIDA,
   ALERTA_EVENTO_COM_ERRO,
   ALERTA_EVENTO_DESCARTADO,
   ALERTA_EVENTO_DIVERGENTE,
@@ -304,17 +305,19 @@ export function DetalheTerminal() {
               </Group>
             )}
           {/* O relógio suspeito por evento (SYNC 12.4; C16): o "Ciente" depois de acertar o relógio do computador. O
-              desvio do heartbeat (RELOGIO_DESVIO) não tem botão: fecha sozinho quando o desvio volta a até 2 min. */}
-          {a.tipo === ALERTA_RELOGIO_SUSPEITO && pode('terminais.gerenciar') && (
-            <Group mt="xs" gap="xs">
-              <Button
-                size="xs"
-                onClick={() => setResolvendo({ alertaId: a.id, tipo: a.tipo, resolucao: '' })}
-              >
-                Ciente
-              </Button>
-            </Group>
-          )}
+              desvio do heartbeat (RELOGIO_DESVIO) não tem botão: fecha sozinho quando o desvio volta a até 2 min. A
+              auditoria com ação desconhecida (F3-B4): o "Ciente" depois de atualizar a API. */}
+          {(a.tipo === ALERTA_RELOGIO_SUSPEITO || a.tipo === ALERTA_AUDITORIA_ACAO_DESCONHECIDA) &&
+            pode('terminais.gerenciar') && (
+              <Group mt="xs" gap="xs">
+                <Button
+                  size="xs"
+                  onClick={() => setResolvendo({ alertaId: a.id, tipo: a.tipo, resolucao: '' })}
+                >
+                  Ciente
+                </Button>
+              </Group>
+            )}
           {/* O de token anterior (SYNC 3.7) é resolvido depois de conferir a máquina; os de terminal fecham sozinhos. */}
           {a.tipo === ALERTA_TOKEN_ANTERIOR_REUTILIZADO && (
             <Group mt="xs" gap="xs">
@@ -426,7 +429,9 @@ export function DetalheTerminal() {
                       ? 'Ex.: vendas recuperadas conferidas no relatório. Vai para a auditoria.'
                       : resolvendo?.tipo === ALERTA_RELOGIO_SUSPEITO
                         ? 'Ex.: data, hora e fuso do computador acertados com o técnico. Vai para a auditoria.'
-                        : 'Ex.: backup restaurado nesta mesma máquina. Se não reconhecer o uso, revogue o terminal.'
+                        : resolvendo?.tipo === ALERTA_AUDITORIA_ACAO_DESCONHECIDA
+                          ? 'Ex.: API atualizada; as próximas chegam com a ação certa. Vai para a auditoria.'
+                          : 'Ex.: backup restaurado nesta mesma máquina. Se não reconhecer o uso, revogue o terminal.'
             }
             maxLength={255}
             autosize

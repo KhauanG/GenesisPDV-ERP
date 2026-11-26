@@ -7629,6 +7629,66 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        pelo seed), o `permissoes.spec.ts` (matriz), o `configuracoes.spec.ts`, os de contrato no shared e na API, o
        `menu.test.ts` do ERP e o `CicloOnlineTests` do PDV.
 
+223. **Versões de payload por tipo, upcasters e a auditoria com ação desconhecida** (F3-B4; plano
+     `docs/planos/fase3-plano.md` › Padrões, "Versões por onda" e "Auditoria com ação desconhecida"; SYNC 9.22 e 17.5;
+     `sync/handlers/comum.ts`, `sync/aplicacao.ts`, `sync/eventos.ts`, `terminais/fila-decisao.ts`). Só o mecanismo:
+     nenhum tipo muda de versão e `versoes_schema` continua igual (o `venda.finalizada` v2 é da onda R3, F3-B13 em diante;
+     o anúncio, do F3-B30). Escolhas técnicas, sem pergunta ao dono:
+     - **Catálogo.** O formato `CatalogoHandlers` (tipo → versão → handler) não muda; o `HandlerEvento` ganha `versoes`
+       (as anteriores que ele aplica: cada uma com o schema do contrato e o `upcast` para a **seguinte**, vN → vN+1) e
+       `anunciada` (padrão `true`). `resolverHandler` acha quem aplica a versão do evento: o handler da própria versão ou o
+       primeiro acima cujo encadeamento cobre cada passo; versão acima da maior conhecida (ou um buraco no encadeamento)
+       continua `SCHEMA_DESCONHECIDO` (transitório: o evento espera a API ser atualizada). `converterPayload` valida cada
+       passo no schema da versão em que está, converte e, no fim, valida no schema do handler.
+     - **O upcast é puro e roda a cada aplicação.** No push, no Reprocessar, no "Aplicar com novo número" e na tarefa de
+       "Reprocessar todos": todos passam por `aplicarEvento`, sobre o envelope remontado da linha (`envelopeDaLinha`), e
+       `eventos_recebidos.payload` continua o original. Corrigir um upcaster e reprocessar resolve o evento que foi a `erro`
+       por defeito dele. A `FilaDecisao` recebe o catálogo pelo construtor (o padrão é o `HANDLERS`; os testes injetam o
+       tipo de teste), como o `PushSync`.
+     - **Falha da conversão é `PAYLOAD_INVALIDO`** (erro de regra, nunca `ERRO_INTERNO`): o payload fora do schema da
+       versão de origem dá a mensagem de sempre ("Payload fora do schema do tipo."); o convertido fora do schema da versão
+       seguinte, "Payload convertido da vN fora do schema da vM.", e a exceção de um upcaster com defeito, "Falha na
+       conversão do payload da vN para a vN+1.", com `versao_origem`, `versao` e a mensagem da exceção nos detalhes. A
+       conversão é determinística: tentar de novo não resolveria, e o `ERRO_INTERNO` gastaria as tentativas do push. O
+       `ErroRegraEvento`/`ErroTransitorioEvento` lançado de propósito pelo upcaster sobe como está, mas só depois da
+       retenção por dependência (8.5), como o payload inválido.
+     - **A versão de origem chega ao handler** (`ContextoHandler.versaoOrigem`): é com ela que as regras de recusa da
+       versão de origem continuam valendo (o `venda.finalizada` v1 com `emprestados > 0` não vira comodato no Reprocessar).
+       O `entidades` e o `dependencias` do handler leem o payload já convertido.
+     - **`versoes_schema` lista só as versões anunciadas** (`versoesSchemaAceitas`, formato `Record<string, number[]>`
+       mantido): a do handler e as das `versoes`, menos as `anunciada: false`; o tipo sem versão anunciada sai da lista.
+       A versão aceita e ainda não anunciada é aplicada se chegar, mas nenhum PDV a grava (o caixa escolhe a maior comum
+       anunciada, README do PDV › decisão 96). A v1 de `venda.finalizada` e de `vasilhame.movimentado` nunca sai: o
+       `contratos-eventos.spec.ts` confere, junto com a regra de que toda versão (a do handler e as das `versoes`) valida
+       com o schema do contrato (`CONTRATOS_EVENTOS[tipo].versoes`) e de que toda fixture `*.payload.json` passa pelo
+       upcast até a versão do handler (fixture `<tipo>.vN[.variante].payload.json`; sem `.vN`, a v1).
+     - **Auditoria com ação desconhecida** (SYNC 9.22). O `auditoria.registros` não passa pelo T13, então o caixa mais novo
+       que a API, com uma ação que ela não conhece, travava o lote para sempre (`PAYLOAD_INVALIDO`). Agora a ação fora de
+       `ACOES_AUDITORIA` é gravada como **`acao_desconhecida`**, com o texto original na frente da descrição
+       (`[Ação do caixa desconhecida nesta versão da nuvem: "…"]`, até 64 caracteres; o lote aceita a `acao` até 64, a
+       coluna continua com 40) e o alerta **`AUDITORIA_ACAO_DESCONHECIDA`** (aviso, no terminal, um aberto por terminal e
+       ação, com as ocorrências somadas em `dados`; reaplicar o mesmo lote não soma, porque só conta o registro inserido;
+       no máximo 20 ações diferentes abrem alerta por lote, para um caixa com defeito não encher a tela),
+       que aparece no detalhe e na listagem de terminais com o "Ciente" (README do ERP › decisão 87). O resultado do
+       evento traz `acoes_desconhecidas`. As **reservadas ao servidor** continuam recusando o lote inteiro, e a própria
+       `acao_desconhecida` entra nelas (só o servidor a grava: um caixa que a mandasse forjaria a marca). A ação vai na
+       descrição, e não no `antes`/`depois`, porque esses são o estado do registro (a tela do ERP os mostra como diferença).
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) não vê diferença: `versoes_schema` é o mesmo, todos os tipos continuam na v1 e as ações que ele
+       manda são do catálogo. O caixa com a ação de uma versão futura, que antes travava o lote, agora sobe.
+     - **Testes.** `aplicacao.spec.ts` (um tipo v1/v2 injetado: a v1 pelo upcast com a versão de origem, a v2 direto, a
+       v3 transitória, a regra da v1 depois do upcast, as três falhas de conversão, a v2 não anunciada fora da lista, o
+       encadeamento v1 → v2 → v3 e o `resolverHandler`), `contratos-eventos.spec.ts` (fixtures pelo upcast, a v1 sempre
+       anunciada) e `test/integracao/versoes-eventos.test.ts` (o payload original gravado; o v1 em `erro` por defeito do
+       upcaster, que o Reprocessar resolve depois da correção; o v1 recusado pela regra da v1 que continua recusado; o
+       lote com ação desconhecida aplicado, com a linha, a descrição e o alerta, idempotente, e o "Ciente"; a ação de 64
+       caracteres pelo banco e o teto de 20 alertas por lote; a reservada ao servidor recusada; a v2 aceita e não
+       anunciada fora do `versoesSchemaAceitas` do catálogo do teste; o `dependencias` e o `entidades` do handler pelo
+       payload convertido, com a v1 retida gravando a entidade e retendo quem depende dela; o erro de regra do upcaster
+       retido pela dependência e, sem ela, com o próprio código; o transitório do upcaster transitório, aplicado no
+       reenvio; a v3 sem efeito). O `relogio.test.ts` trocou a ação inventada (que não é mais erro) por uma
+       reservada ao servidor.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

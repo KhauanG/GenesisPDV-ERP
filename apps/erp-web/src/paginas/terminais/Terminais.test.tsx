@@ -1315,6 +1315,80 @@ describe('<DetalheTerminal> (ERP 12.4)', () => {
     );
   });
 
+  it('auditoria com ação desconhecida (F3-B4): "Ciente" com terminais.gerenciar, sem botão só com o ver', async () => {
+    const u = userEvent.setup();
+    const alerta = {
+      id: '01928f3a-0000-7000-8000-0000000000ca',
+      tipo: 'AUDITORIA_ACAO_DESCONHECIDA',
+      severidade: 'aviso' as const,
+      titulo: 'Caixa 02: auditoria com ação desconhecida ("acao_de_uma_versao_futura")',
+      mensagem: 'O caixa 02 enviou registros de auditoria com uma ação que esta versão da nuvem não conhece.',
+      terminalId: T1,
+      criadoEm: minAtras(5),
+    };
+    const { chamadas } = renderizarDetalhe(DETALHE({ alertas: [alerta] }), PERMISSOES, [
+      ({ url, metodo }) =>
+        metodo === 'POST' && url.pathname === `/api/terminais/${T1}/alertas/${alerta.id}/resolver`
+          ? { corpo: DETALHE({ alertas: [] }) }
+          : undefined,
+    ]);
+    expect(await screen.findByText(alerta.titulo)).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Ciente' }));
+    expect(
+      await screen.findByText(/API atualizada; as próximas chegam com a ação certa/),
+    ).toBeInTheDocument();
+    await u.type(screen.getByLabelText(/O que foi verificado/), 'API atualizada');
+    await u.click(screen.getByRole('button', { name: 'Resolver' }));
+    await waitFor(() =>
+      expect(
+        chamadas.find((c) => c.url.pathname === `/api/terminais/${T1}/alertas/${alerta.id}/resolver`)?.corpo,
+      ).toEqual({ resolucao: 'API atualizada' }),
+    );
+    cleanup();
+
+    renderizarDetalhe(DETALHE({ alertas: [alerta] }), ['terminais.ver']);
+    expect(await screen.findByText(alerta.titulo)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ciente' })).not.toBeInTheDocument();
+  });
+
+  it('auditoria com ação desconhecida (F3-B4): na listagem, o alerta leva ao detalhe do terminal', async () => {
+    simularApi(
+      ...rotasSessao({ permissoes: PERMISSOES }),
+      ({ url }) =>
+        url.pathname === '/api/terminais'
+          ? {
+              corpo: {
+                ...LISTA,
+                alertas: [
+                  {
+                    id: '01928f3a-0000-7000-8000-0000000000cb',
+                    tipo: 'AUDITORIA_ACAO_DESCONHECIDA',
+                    severidade: 'aviso',
+                    titulo: 'Caixa 02: auditoria com ação desconhecida ("acao_futura")',
+                    mensagem: 'Atualize a API; depois, marque "Ciente".',
+                    terminalId: T1,
+                    criadoEm: minAtras(5),
+                  },
+                ],
+              },
+            }
+          : undefined,
+      ({ url }) =>
+        url.pathname === '/api/terminais/ativacoes'
+          ? { corpo: { pendentes: [], bloqueio: { bloqueado: false, falhas: 0, limite: 20, ate: null } } }
+          : undefined,
+    );
+    renderizarComSessao(<Listagem />);
+    expect(
+      await screen.findByText('Caixa 02: auditoria com ação desconhecida ("acao_futura")'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Ver o terminal' })).toHaveAttribute(
+      'href',
+      `/cadastros/pdvs/${T1}`,
+    );
+    expect(screen.queryByRole('link', { name: 'Ver eventos do terminal' })).not.toBeInTheDocument();
+  });
+
   it('Aplicar com novo número e Reprocessar todos com o código', async () => {
     const u = userEvent.setup();
     const duplicado: EventoComErro = {

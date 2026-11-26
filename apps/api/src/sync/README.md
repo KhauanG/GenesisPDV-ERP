@@ -57,9 +57,11 @@ requisicao_id } }` (SYNC 2.4, `erros.ts`). Cabeçalhos `X-Genesis-*` obrigatóri
   chave do terminal (`{cifrado_para_terminal, versao_segredo}`, uma vez por versão, com `auditoria segredo_entregue`)
   entra com o fiscal; o envelope ECIES já existe (`src/seguranca/ecies.ts`) e é usado na chave de backup da ativação.
 - **Handlers**: `auditoria.registros` (grava `auditoria` com `origem = 'pdv'` e `historico_logins`, idempotente pelo id
-  local; ação fora do catálogo → `PAYLOAD_INVALIDO`) e `terminal.configuracao_alterada` (`terminais.configuracao_local`
-  e a auditoria pelo `registrarAuditoriaPdv`); na 1C, os cinco `caixa.*` (`handlers/caixa.ts`, README da API ›
-  decisão 131). Os demais tipos do catálogo respondem `erro_temporario`
+  local; ação fora do catálogo → gravada como `acao_desconhecida`, com o texto original na descrição, e o alerta
+  `AUDITORIA_ACAO_DESCONHECIDA` no terminal; ação reservada ao servidor, `ACOES_AUDITORIA_SO_SERVIDOR`, inclusive a
+  `acao_desconhecida` → `PAYLOAD_INVALIDO`, README da API › decisão 223) e `terminal.configuracao_alterada`
+  (`terminais.configuracao_local` e a auditoria pelo `registrarAuditoriaPdv`); na 1C, os cinco `caixa.*`
+  (`handlers/caixa.ts`, README da API › decisão 131). Os demais tipos do catálogo respondem `erro_temporario`
   `SCHEMA_DESCONHECIDO`: nada é gravado e o PDV mantém o evento no outbox até a fase que o aplica (é transitório pela
   SYNC 7.2). Erro do PostgreSQL que escapa do handler vira código da SYNC 11.2 (`traduzirErroBanco`: 23505 →
   `NUMERO_VENDA_DUPLICADO` ou `AGREGADO_DIVERGENTE`, 23503 → `REFERENCIA_INEXISTENTE`, 23514 → `PAYLOAD_INVALIDO`;

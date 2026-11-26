@@ -14,7 +14,8 @@ import {
 } from './aplicacao.js';
 import type { EnvelopeEvento } from './contratos.js';
 import { ErroRegraEvento } from './erros.js';
-import type { CatalogoHandlers } from './eventos.js';
+import { versoesSchemaAceitas, type CatalogoHandlers, type ContextoHandler } from './eventos.js';
+import { converterPayload, resolverHandler } from './handlers/comum.js';
 
 const terminal: TerminalDoEvento = {
   terminalId: uuidv7(),
@@ -171,6 +172,166 @@ describe('aplicarEvento (SYNC 8.1, 8.3)', () => {
       ErroRegraEvento,
     );
     expect(log.join()).not.toContain('fn_trava_versao');
+  });
+});
+
+describe('versões por tipo e upcasters (SYNC 17.5; F3-B4)', () => {
+  const v1 = z.object({ valor: z.number() });
+  const v2 = z.object({ valor: z.number(), unidade: z.enum(['un', 'cx']) });
+  type V2 = z.infer<typeof v2>;
+
+  /**
+   * Tipo de teste com duas versões: a v2 (o handler) e a v1 pelo upcast (a v1 não tinha unidade: era sempre `un`). A
+   * v2 ainda não foi anunciada (`anunciada: false`), como no meio de uma onda. A regra da v1: valor negativo era
+   * recusado na v1 (e continua recusado para quem veio dela); na v2, o valor negativo é um estorno aceito.
+   */
+  function versionado(log: Array<{ versaoOrigem: number; payload: V2 }>, upcast?: (p: never) => unknown) {
+    return {
+      'teste.versionado': {
+        2: {
+          schema: v2,
+          anunciada: false,
+          versoes: {
+            1: { schema: v1, upcast: upcast ?? ((p: z.infer<typeof v1>): V2 => ({ ...p, unidade: 'un' })) },
+          },
+          async aplicar(ctx: ContextoHandler, p: V2) {
+            if (ctx.versaoOrigem === 1 && p.valor < 0) {
+              throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Valor negativo não existe na v1.');
+            }
+            log.push({ versaoOrigem: ctx.versaoOrigem, payload: p });
+            return { valor: p.valor, unidade: p.unidade };
+          },
+        },
+      },
+    } satisfies CatalogoHandlers;
+  }
+
+  const evento = (versao: number, payload: Record<string, unknown>) =>
+    envelope({ tipo: 'teste.versionado', versao_schema: versao, payload });
+
+  it('a v1 aplica pelo upcast (com a versão de origem) e a v2 direto; o payload do envelope não muda', async () => {
+    const log: Array<{ versaoOrigem: number; payload: V2 }> = [];
+    const handlers = versionado(log);
+    const { c, tx } = clienteFalso();
+    const ev1 = evento(1, { valor: 3 });
+    await expect(aplicarEvento(tx, c, terminal, ev1, { handlers })).resolves.toMatchObject({
+      status: 'aplicado',
+      resultado: { valor: 3, unidade: 'un' },
+    });
+    expect(ev1.payload).toEqual({ valor: 3 });
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(2, { valor: 5, unidade: 'cx' }), { handlers }),
+    ).resolves.toMatchObject({ status: 'aplicado', resultado: { valor: 5, unidade: 'cx' } });
+    expect(log).toEqual([
+      { versaoOrigem: 1, payload: { valor: 3, unidade: 'un' } },
+      { versaoOrigem: 2, payload: { valor: 5, unidade: 'cx' } },
+    ]);
+  });
+
+  it('versão acima da maior conhecida (e a 0) é SCHEMA_DESCONHECIDO transitório, sem a 7300001', async () => {
+    const { c, tx, log } = clienteFalso();
+    const handlers = versionado([]);
+    for (const versao of [3, 0]) {
+      await expect(
+        aplicarEvento(tx, c, terminal, evento(versao, { valor: 1, unidade: 'un' }), { handlers }),
+      ).rejects.toMatchObject({ name: 'ErroTransitorioEvento', codigo: 'SCHEMA_DESCONHECIDO' });
+    }
+    expect(log.join()).not.toContain('fn_trava_versao');
+  });
+
+  it('a v1 recusada pela regra da v1 continua recusada depois do upcast; na v2 o mesmo valor é aceito', async () => {
+    const log: Array<{ versaoOrigem: number; payload: V2 }> = [];
+    const handlers = versionado(log);
+    const { c, tx } = clienteFalso();
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(1, { valor: -2 }), { handlers }),
+    ).rejects.toMatchObject({
+      codigo: 'PAYLOAD_INVALIDO',
+      message: 'Valor negativo não existe na v1.',
+    });
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(2, { valor: -2, unidade: 'un' }), { handlers }),
+    ).resolves.toMatchObject({ status: 'aplicado' });
+    expect(log.map((l) => l.versaoOrigem)).toEqual([2]);
+  });
+
+  it('payload fora do schema da v1, upcaster que lança e upcaster que gera payload inválido: PAYLOAD_INVALIDO', async () => {
+    const { c, tx, log } = clienteFalso();
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(1, { valor: 'x' }), { handlers: versionado([]) }),
+    ).rejects.toMatchObject({ codigo: 'PAYLOAD_INVALIDO', message: 'Payload fora do schema do tipo.' });
+    const lanca = versionado([], () => {
+      throw new TypeError('defeito de teste no upcaster');
+    });
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(1, { valor: 1 }), { handlers: lanca }),
+    ).rejects.toMatchObject({
+      codigo: 'PAYLOAD_INVALIDO',
+      message: 'Falha na conversão do payload da v1 para a v2.',
+      detalhes: { versao_origem: 1, versao: 1, falha: 'defeito de teste no upcaster' },
+    });
+    const invalido = versionado([], (p: { valor: number }) => ({ ...p, unidade: 'litro' }));
+    await expect(
+      aplicarEvento(tx, c, terminal, evento(1, { valor: 1 }), { handlers: invalido }),
+    ).rejects.toMatchObject({
+      codigo: 'PAYLOAD_INVALIDO',
+      message: 'Payload convertido da v1 fora do schema da v2.',
+      detalhes: { versao_origem: 1, versao: 2 },
+    });
+    expect(log.join()).not.toContain('fn_trava_versao');
+  });
+
+  it('versoes_schema: a v2 aceita e não anunciada fica fora; anunciada, entra; tipo sem versão anunciada some', () => {
+    const handlers = versionado([]);
+    expect(versoesSchemaAceitas(handlers)).toEqual({ 'teste.versionado': [1] });
+    const anunciada: CatalogoHandlers = {
+      'teste.versionado': { 2: { ...handlers['teste.versionado'][2], anunciada: true } },
+    };
+    expect(versoesSchemaAceitas(anunciada)).toEqual({ 'teste.versionado': [1, 2] });
+    const novo: CatalogoHandlers = {
+      'teste.novo': { 1: { schema: v1, anunciada: false, aplicar: () => Promise.resolve({}) } },
+    };
+    expect(versoesSchemaAceitas(novo)).toEqual({});
+  });
+
+  it('resolverHandler: o próprio, o de cima com o encadeamento completo, e nenhum com um buraco', () => {
+    const h3 = {
+      schema: v2,
+      versoes: { 2: { schema: v1, upcast: (p: unknown) => p } },
+      aplicar: () => Promise.resolve({}),
+    };
+    const h1 = { schema: v1, aplicar: () => Promise.resolve({}) };
+    const catalogo: CatalogoHandlers = { 'teste.encadeado': { 1: h1, 3: h3 } };
+    expect(resolverHandler(catalogo, 'teste.encadeado', 1)).toEqual({ handler: h1, versaoHandler: 1 });
+    expect(resolverHandler(catalogo, 'teste.encadeado', 2)).toEqual({ handler: h3, versaoHandler: 3 });
+    expect(resolverHandler(catalogo, 'teste.encadeado', 3)).toEqual({ handler: h3, versaoHandler: 3 });
+    expect(resolverHandler(catalogo, 'teste.encadeado', 4)).toBeNull();
+    expect(resolverHandler({ 'teste.buraco': { 3: h3 } }, 'teste.buraco', 1)).toBeNull();
+    expect(resolverHandler(catalogo, 'teste.outro', 1)).toBeNull();
+  });
+
+  it('o encadeamento v1 → v2 → v3 passa por cada schema, na ordem', () => {
+    const passos: string[] = [];
+    const r = {
+      versaoHandler: 3,
+      handler: {
+        schema: z.object({ n: z.number(), c: z.literal(true) }),
+        versoes: {
+          1: {
+            schema: z.object({ n: z.number() }),
+            upcast: (p: { n: number }) => (passos.push('1→2'), { ...p, b: true }),
+          },
+          2: {
+            schema: z.object({ n: z.number(), b: z.literal(true) }),
+            upcast: (p: { n: number }) => (passos.push('2→3'), { n: p.n, c: true }),
+          },
+        },
+        aplicar: () => Promise.resolve({}),
+      },
+    };
+    expect(converterPayload(r, 1, { n: 7 })).toEqual({ success: true, data: { n: 7, c: true } });
+    expect(passos).toEqual(['1→2', '2→3']);
+    expect(converterPayload(r, 2, { n: 7 })).toMatchObject({ success: false, versao: 2 });
   });
 });
 

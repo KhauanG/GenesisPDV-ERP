@@ -118,13 +118,16 @@ public sealed partial class CicloOnlineTests
     {
         var enums = File.ReadAllText(Path.Combine(Fixtures.Pasta("shared"), "enums.ts"));
         // As da Fase 3 (F3-B3) entram na nuvem antes de qualquer PDV que as grave: a lista da nuvem espalha
-        // `ACOES_AUDITORIA_FASE3`, e o caixa não as envia (nem as conhece) até o recurso da onda estar disponível
-        // (F3-B4). As demais são as mesmas, na mesma ordem.
+        // `ACOES_AUDITORIA_FASE3`, e o caixa só as envia com o recurso da onda de cada uma anunciado (F3-B4,
+        // `AcoesAuditoriaFase3`). As demais são as mesmas, na mesma ordem.
         Assert.Equal(ListaTs(enums, "ACOES_AUDITORIA"), CatalogosNuvem.AcoesAuditoria);
         Assert.Contains("...ACOES_AUDITORIA_FASE3,", Declaracao(enums, "ACOES_AUDITORIA"), StringComparison.Ordinal);
         var fase3 = ListaTs(enums, "ACOES_AUDITORIA_FASE3");
         Assert.Contains("venda_suspensa", fase3);
+        Assert.Equal(fase3.Order(StringComparer.Ordinal), CatalogosNuvem.AcoesAuditoriaFase3.Keys.Order(StringComparer.Ordinal));
         Assert.Empty(fase3.Intersect(CatalogosNuvem.AcoesAuditoria, StringComparer.Ordinal));
+        // A `acao_desconhecida` (F3-B4) é do catálogo e só o servidor a grava.
+        Assert.Contains("acao_desconhecida", ListaTs(enums, "ACOES_AUDITORIA_SO_SERVIDOR"));
         Assert.Equal(ListaTs(enums, "MOTIVOS_FALHA_LOGIN"), CatalogosNuvem.MotivosFalhaLogin);
     }
 

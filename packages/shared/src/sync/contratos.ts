@@ -9,7 +9,7 @@
  * fixture e sem o record C# correspondente quebra o teste em vez de passar despercebido.
  */
 import { z } from 'zod';
-import { MOTIVOS_FALHA_LOGIN } from '../enums.js';
+import { ACAO_AUDITORIA_ORIGINAL_MAX, MOTIVOS_FALHA_LOGIN } from '../enums.js';
 
 const uuid = z.uuid();
 const instante = z.iso.datetime({ offset: true });
@@ -178,8 +178,9 @@ export const eventoSchema = z.object({
 export type EnvelopeEvento = z.infer<typeof eventoSchema>;
 
 /**
- * Payload do `auditoria.registros` v1 (SYNC 9): o `log_auditoria_local` do PDV. `acao` é texto aqui; a API recusa o
- * evento com ação fora de `ACOES_AUDITORIA` (`ehAcaoAuditoria`). O `motivo_falha` do login segue `historico_logins`
+ * Payload do `auditoria.registros` v1 (SYNC 9): o `log_auditoria_local` do PDV. `acao` é texto aqui; desde o F3-B4 a
+ * API grava a ação fora de `ACOES_AUDITORIA` como `acao_desconhecida` (com o texto original e um alerta) e recusa o
+ * evento só com uma ação reservada ao servidor (`ACOES_AUDITORIA_SO_SERVIDOR`). O `motivo_falha` do login segue `historico_logins`
  * (MD 3.3.6), que inclui as recusas próprias do login offline. A fixture `auditoria.registros.payload.json` traz o que
  * o PDV grava e passa por aqui e pelo xUnit do PDV.
  */
@@ -191,7 +192,9 @@ export const payloadAuditoriaRegistrosSchema = z.object({
         ocorrido_em: instante,
         usuario_id: uuid.nullable().optional(),
         autorizado_por_id: uuid.nullable().optional(),
-        acao: z.string().max(40),
+        // Até 64 (F3-B4): a ação de um caixa mais novo que a nuvem não conhece vira `acao_desconhecida`, com o texto
+        // original; as do catálogo cabem nos 40 da coluna.
+        acao: z.string().max(ACAO_AUDITORIA_ORIGINAL_MAX),
         entidade: z.string().min(1).max(60),
         registro_id: uuid.nullable().optional(),
         localizacao: z.string().max(60).nullable().optional(),

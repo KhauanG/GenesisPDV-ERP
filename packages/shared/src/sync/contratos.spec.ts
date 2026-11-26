@@ -4,6 +4,8 @@ import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import {
+  ACAO_AUDITORIA_DESCONHECIDA,
+  ACAO_AUDITORIA_ORIGINAL_MAX,
   ACOES_AUDITORIA,
   ACOES_AUDITORIA_FASE3,
   ACOES_AUDITORIA_SO_SERVIDOR,
@@ -285,6 +287,17 @@ describe('fixtures do protocolo de sincronização', () => {
       ).toBe(true);
     }
     expect(new Set(ACOES_AUDITORIA).size).toBe(ACOES_AUDITORIA.length);
+    // F3-B4: a ação que a nuvem não conhece vira `acao_desconhecida` (só o servidor a grava), e o lote aceita a ação
+    // original até 64 caracteres; as do catálogo cabem nos 40 da coluna.
+    expect(ehAcaoAuditoria(ACAO_AUDITORIA_DESCONHECIDA)).toBe(true);
+    expect(ehAcaoAuditoriaSoServidor(ACAO_AUDITORIA_DESCONHECIDA)).toBe(true);
+    expect(ACOES_AUDITORIA.every((a) => a.length <= 40)).toBe(true);
+    const comAcao = (acao: string) =>
+      payloadAuditoriaRegistrosSchema.safeParse({ registros: [{ ...p.registros[0], acao }] }).success;
+    expect([comAcao('a'.repeat(ACAO_AUDITORIA_ORIGINAL_MAX)), comAcao('a'.repeat(65))]).toEqual([
+      true,
+      false,
+    ]);
     const motivoInventado = { logins: [{ ...p.logins[0], motivo_falha: 'motivo_inventado' }] };
     expect(payloadAuditoriaRegistrosSchema.safeParse(motivoInventado).success).toBe(false);
   });

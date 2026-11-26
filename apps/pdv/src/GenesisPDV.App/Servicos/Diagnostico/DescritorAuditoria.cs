@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using GenesisPDV.Data.Entidades;
+using GenesisPDV.Data.Outbox;
 using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Push;
 
@@ -117,6 +118,7 @@ public static partial class DescritorAuditoria
         new("evento_reprocessado", GrupoAuditoria.Sistema, "reprocessou um registro recusado", "Registro reprocessado no ERP"),
         new("lacuna_substituida", GrupoAuditoria.Sistema, "declarou uma lacuna de sequência", "Lacuna declarada"),
         new("recalcular_saldos", GrupoAuditoria.Sistema, "recalculou os saldos", "Saldos recalculados"),
+        new("acao_desconhecida", GrupoAuditoria.Sistema, "registrou uma ação de outra versão", "Ação de outra versão registrada"),
         new("importar", GrupoAuditoria.Sistema, "importou dados", "Importação"),
         new("exportar", GrupoAuditoria.Sistema, "exportou dados", "Exportação"),
         new("efetivar", GrupoAuditoria.Sistema, "efetivou um documento", "Documento efetivado"),
@@ -268,10 +270,18 @@ public static partial class DescritorAuditoria
     /// <summary>
     /// A marca de envio: fora do catálogo da nuvem, só local; no catálogo, pelo lote em que subiu (confirmado, recusado,
     /// descartado pelo ERP — o <c>rejeitado</c> com o <c>resultado</c> do descarte — ou ainda esperando; sem lote, a enviar).
+    /// A ação da Fase 3 (<see cref="CatalogosNuvem.AcoesAuditoriaFase3"/>) sobe só com o recurso da onda anunciado
+    /// (F3-B4): já num lote, pelo lote; sem lote, a enviar com o recurso anunciado em <paramref name="versoesSchema"/> (o
+    /// <c>versoes_schema</c> do último handshake: o próximo lote a leva, como o <see cref="CatalogosNuvem.AcoesEnviaveis"/>)
+    /// e só local antes do anúncio.
     /// </summary>
-    public static SituacaoEnvio Envio(string acao, Guid? eventoId, string? statusEvento, string? resultadoEvento = null)
+    public static SituacaoEnvio Envio(
+        string acao, Guid? eventoId, string? statusEvento, string? resultadoEvento = null, string? versoesSchema = null)
     {
-        if (!CatalogosNuvem.AcoesAuditoria.Contains(acao, StringComparer.Ordinal))
+        var sobe = CatalogosNuvem.AcoesAuditoria.Contains(acao, StringComparer.Ordinal)
+                   || (CatalogosNuvem.AcoesAuditoriaFase3.TryGetValue(acao, out var recurso)
+                       && (eventoId is not null || GravadorOutbox.RecursoDisponivel(versoesSchema, recurso.Tipo, recurso.Versao)));
+        if (!sobe)
         {
             return SituacaoEnvio.SoLocal;
         }

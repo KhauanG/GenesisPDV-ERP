@@ -3157,15 +3157,20 @@ Agregado `auditoria` (id = id do lote). Enviado a cada 5 min ou 200 registros; n
 
 A nuvem grava `auditoria` (`origem = 'pdv'`, `terminal_id`, `loja_id`, `evento_id`, mesmo `id` do registro local) e
 `historico_logins` (`origem = 'pdv'`). Registro com `id` já existente → ignorado (idempotente por `pk_auditoria`).
-Ação fora de `ACOES_AUDITORIA`, ou uma das que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da
-revogação `terminal_revogado`, `token_anterior_reutilizado`, as decisões da fila `evento_descartado` e
-`evento_reprocessado`, `lacuna_substituida` e as alterações feitas só no ERP), recusa o evento (`PAYLOAD_INVALIDO`,
-com as ações em `detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria
-como estado do servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do
-10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal. As ações que o caixa da Fase 3
-vai gravar (`ACOES_AUDITORIA_FASE3`: preço alterado, F8, acréscimo, lote vencido, peso digitado, venda suspensa e
-recuperada, limite de valor, comodato) entram no catálogo da nuvem **antes** do PDV que as grava (F3-B3), e o caixa
-só as envia com o recurso da onda disponível (17.5).
+Uma das ações que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da revogação `terminal_revogado`,
+`token_anterior_reutilizado`, as decisões da fila `evento_descartado` e `evento_reprocessado`, `lacuna_substituida`,
+as alterações feitas só no ERP e a própria `acao_desconhecida`) recusa o evento (`PAYLOAD_INVALIDO`, com as ações em
+`detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria como estado do
+servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do 10.4) só aceita a
+linha que o próprio servidor gravou, nunca uma do lote do terminal. A ação **fora** de `ACOES_AUDITORIA` (o caixa mais
+novo que a API; Fase 3, F3-B4) não recusa mais o lote, que este evento não passa pelo T13 e travaria para sempre: o
+registro é gravado com a ação `acao_desconhecida` e o texto original (até 64 caracteres; o payload aceita a `acao`
+até 64) na frente da descrição, e a nuvem abre o `AUDITORIA_ACAO_DESCONHECIDA` (aviso, no terminal, um aberto por
+terminal e ação, com as ocorrências somadas, até o "Ciente"); o resultado do evento traz `acoes_desconhecidas`. As
+ações que o caixa da Fase 3 vai gravar (`ACOES_AUDITORIA_FASE3`: preço alterado, F8, acréscimo, lote vencido, peso
+digitado, venda suspensa e recuperada, limite de valor, comodato) entram no catálogo da nuvem **antes** do PDV que as
+grava (F3-B3), e o caixa só as envia com o recurso da onda disponível (17.5): a API anterior ao F3-B4 ainda recusaria
+a ação que não conhece.
 
 ### 9.23 `terminal.configuracao_alterada`
 
@@ -4150,9 +4155,10 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   `GravadorOutbox` recusa o evento de tipo ou versão não anunciados, sem gravar o fato (a abertura de caixa numa API sem
   o handler do `caixa.aberto` não acontece; a tela pergunta antes). `auditoria.registros` e
   `terminal.configuracao_alterada`, que toda API desde a 1B aplica, não dependem do anúncio. Sem nenhum handshake
-  gravado desde a atualização (coluna nula), todo tipo vale como aceito: a implantação é sempre API primeiro e o caixa
-  nunca trava por falta de internet (O18); se a API ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO`
-  (transitório). Padrão até a confirmação do dono (README do PDV › decisão 51).
+  gravado desde a atualização (coluna nula), a v1 de todo tipo vale como aceita (uma versão acima da v1, só anunciada,
+  desde o F3-B4): a implantação é sempre API primeiro e o caixa nunca trava por falta de internet (O18); se a API
+  ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO` (transitório). Padrão até a confirmação do dono
+  (README do PDV › decisão 51).
 - **Release R2 do PDV (Fase 2, F2-B45):** as mudanças de `Esquema.g.cs` da Fase 2 (as colunas calculadas das imagens
   em 6.12 e os espelhos `produtos_grupos_complementos`/`produtos_complementos`, MD 3.6.8) entram numa **única** migração
   EF (`FaseDois`), com uma só volta do cursor do `catalogo` (17.4.2; a versão local das marcas e das categorias também
@@ -4164,6 +4170,17 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   não grava evento nem anuncia tipo ou versão; o PDV novo diante da API antiga recebe 404 e mostra "requer conexão". A
   Fase 2 inteira mantém `venda.finalizada` v1 (a `variacao_id` e o `lote_id` já existem nele) e não acrescenta nada a
   `versoes_schema`.
+- **Fase 3 (F3-B4): o mecanismo.** O handler de um tipo aplica a versão dele e as anteriores pelo `upcast` encadeado
+  (`HandlerEvento.versoes`: o schema de cada versão, o do contrato, e a conversão **pura** para a seguinte); a versão de
+  origem chega ao handler (`ContextoHandler.versaoOrigem`) e **as regras de recusa da versão de origem continuam
+  valendo** (o `venda.finalizada` v1 com `emprestados > 0` não vira comodato no Reprocessar). A falha da conversão é
+  `PAYLOAD_INVALIDO` (determinística: corrige-se o upcaster e reprocessa), nunca `ERRO_INTERNO`. O Reprocessar, o
+  "Aplicar com novo número" e o "Reprocessar todos" passam pelo mesmo caminho do push. `versoes_schema` lista **só as
+  versões anunciadas** (o formato `tipo → versões` não muda): a versão que o handler já aceita fica fora até o último
+  bloco da onda (`anunciada: false`), e a v1 de `venda.finalizada` e de `vasilhame.movimentado` nunca sai dentro da
+  janela de 12 meses. O PDV grava a **maior versão comum anunciada**; sem nenhum handshake depois da atualização, a
+  v1, e os recursos novos (`RecursoDisponivel(tipo, versao)`, o portão das telas da onda e das ações novas de
+  auditoria, 9.22) ficam indisponíveis até o primeiro handshake (README da API › decisão 223; do PDV › decisão 96).
 - `SCHEMA_DESCONHECIDO` é **transitório** com backoff de 10 min e alerta para a plataforma: o evento é válido, a API é
   que está atrasada.
 - `itens_venda.fiscal_snapshot` tem versão própria (`schema_fiscal`, modelo 3.11.3), independente de
@@ -4575,6 +4592,7 @@ descartes) e as abas "Eventos com erro" (11.4) e "Perdas prováveis" (22.4).
 | `VENDA_SEM_DOCUMENTO_FISCAL` | 10.5 | aviso |
 | `RELOGIO_SUSPEITO` | Hora de um evento no futuro (> 5 min), no passado (antes da ativação − 1 dia ou > 400 dias) ou anterior à do evento anterior (12.4); um aberto por terminal e motivo, "Ciente" no detalhe do terminal | aviso (`info` na regressão marcada pelo caixa, uma por regressão, somadas por terminal na tela) |
 | `RELOGIO_DESVIO` | Desvio do relógio informado no heartbeat acima de 2 min (12.4, T40); fecha sozinho com o desvio de volta a até 2 min ou com a saída do terminal | aviso; crítico > 5 min |
+| `AUDITORIA_ACAO_DESCONHECIDA` | Lote `auditoria.registros` com uma ação fora de `ACOES_AUDITORIA` (9.22; Fase 3, F3-B4): a linha é gravada como `acao_desconhecida`, com o texto original na descrição; um aberto por terminal e ação (chave `acao_desconhecida:<terminal>:<ação>`, `dados.ocorrencias` somadas; até 20 ações diferentes abrem alerta por lote), "Ciente" no detalhe do terminal depois de atualizar a API | aviso |
 | `SESSAO_FECHADA_POR_SUBSTITUICAO` | Sessão de caixa fechada pela nuvem na substituição ou revogação do terminal, ou aberta depois disso pelo terminal antigo (MD 3.12.1; T16, 9.3); um por sessão | aviso |
 | `SANGRIA_ACIMA_DO_ESTIMADO`, `FECHAMENTO_EVENTOS_PENDENTES` | Sangria acima do `dinheiro_estimado_antes` (9.4); fechamento com eventos do turno em `erro`/`retido` (9.6) | aviso |
 | `ESTOQUE_NEGATIVO`, `VALE_SALDO_NEGATIVO`, `LIMITE_CREDITO_EXCEDIDO`, `ORCAMENTO_CONVERTIDO_DUAS_VEZES`, `COMANDA_CONFLITO`, `COMANDA_ITENS_APOS_FECHAMENTO`, `VENDA_INCONSISTENTE`, `PRODUTO_INATIVO_VENDIDO`, `CANCELAMENTO_DUPLO`, `ESTORNO_PENDENTE`, `RECEBIMENTO_CREDIARIO_A_MAIOR`, `VASILHAME_COMODATO_DIVERGENTE` | Regra de negócio aplicada com conflito (9.20, 9.25, 9.26, 10.4) | aviso |

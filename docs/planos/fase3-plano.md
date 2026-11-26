@@ -620,6 +620,15 @@ corpo do PR-17.
 - **Pronto:** um tipo com duas versões aplica as duas, o payload gravado é o original e o PDV escolhe a versão certa. Decisão 215 no
   README da API e 93 no do PDV.
 - **Depende de:** F3-B3 (as ações de auditoria no catálogo).
+- [**Feito no F3-B4** (README da API › decisão 223, do PDV › 96 e do ERP › 87): o `CatalogoHandlers` continua tipo → versão →
+  handler; o handler ganha `versoes` (schema do contrato + `upcast` para a seguinte) e `anunciada`. A falha da conversão
+  (schema da versão, payload convertido inválido ou exceção do upcaster) é `PAYLOAD_INVALIDO`, nunca `ERRO_INTERNO`; o
+  Reprocessar recebe o catálogo pela `FilaDecisao`. A `acao_desconhecida` leva o texto original na frente da descrição, é
+  reservada ao servidor e abre o `AUDITORIA_ACAO_DESCONHECIDA` (aviso, um por terminal e ação, com o "Ciente" no detalhe do
+  terminal); o lote aceita a `acao` até 64 caracteres. No PDV, `VersaoParaGravar`, `RecursoDisponivel` e as ações da fase pelo
+  recurso da onda (`CatalogosNuvem.AcoesAuditoriaFase3`: a R3 pelo `venda.finalizada` v2, o comodato pelo
+  `vasilhame.movimentado` v2); nenhuma fábrica de evento muda ainda (todas na v1). Versão do PDV mais antiga em uso tratada
+  como 0.10.0 até a lista do dono, que vai no corpo do PR-17.]
 
 #### F3-B5 – Código do vale e do cupom de troca, e a janela do protocolo (SYNC 13.4, 17.2)
 - **Tamanho:** P/M · **Rigor:** completo (dinheiro e protocolo)

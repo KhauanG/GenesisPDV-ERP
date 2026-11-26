@@ -1141,6 +1141,15 @@ A fila técnica (ex.: pg-boss) usa schema próprio.
   `RELOGIO_DESVIO` pelo heartbeat (chave `relogio_desvio:<terminal>`, aviso > 2 min e crítico > 5 min,
   `dados.desvio_relogio_ms` e `maior_desvio_ms`; fecha sozinho com o desvio normal ou a saída do terminal, e nunca abre
   para terminal já `revogado`).
+- Auditoria com ação desconhecida (sincronizacao.md 9.22, 21.3; Fase 3, F3-B4): `AUDITORIA_ACAO_DESCONHECIDA`, aviso,
+  `entidade = 'terminais'`, `registro_id` = o terminal, na loja do terminal; aberto quando um lote `auditoria.registros`
+  traz uma ação fora de `ACOES_AUDITORIA` (gravada em `auditoria` como `acao_desconhecida`, com o texto original, até 64
+  caracteres, na frente da `descricao`). Um aberto por terminal e ação: chave `acao_desconhecida:<terminal>:<ação>`
+  (cortada em 150). `dados`: `terminal_id`, `acao` (o texto original), `evento_id` e `sequencia` do lote que o abriu e
+  `ocorrencias`; o lote seguinte com a mesma ação soma as `ocorrencias` (só os registros inseridos: reaplicar o lote não
+  soma) e grava `ultimo_evento_id` e `ultima_sequencia`. No máximo 20 ações diferentes abrem alerta por lote
+  (`ALERTAS_ACAO_DESCONHECIDA_POR_LOTE`; as linhas de auditoria são gravadas todas). Não fecha sozinho: o "Ciente" do
+  detalhe do terminal (ERP 12.4, `terminais.gerenciar`), depois de atualizar a API (README da API › decisão 223).
 - Razão de estoque (3.7.2; Fase 2, F2-B2): `RAZAO_CADEIA_QUEBRADA`, aberto pelo preenchimento da `seq_lancamento` dos
   movimentos antigos quando a cadeia de uma linha de saldo não fecha (aviso, `entidade = 'produtos'`, `registro_id` =
   o produto, `loja_id` = a loja do estoque, se houver). Um aberto por linha: chave `razao_cadeia:<hash>`, com os 40

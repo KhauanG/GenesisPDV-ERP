@@ -1582,6 +1582,12 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     o item vazio. Testes: `src/menu.test.ts` (segue `promocoes.ver`, não `produtos.ver`; aparece nos perfis padrão que
     editam produtos; toda permissão do menu existe no catálogo).
 
+87. **Alerta de auditoria com ação desconhecida nos terminais** (Fase 3, F3-B4; ERP 12.4; README da API › decisão 223;
+    `src/paginas/terminais/DetalheTerminal.tsx`, `ListagemTerminais.tsx`). O `AUDITORIA_ACAO_DESCONHECIDA` (o caixa
+    mandou na auditoria uma ação que esta versão da nuvem não conhece; o registro foi guardado como "ação desconhecida")
+    aparece nos alertas do terminal, leva ao detalhe na listagem e tem o "Ciente" (com `terminais.gerenciar`), como o do
+    relógio suspeito: o texto de exemplo do "O que foi verificado" fala da API atualizada. Sem tela nova.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

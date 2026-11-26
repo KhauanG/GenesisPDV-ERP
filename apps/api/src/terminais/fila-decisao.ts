@@ -50,6 +50,7 @@ import {
   type TerminalDoEvento,
 } from '../sync/aplicacao.js';
 import { ErroRegraEvento, ErroTransitorioEvento, traduzirErroBanco } from '../sync/erros.js';
+import { HANDLERS, type CatalogoHandlers } from '../sync/eventos.js';
 import { conferirLiberacaoLacuna } from '../sync/lacunas.js';
 import { sessaoDaTarefa, type ExecucaoTarefa, type TarefasSegundoPlano } from '../tarefas/tarefas.js';
 import type { DbEmpresa, Tenancy } from '../tenancy/tenancy.js';
@@ -325,6 +326,11 @@ export class FilaDecisao {
     private readonly auditoria: AuditoriaService,
     private readonly tarefas: TarefasSegundoPlano,
     private readonly permissoes: PermissoesEfetivas,
+    /**
+     * Catálogo de handlers (os testes injetam tipos próprios). O reaplicar usa o mesmo caminho do push
+     * (`aplicarEvento`): o upcast da versão de origem roda de novo sobre o payload gravado (SYNC 17.5; F3-B4).
+     */
+    private readonly handlers: CatalogoHandlers = HANDLERS,
   ) {
     tarefas.registrarTipo(TAREFA_REPROCESSAR_EVENTOS, (e) => this.executarLote(e));
     tarefas.registrarTipo(TAREFA_REPROCESSAR_APOS_LACUNA, (e) => this.executarAposLacuna(e));
@@ -850,7 +856,10 @@ export class FilaDecisao {
           .set({ tentativas: sql`${eventosRecebidos.tentativas} + 1` })
           .where(eq(eventosRecebidos.id, l.id));
         const ev = envelopeDaLinha(l, terminal);
-        const a = await aplicarEvento(tx, c, terminal, ev, { novoNumero: opcoes.novoNumero });
+        const a = await aplicarEvento(tx, c, terminal, ev, {
+          novoNumero: opcoes.novoNumero,
+          handlers: this.handlers,
+        });
         const resultado = a.status === 'aplicado' ? a.resultado : null;
         const numero =
           resultado && typeof resultado.numero_exibicao_original === 'string'
@@ -938,7 +947,7 @@ export class FilaDecisao {
         ev = null;
       }
       if (ev) {
-        await marcarEvento(tx, ev, terminal, m);
+        await marcarEvento(tx, ev, terminal, m, this.handlers);
       } else {
         await tx
           .update(eventosRecebidos)
