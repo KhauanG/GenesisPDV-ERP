@@ -4,6 +4,10 @@ import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import {
+  ACAO_AUDITORIA_DESCONHECIDA,
+  ACAO_AUDITORIA_ORIGINAL_MAX,
+  ACOES_AUDITORIA,
+  ACOES_AUDITORIA_FASE3,
   ACOES_AUDITORIA_SO_SERVIDOR,
   ehAcaoAuditoria,
   ehAcaoAuditoriaSoServidor,
@@ -85,7 +89,8 @@ describe('fixtures do protocolo de sincronização', () => {
     // `erros.json` tem teste próprio abaixo; `argon2.vetores.json` é conferido pela API (senhas.spec) e pelo PDV; os
     // payloads de evento (`*.payload.json`) e `eventos.conferencias.json` ficam com `eventos.spec.ts`, salvo o payload
     // da auditoria, que é da Fase 0 e só passa por aqui; `caixa.apuracao.vetores.json` é do `vendas.spec.ts`, do
-    // teste de integração das consultas (API) e do `ApuracaoVetoresTests` (PDV).
+    // teste de integração das consultas (API) e do `ApuracaoVetoresTests` (PDV); `vale.codigo.vetores.json` é do
+    // `vales.spec.ts` e do `CodigoValeVetoresTests` (PDV).
     const arquivos = readdirSync(pasta).filter(
       (f) => f.endsWith('.json') && (!f.endsWith('.payload.json') || f in SCHEMAS),
     );
@@ -96,6 +101,7 @@ describe('fixtures do protocolo de sincronização', () => {
         'argon2.vetores.json',
         'eventos.conferencias.json',
         'caixa.apuracao.vetores.json',
+        'vale.codigo.vetores.json',
       ].sort(),
     );
   });
@@ -271,6 +277,29 @@ describe('fixtures do protocolo de sincronização', () => {
     expect(
       ehAcaoAuditoria(payloadAuditoriaRegistrosSchema.parse(comAcaoForaDoCatalogo).registros[0]!.acao),
     ).toBe(false);
+    // Fase 3 (F3-B3): as ações novas do caixa já são aceitas pela nuvem, antes de qualquer PDV que as grave, e nenhuma
+    // é reservada ao servidor (o push recusaria o lote do caixa que a trouxesse).
+    for (const a of ACOES_AUDITORIA_FASE3) {
+      expect(ehAcaoAuditoria(a), a).toBe(true);
+      expect(ehAcaoAuditoriaSoServidor(a), a).toBe(false);
+      expect(a.length, a).toBeLessThanOrEqual(40);
+      expect(
+        payloadAuditoriaRegistrosSchema.safeParse({ registros: [{ ...p.registros[0], acao: a }] }).success,
+        a,
+      ).toBe(true);
+    }
+    expect(new Set(ACOES_AUDITORIA).size).toBe(ACOES_AUDITORIA.length);
+    // F3-B4: a ação que a nuvem não conhece vira `acao_desconhecida` (só o servidor a grava), e o lote aceita a ação
+    // original até 64 caracteres; as do catálogo cabem nos 40 da coluna.
+    expect(ehAcaoAuditoria(ACAO_AUDITORIA_DESCONHECIDA)).toBe(true);
+    expect(ehAcaoAuditoriaSoServidor(ACAO_AUDITORIA_DESCONHECIDA)).toBe(true);
+    expect(ACOES_AUDITORIA.every((a) => a.length <= 40)).toBe(true);
+    const comAcao = (acao: string) =>
+      payloadAuditoriaRegistrosSchema.safeParse({ registros: [{ ...p.registros[0], acao }] }).success;
+    expect([comAcao('a'.repeat(ACAO_AUDITORIA_ORIGINAL_MAX)), comAcao('a'.repeat(65))]).toEqual([
+      true,
+      false,
+    ]);
     const motivoInventado = { logins: [{ ...p.logins[0], motivo_falha: 'motivo_inventado' }] };
     expect(payloadAuditoriaRegistrosSchema.safeParse(motivoInventado).success).toBe(false);
   });

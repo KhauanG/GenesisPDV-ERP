@@ -5,6 +5,7 @@ import {
   COLUNAS_ISENTAS_VERSAO,
   TABELAS_FN_VERSAO,
   TABELAS_FN_VERSAO_LOCAL,
+  TABELAS_FN_VERSAO_SEM_FLUXO,
 } from '../../src/database/empresa/versionamento.js';
 import { nomeTabela, REGISTRO_FLUXOS } from '../../src/sync/fluxos.js';
 import { conectar, consultar, criarAmbiente, type Ambiente, type EmpresaTeste } from './ambiente.js';
@@ -56,6 +57,7 @@ describe('versao, seq_versao e trava de ordenação (MD 1.5)', () => {
     );
     const mapa = new Map(triggers.map((t) => [t.tabela, t.funcao]));
     for (const t of TABELAS_FN_VERSAO) expect(mapa.get(t), t).toBe('fn_versao');
+    for (const t of TABELAS_FN_VERSAO_SEM_FLUXO) expect(mapa.get(t), t).toBe('fn_versao');
     for (const t of TABELAS_FN_VERSAO_LOCAL) expect(mapa.get(t), t).toBe('fn_versao_local');
     const comVersao = await consultar<{ table_name: string }>(
       emp.nomeBanco,

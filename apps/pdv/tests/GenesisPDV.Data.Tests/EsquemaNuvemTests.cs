@@ -198,6 +198,8 @@ public class EsquemaNuvemTests
             "formas_pagamento", "formas_pagamento_lojas", "unidades_medida",
             // Fase 2 (F2-B45; F2-Q1 = D43): os complementos.
             "produtos_grupos_complementos", "produtos_complementos",
+            // Fase 3 (F3-B7): promoções, vales, orçamentos e o status das vendas.
+            "promocoes", "promocoes_itens", "vales", "orcamentos", "itens_orcamento", "vendas_status_pdv",
         ];
         var mapeadas = db.Model.GetEntityTypes().Select(t => t.GetTableName()).ToHashSet();
         foreach (var nome in espelhos)
@@ -215,7 +217,7 @@ public class EsquemaNuvemTests
         using var db = new PdvDbContext(FabricaPdvDb.Opcoes("Data Source=:memory:"));
         var mapeadas = db.Model.GetEntityTypes().ToDictionary(t => t.GetTableName()!);
         var espelhos = EsquemaNuvem.Tabelas.Where(t => t.Papel == PapelTabela.Espelho).ToList();
-        Assert.True(espelhos.Count >= 58, $"{espelhos.Count} espelhos no Esquema.g.cs");
+        Assert.True(espelhos.Count >= 64, $"{espelhos.Count} espelhos no Esquema.g.cs");
         foreach (var tabela in espelhos)
         {
             Assert.True(mapeadas.TryGetValue(tabela.Nome, out var entidade), $"{tabela.Nome} sem espelho no PDV");

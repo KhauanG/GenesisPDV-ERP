@@ -154,3 +154,40 @@ public class ProdutoComplementoRegistro : LinhaEspelho
     public int Ordem { get; set; }
     public bool Ativo { get; set; }
 }
+
+/// <summary>
+/// <c>promocoes</c> (MD 3.6.11; F3-B7): todas as promoções, de todas as lojas (o PDV filtra <c>lojas</c>, vigência e
+/// <c>ativo</c>, MD 6.2). Só o espelho: o motor que aplica é do F3-B35 em diante. <c>parametros</c> guarda o JSON
+/// como veio (o formato de cada tipo é do contrato do shared, F3-B34).
+/// </summary>
+public class PromocaoRegistro : LinhaEspelho
+{
+    public string Nome { get; set; } = string.Empty;
+    public string Tipo { get; set; } = string.Empty;
+    public string Parametros { get; set; } = "{}";
+    public DateTimeOffset? Inicio { get; set; }
+    public DateTimeOffset? Fim { get; set; }
+
+    /// <summary><c>smallint[]</c> da nuvem (0 = domingo), gravado como JSON (<c>[5,6]</c>) em TEXT; nulo = todos os dias.</summary>
+    public short[]? DiasSemana { get; set; }
+
+    public TimeOnly? HoraInicio { get; set; }
+    public TimeOnly? HoraFim { get; set; }
+
+    /// <summary><c>uuid[]</c> da nuvem, gravado como JSON em TEXT; nulo = todas as lojas.</summary>
+    public Guid[]? Lojas { get; set; }
+
+    public short Prioridade { get; set; }
+    public bool Acumulativa { get; set; }
+    public bool Ativo { get; set; } = true;
+}
+
+/// <summary><c>promocoes_itens</c> (MD 3.6.11): gatilhos e brindes da promoção, por produto ou por categoria.</summary>
+public class PromocaoItemRegistro : LinhaEspelhoSemAutoria
+{
+    public Guid PromocaoId { get; set; }
+    public Guid? ProdutoId { get; set; }
+    public Guid? CategoriaId { get; set; }
+    [Escala(3)] public decimal Quantidade { get; set; } = 1m;
+    public string Papel { get; set; } = string.Empty;
+}

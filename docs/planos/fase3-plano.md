@@ -152,7 +152,8 @@ O que as Fases 1 e 2 já entregaram e que a Fase 3 usa, e o que falta, por área
   - o "Imprimir comprovante" de reforço e sangria (ERP 15.2/15.3 "espera os templates de impressão"; não há tipo de template para
     eles em `TIPOS_TEMPLATE`);
   - a API e a tela de `templates_documentos` (a tabela existe e desce ao PDV);
-  - o índice `uq_templates_documentos_padrao` do MD 3.1.3 e a numeração `vale` do caixa 0;
+  - o índice `uq_templates_documentos_padrao` do MD 3.1.3 e a numeração `vale` do caixa 0 (correção no F3-B2: o índice já
+    existe desde a migração 0002, SQL customizado fora do snapshot; README da API › decisão 221);
   - as faixas de 6 chaves do catálogo estão mais largas que a ERP 9.3.1 (ver o F3-B12).
 
 ### Documentação
@@ -355,7 +356,9 @@ Em cada pergunta, "na loja" diz o que muda para quem está no balcão.
   diante de uma API antiga recebe 404 e cai no caminho offline.
 - **Ordem das travas na transação:** a trava global de ordenação de versões (7300001, `fn_versao`) é pega **o mais tarde possível**
   (padrão de `fila-decisao.ts:5`), porque `vales`, `vendas_status_pdv` e `saldos_vasilhame_pessoas` descem e cada push com vale,
-  troca ou comodato passa a pegá-la.
+  troca ou comodato passa a pegá-la. Exceção: nas chamadas online (F3-B6, SYNC 20.4) a 7300001 é a **primeira** instrução
+  (`travaVersao` da rota), antes da linha de `requisicoes_terminal`, cuja FK trava a linha do terminal que o push trava
+  depois da 7300001.
 
 **Preços, itens e dinheiro**
 - Quantidade do complemento por unidade do item; o adicional entra no `preco_unitario` e no `preco_tabela`.
@@ -547,7 +550,9 @@ corpo do PR-17.
     (MD 6.4 regra 2);
   - **comodato comutativo:** tira o `ck_saldos_vasilhame_pessoas_quantidade` (o saldo pode ficar negativo por um tempo, Padrões). Se o
     gerador do `Esquema.g.cs` levar o CHECK ao espelho, a mudança entra na `FaseTres` (F3-B7);
-  - **índice** `uq_templates_documentos_padrao` (`nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`), **depois**
+  - **índice** `uq_templates_documentos_padrao` (`nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`)
+    [**feito no F3-B2:** o índice já existia desde a 0002, então não houve o que desmarcar; o teste confere a definição e o
+    efeito, decisão 221], **depois**
     de desmarcar os "padrão" duplicados do mesmo tipo e loja (fica o mais antigo), com uma linha de auditoria por desmarcação.
 - **Arquivos:** `schema/produtos.ts`, `schema/orcamentos.ts` (novo), `schema/vendas.ts`, `schema/caixa.ts`, `schema/pessoas.ts`,
   `apps/api/drizzle/empresa/0030_fase3_promocoes_orcamentos.sql` (drizzle-kit).
@@ -576,6 +581,16 @@ corpo do PR-17.
 - **Testes:** perfis padrão; a migração de dados num perfil personalizado com e sem `produtos.editar`; vitest do menu.
 - **Pronto:** nenhuma permissão ampliada além da regra acima; o menu de Promoções aparece para quem já editava produtos.
 - **Depende de:** F3-B2.
+- [**Feito no F3-B3** (README da API › decisão 222): a regra da migração vale para **todo** perfil com `produtos.editar`
+  (o de sistema também, com a auditoria) e para os ajustes por usuário (concedida e negada, senão o usuário com
+  `produtos.editar` negada passaria a criar promoções); o perfil de sistema que a empresa tirou de produtos fica com a
+  linha de promoções já excluída, que o seed respeita. O Estoquista ganha ver/criar/editar pela mesma regra; como ele
+  não tem `produtos.alterar_preco`, o F3-B34 tem de aplicar às promoções a trava de preço do cadastro do produto
+  (`geral.altera_preco_produto_erp` = Não, `trava-preco.ts`; ver as entregas do F3-B34). Comodato
+  no Operador (a D84 é "até o limite, sem o supervisor"; "só o supervisor" seria a opção D) e, por ele, no Supervisor e
+  no Encarregado. `pdv.pagamento.consumo_interno` no Supervisor (✔ na PDV 31.2 e D102). As ações de auditoria entram
+  em `ACOES_AUDITORIA_FASE3`, espalhada em `ACOES_AUDITORIA`; o `CatalogosNuvem` do PDV continua sem elas até o
+  F3-B4. Constantes de liberação em `ACOES_LIBERACAO_FASE3`. A `acao_desconhecida` fica para o F3-B4.]
 
 #### F3-B4 – Upcasters, versões por tipo e a auditoria desconhecida (SYNC 17.5)
 - **Tamanho:** M · **Rigor:** completo (protocolo)
@@ -607,6 +622,15 @@ corpo do PR-17.
 - **Pronto:** um tipo com duas versões aplica as duas, o payload gravado é o original e o PDV escolhe a versão certa. Decisão 215 no
   README da API e 93 no do PDV.
 - **Depende de:** F3-B3 (as ações de auditoria no catálogo).
+- [**Feito no F3-B4** (README da API › decisão 223, do PDV › 96 e do ERP › 87): o `CatalogoHandlers` continua tipo → versão →
+  handler; o handler ganha `versoes` (schema do contrato + `upcast` para a seguinte) e `anunciada`. A falha da conversão
+  (schema da versão, payload convertido inválido ou exceção do upcaster) é `PAYLOAD_INVALIDO`, nunca `ERRO_INTERNO`; o
+  Reprocessar recebe o catálogo pela `FilaDecisao`. A `acao_desconhecida` leva o texto original na frente da descrição, é
+  reservada ao servidor e abre o `AUDITORIA_ACAO_DESCONHECIDA` (aviso, um por terminal e ação, com o "Ciente" no detalhe do
+  terminal); o lote aceita a `acao` até 64 caracteres. No PDV, `VersaoParaGravar`, `RecursoDisponivel` e as ações da fase pelo
+  recurso da onda (`CatalogosNuvem.AcoesAuditoriaFase3`: a R3 pelo `venda.finalizada` v2, o comodato pelo
+  `vasilhame.movimentado` v2); nenhuma fábrica de evento muda ainda (todas na v1). Versão do PDV mais antiga em uso tratada
+  como 0.10.0 até a lista do dono, que vai no corpo do PR-17.]
 
 #### F3-B5 – Código do vale e do cupom de troca, e a janela do protocolo (SYNC 13.4, 17.2)
 - **Tamanho:** P/M · **Rigor:** completo (dinheiro e protocolo)
@@ -624,6 +648,14 @@ corpo do PR-17.
   `CT` com um dígito trocado recusado).
 - **Pronto:** vetores verdes na API e no PDV. (O `atualizar_ate` do heartbeat fica todo no F3-B31.)
 - **Depende de:** —.
+- [**Feito no F3-B5** (README da API › decisão 224, do PDV › 97): o resumo da conferência é
+  `pbkdf2-sha256$<iterações>$<sal>$<resumo>` (PBKDF2-HMAC-SHA-256 sobre `<código do vale>:<4 dígitos>`, sal de 16 bytes,
+  100.000 iterações; a conferência aceita de 10.000 a 1.000.000), pela Web Crypto no shared e pela BCL no Core
+  (`GenesisPDV.Core/Vales/CodigoVale.cs`); o F3-B41 usa o formato (a MD 3.13.2 já aponta para ele). A leitura do código
+  tira os espaços e aceita o prefixo minúsculo, e confere o DV antes dos limites (motivos `FORMATO`, `DIGITO_VERIFICADOR`,
+  `LOJA`, `NUMERO`). A janela do protocolo é `JANELA_PROTOCOLO` (o atual e a data em que cada anterior deixou de sê-lo) com
+  `protocoloAceito`/`protocoloMinimo`; o `X-Genesis-Protocolo: 0` passa de 400 a 426, o ausente continua 400. Versão do
+  PDV mais antiga em uso tratada como 0.10.0 até a lista do dono, que vai no corpo do PR-17 (todas mandam o protocolo 1).]
 
 #### F3-B6 – Idempotência das requisições online (SYNC 20.4)
 - **Tamanho:** M · **Rigor:** completo (protocolo, concorrência)
@@ -640,6 +672,14 @@ corpo do PR-17.
   (um efeito, a mesma resposta), de outro terminal e depois da expiração; Sync.Tests da repetição depois de um timeout.
 - **Pronto:** o mecanismo pronto e documentado na SYNC 20.4 e no README da API.
 - **Depende de:** F3-B1.
+- [**Feito no F3-B6** (README da API › decisão 225, do PDV › 98): `sync/online/idempotencia.ts` (`IdempotenciaOnline`),
+  `sync/atendimento.ts` (`atenderOnline`, endpoint `online` com o hardware) e a tarefa por minuto
+  `sync/online/manutencao-online.ts` (fila `genesis-manutencao-online`, onde a expiração das reservas do F3-B45 entra).
+  Códigos novos `409 REQUISICAO_EM_ANDAMENTO` (a espera de 10 s pela original vencida, `Retry-After: 1`) e
+  `422 REQUISICAO_DIVERGENTE` (o mesmo id com outra rota ou outro pedido). Só o sucesso fica gravado; a primeira resposta
+  e as repetições saem do mesmo `jsonb`. No PDV, `ChamadaOnline.AlterarComRepeticaoAsync` (3 tentativas com o mesmo id).
+  O limite de 120/min por terminal (SYNC 20.3) entra com as rotas do F3-B45. Versão do PDV mais antiga em uso tratada
+  como 0.10.0 até a lista do dono, que vai no corpo do PR-17 (nada muda para o instalado).]
 
 #### F3-B7 – Fluxos de pull da Fase 3 e o espelho do PDV numa só volta de cursor (SYNC 6.1, 16.3, 17.4)
 - **Tamanho:** M/G · **Rigor:** completo (sincronização)
@@ -668,6 +708,14 @@ corpo do PR-17.
     cursor avança (`test/e2e-pdv`).
 - **Pronto:** o PDV novo recebe as linhas no SQLite; o PDV instalado continua sincronizando e vendendo.
 - **Depende de:** F3-B2.
+- [**Feito no F3-B7** (README da API › decisão 226, do PDV › 99): a `FaseTres` volta **quatro** cursores — o
+  `configuracao` também, porque a correção do `TEMPLATES_PDV` passa a descer `recibo_venda` e `orcamento_*`, cujas linhas
+  do seed são antigas — e apaga as cópias locais do `recibo_receber`, que saiu do filtro (MD 3.1.3). A janela dos vales
+  (D90) é "mudou nos últimos 90 dias **ou** ainda utilizável (ativo, com saldo, vencido há no máximo 90 dias)", e a purga
+  local é o complemento exato, que também segura o vale de venda ou evento local em curso. A `valido_ate` do orçamento
+  desce como gerada e o SQLite a calcula. O e2e do PDV não tem o status de venda (precisa de uma venda de terminal): fica
+  na integração. A matriz com o PDV das tags é o `apps/api/test/e2e-pdv/compatibilidade.sh` (local); a lista de versões
+  do dono vai no corpo do PR-17.]
 
 #### F3-B8 – Spike do Velopack sem o Actions
 - **Tamanho:** M · **Rigor:** enxuto (documentação e protótipo descartável), com critérios de "segue / não segue"
@@ -685,6 +733,23 @@ corpo do PR-17.
 - **Testes:** um pacote de teste gerado na sessão; o roteiro do Windows com o resultado de (b) e (c) registrado.
 - **Pronto:** decisão registrada, com o desenho do F3-B32/B33 confirmado ou ajustado.
 - **Depende de:** —.
+- [**Feito no F3-B8** (README do PDV › decisão 100; `operacao-sem-actions-plano.md` › OP-B3 ampliado): protótipo
+  descartável em `apps/pdv/instalador/velopack-spike/` (fora do `GenesisPDV.slnx`; sai no F3-B33). (a) **comprovado na
+  sessão** com o vpk 1.2.161 fixo, sem Wine (só o `zstd`). (b) o manifesto é assinado no formato SSHSIG do
+  `ssh-keygen -Y sign` (Ed25519, o OpenSSH que já vem no Windows: o dono não instala nada), conferido por um
+  `IUpdateSource` na frente do `UpdateManager` antes de qualquer download, com o piso da mínima permitida que só sobe.
+  (c) a volta pelo pacote guardado na pasta própria, com o banco restaurado e a versão que falhou recusada localmente;
+  a volta fica "em andamento" (a pendente e o backup mantidos) até a versão anterior abrir, e se repete sem migrar se a
+  que falhou abrir de novo; a mínima permitida do manifesto nunca é a versão publicada (regra do F3-B31).
+  (d) instalação por usuário, sem administrador, o mutex do app visto entre as duas instalações e os dados em
+  `%ProgramData%` intocados. **Ensaio no Wine verde** (`ensaiar-no-wine.sh --com-inno`, com o 0.13.0 do Inno instalado).
+  Achados que ajustam o F3-B32: o completo remontado pelos deltas tem outro sha256 (os mesmos arquivos em outro zip),
+  então o manifesto leva o sha256 de cada arquivo de dentro do completo; o Velopack apaga o pacote instalado quando um
+  download é recusado e aplica sozinho na abertura o mais novo da pasta, e o `UpdateExe.Apply` aplica o mais novo quando
+  o pacote pedido não está na pasta. **Pendente:** o `ROTEIRO-WINDOWS.txt` no Windows do dono (o pacote
+  `velopack-spike-roteiro.zip` gerado pelo `gerar-pacotes-teste.sh`), que decide se o PR-22 começa; a lista de versões
+  dos caixas do dono vai no corpo do PR-17 (até lá, o mais antigo em uso é tratado como 0.10.0; nada muda para ele
+  neste bloco).]
 
 ### PR-18 – ERP: conferência, cancelamento e parâmetros
 
@@ -1068,6 +1133,10 @@ corpo do PR-17.
     nunca é bloqueado); `canal` no `app` (contrato e fixtures);
   - `infra/producao/implantar.sh pdv publicar --canal --minima`: grava em `versoes_app_pdv` e publica o feed em
     `download.<domínio>/pdv/<canal>/` (o comando roda na VPS pelo dono, OP-B2);
+    [**ajuste do spike F3-B8** (README do PDV › decisão 100, regra de publicação): o `--minima` (o `versao_minima` do
+    heartbeat, que força com a carência) e a `versao_minima_permitida` do manifesto assinado são **dois valores
+    separados**; a do manifesto fica igual ou abaixo da versão anterior em uso nos caixas, e o comando **recusa** a
+    mínima permitida igual ou acima da versão publicada (senão o caixa perde a volta automática dessa versão);]
   - ERP: a exceção de canal na tela Terminais e a tela 19.5 mínima (lista e marcar a mínima); o canal da empresa no painel da plataforma
     só se ainda não estiver lá.
 - **Migrações:** controle `0007` (provisória).
@@ -1088,6 +1157,18 @@ corpo do PR-17.
     no cache, **por decisão do próprio app** (nunca por comando remoto);
   - depois da carência, atualização obrigatória no login (o push continua); comando `atualizar_app` atendido (só "procure agora"; nunca
     escolhe versão); situação na Central.
+  - [**Ajustes do spike F3-B8** (README do PDV › decisão 100): a conferência é um `IUpdateSource` na frente do
+    `UpdateManager` (manifesto `manifesto.<canal>.json` + `.sig` SSHSIG, o sha256 do feed, cada pacote igual ao do
+    manifesto, o piso da mínima permitida persistido e só subindo); o completo remontado pelos deltas é conferido pelo
+    sha256 de cada arquivo de dentro dele (o manifesto leva a lista); `SetAutoApplyOnStartup(false)`; o pacote da versão
+    que abriu sem erro guardado numa pasta própria já na abertura e devolvido à pasta do Velopack antes de procurar
+    (o Velopack o apaga quando um download é recusado); antes da volta, a pasta do Velopack só com o pacote anterior (o
+    `UpdateExe.Apply` aplica o mais novo quando o pedido falta); a versão que falhou recusada neste computador; a
+    atualização pendente (com o backup) mantida até a versão de destino da volta abrir, a volta gravada como "em
+    andamento" (não "feita") antes do `ApplyUpdatesAndRestart`, o "volta feita" só com a versão instalada igual à de
+    destino, e, se a versão que falhou abrir de novo com a volta em andamento, o banco restaurado outra vez sem migrar e
+    a volta repetida (até 3 tentativas, depois o suporte); busca de atualização recusada com a volta em andamento. Teste
+    com feed falso: a aplicação da volta que lança exceção, e a abertura seguinte que restaura e volta.]
 - **Arquivos:** `apps/pdv/src/GenesisPDV.App/Servicos/Atualizacao/` (novo), `GenesisPDV.Sync/Ciclo/ProcessadorComandos.cs`,
   `GenesisPDV.App/ViewModels/LoginViewModel.cs`, Central do PDV.
 - **Migrações:** nenhuma.
@@ -1109,6 +1190,13 @@ corpo do PR-17.
     conta do caixa, conferir a venda e a sincronização antes do caixa seguinte;
   - página de download atualizada; a mínima só sobe depois de todos os caixas migrados (senão a ativação recebe 426);
   - README do PDV e `infra/producao/README.md`.
+  - [**Ajustes do spike F3-B8** (README do PDV › decisão 100; OP-B3 ampliado): o pacote sai do vpk fixo no Linux, sem
+    Wine; o Setup.exe de cada versão se guarda logo depois do `pack` dela; a assinatura é o `ssh-keygen -Y sign -n
+    genesispdv-atualizacao` no PC do dono (sem ferramenta nova), e a sessão confere o `.sig` antes da publicação; o
+    Velopack instala por usuário, com o atalho da inicialização do usuário no lugar do "Iniciar com o Windows" do HKLM;
+    um caixa novo, sem o Inno antes, não tem a ACL do `%ProgramData%\GenesisPDV` (decidir aqui como prepará-lo); a
+    `versao_minima_permitida` de cada manifesto fica igual ou abaixo da versão anterior em uso nos caixas, nunca a
+    publicada, e é um valor separado do `versao_minima` do heartbeat (o roteiro de publicação diz os dois).]
 - **Migrações:** nenhuma.
 - **Testes:** shellcheck; conteúdo do pacote (lista de arquivos, versão, sha256); roteiro manual no Windows registrado.
 - **Pronto:** todos os caixas na 0.14.1 pelo Velopack; a R4 sai por este caminho.
@@ -1122,11 +1210,17 @@ corpo do PR-17.
   `forma_pagamento`), dinheiro e percentual em texto decimal; API `/promocoes` com versão (409) e auditoria legível; ERP: listagem
   (Nome, Tipo, Situação, Loja) e formulário com vigência, dias da semana, horário, lojas, prioridade e a grade de gatilhos e brindes
   por produto ou categoria; no produto, a promoção vigente que o atinge; a chave das promoções nos caixas com a **trava dura** do F3-B12
-  (só liga com 0 terminais ativos abaixo da R4).
+  (só liga com 0 terminais ativos abaixo da R4). **Trava de preço (F3-B3, README da API › decisão 222):** com
+  `geral.altera_preco_produto_erp` = Não, criar ou editar promoção que mude preço (`preco_fixo`, `desconto_pct_item`,
+  `leve_pague`, `combo`, `forma_pagamento`; na prática, todos os tipos de hoje) exige `produtos.alterar_preco`, a mesma
+  regra de `apps/api/src/produtos/trava-preco.ts` e do `garantirAlterarPreco`; sem ela, o Estoquista (que ganhou
+  `promocoes.criar/editar` no F3-B3) mudaria o preço cobrado nos caixas por uma promoção, contornando a trava do
+  cadastro do produto.
 - **Arquivos:** `packages/shared/src/promocoes.ts` (novo), `apps/api/src/produtos/promocoes*.ts`,
   `apps/erp-web/src/paginas/produtos/Promocoes*.tsx`.
 - **Migrações:** nenhuma.
-- **Testes:** zod; integração do CRUD (403, loja não permitida) e do pull; vitest.
+- **Testes:** zod; integração do CRUD (403, loja não permitida), da trava de preço (com a chave = Não, o Estoquista
+  recebe 403 ao criar e ao editar a promoção; com `produtos.alterar_preco`, grava) e do pull; vitest.
 - **Pronto:** promoção cadastrada chega ao SQLite do caixa novo; os caixas antigos seguem vendendo.
 - **Depende de:** F3-B7, F3-B12.
 
@@ -1278,7 +1372,10 @@ corpo do PR-17.
   campos da troca, sem custo; **limites de privacidade** em toda consulta por cliente: só a janela de `pdv.dias_validade_cupom_troca`,
   no máximo 20 resultados, CPF mascarado na resposta, limite de taxa por terminal, auditoria da consulta com o operador informado pelo
   caixa (só como registro, sem autoridade); contratos no zod e no `Protocolo/Contratos.cs`; SYNC 14.4, PDV 16.11 e ERP 15.4.4
-  corrigidas para as rotas.
+  corrigidas para as rotas; **o prazo de cada tentativa das reservas no balcão** (pendência do F3-B6: hoje o
+  `ChamadaOnline` usa o `TemposLimiteSync.Outras`, 30 s, e o pior caso das 3 tentativas é ≈ 91 s), com um teste que o fixe; as
+  rotas que gravam tabela que desce declaram `travaVersao` no `atenderOnline` (a 7300001 antes da linha de
+  `requisicoes_terminal`, decisão 225 da API).
 - **Migrações:** nenhuma.
 - **Testes:** duas reservas de R$ 3 num vale de R$ 4,50 (a segunda 409); reserva sem em-uso vence (relógio injetado); em-uso pelo
   heartbeat; repetição com o mesmo `X-Requisicao-Id` (em sequência e ao mesmo tempo); outra empresa recusada; busca por CPF fora da

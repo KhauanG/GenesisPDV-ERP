@@ -147,6 +147,30 @@ public partial class DescritorAuditoriaTests
     }
 
     [Fact]
+    public void Marca_de_envio_da_acao_da_fase3_pelo_recurso_anunciado()
+    {
+        // F3-B4: a ação da onda R3 sobe só com o `venda.finalizada` v2 anunciado; o comodato, com o `vasilhame.movimentado` v2.
+        var lote = Guid.CreateVersion7();
+        const string semR3 = """{"venda.finalizada":[1],"vasilhame.movimentado":[1]}""";
+        const string comR3 = """{"venda.finalizada":[1,2],"vasilhame.movimentado":[1]}""";
+        Assert.All(["venda_suspensa", "venda_recuperada", "comodato_emprestado"], a => Assert.True(CatalogosNuvem.AcoesAuditoriaFase3.ContainsKey(a)));
+
+        // Sem lote: só local antes do anúncio (e sem handshake), a enviar depois dele (o próximo lote a leva).
+        Assert.Equal(SituacaoEnvio.SoLocal, DescritorAuditoria.Envio("venda_suspensa", null, null));
+        Assert.Equal(SituacaoEnvio.SoLocal, DescritorAuditoria.Envio("venda_suspensa", null, null, null, semR3));
+        Assert.Equal(SituacaoEnvio.AEnviar, DescritorAuditoria.Envio("venda_suspensa", null, null, null, comR3));
+        Assert.Equal(SituacaoEnvio.AEnviar, DescritorAuditoria.Envio("venda_recuperada", null, null, null, comR3));
+        Assert.Equal(SituacaoEnvio.SoLocal, DescritorAuditoria.Envio("comodato_emprestado", null, null, null, comR3));
+        // A ação local continua só local, com qualquer anúncio.
+        Assert.Equal(SituacaoEnvio.SoLocal, DescritorAuditoria.Envio("desconto_item", null, null, null, comR3));
+
+        // Já num lote: pelo lote, com ou sem o anúncio no handshake atual.
+        Assert.Equal(SituacaoEnvio.Enviado, DescritorAuditoria.Envio("venda_suspensa", lote, StatusEventoSaida.Confirmado));
+        Assert.Equal(SituacaoEnvio.AEnviar, DescritorAuditoria.Envio("venda_suspensa", lote, StatusEventoSaida.Pendente, null, semR3));
+        Assert.Equal(SituacaoEnvio.Recusado, DescritorAuditoria.Envio("venda_recuperada", lote, StatusEventoSaida.Rejeitado, null, comR3));
+    }
+
+    [Fact]
     public void Antes_e_depois_so_com_os_campos_exibiveis_e_mascarados()
     {
         // A edição da impressora: só o que mudou, das chaves exibíveis; a chave interna (o token) nunca.

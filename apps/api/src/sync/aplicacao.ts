@@ -11,6 +11,11 @@
  * envelope e as que o handler recalcula do payload, SYNC 8.5), o schema do tipo e o agregado do contrato, lê os
  * cadastros do handler sem trava (`preparar`, C6a), pega a 7300001, roda o handler e marca `aplicado`. Erros sobem:
  * o chamador desfaz e grava `erro` em transação nova (`traduzirErroBanco` primeiro, fora da transação).
+ *
+ * Versões (SYNC 17.5; F3-B4): o handler de um tipo aplica a versão dele e as anteriores que as `versoes` convertem
+ * (`resolverHandler`, `converterPayload` em `handlers/comum.ts`). A conversão roda a cada aplicação, no push e no
+ * Reprocessar, sobre o payload gravado, que continua o original; versão acima da maior conhecida é
+ * `SCHEMA_DESCONHECIDO` (transitório), e a `versao_schema` de origem chega ao handler (`ContextoHandler.versaoOrigem`).
  */
 import {
   ALERTA_EVENTO_COM_ERRO as ALERTA_EVENTO_COM_ERRO_COMPARTILHADO,
@@ -30,7 +35,14 @@ import {
 } from './contratos.js';
 import { ErroRegraEvento, ErroTransitorioEvento } from './erros.js';
 import { HANDLERS, type CatalogoHandlers } from './eventos.js';
-import { eventoPendente, type DependenciaEvento } from './handlers/comum.js';
+import {
+  converterPayload,
+  erroDaConversao,
+  eventoPendente,
+  resolverHandler,
+  type DependenciaEvento,
+  type PayloadConvertido,
+} from './handlers/comum.js';
 
 /**
  * O terminal dono do evento, só com o que a aplicação usa. No push vem do token (`TerminalAutenticado` é um
@@ -224,11 +236,29 @@ export async function aplicarEvento(
   const handlers = opcoes.handlers ?? HANDLERS;
   await travarTerminal(c, terminal.terminalId);
   conferirEscopo(ev, terminal);
-  const handler = handlers[ev.tipo]?.[ev.versao_schema];
-  const payload = handler?.schema.safeParse(ev.payload);
+  const resolvido = resolverHandler(handlers, ev.tipo, ev.versao_schema);
+  const handler = resolvido?.handler;
+  // Validado e convertido para a versão do handler (17.5). O erro que um upcaster lança de propósito sobe só depois
+  // da retenção, como o payload inválido (o evento retido por uma dependência espera, qualquer que seja o payload).
+  let payload: PayloadConvertido | undefined;
+  let erroUpcast: unknown;
+  if (resolvido) {
+    try {
+      payload = converterPayload(resolvido, ev.versao_schema, ev.payload);
+    } catch (e) {
+      erroUpcast = e;
+    }
+  }
   // SYNC 8.5: as dependências do envelope mais as que a nuvem recalcula do payload (só com o payload válido; o
   // inválido cai em `PAYLOAD_INVALIDO` logo abaixo se nada o retiver).
-  const ctx = { tx, c, evento: ev, terminal, novoNumero: opcoes.novoNumero === true };
+  const ctx = {
+    tx,
+    c,
+    evento: ev,
+    terminal,
+    novoNumero: opcoes.novoNumero === true,
+    versaoOrigem: ev.versao_schema,
+  };
   const dependencias = unirDependencias(
     ev.dependencias,
     handler?.dependencias && payload?.success ? await handler.dependencias(ctx, payload.data as never) : [],
@@ -251,17 +281,14 @@ export async function aplicarEvento(
     );
     return { status: 'retido', codigo: 'DEPENDENCIA_PENDENTE', mensagem };
   }
+  if (erroUpcast !== undefined) throw erroUpcast;
   if (!handler || !payload) {
     throw new ErroTransitorioEvento(
       'SCHEMA_DESCONHECIDO',
       `Tipo ${ev.tipo} v${ev.versao_schema} ainda não suportado`,
     );
   }
-  if (!payload.success) {
-    throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Payload fora do schema do tipo.', {
-      campos: payload.error.issues.map((x) => `${x.path.join('.')}: ${x.message}`),
-    });
-  }
+  if (!payload.success) throw erroDaConversao(payload, ev.versao_schema);
   conferirAgregado(ev, payload.data);
   // Cadastros lidos fora da 7300001 (C6a): só o que grava fica sob a trava que serializa a empresa inteira.
   const preparado = handler.preparar ? await handler.preparar(ctx, payload.data as never) : undefined;
@@ -329,11 +356,16 @@ export async function marcarEvento(
       terminal,
     });
   }
-  const handler = handlers[ev.tipo]?.[ev.versao_schema];
-  const lido = handler?.schema.safeParse(ev.payload);
-  if (handler?.entidades && lido?.success) {
-    await registrarEntidades(tx, ev, terminal, handler.entidades(lido.data));
+  const resolvido = resolverHandler(handlers, ev.tipo, ev.versao_schema);
+  if (!resolvido?.handler.entidades) return;
+  let lido: PayloadConvertido;
+  try {
+    lido = converterPayload(resolvido, ev.versao_schema, ev.payload);
+  } catch {
+    // O erro de regra do upcaster é o que levou o evento a `erro`: sem payload convertido, sem entidades.
+    return;
   }
+  if (lido.success) await registrarEntidades(tx, ev, terminal, resolvido.handler.entidades(lido.data));
 }
 
 /** SYNC 11.3: o alerta de cada evento em `erro`, aberto até Reprocessar ou Descartar (fila de decisão, ERP 12.5). */

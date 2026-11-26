@@ -6,6 +6,7 @@
  * (`manutencao.ts`) repete o que tiver faltado.
  */
 import {
+  ALERTA_AUDITORIA_ACAO_DESCONHECIDA,
   ALERTA_EVENTO_COM_ERRO,
   ALERTA_EVENTO_DESCARTADO,
   ALERTA_EVENTO_DIVERGENTE,
@@ -83,7 +84,8 @@ const LOCALIZACAO = 'PDVs/Terminais';
  * Alertas de terminal que alguém resolve na tela ("Ciente"/"Máquina conferida"): os demais fecham sozinhos. As lacunas
  * (SYNC 8.6; C15): o `LACUNA_DECLARADA` fecha sozinho só quando todos os eventos voltam; senão, a perda conferida com o
  * caixa; o `LACUNA_RECUPERADA` é aviso. O `RELOGIO_SUSPEITO` (SYNC 12.4; C16) depois de acertar o relógio do
- * computador; o `RELOGIO_DESVIO` não: fecha sozinho quando o heartbeat traz o desvio normal (T40).
+ * computador; o `RELOGIO_DESVIO` não: fecha sozinho quando o heartbeat traz o desvio normal (T40). O
+ * `AUDITORIA_ACAO_DESCONHECIDA` (F3-B4) depois de atualizar a API.
  */
 const RESOLVIDOS_NA_TELA: readonly string[] = [
   ALERTA_TOKEN_ANTERIOR,
@@ -92,6 +94,7 @@ const RESOLVIDOS_NA_TELA: readonly string[] = [
   ALERTA_LACUNA_DECLARADA,
   ALERTA_LACUNA_RECUPERADA,
   ALERTA_RELOGIO_SUSPEITO,
+  ALERTA_AUDITORIA_ACAO_DESCONHECIDA,
 ];
 
 /**
@@ -1101,6 +1104,7 @@ export class TerminaisErp {
             ALERTA_LACUNA_RECUPERADA,
             ALERTA_RELOGIO_SUSPEITO,
             ALERTA_RELOGIO_DESVIO,
+            ALERTA_AUDITORIA_ACAO_DESCONHECIDA,
           ]),
           not(regressaoMarcada),
           abertos,

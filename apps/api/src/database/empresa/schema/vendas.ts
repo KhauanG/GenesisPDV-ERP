@@ -3,11 +3,13 @@
  * parcelas, transações TEF e cobranças PIX. Nascem no PDV e chegam por evento (`venda.finalizada`,
  * `venda.cancelada`, SYNC 9.7 e 9.9); o SQLite do PDV tem as mesmas colunas (o `EsquemaNuvemTests` confere contra o
  * `Esquema.g.cs`). Nada daqui desce ao PDV (`fn_versao_local`); o estado alterado fora do terminal volta pela
- * projeção `vendas_status_pdv` (MD 3.11.9, Fase 3).
+ * projeção `vendas_status_pdv` (MD 3.11.9; a tabela é do F3-B2, migração 0030, e o fluxo, do F3-B7).
  *
  * Imutabilidade de `vendas` depois de `finalizada` (`fn_protege_imutavel`) e as FKs de autoria ficam na migração
  * customizada (0012). Colunas que apontam para tabelas que ainda não existem (orçamentos, comandas, pedidos,
- * promoções, vales, complementos, contas financeiras) ficam sem FK até a tabela entrar.
+ * promoções, contas financeiras) ficam sem FK até a tabela entrar; as que o PDV envia (`orcamento_id`, `promocao_id`,
+ * `vale_id`, `item_orcamento_id`) ficam sem FK mesmo depois (padrões da Fase 3; README da API › decisão 220). Com a
+ * venda finalizada ou cancelada, o item só muda em `quantidade_devolvida` (`tg_itens_venda_imutavel`, 0029).
  */
 import { sql } from 'drizzle-orm';
 import {
@@ -643,7 +645,9 @@ export const pagamentosVenda = pgTable(
     idTerminalPagamento: varchar('id_terminal_pagamento', { length: 40 }),
     tefTransacaoId: uuid('tef_transacao_id'),
     pixCobrancaId: uuid('pix_cobranca_id'),
-    // → `vales` (Fase 3) e `contas_financeiras` (Fase 4): FK quando as tabelas existirem.
+    // → `vales` (0029, F3-B1) sem FK: o PDV envia o id, e a ordem entre terminais não é garantida (um 23503
+    // recusaria um fato consumado); o handler da venda confere e abre alerta (padrões da Fase 3, decisão 220).
+    // `contas_financeiras` (Fase 4): FK quando a tabela existir.
     valeId: uuid('vale_id'),
     transferidoDeId: uuid('transferido_de_id'),
     autorizadoPorId: uuid('autorizado_por_id'),
@@ -721,5 +725,50 @@ export const parcelasVenda = pgTable(
     }),
     uniqueIndex('uq_parcelas_venda').on(t.pagamentoVendaId, t.numero),
     check('ck_parcelas_venda_valor', sql`valor > 0`),
+  ],
+);
+
+/**
+ * P (↓ caixa): projeção do estado das vendas alteradas **fora** do terminal de origem (cancelamento pelo ERP,
+ * devolução registrada em outro caixa, status fiscal resolvido pela nuvem; MD 3.11.9, SYNC 16.3; Fase 3, F3-B2,
+ * migração 0030; README da API › decisão 221). `vendas` é ↑ (`fn_versao_local`) e não pode ser lida pelo pull; a
+ * projeção tem `fn_versao` e desce no fluxo `operacao` (F3-B7, decisão 226).
+ *
+ * O `id` é o da venda (PK e FK, sem default). Desce pelo **caixa** da venda (`caixa_id`), não pelo terminal: o
+ * terminal que substituiu outro no mesmo caixa recebe o status das vendas antigas (padrões da Fase 3); `terminal_id`
+ * guarda o terminal que criou a venda. As duas são imutáveis (`tg_vendas_status_pdv_filtro_imutavel`, MD 6.4 regra
+ * 2). O upsert na mesma transação da mudança (`registrarStatusPdv`) é do F3-B10.
+ */
+export const vendasStatusPdv = pgTable(
+  'vendas_status_pdv',
+  {
+    ...colunasPadrao(),
+    id: uuid('id').notNull(),
+    caixaId: uuid('caixa_id').notNull(),
+    terminalId: uuid('terminal_id').notNull(),
+    status: varchar('status', { length: 16 }).notNull(),
+    statusFiscal: varchar('status_fiscal', { length: 22 }).notNull(),
+    devolucao: varchar('devolucao', { length: 8 }).notNull(),
+    canceladaEm: timestamptz('cancelada_em'),
+    cancelamentoOrigem: varchar('cancelamento_origem', { length: 4 }),
+  },
+  (t) => [
+    primaryKey({ name: 'pk_vendas_status_pdv', columns: [t.id] }),
+    foreignKey({ name: 'fk_vendas_status_pdv_id', columns: [t.id], foreignColumns: [vendas.id] }),
+    foreignKey({ name: 'fk_vendas_status_pdv_caixa_id', columns: [t.caixaId], foreignColumns: [caixas.id] }),
+    foreignKey({
+      name: 'fk_vendas_status_pdv_terminal_id',
+      columns: [t.terminalId],
+      foreignColumns: [terminais.id],
+    }),
+    index('ix_vendas_status_pdv_caixa_id_versao').on(t.caixaId, t.versao),
+    index('ix_vendas_status_pdv_terminal_id').on(t.terminalId),
+    check('ck_vendas_status_pdv_status', sql`status in (${listaSql(STATUS_VENDA)})`),
+    check('ck_vendas_status_pdv_status_fiscal', sql`status_fiscal in (${listaSql(STATUS_FISCAL_VENDA)})`),
+    check('ck_vendas_status_pdv_devolucao', sql`devolucao in (${listaSql(DEVOLUCOES_VENDA)})`),
+    check(
+      'ck_vendas_status_pdv_cancelamento_origem',
+      sql`cancelamento_origem is null or cancelamento_origem in (${listaSql(ORIGENS_CANCELAMENTO_VENDA)})`,
+    ),
   ],
 );

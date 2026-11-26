@@ -114,6 +114,43 @@ precisarmos dos actions". Decisão **D70** (roadmap §16; `docs/planos/decisoes-
 - **Pronto:** o instalador da versão atual (0.13.0) gerado na sessão passa no teste acima; os testes do
   `publicar-release.sh` verdes; nenhum release criado por este bloco.
 
+#### OP-B3 ampliado — o pacote do Velopack sem o runner Windows (F3-B8, 26/11/2026)
+
+Spike do F3-B8 (`docs/planos/fase3-plano.md` › F3-B8; README do PDV › decisão 100). O que vale para o PR-22, se o
+roteiro do Windows do dono passar:
+
+- **Empacotar no Linux da sessão (critério (a), comprovado):** `vpk "[win]" pack -r win-x64 …` do **vpk 1.2.161**
+  (a versão estável mais nova com mais de duas semanas; o `contentHash` do pacote no nuget.org fixado no script e
+  conferido a cada instalação, numa pasta própria, nunca global) monta, a partir da publicação `win-x64` do
+  `dotnet publish`, o `-full.nupkg`, o `-delta.nupkg` contra o anterior que achar na pasta de releases, o
+  `releases.<canal>.json` (o feed, com SHA1 **e** SHA256), o `-Setup.exe` (o `setup.exe` do Velopack com o pacote
+  completo anexado em zip) e o `-Portable.zip`. **Sem Wine** para empacotar: só o `zstd` do apt (o vpk monta os deltas
+  com ele no Linux). O Wine fica só para o ensaio. Os binários do Velopack (`Update.exe`, `setup.exe`, o stub) saem
+  **sem Authenticode**, como o instalador atual (`osslsigncode verify`: "No signature found").
+- **O Setup.exe da pasta de releases é sempre o da última versão empacotada:** o de cada versão se guarda logo depois do
+  `pack` dela (o script do spike guarda o da 1.0.0 para o roteiro; o primeiro ensaio instalou a 1.0.2 por isso).
+- **A assinatura (logística da D70, F3-B33):** o manifesto (`manifesto.<canal>.json`) é gerado na sessão junto com o
+  pacote, e o dono o assina no PC dele com o OpenSSH que já vem no Windows 10/11 —
+  `ssh-keygen -Y sign -f <chave> -n genesispdv-atualizacao manifesto.<canal>.json` — gerando o `.sig` ao lado; a chave
+  (Ed25519, com senha) só existe no PC dele, e a parte pública entra no build do PDV. A sessão nunca vê a chave: ela
+  confere o `.sig` com a chave pública (`ssh-keygen -Y verify`) antes de o dono publicar. O feed, os pacotes, o
+  manifesto e o `.sig` vão juntos para `download.<domínio>/pdv/<canal>/` pelo comando do OP-B2 (F3-B31/B33).
+- **A mínima permitida do manifesto nunca é a versão publicada:** fica igual ou abaixo da versão anterior em uso nos
+  caixas (o caixa a grava como piso antes de baixar, e a volta abaixo do piso é proibida: com a mínima igual à versão
+  nova, uma migração que falha deixa o caixa sem a volta automática). É um valor separado do `versao_minima` do
+  heartbeat (o que força a atualização com carência); o comando de publicação do F3-B31 recebe os dois e recusa a
+  mínima permitida igual ou acima da versão publicada (README do PDV › decisão 100).
+- **Os scripts do spike** (protótipo descartável, `apps/pdv/instalador/velopack-spike/`, fora do `GenesisPDV.slnx` e de
+  qualquer build do PDV; saem no F3-B33): `gerar-pacotes-teste.sh` (as três versões do protótipo, as pastas de feed boas
+  e adulteradas, assinadas com uma chave **de teste** gerada na hora, a conferência do conteúdo e o
+  `velopack-spike-roteiro.zip` com o `ROTEIRO.txt`, em `apps/pdv/publish/velopack-spike/`, ignorada) e
+  `ensaiar-no-wine.sh` (o roteiro inteiro no Wine, com cada resultado conferido; `--com-inno` instala antes o
+  GenesisPDV pelo instalador atual e confere a convivência).
+- **Não coberto na sessão** (o roteiro do Windows do dono, `apps/pdv/instalador/velopack-spike/ROTEIRO-WINDOWS.txt`):
+  o SmartScreen do Setup.exe baixado, o Smart App Control (F3-Q35 b), a janela de progresso e a reabertura do
+  `Update.exe` no Windows de verdade, o caixa com a conta comum (sem administrador), a ACL do `%ProgramData%` e o
+  Windows 10 22H2.
+
 ### OP-B4 — Vigia da implantação na VPS (a sessão pede, a VPS busca)
 
 - **Por quê:** o dono autorizou a sessão a implantar (D70), mas a sessão não abre conexão com a VPS e não deve ter

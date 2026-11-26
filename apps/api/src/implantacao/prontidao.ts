@@ -46,6 +46,7 @@ const FILAS_DA_PLATAFORMA = [
   FILAS.manutencaoTerminais,
   FILAS.expiracaoRelevancia,
   FILAS.tarefasInterrompidas,
+  FILAS.manutencaoOnline,
 ];
 
 /** Backup lógico mais velho que isto (o diário roda uma vez por dia, com folga) vira aviso. */

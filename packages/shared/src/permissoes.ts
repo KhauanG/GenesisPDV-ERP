@@ -66,6 +66,9 @@ const GRUPOS: Array<{ grupo: string; modulo: ModuloPermissao; itens: Entrada[] }
       ['categorias.ver', 'Categorias: Ver'],
       ['categorias.editar', 'Categorias: Editar'],
       ...crud('marcas', 'Marcas', ['ver', 'criar', 'editar', 'excluir']),
+      // Fase 3, F3-B3 (ERP 8.8 e 11.4): o cadastro de promoções do F3-B34, antes no menu com `produtos.ver`. A migração
+      // 0031 dá ver/criar/editar a quem já editava produtos (README da API › decisão 222).
+      ...crud('promocoes', 'Promoções', ['ver', 'criar', 'editar', 'excluir']),
       ['restricoes_horario.ver', 'Restrições de horário de venda: Ver'],
       ['restricoes_horario.editar', 'Restrições de horário de venda: Editar'],
       ['grupos_preco.ver', 'Grupos de preço por quantidade (mix): Ver'],
@@ -253,6 +256,9 @@ const GRUPOS: Array<{ grupo: string; modulo: ModuloPermissao; itens: Entrada[] }
       ['pdv.documento.reimprimir', 'Reimprimir documentos'],
       ['pdv.cliente.cadastro_rapido', 'Cadastro rápido de cliente'],
       ['pdv.taxa_servico.remover', 'Remover taxa de serviço'],
+      // Fase 3, F3-B3 (D84; PDV 10.12): emprestar cascos a cliente identificado, com `pdv.vasilhame_comodato` ligada, até
+      // `pdv.vasilhame_comodato_max_por_cliente`; acima do limite, o supervisor libera (liberação `comodato`).
+      ['pdv.vasilhame.comodato', 'Emprestar cascos em comodato (até o limite por cliente)'],
     ],
   },
   {

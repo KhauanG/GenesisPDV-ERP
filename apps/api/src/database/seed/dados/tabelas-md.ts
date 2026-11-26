@@ -295,6 +295,24 @@ export const TIPOS_MOVIMENTO_ESTOQUE: readonly TipoMovimentoSeed[] = [
     nomeNuvem3: null,
     idNuvem3: null,
   },
+  // Fase 3 (F3-B1, migração 0029, que também os grava nas empresas existentes): os estornos que faltavam no MD 7.3 — o
+  // cancelamento da venda com cascos emprestados devolve o empréstimo (D85) e o da baixa interna (D102).
+  {
+    codigo: 'ESTORNO_VASILHAME_EMPRESTADO',
+    nome: 'Estorno de empréstimo de vasilhame (comodato)',
+    sinal: 1,
+    documentoTipo: 'venda',
+    nomeNuvem3: null,
+    idNuvem3: null,
+  },
+  {
+    codigo: 'ESTORNO_BAIXA_INTERNA',
+    nome: 'Estorno de baixa interna',
+    sinal: 1,
+    documentoTipo: 'venda',
+    nomeNuvem3: null,
+    idNuvem3: null,
+  },
 ];
 
 export const PLANO_CONTAS_PADRAO: readonly PlanoContasSeed[] = [

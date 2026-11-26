@@ -44,6 +44,25 @@ public sealed class RepositorioCaixa(IDbContextFactory<PdvDbContext> fabrica, IR
     }
 
     /// <summary>
+    /// O portão de uma tela nova da onda (F3-B4; <see cref="GravadorOutbox.RecursoDisponivel"/>): a nuvem anunciou o tipo
+    /// na versão no último handshake. Sem handshake, indisponível; no terminal de demonstração (que não sobe nada), sempre
+    /// disponível.
+    /// </summary>
+    public async Task<bool> RecursoDisponivelAsync(string tipo, int versao, CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        return await db.IdentidadeTerminal.AsNoTracking().AnyAsync(i => i.UrlApi == IdentidadeTerminal.UrlDemonstracao, ct)
+               || await GravadorOutbox.RecursoDisponivelAsync(db, tipo, versao, ct);
+    }
+
+    /// <summary>A versão que a fábrica do evento grava (F3-B4; <see cref="GravadorOutbox.VersaoParaGravar"/>).</summary>
+    public async Task<int?> VersaoParaGravarAsync(string tipo, IReadOnlyCollection<int> conhecidas, CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        return await GravadorOutbox.VersaoParaGravarAsync(db, tipo, conhecidas, ct);
+    }
+
+    /// <summary>
     /// <c>caixa.aberto</c> (SYNC 9.3): sessão, movimento <c>abertura</c> (nenhum com fundo 0,00) e
     /// <c>estado_operacao.sessao_caixa_id</c> num commit. Recusado com o terminal em desativação (3.8), com outra sessão
     /// aberta, com o tipo não anunciado pela nuvem (T13) ou com a abertura diferente do fundo (o <c>caixa.aberto</c> do

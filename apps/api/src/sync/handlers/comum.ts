@@ -14,7 +14,7 @@ import { erroDoDriver } from '../../database/erro-postgres.js';
 import type { ClienteEmpresa, DbEmpresa } from '../../tenancy/tenancy.js';
 import type { TerminalDoEvento } from '../aplicacao.js';
 import type { EnvelopeEvento } from '../contratos.js';
-import { ErroRegraEvento } from '../erros.js';
+import { ErroRegraEvento, ErroTransitorioEvento } from '../erros.js';
 
 export interface ContextoHandler {
   tx: DbEmpresa;
@@ -28,6 +28,13 @@ export interface ContextoHandler {
    * da faixa de renumeração do caixa (`renumerarVenda`, `handlers/vendas.ts`). Falso no push.
    */
   novoNumero?: boolean;
+  /**
+   * `versao_schema` com que o evento chegou (SYNC 17.5; F3-B4). O handler recebe o payload já convertido para a versão
+   * dele (`upcast` encadeado), e é por aqui que as regras de recusa da versão de origem continuam valendo: um
+   * `venda.finalizada` v1 com `emprestados > 0`, recusado na v1, não passa a ser aceito como comodato só porque o
+   * upcaster o levou à versão que entende comodato.
+   */
+  versaoOrigem: number;
 }
 
 /**
@@ -48,8 +55,35 @@ export interface DependenciaEvento {
   agregado_id: string;
 }
 
-export interface HandlerEvento {
+/**
+ * Uma versão anterior do payload de um tipo (SYNC 17.5; F3-B4): o schema dela (o do contrato,
+ * `CONTRATOS_EVENTOS[tipo].versoes[n]`) e a conversão para a versão **seguinte** (vN → vN+1). O `upcast` é **puro**:
+ * não lê o banco nem o relógio, para o Reprocessar dar sempre o mesmo resultado, e o payload gravado em
+ * `eventos_recebidos` continua o original (a conversão acontece a cada aplicação). Uma falha dele é erro de regra
+ * (`PAYLOAD_INVALIDO`, que o suporte resolve corrigindo o upcaster e reprocessando), nunca transitória.
+ */
+export interface VersaoAnteriorEvento {
   schema: z.ZodType;
+  upcast(payload: never): unknown;
+  /** `false`: aceita, mas fora de `versoes_schema` (padrão: anunciada; a v1 de um tipo que já foi anunciado nunca sai). */
+  anunciada?: boolean;
+}
+
+export interface HandlerEvento {
+  /** Schema da versão do handler (a chave dele no catálogo). */
+  schema: z.ZodType;
+  /**
+   * Versões anteriores que este handler aplica pelo `upcast` encadeado (SYNC 17.5; F3-B4): o evento v1 de um handler v3
+   * passa por `versoes[1]` e `versoes[2]` antes do `schema`. Cada versão abaixo da do handler precisa estar aqui (ou ter
+   * handler próprio no catálogo); a que falta fica `SCHEMA_DESCONHECIDO`.
+   */
+  versoes?: Readonly<Record<number, VersaoAnteriorEvento>>;
+  /**
+   * `false`: o handler já aplica a versão, mas ela fica **fora** de `versoes_schema` até o último bloco da onda (o
+   * anúncio no fim da onda, plano da Fase 3). O PDV escolhe a maior versão comum anunciada, então nenhum caixa a grava
+   * antes; um evento que chegue nela (outro caminho, teste) é aplicado normalmente. Padrão: anunciada.
+   */
+  anunciada?: boolean;
   /** Entidades criadas pelo payload (`entidades_evento`, SYNC 8.5), lidas sem aplicar. */
   entidades?(payload: unknown): Array<{ tipo: string; id: string }>;
   /**
@@ -70,6 +104,119 @@ export interface HandlerEvento {
 
 /** Handlers por tipo e `versao_schema` (SYNC 9). */
 export type CatalogoHandlers = Readonly<Record<string, Readonly<Record<number, HandlerEvento>>>>;
+
+/** O handler que aplica uma versão de um tipo e a versão dele (a chave no catálogo). */
+export interface HandlerResolvido {
+  handler: HandlerEvento;
+  versaoHandler: number;
+}
+
+/**
+ * Quem aplica `tipo` na `versao` (SYNC 17.5; F3-B4): o handler da própria versão ou, sem ele, o primeiro acima cujas
+ * `versoes` cobrem cada passo de `versao` até a dele. `null` = versão que esta API não aplica (acima da maior
+ * conhecida: o PDV é mais novo; ou um buraco no encadeamento), que a aplicação trata como `SCHEMA_DESCONHECIDO`
+ * (transitório: o evento espera a API ser atualizada).
+ */
+export function resolverHandler(
+  catalogo: CatalogoHandlers,
+  tipo: string,
+  versao: number,
+): HandlerResolvido | null {
+  const porVersao = catalogo[tipo];
+  if (!porVersao || !Number.isInteger(versao) || versao < 1) return null;
+  const proprio = porVersao[versao];
+  if (proprio) return { handler: proprio, versaoHandler: versao };
+  const acima = Object.keys(porVersao)
+    .map(Number)
+    .filter((v) => v > versao)
+    .sort((a, b) => a - b);
+  for (const v of acima) {
+    const handler = porVersao[v]!;
+    let cobre = true;
+    for (let n = versao; n < v && cobre; n++) cobre = handler.versoes?.[n] !== undefined;
+    if (cobre) return { handler, versaoHandler: v };
+  }
+  return null;
+}
+
+/** O payload convertido para a versão do handler, ou onde a conversão parou (com o que o zod apontou). */
+export type PayloadConvertido =
+  | { success: true; data: unknown }
+  | { success: false; versao: number; campos: string[]; falhaUpcast?: string };
+
+const camposDoErro = (e: z.ZodError) => e.issues.map((x) => `${x.path.join('.')}: ${x.message}`);
+
+/**
+ * Leva o payload da `versaoOrigem` até a versão do handler (SYNC 17.5; F3-B4): cada passo valida no schema da versão
+ * em que está e converte para a seguinte; no fim, o schema do handler. Puro (só o zod e os `upcast`), para valer igual
+ * no push, no Reprocessar e na suíte de contrato. O erro de regra que um upcaster lance de propósito sobe como está; a
+ * exceção de um upcaster com defeito vira a falha da etapa (o chamador grava `PAYLOAD_INVALIDO`).
+ */
+export function converterPayload(
+  r: HandlerResolvido,
+  versaoOrigem: number,
+  payload: unknown,
+): PayloadConvertido {
+  let atual = payload;
+  for (let n = versaoOrigem; n < r.versaoHandler; n++) {
+    const anterior = r.handler.versoes?.[n];
+    if (!anterior) return { success: false, versao: n, campos: [], falhaUpcast: `sem a conversão da v${n}` };
+    const lido = anterior.schema.safeParse(atual);
+    if (!lido.success) return { success: false, versao: n, campos: camposDoErro(lido.error) };
+    try {
+      atual = anterior.upcast(lido.data as never);
+    } catch (e) {
+      if (e instanceof ErroRegraEvento || e instanceof ErroTransitorioEvento) throw e;
+      return {
+        success: false,
+        versao: n,
+        campos: [],
+        falhaUpcast: (e instanceof Error ? e.message : String(e)).slice(0, 500),
+      };
+    }
+  }
+  const final = r.handler.schema.safeParse(atual);
+  return final.success
+    ? { success: true, data: final.data }
+    : { success: false, versao: r.versaoHandler, campos: camposDoErro(final.error) };
+}
+
+/** `ErroRegraEvento` da conversão que parou (`PAYLOAD_INVALIDO`), com a versão de origem e a etapa nos detalhes. */
+export function erroDaConversao(
+  c: Extract<PayloadConvertido, { success: false }>,
+  versaoOrigem: number,
+): ErroRegraEvento {
+  const mensagem = c.falhaUpcast
+    ? `Falha na conversão do payload da v${c.versao} para a v${c.versao + 1}.`
+    : c.versao === versaoOrigem
+      ? 'Payload fora do schema do tipo.'
+      : `Payload convertido da v${versaoOrigem} fora do schema da v${c.versao}.`;
+  return new ErroRegraEvento('PAYLOAD_INVALIDO', mensagem, {
+    campos: c.campos,
+    ...(c.versao === versaoOrigem && !c.falhaUpcast ? {} : { versao_origem: versaoOrigem, versao: c.versao }),
+    ...(c.falhaUpcast ? { falha: c.falhaUpcast } : {}),
+  });
+}
+
+/**
+ * `versoes_schema` do `GET /sync/estado` (SYNC 17.5; T13; F3-B4): por tipo, as versões que esta API aplica **e
+ * anuncia** — a do handler e as anteriores que ele converte, menos as marcadas `anunciada: false`. A versão aceita e
+ * ainda não anunciada fica fora (o PDV escolhe a maior comum anunciada); tipo sem versão anunciada não aparece.
+ */
+export function versoesAnunciadas(catalogo: CatalogoHandlers): Record<string, number[]> {
+  const saida: Record<string, number[]> = {};
+  for (const [tipo, porVersao] of Object.entries(catalogo)) {
+    const versoes = new Set<number>();
+    for (const [chave, handler] of Object.entries(porVersao)) {
+      if (handler.anunciada !== false) versoes.add(Number(chave));
+      for (const [n, anterior] of Object.entries(handler.versoes ?? {})) {
+        if (anterior.anunciada !== false) versoes.add(Number(n));
+      }
+    }
+    if (versoes.size) saida[tipo] = [...versoes].sort((a, b) => a - b);
+  }
+  return saida;
+}
 
 /**
  * Partição de `auditoria` inexistente para a data (relógio muito errado): erro de regra, não falha transitória. Lê o

@@ -1,4 +1,4 @@
-import { type DynamicModule, Module } from '@nestjs/common';
+import { type DynamicModule, Module, type Type } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
@@ -54,7 +54,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Module({})
 export class AppModule {
-  static registrar(servicos: Servicos, logger: LoggerPino): DynamicModule {
+  /** `controllersExtras`: só os testes passam (a rota de teste da idempotência online, F3-B6). */
+  static registrar(servicos: Servicos, logger: LoggerPino, controllersExtras: Type[] = []): DynamicModule {
     const { config } = servicos;
     return {
       module: AppModule,
@@ -126,6 +127,7 @@ export class AppModule {
         MovimentosCaixaController,
         SessoesCaixaController,
         SyncController,
+        ...controllersExtras,
       ],
       providers: [
         { provide: SERVICOS, useValue: servicos },

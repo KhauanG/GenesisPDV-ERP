@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using GenesisPDV.Core.Vendas;
 using GenesisPDV.Data.Entidades;
+using GenesisPDV.Data.Outbox;
 using Microsoft.EntityFrameworkCore;
 
 namespace GenesisPDV.Data.Repositorios;
@@ -118,6 +119,16 @@ public sealed class ConsultasAuditoriaLocal(IDbContextFactory<PdvDbContext> fabr
 
         var pagina = linhas.GetRange(0, tamanho);
         return new PaginaAuditoria(pagina, Cursor(pagina, depois));
+    }
+
+    /// <summary>
+    /// O <c>versoes_schema</c> do último handshake (nulo antes do primeiro): a marca de envio das ações da Fase 3 sem lote
+    /// (<c>DescritorAuditoria.Envio</c>; F3-B4) segue o mesmo portão do lote.
+    /// </summary>
+    public async Task<string?> VersoesSchemaNuvemAsync(CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        return await GravadorOutbox.VersoesSchemaNuvemAsync(db, ct);
     }
 
     /// <summary>Um registro pelo id (o detalhe; nulo se não existe).</summary>

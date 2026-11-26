@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Protótipo descartável do atualizador (F3-B8): o mínimo para provar no Windows os critérios (b) e (c) do spike. Não é o
+    atualizador do PDV (F3-B32), não tem tela e não abre o banco do caixa.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>GenesisPDV.Spike</RootNamespace>
+    <AssemblyName>GenesisPDV.Spike</AssemblyName>
+    <!--
+      Só Windows, autocontido e de arquivo único como o PDV, fixos aqui (não na linha de comando): o restore e o
+      publish veem as mesmas referências implícitas (o Microsoft.NET.ILLink.Tasks do arquivo único), e o
+      packages.lock.json versionado não muda no publish.
+    -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <!--
+    Passados pelo gerar-pacotes-teste.sh: a chave pública da assinatura (a linha "ssh-ed25519 AAAA…" do .pub, embutida
+    no build como no F3-B32) e a falha de migração simulada (só no pacote 1.0.2 do roteiro).
+  -->
+  <PropertyGroup>
+    <SpikeChavePublica Condition="'$(SpikeChavePublica)' == ''">nenhuma</SpikeChavePublica>
+    <DefineConstants Condition="'$(SpikeFalharMigracao)' == 'true'">$(DefineConstants);FALHAR_MIGRACAO</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SpikeChavePublica" Value="$(SpikeChavePublica)" />
+  </ItemGroup>
+  <PropertyGroup>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Velopack" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+  </ItemGroup>
+</Project>

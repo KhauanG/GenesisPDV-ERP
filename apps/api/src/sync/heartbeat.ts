@@ -40,7 +40,7 @@ import { dentroDaMargem } from './numeracao.js';
 import { alertarDesvioRelogio, resolverAlertaDesvioRelogio } from './relogio.js';
 import { fecharSessoesDoTerminal, sessaoAbertaDoTerminal } from './sessoes-caixa.js';
 import { situacaoNaNuvem } from './situacao-evento.js';
-import { PROTOCOLO_ATUAL, PROTOCOLO_MINIMO, type TerminalAutenticado } from './terminal.js';
+import { PROTOCOLO_ATUAL, protocoloMinimo, type TerminalAutenticado } from './terminal.js';
 import { compararVersoes } from './versoes-app.js';
 
 const RENOVAR_TOKEN_DIAS = 30;
@@ -456,7 +456,7 @@ export class HeartbeatSync {
         com_erro: contagem.find((c) => c.status === 'erro')?.n ?? 0,
         retidos: contagem.find((c) => c.status === 'retido')?.n ?? 0,
       },
-      protocolo: { atual: PROTOCOLO_ATUAL, minimo: PROTOCOLO_MINIMO },
+      protocolo: { atual: PROTOCOLO_ATUAL, minimo: protocoloMinimo('pull') },
       versoes_schema: versoesSchemaAceitas(),
       app: await this.app(terminal),
       agora_servidor: new Date().toISOString(),

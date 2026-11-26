@@ -120,4 +120,19 @@ describe('catálogo de configurações (MD 3.1.2)', () => {
     expect(def.pdv).toBe(true);
     expect(CHAVES_CONFIGURACAO_PDV).toContain(CHAVE_CONSULTA_OUTRAS_LOJAS);
   });
+
+  it('Fase 3 (F3-B3): o limite de comodato por cliente (D84) e a conferência do vale (D96), por loja e no PDV', () => {
+    const comodato = CONFIGURACOES_POR_CHAVE.get('pdv.vasilhame_comodato_max_por_cliente')!;
+    expect(comodato.padrao).toBe(6);
+    expect([comodato.loja, comodato.pdv]).toEqual([true, true]);
+    for (const v of [0, 6, 9999]) expect(comodato.tipo.safeParse(v).success, String(v)).toBe(true);
+    for (const v of [-1, 10_000, 2.5, '6']) expect(comodato.tipo.safeParse(v).success, String(v)).toBe(false);
+    // O recurso continua desligado até o dono ligar (D84).
+    expect(CONFIGURACOES_POR_CHAVE.get('pdv.vasilhame_comodato')!.padrao).toBe(false);
+    const conferencia = CONFIGURACOES_POR_CHAVE.get('pdv.vale_exige_conferencia')!;
+    expect(conferencia.padrao).toBe(true);
+    expect([conferencia.loja, conferencia.pdv]).toEqual([true, true]);
+    // O limite padrão do cliente no caixa já existia desde a Fase 1: o F3-B3 não a recria.
+    expect(CONFIGURACOES_POR_CHAVE.get('pdv.limite_padrao_cliente_pdv')).toBeDefined();
+  });
 });

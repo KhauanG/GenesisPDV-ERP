@@ -118,8 +118,9 @@ export const MENU: GrupoMenu[] = [
         fase: 'Fase 1',
         pronto: true,
       },
-      // `promocoes.ver` ainda não está no catálogo (11.4; promoções são da PDV-2): usa `produtos.ver`.
-      { rotulo: 'Promoções', rota: '/produtos/promocoes', permissao: 'produtos.ver', fase: 'Fase 3' },
+      // Fase 3, F3-B3: `promocoes.ver` (ERP 11.4), antes `produtos.ver`; a migração 0031 a deu a quem editava produtos
+      // (README da API › decisão 222). A tela é do F3-B34.
+      { rotulo: 'Promoções', rota: '/produtos/promocoes', permissao: 'promocoes.ver', fase: 'Fase 3' },
       {
         rotulo: 'Restrições de horário de venda',
         rota: '/produtos/restricoes-horario',

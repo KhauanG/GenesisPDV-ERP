@@ -30,6 +30,7 @@ export * from './sync/eventos.js';
 export * from './tarefas.js';
 export * from './terminais.js';
 export * from './transferencias.js';
+export * from './vales.js';
 export * from './validadores.js';
 export * from './zod-pt.js';
 export * from './usuarios.js';

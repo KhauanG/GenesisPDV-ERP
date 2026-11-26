@@ -1,0 +1,12 @@
+<!-- Versões do spike do Velopack (F3-B8), separadas das do PDV (ver Directory.Build.props desta pasta). -->
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- A mesma versão do vpk fixada no gerar-pacotes-teste.sh (a biblioteca e o empacotador andam juntos). -->
+    <PackageVersion Include="Velopack" Version="1.2.161" />
+    <!-- Ed25519 da assinatura do manifesto: a mesma biblioteca e versão do X25519 do PDV (apps/pdv/Directory.Packages.props). -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+</Project>

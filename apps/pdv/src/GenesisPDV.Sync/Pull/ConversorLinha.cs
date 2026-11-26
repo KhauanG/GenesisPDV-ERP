@@ -67,6 +67,12 @@ public static class ConversorLinha
             return valor.GetRawText();
         }
 
+        if (tipo == typeof(Guid[]))
+        {
+            // `uuid[]` (F3-B7, `promocoes.lojas`): JSON com o UUID canônico, igual ao que o `ListaGuidJson` grava.
+            return JsonSerializer.Serialize(valor.EnumerateArray().Select(g => Guid.Parse(g.GetString()!)).ToArray());
+        }
+
         if (tipo == typeof(byte[]))
         {
             return Convert.FromBase64String(valor.GetString()!);

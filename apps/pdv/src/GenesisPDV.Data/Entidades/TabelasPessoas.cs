@@ -112,3 +112,33 @@ public class SaldoVasilhamePessoaRegistro : LinhaEspelhoSemAutoria
     public Guid ProdutoVasilhameId { get; set; }
     [Escala(3)] public decimal Quantidade { get; set; }
 }
+
+/// <summary>
+/// <c>vales</c> (MD 3.13.2; F3-B7; D90): os vales de todas as lojas na janela do caixa — os utilizáveis e os que
+/// mudaram nos últimos 90 dias. Quem sai da janela pelo relógio é purgado pelo próprio PDV, no fim do pull de
+/// <c>pessoas</c> (<c>PurgaJanelas</c>), menos o emitido aqui e ainda não confirmado (<c>criado_localmente</c>). O
+/// <c>saldo</c> pode ser negativo (D89). Só o espelho: o uso na venda é do F3-B46.
+/// </summary>
+public class ValeRegistro : LinhaEspelhoSemAutoria
+{
+    public string Codigo { get; set; } = string.Empty;
+    public string Tipo { get; set; } = string.Empty;
+    public Guid? PessoaId { get; set; }
+    public Guid LojaEmissaoId { get; set; }
+    public Guid? TerminalEmissaoId { get; set; }
+    [Escala(2)] public decimal ValorOriginal { get; set; }
+    [Escala(2)] public decimal Saldo { get; set; }
+    public DateOnly Validade { get; set; }
+    public string Status { get; set; } = "ativo";
+    public string OrigemTipo { get; set; } = string.Empty;
+    public Guid? OrigemId { get; set; }
+
+    /// <summary>Resumo do código de conferência de 4 dígitos (D96); nulo no vale sem conferência.</summary>
+    public string? ConferenciaHash { get; set; }
+
+    public DateTimeOffset EmitidoEm { get; set; }
+    public Guid EmitidoPorId { get; set; }
+    public DateTimeOffset? CanceladoEm { get; set; }
+    public Guid? CanceladoPorId { get; set; }
+    public string? MotivoCancelamento { get; set; }
+}

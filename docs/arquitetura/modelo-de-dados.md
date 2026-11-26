@@ -851,6 +851,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.taxa_servico_no_documento_fiscal` | bool | `false` | S | S | Novo (PDV 25.3): `false` = a taxa de serviço (gorjeta, Lei 13.419/2017) fica fora do rateio/`vOutro` e do `vNF`; a parte dos pagamentos que a cobre vai em `pagamentos_venda.valor_taxa_servico` e a nuvem a lança como passivo `gorjetas_a_repassar` (7.5). `true` = rateada em `acrescimo_rateado` e incluída no `vNF` |
 | `pdv.confirmacao_idade` | `por_venda`/`por_item`/`desligado` | `desligado` (O20 do dono, roadmap D36) | S | S | Novo (PDV 10.11): frequência do modal de confirmação de idade para produtos com `idade_minima` |
 | `pdv.vasilhame_comodato` | bool | `false` | S | S | Novo (PDV 10.12): permite "Emprestar cascos" (comodato) a cliente identificado em vez de cobrar o casco faltante |
+| `pdv.vasilhame_comodato_max_por_cliente` | inteiro 0–9999 | `6` | S | S | Novo (PDV 10.12; F3-B3; D84): saldo de cascos em comodato do cliente, depois do empréstimo, que quem tem `pdv.vasilhame.comodato` empresta sem o supervisor; acima, liberação `comodato`; `0` = todo empréstimo pede o supervisor |
 | `pdv.cancelamento_devolve_vazios` | bool | `true` | S | S | Novo (PDV 13.3; sincronizacao.md 10.4; decisão do dono, D29): no cancelamento da venda finalizada o caixa devolve ao cliente os vazios que ele trouxe e a nuvem estorna a entrada deles (`ESTORNO_VASILHAME_DEVOLVIDO`); `false` = os vazios ficam na loja |
 | `pdv.pix_manual_exige_supervisor` | bool | `true` | S | S | Novo (PDV 16.7): a confirmação manual de PIX sempre pede liberação de supervisor |
 | `pdv.desconto_cascos_max_sem_supervisor` | dinheiro | `50.00` | S | S | Novo (PDV 10.12; Fase 1C, C11c; roadmap D38, decidida pelo dono): crédito dos cascos descontados na venda (F11 › V) que o operador dá sem o supervisor; acima, a liberação vira `desconto_cascos` em `liberacoes`; `0` = sem teto (só a permissão `pdv.venda.desconto_total`) |
@@ -868,6 +869,7 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `pdv.crediario_exige_senha_cliente` | bool | `false` | S | S | Novo |
 | `pdv.vale_exige_online` | bool | `false` | S | S | Novo |
 | `pdv.vale_exige_cliente_acima` | dinheiro | `0.00` | S | S | Novo (0 = nunca) |
+| `pdv.vale_exige_conferencia` | bool | `true` | S | S | Novo (F3-B3; D96): o vale sai com um código de conferência de 4 dígitos (a nuvem guarda só o resumo, `vales.conferencia_hash`) e o uso pede os 4 dígitos além do código lido |
 | `pdv.troca_kit_parcial` | bool | `false` | S | S | Novo |
 | `pdv.devolucao_emite_nfe_entrada` | bool | `false` | S | S | Novo |
 | `pdv.delivery_emite_nota_na_saida` | bool | `true` | S | S | Novo |
@@ -972,9 +974,10 @@ restritiva** que a da UF (prazo menor); a API recusa a mais permissiva. Valores 
 | `padrao` | `boolean` | não | `false` | Um padrão por (tipo, loja) |
 | `ativo` | `boolean` | não | `true` | |
 
-- `uq_templates_documentos_padrao unique nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`;
+- `uq_templates_documentos_padrao unique nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`
+  (desde a migração 0002; conferido na 0030, F3-B2: nenhum banco pode ter dois padrões do mesmo tipo e loja);
   `ck_templates_documentos_tipo`, `ck_templates_documentos_formato`. Desce ao PDV: tipos `cupom_*`, `recibo_venda`,
-  `vale_compra`, `orcamento_*`.
+  `vale_compra`, `orcamento_*` (F3-B7: o `recibo_receber`, que descia até a Fase 2, saiu do filtro).
 
 #### 3.1.4 `numeracoes` (C, —)
 
@@ -1138,6 +1141,15 @@ A fila técnica (ex.: pg-boss) usa schema próprio.
   `RELOGIO_DESVIO` pelo heartbeat (chave `relogio_desvio:<terminal>`, aviso > 2 min e crítico > 5 min,
   `dados.desvio_relogio_ms` e `maior_desvio_ms`; fecha sozinho com o desvio normal ou a saída do terminal, e nunca abre
   para terminal já `revogado`).
+- Auditoria com ação desconhecida (sincronizacao.md 9.22, 21.3; Fase 3, F3-B4): `AUDITORIA_ACAO_DESCONHECIDA`, aviso,
+  `entidade = 'terminais'`, `registro_id` = o terminal, na loja do terminal; aberto quando um lote `auditoria.registros`
+  traz uma ação fora de `ACOES_AUDITORIA` (gravada em `auditoria` como `acao_desconhecida`, com o texto original, até 64
+  caracteres, na frente da `descricao`). Um aberto por terminal e ação: chave `acao_desconhecida:<terminal>:<ação>`
+  (cortada em 150). `dados`: `terminal_id`, `acao` (o texto original), `evento_id` e `sequencia` do lote que o abriu e
+  `ocorrencias`; o lote seguinte com a mesma ação soma as `ocorrencias` (só os registros inseridos: reaplicar o lote não
+  soma) e grava `ultimo_evento_id` e `ultima_sequencia`. No máximo 20 ações diferentes abrem alerta por lote
+  (`ALERTAS_ACAO_DESCONHECIDA_POR_LOTE`; as linhas de auditoria são gravadas todas). Não fecha sozinho: o "Ciente" do
+  detalhe do terminal (ERP 12.4, `terminais.gerenciar`), depois de atualizar a API (README da API › decisão 223).
 - Razão de estoque (3.7.2; Fase 2, F2-B2): `RAZAO_CADEIA_QUEBRADA`, aberto pelo preenchimento da `seq_lancamento` dos
   movimentos antigos quando a cadeia de uma linha de saldo não fecha (aviso, `entidade = 'produtos'`, `registro_id` =
   o produto, `loja_id` = a loja do estoque, se houver). Um aberto por linha: chave `razao_cadeia:<hash>`, com os 40
@@ -1842,9 +1854,11 @@ Cascos em comodato com o cliente (PDV 10.12), mantida pela nuvem ao aplicar o bl
 | CP | | | | |
 | `pessoa_id` | `uuid` | não | — | → `pessoas` |
 | `produto_vasilhame_id` | `uuid` | não | — | → `produtos` (`tipo = 'vasilhame'`) |
-| `quantidade` | `numeric(15,3)` | não | `0` | Cascos em comodato (baixa maior que o saldo zera e gera `VASILHAME_COMODATO_DIVERGENTE`) |
+| `quantidade` | `numeric(15,3)` | não | `0` | Cascos em comodato: a soma dos movimentos na ordem em que chegam (projeção comutativa); **pode ficar negativa** por um tempo, com o alerta `VASILHAME_COMODATO_NEGATIVO` (F3-B39). O caixa mostra no mínimo 0 |
 
-- `uq_saldos_vasilhame_pessoas (pessoa_id, produto_vasilhame_id)`; `ck_saldos_vasilhame_pessoas_quantidade (quantidade >= 0)`.
+- `uq_saldos_vasilhame_pessoas (pessoa_id, produto_vasilhame_id)`. **Sem** `CHECK (quantidade >= 0)` desde a migração
+  0030 (F3-B2; padrões da Fase 3): a baixa de um caixa pode chegar antes do empréstimo de outro, e limitar a 0 na
+  chegada daria um saldo final errado (como o saldo do vale, 3.13.2).
 
 ---
 
@@ -2271,12 +2285,20 @@ Promoções cadastradas no ERP (ERP › Promoções) e aplicadas pelo PDV depois
 | `ativo` | `boolean` | não | `true` | |
 
 - `ck_promocoes_tipo`; `ck_promocoes_vigencia (fim is null or inicio is null or fim > inicio)`;
-  `ck_promocoes_horario ((hora_inicio is null) = (hora_fim is null))`; `ix_promocoes_vigencia (inicio, fim) where ativo and excluido_em is null`.
+  `ck_promocoes_horario ((hora_inicio is null) = (hora_fim is null))`; `ix_promocoes_vigencia (inicio, fim) where ativo and excluido_em is null`;
+  `ck_promocoes_parametros (jsonb_typeof(parametros) = 'object')` (o formato por tipo é do contrato do shared, F3-B34);
+  `ck_promocoes_dias_semana` (como `restricoes_horario_venda`: de 1 a 7 dias entre 0 e 6);
+  `ck_promocoes_lojas (lojas is null or cardinality(lojas) >= 1)`.
+- Migração 0030 (F3-B2): `fn_versao` e `ix_promocoes_versao` já na criação (o fluxo `catalogo` a lê desde o F3-B7, todas as linhas);
+  autoria; **exclusão física proibida** (`fn_exclusao_fisica_proibida`, `DELETE` e `TRUNCATE`): o caixa offline pode
+  ter na venda o `promocao_id` (sem FK em `itens_venda`) de uma promoção que a nuvem precisa continuar conhecendo, e a
+  linha só sai do caixa como tombstone. Só inativação (`ativo`) ou exclusão lógica.
 
 `promocoes_itens`: CP, `promocao_id uuid not null → promocoes`, `produto_id uuid null → produtos`,
 `categoria_id uuid null → categorias`, `quantidade numeric(15,3) not null default 1`, `papel varchar(8) not null`
 (`gatilho`, `brinde`). `ck_promocoes_itens_alvo ((produto_id is null) <> (categoria_id is null))`,
-`ck_promocoes_itens_papel`, `ix_promocoes_itens_promocao_id`.
+`ck_promocoes_itens_papel`, `ck_promocoes_itens_quantidade (quantidade > 0)`, `ix_promocoes_itens_promocao_id`
+(e os índices das FKs). `fn_versao` e exclusão física proibida, como a promoção (0030).
 
 - O desconto calculado vai para `itens_venda.desconto_promocao` + `promocao_id` (na NFC-e entra em `vDesc`) e não
   consome o limite de desconto do operador. Descem **todas** as linhas (fluxo `catalogo`); o PDV filtra `lojas`,
@@ -3280,7 +3302,18 @@ Tabela de atalhos (Configurações › PDV: Atalho / Habilitado / Ordem), por em
 - `uq_orcamentos_codigo`; `ix_orcamentos_loja_id_status`; `ix_orcamentos_pessoa_id`; `ck_orcamentos_status`,
   `ck_orcamentos_respondido (respondido in ('nao','aprovado','recusado'))`,
   `ck_orcamentos_respondido_em ((respondido = 'nao') = (respondido_em is null))`,
-  `ck_orcamentos_desconto_tipo`, `ck_orcamentos_dias_validade (dias_validade between 0 and 365)`.
+  `ck_orcamentos_desconto_tipo`, `ck_orcamentos_dias_validade (dias_validade between 0 and 365)`;
+  `ck_orcamentos_valores (desconto_valor >= 0 and subtotal_bruto >= 0 and total >= 0 and (desconto_pct is null or desconto_pct between 0 and 100))`,
+  `ck_orcamentos_origem (origem in ('erp','pdv'))`, `ck_orcamentos_origem_terminal (origem = 'erp' or origem_terminal_id is not null)`,
+  `ck_orcamentos_convertido (status <> 'convertido' or convertido_em is not null)`,
+  `ck_orcamentos_reserva ((reservado_terminal_id is null) = (reservado_ate is null))`.
+- FKs: `loja_id`, `pessoa_id`, `vendedor_id`, `origem_terminal_id`, `reservado_terminal_id` e `venda_id` (gravada pela
+  própria nuvem ao aplicar a venda da conversão). `vendas.orcamento_id` e `itens_venda.item_orcamento_id` continuam
+  **sem** FK (o PDV os envia).
+- Migração 0030 (F3-B2): `seq_codigo_orcamentos`; `fn_versao('valido_ate')` (a gerada é isenta de versão) e
+  `ix_orcamentos_versao` já na criação (o fluxo `operacao` a lê desde o F3-B7, com a `valido_ate` descendo como gerada: o PDV a calcula); autoria; `loja_id` imutável
+  (`tg_orcamentos_filtro_imutavel`, 6.4 regra 2); exclusão física proibida (o caixa pode ter na venda o
+  `orcamento_id`), como nos itens.
 - Situação exibida no ERP 15.1 (derivada): `cancelado` → Cancelado; `convertido` → Convertido; `aberto` e vencido →
   Expirado; `aberto` com `respondido = 'aprovado'` → Respondido – aprovado; com `recusado` → Respondido – recusado;
   senão → Aberto. Orçamento recusado continua `aberto` (pode ser revisado e reenviado; a revisão volta `respondido` a
@@ -3289,7 +3322,9 @@ Tabela de atalhos (Configurações › PDV: Atalho / Habilitado / Ordem), por em
 `itens_orcamento`: CP, `orcamento_id uuid not null`, `sequencia integer not null`, `produto_id uuid not null`,
 `variacao_id uuid null`, `descricao varchar(120) not null`, `unidade varchar(6) not null`, `quantidade numeric(15,3) not null`,
 `preco_unitario numeric(15,4) not null`, `desconto_item numeric(15,2) not null default 0`, `valor_total numeric(15,2) not null`,
-`observacao varchar(255) null`. `uq_itens_orcamento_sequencia (orcamento_id, sequencia)`; `ck_… (quantidade > 0)`.
+`observacao varchar(255) null`. `uq_itens_orcamento_sequencia (orcamento_id, sequencia)`;
+`ck_itens_orcamento_quantidade (quantidade > 0)`, `ck_itens_orcamento_valores (preco_unitario >= 0 and desconto_item >= 0 and valor_total >= 0)`;
+FKs `orcamento_id`, `produto_id`, `variacao_id`. `fn_versao` e exclusão física proibida (0030).
 
 #### 3.11.2 `vendas` (D, ↑)
 
@@ -3381,9 +3416,11 @@ Venda do PDV (nasce no PDV, chega por evento) ou do ERP (Venda.aspx). Mesmas col
   ou vai a `cancelada`; `cancelada` é terminal e as colunas de cancelamento não mudam mais. Sem ele, voltar o `status`
   a um estado aberto num UPDATE deixaria editar tudo no seguinte, e a cancelada poderia ser "descancelada"
   (`DOCUMENTO_IMUTAVEL`).
-- FKs: toda coluna `→` para tabela existente; `orcamento_id`, `comanda_id`, `pedido_id` (e, nos itens e pagamentos,
-  `promocao_id`, `item_comanda_id`, `item_orcamento_id`, `vale_id`, `conta_financeira_id`, `complemento_id`) ficam sem
-  FK até a tabela de destino existir.
+- FKs: toda coluna `→` para tabela existente. `orcamento_id` (e, nos itens e pagamentos, `promocao_id`,
+  `item_orcamento_id` e `vale_id`) ficam **sem FK de propósito**, mesmo com a tabela de destino criada (0029 e 0030): o
+  PDV as envia, a ordem entre terminais não é garantida e um 23503 recusaria um fato consumado (padrões da Fase 3; README
+  da API › decisões 220 e 221). Só `comanda_id`, `pedido_id` (e, nos itens e pagamentos, `item_comanda_id`,
+  `conta_financeira_id` e `complemento_id`) ficam sem FK até a tabela de destino existir.
 - `vendas` não desce ao PDV (trigger `fn_versao_local`). O estado alterado fora do terminal volta pela projeção
   `vendas_status_pdv` (3.11.9), gravada na mesma transação que muda essas colunas.
 
@@ -3455,6 +3492,11 @@ Venda do PDV (nasce no PDV, chega por evento) ou do ERP (Venda.aspx). Mesmas col
   `ck_itens_venda_devolvida (quantidade_devolvida between 0 and quantidade)`; `ck_itens_venda_origem_preco`;
   `ck_itens_venda_origem_entrada (origem_entrada is null or origem_entrada in ('leitor','teclado','balanca','etiqueta','busca','cardapio'))`;
   `ck_itens_venda_kit ((kit_grupo_id is null) = (kit_produto_id is null) and (kit_grupo_id is null) = (kit_componente_id is null) and (kit_grupo_id is null or (kit_quantidade > 0 and kit_preco_unitario >= 0 and kit_descricao is not null)) and (kit_alternativa_id is null or kit_grupo_id is not null) and kit_acrescimo >= 0)`.
+- **Imutável com a venda fechada** (`tg_itens_venda_imutavel`, migração 0029, F3-B1): com a venda do item `finalizada`
+  ou `cancelada` (fora dos estados abertos), só mudam `quantidade_devolvida` (projeção das trocas), `versao` e
+  `atualizado_em`, e a exclusão é recusada (`DOCUMENTO_IMUTAVEL`); com a venda aberta (o rascunho do ERP) incluir,
+  alterar e excluir são livres. O INSERT não passa pelo trigger: o `venda.finalizada` grava o cabeçalho já finalizado e
+  depois as linhas.
 
 `fiscal_snapshot` (`schema_fiscal: 2`; o 1 era o bloco plano anterior e é lido por upcaster, sincronizacao.md 17.5).
 Valores monetários em string decimal, percentuais em string com 4 casas; blocos ausentes = tributo não aplicável.
@@ -3694,7 +3736,7 @@ Fase 1, vazia até o módulo ser ativado.
 `pedidos_historico_status` (D, ↑): CP, `pedido_id uuid not null`, `status_anterior varchar(18) null`,
 `status_novo varchar(18) not null`, `ocorrido_em timestamptz not null`, `usuario_id uuid null`, `terminal_id uuid null`.
 
-#### 3.11.9 `vendas_status_pdv` (P, ↓ terminal)
+#### 3.11.9 `vendas_status_pdv` (P, ↓ caixa)
 
 Projeção do estado das vendas de um terminal alteradas **fora dele** (cancelamento pelo ERP, devolução registrada em
 outro caixa, status fiscal resolvido pela nuvem; sincronizacao.md 16.3). Existe porque `vendas` é ↑ (`fn_versao_local`,
@@ -3703,20 +3745,26 @@ cancelar ou trocar uma venda já cancelada ou devolvida.
 
 | Coluna | Tipo | Nulo | Padrão | Descrição |
 |---|---|---|---|---|
-| CP | | | | `id` = `vendas.id` (PK e FK) |
-| `terminal_id` | `uuid` | não | — | → `terminais` (o terminal que criou a venda; filtro do pull) |
+| CP | | | | `id` = `vendas.id` (PK e FK, sem default) |
+| `caixa_id` | `uuid` | não | — | → `caixas` (o caixa da venda, imutável; filtro do pull) |
+| `terminal_id` | `uuid` | não | — | → `terminais` (o terminal que criou a venda) |
 | `status` | `varchar(16)` | não | — | Cópia de `vendas.status` |
 | `status_fiscal` | `varchar(22)` | não | — | Cópia de `vendas.status_fiscal` |
 | `devolucao` | `varchar(8)` | não | — | Cópia de `vendas.devolucao` |
 | `cancelada_em` | `timestamptz` | sim | — | |
 | `cancelamento_origem` | `varchar(4)` | sim | — | `pdv`, `erp` |
 
-- `pk_vendas_status_pdv (id)`; `fk_vendas_status_pdv_id → vendas`; `ix_vendas_status_pdv_terminal_id_versao (terminal_id, versao)`;
-  trigger `fn_versao`. `terminal_id` imutável.
+- `pk_vendas_status_pdv (id)`; `fk_vendas_status_pdv_id → vendas`; `ix_vendas_status_pdv_caixa_id_versao (caixa_id, versao)`,
+  `ix_vendas_status_pdv_versao`, `ix_vendas_status_pdv_terminal_id`; trigger `fn_versao`; os CHECKs de `status`,
+  `status_fiscal`, `devolucao` e `cancelamento_origem` com as listas de `vendas`. `caixa_id` e `terminal_id` imutáveis
+  (`tg_vendas_status_pdv_filtro_imutavel`). Migração 0030 (F3-B2).
+- Desce pelo **caixa** da venda, não pelo terminal: o terminal que substituiu outro no mesmo caixa recebe o status das
+  vendas antigas (padrões da Fase 3).
 - Upsert **na mesma transação** de qualquer alteração dessas colunas de `vendas` cuja origem não seja o próprio
   terminal (ERP, evento de outro terminal, tarefa fiscal). Alterações feitas pelo próprio terminal não geram linha
   (ele já tem o estado).
-- Desce no fluxo `operacao` com filtro `terminal_id = T` e `atualizado_em > now() − interval '90 days'`. No PDV é um
+- Desce no fluxo `operacao` (F3-B7) com filtro `caixa_id = caixa do terminal T` e `atualizado_em > now() − interval '90 days'`;
+  a linha que passa dos 90 dias sem mudança não ganha versão nova e o PDV a purga no fim do pull de `operacao`. No PDV é um
   espelho (4.2) com o mesmo nome; a Gestão de vendas lê `vendas` local com `left join vendas_status_pdv` e, quando há
   linha, as colunas da projeção prevalecem. O PDV nunca regrava a própria `vendas` com esses valores (a tabela de
   movimento continua imutável localmente).
@@ -3867,6 +3915,13 @@ Conferência do gerente no ERP (ERP 14.9).
 `valor_conferido numeric(15,2) not null`, `diferenca numeric(15,2) not null` (conferido − calculado).
 `uq_conferencias_caixa_formas (conferencia_id, forma_pagamento_id)`.
 
+- Migração 0030 (F3-B2): `uq_conferencias_caixa_fechamento (fechamento_id)` (refazer a conferência, D114, altera a
+  mesma linha, com auditoria); `ck_conferencias_caixa_situacao (situacao in ('conferida','divergente'))`,
+  `ck_conferencias_caixa_formas_valor (valor_conferido >= 0)`; FKs `fechamento_id`, `conferido_por_id`,
+  `conferencia_id`, `forma_pagamento_id` e a autoria; `conta_financeira_id` sem FK até `contas_financeiras` existir
+  (Fase 4). `fn_versao_local` (não sai da nuvem). A situação da sessão é derivada daqui, sem mudar o
+  `ck_sessoes_caixa_status` (que desce ao caixa).
+
 Situação exibida no ERP: `aberta` (sessão aberta) · `fechada` (sem conferência) · `conferida` · `divergente`.
 
 #### 3.12.5 `recebimentos_crediario` e `pagamentos_recebimento_crediario` (D, ↑)
@@ -3967,7 +4022,13 @@ trazidos, cobrados e emprestados **numa venda** não usam esta tabela: vão no b
   `ck_trocas_venda_origem (venda_origem_id is not null or sem_venda_origem)`;
   `ck_trocas_origem (origem in ('pdv','erp'))`;
   `ck_trocas_pdv (origem = 'erp' or (terminal_id is not null and sessao_caixa_id is not null))`;
-  `ck_trocas_erp (origem = 'pdv' or (venda_origem_id is not null and resolucao <> 'troca_imediata'))`.
+  `ck_trocas_erp (origem = 'pdv' or (venda_origem_id is not null and resolucao <> 'troca_imediata'))`;
+  `ck_trocas_valor (valor_total >= 0)`; `ck_trocas_cancelada (status <> 'cancelada' or cancelada_em is not null)`.
+- FKs: `loja_id`, `caixa_id`, `terminal_id`, `sessao_caixa_id`, `cliente_id`, `operador_id`, `autorizado_por_id`,
+  `vale_id` e `movimento_caixa_id` (as duas últimas sobem no mesmo `troca.registrada`) e `venda_nova_id` (preenchida
+  pela nuvem). `venda_origem_id` **sem FK**: a venda de origem pode ser de outro terminal e chegar depois.
+- Imutável depois de gravada (migração 0029): só mudam `venda_nova_id` (uma vez, de nulo para a venda), `status`
+  (`registrada` → `cancelada`, terminal) e as colunas de cancelamento; exclusão física proibida.
   Devolução do ERP: estoque `DEVOLUCAO_ERP` (+) ao `itens_venda.custo_unitario` do item de origem; cancelamento
   (`status = 'cancelada'`) gera `ESTORNO_DEVOLUCAO_ERP` e é bloqueado se o vale gerado já foi utilizado.
 
@@ -3975,7 +4036,10 @@ trazidos, cobrados e emprestados **numa venda** não usam esta tabela: vão no b
 `produto_id uuid not null`, `variacao_id uuid null`, `lote_id uuid null`, `quantidade numeric(15,3) not null`,
 `valor_unitario numeric(15,4) not null` (valor líquido unitário pago), `valor_total numeric(15,2) not null`,
 `destino varchar(8) not null` (`estoque`, `avaria`), `motivo varchar(255) null`.
-`uq_itens_troca_sequencia (troca_id, sequencia)`; `ck_… (quantidade > 0)`, `ck_itens_troca_destino`.
+`uq_itens_troca_sequencia (troca_id, sequencia)`; `ck_itens_troca_quantidade (quantidade > 0)`,
+`ck_itens_troca_valores (valor_unitario >= 0 and valor_total >= 0)`, `ck_itens_troca_destino`. `item_venda_origem_id`
+sem FK (como a venda de origem); `lote_id` → `produtos_lotes` (o handler anula o lote desconhecido, com alerta).
+Imutável e sem exclusão física (0029).
 
 #### 3.13.2 `vales` (C, ↕) e `movimentos_vale` (D, ↑)
 
@@ -4001,19 +4065,28 @@ emitidos no ERP usam o caixa `00` (dono `nuvem`).
 | `validade` | `date` | não | — | Emissão + `pdv.vale_compra_validade_dias` |
 | `status` | `varchar(10)` | não | `'ativo'` | `ativo`, `utilizado`, `expirado`, `cancelado` |
 | `origem_tipo` | `varchar(8)` | não | — | `troca`, `manual`, `venda` |
-| `origem_id` | `uuid` | sim | — | |
+| `origem_id` | `uuid` | sim | — | Troca ou venda de origem (sem FK) |
+| `conferencia_hash` | `varchar(100)` | sim | — | Resumo criptográfico do código de conferência de 4 dígitos impresso no vale (D96, `pdv.vale_exige_conferencia`); o código em si nunca é guardado. Nulo = vale sem conferência. Formato `pbkdf2-sha256$<iterações>$<sal>$<resumo>` sobre `<código>:<4 dígitos>` (F3-B5, `packages/shared/src/vales.ts`; SYNC 13.4) |
 | `emitido_em` | `timestamptz` | não | — | |
 | `emitido_por_id` | `uuid` | não | — | |
 | `cancelado_em`, `cancelado_por_id`, `motivo_cancelamento` | | sim | — | |
 
-- `uq_vales_codigo (codigo)`; `ix_vales_pessoa_id`; `ck_vales_codigo (codigo ~ '^VC[0-9]{12}$')`, `ck_vales_tipo`, `ck_vales_status`.
+- `uq_vales_codigo (codigo)`; `ix_vales_pessoa_id`; `ck_vales_codigo (codigo ~ '^VC[0-9]{12}$')`, `ck_vales_tipo`, `ck_vales_status`,
+  `ck_vales_origem_tipo`, `ck_vales_valor_original (valor_original > 0)`,
+  `ck_vales_cancelado (status <> 'cancelado' or cancelado_em is not null)`. **Sem** `CHECK (saldo >= 0)`.
+  `fn_versao` e `ix_vales_versao` desde a migração 0029; desce ao caixa no fluxo `pessoas` desde o F3-B7, na janela
+  da D90 (6.2): o utilizável e o que mudou nos últimos 90 dias; o PDV purga a cópia que sai da janela pelo relógio.
 
 `movimentos_vale`: CP, `vale_id uuid not null`, `tipo varchar(20) not null` (`emissao`, `utilizacao`,
 `estorno_utilizacao`, `cancelamento`, `expiracao`, `ajuste`), `valor numeric(15,2) not null` (emissão +, utilização −),
 `venda_id uuid null`, `pagamento_venda_id uuid null`, `troca_id uuid null`, `terminal_id uuid null`,
 `usuario_id uuid null`, `ocorrido_em timestamptz not null`, `evento_id uuid null`.
 `ix_movimentos_vale_vale_id`; `uq_movimentos_vale_pagamento (pagamento_venda_id, tipo) where pagamento_venda_id is not null`;
-`ck_movimentos_vale_tipo`, `ck_movimentos_vale_valor (valor <> 0)`.
+`ck_movimentos_vale_tipo`, `ck_movimentos_vale_valor (valor <> 0)`,
+`ck_movimentos_vale_sinal ((tipo not in ('emissao','estorno_utilizacao') or valor > 0) and (tipo <> 'utilizacao' or valor < 0))`
+(o cancelamento, −saldo, fica livre: o saldo pode estar negativo). FKs só em `vale_id`, `terminal_id` e `usuario_id`;
+`venda_id`, `pagamento_venda_id` e `troca_id` sem FK (documento de outro evento). Imutável e sem exclusão física (0029):
+a correção é um movimento novo (`ajuste`).
 
 `reservas_vale` (C, —) — reservas de saldo feitas por caixas **online** antes de lançar o pagamento com vale
 (sincronizacao.md 14.4). Várias reservas ativas por vale (uso parcial em caixas diferentes).
@@ -4331,6 +4404,31 @@ o evento que referencia uma entidade cujo evento criador está em `erro`/`retido
 - `uq_entidades_evento (entidade_tipo, entidade_id, evento_id)`; `ix_entidades_evento_evento_id (evento_id)`.
 - Alimentada com **toda linha criada pelo payload** do evento, na transação que o aplica **e** na que o grava como
   `erro` ou `retido` (lida do payload, sem aplicar). Sem `versao`: não desce ao PDV.
+
+#### 3.15.5 `requisicoes_terminal` (L mutável, —)
+
+Requisições online do caixa que alteram estado (reservas de vale e de orçamento, sincronizacao.md 20.4; migração 0029,
+F3-B1; o uso é do F3-B6, `apps/api/src/sync/online/idempotencia.ts`): a mesma requisição devolve a mesma resposta. A
+linha entra "em andamento" no começo da transação do efeito e recebe a resposta no mesmo commit; a repetição espera a
+linha da outra transação (`on conflict`). `corpo_sha256` = SHA-256 do JCS de `{parametros, corpo}`. Retenção de 24 h:
+a linha mais velha é apagada pela própria requisição que a reusa e pela tarefa por minuto da API. A FK para
+`terminais` trava a linha do terminal (`FOR KEY SHARE`) até o commit: o efeito que grava tabela que desce pega a
+7300001 **antes** desta linha (1.5), na mesma ordem do push (7300001 e depois `FOR UPDATE` do terminal).
+
+| Coluna | Tipo | Nulo | Padrão | Descrição |
+|---|---|---|---|---|
+| `terminal_id` | `uuid` | não | — | → `terminais` |
+| `requisicao_id` | `uuid` | não | — | `X-Requisicao-Id` |
+| `endpoint` | `varchar(80)` | não | — | Rota chamada |
+| `corpo_sha256` | `varchar(64)` | sim | — | Resumo do corpo: o mesmo id com outro corpo é recusado |
+| `status_http` | `smallint` | sim | — | Nulo enquanto em andamento |
+| `resposta` | `jsonb` | sim | — | Resposta gravada no mesmo commit do efeito |
+| `criada_em` | `timestamptz` | não | `now()` | |
+| `concluida_em` | `timestamptz` | sim | — | |
+
+- PK `(terminal_id, requisicao_id)`; `ix_requisicoes_terminal_criada_em` (retenção de 24 h);
+  `ck_requisicoes_terminal_status_http (status_http is null or status_http between 100 and 599)`,
+  `ck_requisicoes_terminal_concluida ((concluida_em is null) = (status_http is null))`. Sem `versao`.
 
 ---
 
@@ -4994,11 +5092,11 @@ X = loja do terminal; E = `lojas.estoque_id` de X; T = o terminal. "Todas" = sem
 | `pessoas_categorias`, `saldos_credito_pessoas`, `parcelas_credito_pessoas`, `saldos_vasilhame_pessoas` | pela pessoa (mesmo critério) | — |
 | `pessoas_enderecos`, `pessoas_telefones` | pela pessoa, só com relevância de motivo diferente de `funcionario` (D19: o funcionário desce para login e identificação, sem contato) | Quando só sobra `funcionario`, o PDV apaga o contato local ao receber a relevância excluída (3.5.4) |
 | `pessoas_aliases` | todas | Só ids (resolve `pessoa_id` de cadastro rápido mesclado) |
-| `vales` | todas | — |
+| `vales` | Janela do caixa (D90, F3-Q19 = A): `atualizado_em > now() − 90 dias` **ou** (`status = 'ativo'`, `saldo > 0` e `validade >= hoje − 90 dias`, hoje no fuso da empresa), de todas as lojas | — (o `conferencia_hash` desce para a conferência offline, D96). Quem sai da janela pelo relógio não ganha versão: o PDV apaga a cópia pelo mesmo critério no fim do pull de `pessoas` (menos o `criado_localmente` e o de venda ou evento local em curso), pela hora corrigida para a nuvem; o caixa parado há mais que a janela apaga a cópia e puxa o fluxo do cursor 0 (SYNC 6.8); online o caixa consulta qualquer vale |
 | `orcamentos`, `itens_orcamento` | `loja_id = X` (itens pelo pai) | — |
 | `comandas`, `itens_comanda` | `loja_id = X` (itens pelo pai) | — |
 | `cobrancas_pix` | `terminal_id = T` | — |
-| `vendas_status_pdv` | `terminal_id = T` e `atualizado_em > now() − 90 dias` | Projeção de status (3.11.9); `vendas` em si não desce |
+| `vendas_status_pdv` | `caixa_id` = caixa de T e `atualizado_em > now() − 90 dias` | Projeção de status (3.11.9); `vendas` em si não desce. A linha de mais de 90 dias sai do PDV pela purga no fim do pull de `operacao`; o caixa parado há mais que a janela apaga a cópia e puxa o fluxo do cursor 0 (SYNC 6.8) |
 
 Tabelas que **não** descem: todo o financeiro, compras/NF-e de entrada, acertos, transferências, movimentos de estoque,
 auditoria, arquivos, `terminais`, `eventos_recebidos`, `entidades_evento`, `comandos_terminal` (vão no heartbeat), `numeracoes` (só na
@@ -5054,7 +5152,7 @@ renova as `reservas_vale` informadas em uso e devolve `comandos_terminal`.
    `saldos_lote.estoque_id`, `produtos_lotes.estoque_id`, `configuracoes.escopo` e `configuracoes.loja_id`,
    `templates_documentos.loja_id`, `impressoras_destino.loja_id`, `atalhos_pdv.loja_id`, `lojas_banners.loja_id`,
    `taxas_entrega.loja_id`, `caixas.loja_id`, `certificados_digitais.loja_id`, `numeracoes_faixas.terminal_id`,
-   `cobrancas_pix.terminal_id`, `vendas_status_pdv.terminal_id`, `restricoes_horario_venda.loja_id`,
+   `cobrancas_pix.terminal_id`, `vendas_status_pdv.caixa_id` e `vendas_status_pdv.terminal_id`, `restricoes_horario_venda.loja_id`,
    `grupos_preco_quantidade_faixas.loja_id`,
    `pessoas_relevancia_loja.pessoa_id/loja_id/motivo`
    nunca mudam; mudar = excluir logicamente e criar outra linha (assim a exclusão desce para quem tinha a linha).
@@ -5157,9 +5255,14 @@ gera um `acertos_estoque` com a `origem` correspondente, por isso esses tipos t�
 | `ESTORNO_VASILHAME_DEVOLVIDO` | Estorno de devolução de vasilhame | -1 | `venda` | — | — |
 | `VASILHAME_VENDIDO` | Venda de vasilhame (casco) | -1 | `venda` | — | — |
 | `VASILHAME_EMPRESTADO` | Empréstimo de vasilhame (comodato) | -1 | `venda` | — | — |
+| `ESTORNO_VASILHAME_EMPRESTADO` | Estorno de empréstimo de vasilhame (comodato) | 1 | `venda` | — | — |
+| `ESTORNO_BAIXA_INTERNA` | Estorno de baixa interna | 1 | `venda` | — | — |
 
 `DEVOLUCAO_ERP`/`ESTORNO_DEVOLUCAO_ERP`: troca com `origem = 'erp'` (3.13.1, ERP 15.4.3). `BAIXA_INTERNA`: venda paga com
 forma `tipo_forma = 'consumo_interno'`, no lugar do `VENDA_PDV` (ERP 10.2); fica fora dos relatórios de vendas e lucro.
+Os dois estornos da Fase 3 (migração 0029, F3-B1; o gerador é dos blocos do comodato e da baixa interna):
+`ESTORNO_VASILHAME_EMPRESTADO` devolve o empréstimo ao `vasilhame_vazio` no cancelamento da venda com cascos emprestados
+(D85) e `ESTORNO_BAIXA_INTERNA` desfaz a `BAIXA_INTERNA` no cancelamento (D102), ambos com `estorno_de_id`.
 
 Vasilhames (PDV 10.12): `VASILHAME_DEVOLVIDO` entra no tipo de estoque `vasilhame_vazio` (bloco `vasilhames` do
 `venda.finalizada`, com `documento_tipo = 'venda'`, ou `vasilhame.movimentado`, cujo documento é o movimento avulso
@@ -5306,11 +5409,11 @@ PDV (31.2). Chaves `pdv.*` no formato `pdv.<area>.<acao>` (ex.: `pdv.caixa.sangr
 | `administrador` | Administrador | Tudo, exceto ser Master |
 | `gerente` | Gerente | Cadastros (sem usuários e configurações fiscais), estoque, vendas, relatórios, conferência de caixa; no PDV, todas as permissões da coluna "Gerente" do PDV 31.2 |
 | `financeiro` | Financeiro | Financeiro completo, relatórios financeiros, download de XML, consulta de vendas |
-| `estoquista` | Estoquista | Produtos (sem preço), acertos, recebimentos, NF-e de entrada, transferências, relatórios de estoque |
+| `estoquista` | Estoquista | Produtos (sem preço), promoções (ver, criar e editar, como quem edita produtos; F3-B3), acertos, recebimentos, NF-e de entrada, transferências, relatórios de estoque |
 | `vendedor` | Vendedor | Orçamentos, vendas ERP, consulta de produtos e pessoas, relatório de comissão próprio |
 | `operador_caixa` | Operador de caixa | Só PDV: coluna "Operador" do PDV 31.2 (✔) |
 | `supervisor_caixa` | Supervisor de caixa | Operador + coluna "Supervisor" do PDV 31.2, incluindo `pdv.supervisor` |
-| `encarregado` | Encarregado | Só PDV: as permissões do Supervisor de caixa mais cancelar a venda paga do caixa aberto (quem libera na loja sem gerente; dono, 05/11/2026; PDV 31.2) |
+| `encarregado` | Encarregado | Só PDV: as permissões do Supervisor de caixa mais cancelar a venda paga do caixa aberto e devolver dinheiro na troca e no resgate do vale (`pdv.troca.devolver_dinheiro`, D91) (quem libera na loja sem gerente; dono, 05/11/2026; PDV 31.2) |
 
 ### 7.10 `unidades_medida`
 

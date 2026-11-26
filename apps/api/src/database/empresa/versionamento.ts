@@ -9,6 +9,16 @@ import { TABELAS_DOS_FLUXOS } from '../../sync/fluxos.js';
 export const TABELAS_FN_VERSAO: readonly string[] = TABELAS_DOS_FLUXOS;
 
 /**
+ * Tabelas que já nascem com `fn_versao` e `ix_<tabela>_versao` porque vão descer ao PDV, mas cujo fluxo do pull entra
+ * num bloco seguinte (o `Esquema.g.cs` só muda junto do fluxo, numa só volta de cursor por release; padrões da Fase 3).
+ * Fora de `TABELAS_FN_VERSAO` (que gera os espelhos do PDV); o `test:sync-triggers` confere o trigger, o índice e que
+ * nenhuma está num fluxo. Quando o fluxo entrar, a tabela sai daqui.
+ * Vazia desde o F3-B7: `vales` (0029, F3-B1), `promocoes`/`promocoes_itens`, `orcamentos`/`itens_orcamento` e
+ * `vendas_status_pdv` (0030, F3-B2) entraram nos fluxos `pessoas`, `catalogo` e `operacao` (README › decisão 226).
+ */
+export const TABELAS_FN_VERSAO_SEM_FLUXO: readonly string[] = [];
+
+/**
  * Colunas isentas de versão (argumentos do trigger `tg_<tabela>_versao`, migrações 0011, 0012 e 0016; MD 1.5; T3/T10
  * da 1C): se só elas mudam, a linha fica com a mesma `versao` e não desce. Só projeção mantida pelo banco e que nunca vai
  * ao PDV: toda coluna daqui fica no `omitir` do fluxo da tabela. Coluna editada no ERP **nunca** entra (o 409 do ERP
@@ -27,6 +37,8 @@ export const COLUNAS_ISENTAS_VERSAO: Readonly<Record<string, readonly string[]>>
   movimentos_estoque: ['seq_lancamento'],
   // Coluna gerada (0025, F2-B22): enviada − recebida do item da transferência.
   itens_transferencia: ['diferenca'],
+  // Coluna gerada (0030, F3-B2): `data + dias_validade` do orçamento (MD 3.11.1).
+  orcamentos: ['valido_ate'],
 };
 
 export const TABELAS_FN_VERSAO_LOCAL = [
@@ -74,6 +86,14 @@ export const TABELAS_FN_VERSAO_LOCAL = [
   // pelo fluxo `estoque`
   'transferencias_estoque',
   'itens_transferencia',
+  // Fase 3: trocas e movimentos de vale (MD 3.13, F3-B1) sobem por evento (↑); as reservas de vale não saem da nuvem (—)
+  'trocas',
+  'itens_troca',
+  'movimentos_vale',
+  'reservas_vale',
+  // Fase 3: a conferência do fechamento pelo gerente (MD 3.12.4, F3-B2) não sai da nuvem (—)
+  'conferencias_caixa',
+  'conferencias_caixa_formas',
 ] as const;
 
 /** Tabelas com bloco AU (`criado_por_id`, `atualizado_por_id` → usuarios). */
@@ -144,4 +164,8 @@ export const TABELAS_COM_AUTORIA = [
   // Fase 2, F2-B45: complementos (MD 3.6.8), cadastrados no ERP pelo F2-B51
   'produtos_grupos_complementos',
   'produtos_complementos',
+  // Fase 3, F3-B2: promoções (MD 3.6.11), orçamentos (MD 3.11.1) e a conferência do fechamento (MD 3.12.4)
+  'promocoes',
+  'orcamentos',
+  'conferencias_caixa',
 ] as const;

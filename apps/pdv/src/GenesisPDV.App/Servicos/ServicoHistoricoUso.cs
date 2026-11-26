@@ -278,6 +278,8 @@ public sealed class ServicoHistoricoUso(ConsultasAuditoriaLocal consultas, Acess
         }
 
         var lista = new List<RegistroHistoricoUso>(registros.Count);
+        // A ação da Fase 3 sem lote: a enviar com o recurso da onda já anunciado (o próximo lote a leva), só local antes.
+        var versoesSchema = registros.Count == 0 ? null : await consultas.VersoesSchemaNuvemAsync(ct);
         foreach (var r in registros)
         {
             var quem = await NomeAsync(r.UsuarioId);
@@ -294,7 +296,7 @@ public sealed class ServicoHistoricoUso(ConsultasAuditoriaLocal consultas, Acess
                 DescritorAuditoria.Frase(descricao, quem, liberadoPor),
                 MascaradorSuporte.Mascarar(DescritorAuditoria.DescricaoExibivel(r.Acao, r.Descricao)),
                 MascaradorSuporte.Mascarar(r.Motivo),
-                DescritorAuditoria.Envio(r.Acao, r.EventoId, r.StatusEvento, r.ResultadoEvento),
+                DescritorAuditoria.Envio(r.Acao, r.EventoId, r.StatusEvento, r.ResultadoEvento, versoesSchema),
                 r.Localizacao,
                 r.SessaoCaixaId,
                 campos,
