@@ -179,10 +179,11 @@ describe('fluxo de login do ERP', () => {
   it('rota de tela sem a permissão mostra "Sem permissão"; tela futura mostra "Em construção"', async () => {
     simularApi(
       rota('POST', '/api/auth/refresh', () => ({ corpo: respostaLogin() })),
-      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'produtos.ver']) })),
+      rota('GET', '/api/auth/eu', () => ({ corpo: eu(['dashboard.ver', 'produtos.ver', 'promocoes.ver']) })),
     );
     const { router } = renderizarRotas(rotas, '/cadastros/usuarios');
     expect(await screen.findByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument();
+    // Promoções seguem `promocoes.ver` desde o F3-B3 (README do ERP › decisão 86).
     await router.navigate('/produtos/promocoes');
     expect(await screen.findByText('Em construção · Fase 3')).toBeInTheDocument();
     // Exportação sem permissão de exportar (só o ver de produtos): "Sem permissão".

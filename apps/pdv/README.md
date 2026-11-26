@@ -4266,3 +4266,266 @@ reimpresso continua o original, com o número do caixa.
       nem na versão do PDV; nenhum release nem tag criados por este bloco. Na sessão de 25/11/2026, o workflow "PDV
       release" ainda estava ligado (`GET actions/workflows/pdv-release.yml`): o primeiro release pelo site começa pelo
       passo 1.
+
+95. **Permissões e ações de auditoria da Fase 3 no catálogo, sem mudar o caixa** (F3-B3; PDV 10.12 e 31.2; D84, D91,
+    D102; README da API › decisão 222). O shared ganhou `pdv.vasilhame.comodato` (no perfil do Operador e, por ele, no
+    do Supervisor e no do Encarregado), a `pdv.troca.devolver_dinheiro` no Encarregado e a
+    `pdv.pagamento.consumo_interno` no Supervisor, as chaves `pdv.vasilhame_comodato_max_por_cliente` e
+    `pdv.vale_exige_conferencia` e as ações de auditoria da fase (`ACOES_AUDITORIA_FASE3`). No PDV só muda o
+    `PermissoesPdv.PerfilOperador` (o operador de demonstração e os testes), para continuar igual ao `PDV_OPERADOR`:
+    nenhuma tela lê o comodato ainda (F3-B40). O `CatalogosNuvem.AcoesAuditoria` **não** ganha as ações novas: é a
+    lista do que o caixa envia no `auditoria.registros`, e o caixa só as envia com o recurso da onda disponível
+    (`RecursoDisponivel`, F3-B4); o `CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem` passou a conferir que a lista
+    da nuvem é a do caixa mais a da fase (espalhada) e que as duas não se cruzam, e o
+    `Permissoes_do_caixa_e_o_perfil_do_operador_sao_os_do_shared`, que o Encarregado é o Supervisor mais o cancelamento
+    da venda paga e a devolução em dinheiro. `venda_recuperada`, que o caixa já grava só localmente (a venda
+    interrompida por uma queda), é também o nome da ação da venda suspensa recuperada (F3-B23): quando o caixa passar
+    a enviá-la, sobem as duas. Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova.
+
+96. **A versão do evento, o portão dos recursos da onda e as ações de auditoria da Fase 3** (F3-B4; SYNC 17.5 e 9.22;
+    plano da Fase 3 › Padrões, "O PDV escolhe a versão"; README da API › decisão 223; `GravadorOutbox.cs`,
+    `OutboxSync.cs`). Só o mecanismo: nenhum evento do caixa muda de versão ainda.
+    - **A versão que a fábrica grava** é a **maior versão comum anunciada** (`GravadorOutbox.VersaoParaGravar`): a maior
+      das que o caixa sabe montar que está no `versoes_schema` do último handshake. Sem handshake (coluna nula ou vazia),
+      **sempre a v1**: a v1 nunca sai do anúncio, toda API que tem o tipo a aplica, e a versão nova só é anunciada no fim
+      da onda. Nenhuma versão comum dá nulo (a tela não deixa começar a função, como o T13). O `TipoAnunciado` (o portão
+      da gravação, decisão 51) continua aceitando a v1 sem handshake, e uma versão acima da v1 passa a exigir o anúncio,
+      também nos tipos da 1B (`TiposSempreAceitos` vale para a v1).
+    - **`RecursoDisponivel(tipo, versao)`** é o portão das telas novas de uma onda e das ações novas de auditoria que elas
+      gravam: o recurso existe só com o tipo na versão anunciado no último handshake. Ao contrário da gravação da v1, **sem
+      handshake o recurso fica indisponível**: o caixa recém-atualizado que abre sem internet continua como a versão
+      anterior até falar com a nuvem. O `RepositorioCaixa` expõe os dois (`RecursoDisponivelAsync`, com o terminal de
+      demonstração sempre disponível, e `VersaoParaGravarAsync`) para as telas dos blocos seguintes.
+    - **As ações de auditoria da Fase 3** (`CatalogosNuvem.AcoesAuditoriaFase3`) só sobem no lote com o recurso da onda
+      delas anunciado (`CatalogosNuvem.AcoesEnviaveis`, lido a cada lote): a onda R3 (preço, F8, acréscimo, lote vencido,
+      peso digitado, venda suspensa e recuperada, limite de valor) pelo `venda.finalizada` v2, e o comodato (onda R4) pelo
+      `vasilhame.movimentado` v2. Uma API anterior ao F3-B3 recusaria o lote inteiro com a ação; a API do F3-B4 grava a
+      desconhecida como `acao_desconhecida`, mas a ordem de publicação não garante que o caixa só fale com ela. Até o
+      anúncio, a ação gravada fica no caixa (a Central mostra "só local"; com o recurso anunciado e ainda sem lote, "a
+      enviar", pelo mesmo `versoes_schema` do último handshake, porque o próximo lote a leva; já num lote, pelo lote:
+      `DescritorAuditoria.Envio`, com o `versoes_schema` lido pelo `ConsultasAuditoriaLocal`). Isso inclui a
+      `venda_recuperada` que o caixa grava só localmente desde a 1C: as anteriores sobem juntas quando a R3 for
+      anunciada (o F3-B23 distingue a da venda suspensa pelo `depois`). A associação ação → recurso é escolha técnica do
+      bloco; o bloco que anunciar outra versão para uma ação muda aqui.
+    - **`acao_desconhecida`** entra no `CatalogosNuvem.AcoesAuditoria` (é do catálogo da nuvem e reservada ao servidor;
+      o caixa nunca a grava, e o Histórico de uso tem a frase dela, "Ação de outra versão registrada").
+    - **Testes.** `DescritorAuditoriaTests.Marca_de_envio_da_acao_da_fase3_pelo_recurso_anunciado` (só local antes do
+      anúncio, a enviar depois dele, pelo lote quando já num lote), `GravadorOutboxTests` (a maior versão comum, a v1
+      sem handshake, o recurso indisponível sem handshake e disponível com o anúncio, e o lote que leva a ação da R3 só
+      depois do handshake que a anuncia, com o comodato ainda de fora) e o `CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem` (as ações da fase do caixa são as do shared).
+      Sem migração EF, `Esquema.g.cs`, protocolo nem versão nova do PDV; o PDV instalado não muda de comportamento.
+97. **Códigos do vale e do cupom de troca e o código de conferência do vale no Core** (F3-B5; SYNC 13.4, MD 3.13.2,
+    D95 e D96; README da API › decisão 224; `GenesisPDV.Core/Vales/CodigoVale.cs`). A mesma regra do
+    `packages/shared/src/vales.ts`, conferida pelos mesmos vetores (`vale.codigo.vetores.json`, ligado ao
+    `GenesisPDV.Core.Tests` como o da apuração): um código ou um resumo diferente entre o caixa e a nuvem faria o vale
+    emitido de um lado ser recusado do outro.
+    - **`CodigoVale`**: `MontarVale(loja, caixa, sequencial)` e `MontarCupomTroca(loja, caixa, numeroVenda)` (fora dos
+      limites, `ArgumentOutOfRangeException`), `ConferirVale`/`ConferirCupomTroca` (devolvem um `CodigoLido` com o
+      código normalizado e as partes, ou o `MotivoCodigoInvalido`: formato, DV, loja 00 ou número 0, o DV antes dos
+      limites) e `DigitoLuhn`. A leitura tira das pontas só espaço, tab, CR e LF (não o `Trim()`, que tira o NEL U+0085
+      e não o BOM, ao contrário do `trim()` do JS) e passa a maiúsculas só as letras ASCII; os padrões terminam em `\z`,
+      não em `$` (no .NET o `$` casa antes de um `\n` final, e no JS não).
+    - **`ConferenciaVale`**: `Gerar()` (4 dígitos do `RandomNumberGenerator.GetInt32`, sem viés), `Resumir` (PBKDF2 do
+      `Rfc2898DeriveBytes.Pbkdf2`, SHA-256, 100.000 iterações, sal de 16 bytes) e `Conferir` (iterações de 10.000 a
+      1.000.000, `CryptographicOperations.FixedTimeEquals`; entrada inválida dá `false`). Tudo da BCL: nenhum pacote novo.
+    - Só a regra: nenhuma tela, evento, migração EF, `Esquema.g.cs` nem versão do PDV muda (quem emite e lê o vale no
+      caixa é do F3-B41/F3-B46, pelo `RecursoDisponivel` da decisão 96). O PDV instalado não muda de comportamento. A
+      janela do protocolo da API (decisão 224 dela) não muda nada para o caixa: todos mandam o protocolo 1.
+    - **Testes.** `CodigoValeVetoresTests` (os vetores do vale, do cupom e da conferência; as constantes iguais às do
+      shared; qualquer dígito trocado recusado; o `\n` no fim, o BOM e o NEL recusados como no shared; o sorteio e o resumo
+      novo) e o `ContratosTests` do Sync, que agora sabe
+      que o arquivo novo da pasta é do Core.
+98. **Repetição das chamadas online que alteram estado com o mesmo `X-Requisicao-Id`** (F3-B6; SYNC 20.4 e 2.5; README
+    da API › decisão 225; `GenesisPDV.Sync/Cliente/ChamadaOnline.cs`). O lado do caixa da idempotência online: a API
+    guarda a resposta da primeira em `requisicoes_terminal` e devolve a mesma; o caixa só precisa repetir com o mesmo id.
+    - **`ChamadaOnline.AlterarComRepeticaoAsync`** (extensão do `IClienteSync`, sobre o `AlterarAsync` que já mantinha o
+      id da operação): repete com o **mesmo** id e o mesmo corpo quando o caixa não sabe se a nuvem aplicou — o prazo da
+      rota estourou (`TaskCanceledException` com `TimeoutException`), a conexão caiu (`HttpRequestException`) ou o
+      gateway respondeu 502/504 sem o envelope da API — e quando a nuvem pede (`409 REQUISICAO_EM_ANDAMENTO`, com o
+      `Retry-After` limitado a `EsperaMaxima`, 3 s). `RepeticaoOnline.Padrao`: 3 tentativas no total, 500 ms entre elas.
+      A política não tem prazo total: cada tentativa tem o prazo da rota no `ClienteSyncHttp`, o
+      `TemposLimiteSync.Outras` (30 s, o mesmo da renovação do token), então com a API que aceita a conexão e não
+      responde o pior caso é 3 × 30 s + 2 × 0,5 s ≈ 91 s com o cliente no balcão. O prazo próprio das chamadas do balcão
+      (como os 3 s do `TemposLimiteSync.Consulta` das consultas) fica para o F3-B45, que traz as rotas e o primeiro uso.
+      Qualquer outra resposta sobe na hora: o `422 REQUISICAO_DIVERGENTE` (o mesmo id com outro corpo é bug e não se
+      repete), as recusas de regra, o 500 (a transação da API foi desfeita; repetir só repetiria o erro) e o
+      cancelamento de quem chamou. Esgotadas as tentativas, sobe a última falha e quem chama (as reservas do F3-B45 e do
+      F3-B63) consulta o estado antes do caminho offline (SYNC 9.20).
+    - Nenhuma tela, evento, migração EF, `Esquema.g.cs` nem versão do PDV muda; ninguém chama a extensão ainda (as rotas
+      online da API chegam com o F3-B45). O PDV instalado não muda de comportamento.
+    - **Testes.** `ChamadaOnlineTests` (Sync.Tests): o timeout repete com o mesmo id e o mesmo corpo e devolve a resposta
+      da API; a queda de conexão e o 504 sem envelope também repetem; o `REQUISICAO_EM_ANDAMENTO` espera o `Retry-After`
+      no teto (o de 30 s espera os 200 ms do teto, nem menos nem mais) e abaixo dele (o de 1 s espera 1 s, e não a
+      `Espera` da política); o 422 `REQUISICAO_DIVERGENTE`, o 409 de regra, o `HARDWARE_ALTERADO`, o 500 e o 404 não repetem; as
+      tentativas esgotadas sobem o timeout com todas no mesmo id e o prazo inteiro da rota em cada uma; o cancelamento de quem chamou e a política de uma
+      tentativa não repetem.
+
+99. **Espelhos da Fase 3, uma volta de cursor só na migração `FaseTres` e a purga das janelas por tempo** (F3-B7; SYNC
+    6.1, 16.3, 17.4.2; MD 4.2, 6.2, 3.11.9, 3.13.2; D90; README da API › decisão 226). Só o espelho: nenhuma tela lê as
+    tabelas ainda (promoções a partir do F3-B35, vales no F3-B46, orçamentos no F9 e o status na Gestão de vendas do
+    F3-B29), nenhum evento nem `versoes_schema` muda, e a `<Version>` continua 0.13.0 até a release R3 (0.14.0, F3-B30).
+    - **Espelhos novos:** `promocoes` e `promocoes_itens` (fluxo `catalogo`; `Entidades/TabelasCatalogoComplementar.cs`),
+      `vales` (`pessoas`; `TabelasPessoas.cs`) e `orcamentos`, `itens_orcamento` e `vendas_status_pdv` (`operacao`;
+      `TabelasOperacao.cs`, novo), com os índices do MD 4.2 (`vales(codigo)`, `orcamentos(codigo)`, `promocoes_itens`
+      pelo produto e pela categoria) e os da purga (`atualizado_em` dos vales e do status). O `uuid[]` da nuvem
+      (`promocoes.lojas`) é TEXT JSON com o UUID canônico (`ListaGuidJson`, como o `text[]` e o `smallint[]`), e o
+      `ConversorLinha` grava o mesmo formato; `parametros`, `dias_semana` e `lojas` com o CHECK `json_valid`. A
+      `orcamentos.valido_ate`, gerada na nuvem, é gerada aqui (`date(data, '+' || dias_validade || ' days')`, stored):
+      o `pragma table_info` não a lista e o aplicador do pull a pula em silêncio pela marca `Gerada` do `Esquema.g.cs`
+      (o SQLite recusaria o valor). Os CHECKs de domínio da nuvem não se repetem nos espelhos (como desde a 1B).
+    - **Uma migração EF só** (`Migracoes/<data>_FaseTres.cs`), no padrão da `FaseDois` (decisão 85): cria as seis tabelas
+      e volta a 0 os cursores do `catalogo`, do `pessoas` e do `operacao` — o PDV anterior descartou as linhas delas e a
+      API vai antes à produção — e também do `configuracao`, porque o filtro dos `templates_documentos` ganhou
+      `recibo_venda` e `orcamento_*` (MD 3.1.3), cujas linhas do seed são antigas (o plano listava três; o fluxo é
+      pequeno). Nenhuma versão local volta (nenhuma coluna nova em tabela existente); a carga inicial concluída, a marca
+      `ressincronizar` e o restante do estado ficam; a venda segue durante a nova descida (upsert por versão). Saem só
+      as cópias do `recibo_receber`, que deixou de descer (saída de filtro sem tombstone, SYNC 4.1; o caixa nunca o
+      imprimiu). O 0.10.0 que passa direto para a versão nova aplica a `BuscaProdutosFts`, a `FaseDois` e a `FaseTres`
+      juntas, com o mesmo resultado. A publicação de `ressincronizar_fluxo` por migração da nuvem é do F3-B67.
+    - **Purga das janelas por tempo** (`Manutencao/PurgaJanelas.cs`, chamada pelo `AplicadorPull`): o vale e o status
+      que saem da janela só pelo relógio não ganham versão nova na nuvem, então nada os "desce". Na **última página** do
+      `pessoas` saem os vales sem mudança há mais de 90 dias que não são mais utilizáveis (vencidos há mais de 90 dias
+      pela data no fuso da empresa do espelho, zerados ou negativos, usados, expirados ou cancelados) — o complemento
+      exato do `valeNaJanela` da API —, menos o emitido aqui e ainda não confirmado (`criado_localmente`), o de uma venda
+      local em curso (pagamento com o `vale_id`) e o de um evento ainda a subir (pendente, enviando, erro temporário; o
+      recusado em quarentena não segura, como na purga de pessoas da decisão 91). Na última página do `operacao` sai o
+      status de venda com mais de 90 dias. Por estado, uma vez por ciclo; a página com `tem_mais` não purga. Só com o
+      espelho no banco (o aplicador também roda sobre o banco de uma versão anterior nos testes de compatibilidade).
+      `PurgaJanelas.DiasJanela = 90` é o `DIAS_JANELA_PDV` da API. A hora da purga é a **corrigida para a nuvem** (o
+      `RelogioSync`, passado ao `AplicadorPull` só para as janelas): o filtro da API corta pelo `now()` de lá, e o
+      Windows adiantado apagaria o que a nuvem ainda tem na janela, sem volta (a linha não ganha versão nova). Sem amostra
+      confiável do relógio neste boot (`relogio_confiavel = false`), a purga fica para o ciclo seguinte.
+    - **Recarga do fluxo parado** (`AplicadorPull.RecarregarJanelaSeParadoAsync`, chamado pelo ciclo antes do pull de
+      cada fluxo; SYNC 6.8): a mudança que tira a linha da janela e envelhece enquanto o caixa está parado (o ERP cancela
+      o vale no 5º dia, o caixa volta no 100º) não desce mais, e a cópia local ainda diria "ativo, com saldo" — com a
+      `pdv.vale_exige_online` = Não (D89), aceito sem internet. Pela D35 nada impede o caixa de ficar parado esse tempo.
+      Por isso, sem pull com sucesso do `pessoas` ou do `operacao` há mais de `DiasJanela − MargemRecargaDias` (80) dias
+      — a folga de 10 cobre a diferença entre o relógio do caixa, que gravou o `ultimo_pull_sucesso_em`, e o da nuvem; a
+      idade é a maior pelos dois relógios — ou nunca, com o cursor já andado, o PDV apaga a cópia da tabela com janela do
+      fluxo (`PurgaJanelas.DescartarCopiaAsync`: os `vales` menos o `criado_localmente`, o de venda local em curso e o de
+      evento a subir; os `vendas_status_pdv`) e volta o cursor a 0 na mesma transação. A descida traz de novo o que está
+      na janela (as outras tabelas do fluxo passam pelo upsert por versão sem mudar), e a primeira página renova o último
+      pull. Até a recarga terminar, o vale da nuvem só se consulta online (F3-B45); é a exceção ao "cursor nunca expira".
+    - **Compatibilidade.** O 0.13.0 e o 0.10.0 instalados (o mais antigo em uso tratado como 0.10.0 até a lista do dono,
+      que vai no corpo do PR-17) descartam as tabelas novas com log e o cursor avança; conferido com o PDV compilado das
+      tags contra a API nova pelo `apps/api/test/e2e-pdv/compatibilidade.sh` (README da API › decisão 226).
+    - **Testes.** `MigracaoFaseTresTests` (Data.Tests: sobre o banco do 0.10.0 e do 0.13.0 com dados, só os quatro
+      cursores voltam, uma migração da Fase 3, a versão local e os dados ficam, o `recibo_receber` sai, as tabelas novas
+      vazias; a `valido_ate` calculada pelo SQLite e lida pelo EF), `PurgaJanelasTests` (o vale zerado há 91 dias sai e o
+      de 89 fica; o criado localmente nunca sai; o negativo, o cancelado e o vencido há 91 dias saem; o vencido há 89 dias
+      e o que mudou ontem ficam; o da venda em curso e o do evento pendente ficam até terminar, o do recusado sai; o status
+      de 91 dias sai e o de 89 fica; a recarga apaga até o vale utilizável e todo status, menos o vale local, o da venda
+      em curso e o do evento), `AplicadorPullTests` (o 0.13.0 descarta as seis tabelas e o cursor avança, a
+      `FaseTres` volta os cursores e o app novo grava promoções com as listas, o vale negativo com o resumo da
+      conferência, o orçamento com a `valido_ate` calculada, os itens e o status; a última página purga e a do meio não;
+      com o Windows 91 dias adiantado e a nuvem 1 dia depois nada sai, sem amostra do relógio a purga espera; o fluxo
+      parado 100 dias recarrega do cursor 0 e o de 80 não, o cursor 0 não recarrega de novo e o cursor andado sem pull
+      registrado recarrega; os testes com a purga fixam o relógio na data das linhas, para não quebrarem com o tempo;
+      o exemplo de tabela desconhecida passou de `promocoes` para `comandas`), `EsquemaNuvemTests` com as tabelas novas e
+      os testes da `FaseDois` e da `FormasPagamentoLojas` com um fluxo que a `FaseTres` não volta; no e2e (`PontaAPontaTests`), a
+      promoção, o vale e o orçamento com item que o `servidor.ts` semeia chegam ao SQLite na carga inicial.
+
+100. **Spike do Velopack: empacotar no Linux, manifesto assinado e volta local depois de uma migração que falhou**
+     (F3-B8; plano da Fase 3 › F3-B8 e PR-22; F3-Q33 = D103 (A), F3-Q35 = D105; PDV 32.6; plano
+     `docs/planos/operacao-sem-actions-plano.md` › OP-B3 ampliado). **Protótipo descartável** em
+     `instalador/velopack-spike/` (fora do `GenesisPDV.slnx`, com `Directory.Build.props` e `Directory.Packages.props`
+     próprios, que param a busca do MSBuild: nada dele entra no PDV, e o `packages.lock.json` dele é versionado e não
+     muda no publish, porque o RID, o autocontido e o arquivo único estão no csproj). Sai no F3-B33. Nada muda no PDV,
+     no instalador Inno, no protocolo (`versoes_schema`) nem na versão (0.13.0).
+     - **Critério (a), comprovado na sessão:** o `vpk "[win]" pack -r win-x64` do **vpk 1.2.161** (fixo, com o
+       `contentHash` do nuget.org conferido; a biblioteca `Velopack` na mesma versão) monta no Linux, sem Wine, o
+       completo, o delta, o feed `releases.<canal>.json` (SHA1 e SHA256), o `Setup.exe` e o portátil; só pede o `zstd`
+       do apt para o delta. O `gerar-pacotes-teste.sh` confere a lista de arquivos de cada `.nupkg` (o exe, o stub, o
+       `Squirrel.exe`/`Update.exe`, o `sq.version`), a versão, o RID e o canal do `.nuspec` e o Setup da 1.0.0.
+     - **Critério (b): o manifesto assinado** (`manifesto.<canal>.json` + `.sig`, ao lado do feed;
+       `ProtoAtualizacao/FonteAssinada.cs`, um `IUpdateSource` na frente do `UpdateManager`). Antes de o Velopack ver
+       qualquer versão: a assinatura sobre os bytes exatos do manifesto, com a chave pública embutida no build; o app e o
+       canal escritos nele; o **piso** (a maior "versão mínima permitida" já aceita, que só sobe); o sha256 do feed; e cada
+       pacote do feed igual ao do manifesto (nome, tipo, versão, tamanho e sha256 obrigatório; o Velopack cairia para o
+       SHA1 sem ele). Os abaixo da mínima permitida saem do feed. Cada download é conferido de novo contra o manifesto.
+       **Assinatura = o formato SSHSIG do OpenSSH** (`ssh-keygen -Y sign -n genesispdv-atualizacao`, Ed25519): o dono
+       assina no PC dele com o OpenSSH que já vem no Windows 10/11, sem instalar nada, com a chave protegida por senha;
+       o caixa confere com o BouncyCastle 2.7.0 que o PDV já usa (`AssinaturaSsh.cs`, ~100 linhas, só Ed25519, contexto
+       fixo, a chave tem de ser a embutida). Sem assinatura do Authenticode: o `Update.exe` e o `setup.exe` do Velopack
+       também saem sem ela.
+     - **Achado: o completo remontado pelos deltas não é o completo publicado.** O `Update.exe patch` monta os mesmos
+       arquivos, byte a byte, num zip diferente (outro sha256 do `.nupkg`; conferido arquivo por arquivo), e o
+       `UpdateManager` **não** confere o remontado contra o feed. O manifesto leva então, no completo, o sha256 de cada
+       arquivo de dentro dele (`conteudo`), e antes de aplicar o app aceita o `.nupkg` da pasta do Velopack só se o
+       sha256 do arquivo for o assinado ou se a lista de arquivos (sem nome repetido) e o sha256 de cada um forem
+       exatamente os assinados. O `DownloadUpdatesAsync` extrai o `Update.exe` novo do pacote antes disso (no
+       `finally`): por isso o manifesto e o feed são conferidos **antes** do download, e os deltas e a base são todos
+       conferidos (a base é o pacote local).
+     - **Achado: o Velopack apaga o pacote instalado da pasta dele quando um download é recusado** (o
+       `CleanPackagesExcept` no `finally`), e sem ele não há delta nem para onde voltar. O app guarda o pacote da versão
+       que abriu sem erro numa pasta própria (`%LocalAppData%\GenesisPDV.Spike.Estado\anterior`, com o sha256), já na
+       abertura, e o devolve à pasta do Velopack antes de procurar atualização.
+     - **Critério (c): a volta local.** `SetAutoApplyOnStartup(false)`: o Velopack não aplica sozinho, na abertura, o
+       pacote mais novo da pasta (é o padrão dele, e passaria por cima das conferências e da regra "só no login ou depois
+       do fechamento"). Antes de aplicar: o backup do banco e a atualização pendente gravada (de, para, backup). Na
+       abertura da versão nova, a migração falhou: o app restaura o banco do backup, **recusa a versão neste computador**
+       (não a baixa de novo até sair uma mais nova), confere o pacote guardado (sha256 e o piso da mínima permitida: a
+       volta abaixo dela é proibida e o caixa pede o suporte com o banco já restaurado), tira da pasta do Velopack todos
+       os `.nupkg`, copia o anterior e o aplica pelo `Update.exe` (`ApplyUpdatesAndRestart`). A pasta limpa é
+       obrigatória: o `UpdateExe.Apply` **omite** o `--package` quando o arquivo não está lá, e o `Update.exe` aplica o
+       mais novo da pasta (a versão que falhou). O `apply --package` do `Update.exe` aceita versão menor (não confere
+       "downgrade"), e é ele que reescreve a entrada de desinstalação (DisplayVersion volta) e os atalhos. Nenhum
+       comando, argumento ou campo do manifesto pede volta: só a falha local da migração. **A ordem da volta (ajuste
+       da revisão do F3-B8):** a atualização pendente, com o backup, **só sai quando a versão de destino da volta
+       abre**; até lá a volta fica gravada como **em andamento** (de, para, motivo, tentativas), não como feita. Na
+       abertura, o "VOLTA FEITA" só aparece (e o estado só é limpo) com a versão instalada igual à de destino. Se a
+       versão que falhou abre de novo com a volta em andamento (o `Update.exe` não aplicou: falta de energia entre o
+       fechamento e o apply, arquivo travado pelo antivírus, a chamada lançou exceção), o app **não migra**: restaura o
+       banco do backup outra vez e repete a volta, até 3 tentativas (depois, pede o suporte com o banco restaurado).
+       Sem isso, uma volta que não chegou a ser aplicada deixava o estado dizendo "voltou", sem a referência ao backup,
+       e a abertura seguinte da versão que falhou migrava o banco pela metade sem ter como desfazer. Uma busca de
+       atualização com a volta em andamento é recusada. O ensaio no Wine força a primeira tentativa a falhar (a
+       variável `GENESIS_SPIKE_FALHAR_VOLTA`, lida só pelo pacote de teste da migração que falha). Os ganchos de
+       primeira execução e de reabertura do Velopack só registram: rodam dentro do `VelopackApp.Run()`, antes de o log
+       existir, então as linhas deles ficam guardadas e entram no `spike.log` logo depois (o console já em UTF-8): a
+       reabertura pelo `Update.exe` fica provada no log que o dono manda.
+     - **Regra de publicação da mínima permitida (para o F3-B31/B33):** a `versao_minima_permitida` do manifesto fica
+       **sempre igual ou abaixo da versão anterior em uso nos caixas**, nunca a própria versão publicada: o caixa grava
+       a mínima do manifesto como piso **antes** de baixar, e a volta abaixo do piso é proibida, então um manifesto da
+       0.14.2 com mínima 0.14.2 tiraria a volta automática justo da publicação que força a atualização (a migração da
+       0.14.2 falha, o banco é restaurado, mas o caixa fica na 0.14.2, que não abre o banco, até o suporte). Ela é um
+       valor **diferente** do `versao_minima` do heartbeat (o que força a atualização, com os 3 dias de carência e o
+       426 na ativação): o `implantar.sh pdv publicar` do F3-B31 recebe os dois separados e **recusa** a mínima
+       permitida igual ou acima da versão publicada. Subir a mínima permitida serve para barrar uma versão velha com
+       defeito (impedir que o caixa volte a ela), não para forçar a versão nova.
+     - **Critério (d): convivência com o Inno.** O Velopack instala por usuário (`%LocalAppData%\<packId>`, sem
+       administrador, com a entrada de desinstalação em HKCU), com os atalhos da área de trabalho, do menu Iniciar e o
+       da pasta Inicializar **do usuário** (`--shortcuts Desktop,StartMenuRoot,Startup`), no lugar do "Iniciar com o
+       Windows" do HKLM do Inno (para qualquer usuário): o caixa passa a abrir sozinho só na conta em que foi instalado,
+       o que já é o caso pela DPAPI CurrentUser do token (D21). O mutex `Global\GenesisPDV.Instancia` é do app, não do
+       instalador: o app instalado pelo Velopack vê o do PDV do Inno aberto. Os dados continuam em
+       `%ProgramData%\GenesisPDV`, que o Inno criou com MODIFICAR para Usuários e não apaga ao desinstalar: na passagem
+       (F3-B33), desinstalar o Inno e instalar o Velopack não mexe neles. **Um caixa novo, sem o Inno antes**, não terá
+       essa ACL (o Velopack não roda como administrador): a pasta criada pela conta do caixa serve a ela, mas o F3-B33
+       decide como preparar um caixa novo (o Inno só para a primeira vez, ou um passo de administrador do roteiro).
+       O piso e as recusadas ficam fora da pasta do Velopack e sobrevivem a desinstalar e reinstalar (a proteção contra a
+       versão velha não some com uma reinstalação).
+     - **Desenho do F3-B32/B33, confirmado com estes ajustes:** a fonte com o manifesto na frente do `UpdateManager`; o
+       sha256 de cada arquivo do completo no manifesto; o auto-aplicar desligado; o pacote instalado guardado na
+       abertura; a pasta do Velopack limpa antes da volta; a volta em andamento até a versão de destino abrir (a
+       pendente e o backup mantidos, repetida se a que falhou abrir de novo); a versão que falhou recusada localmente; o
+       piso persistido, com a mínima permitida do manifesto nunca a versão publicada; a assinatura pelo `ssh-keygen` do
+       Windows (a chave pública do dono no build, a privada só no PC dele, com senha).
+       O endereço do feed vem fixo no build (só `https`); no protótipo, o `--fonte <pasta>` é só para o roteiro.
+     - **Ensaio no Wine (sessão, 26/11/2026):** `ensaiar-no-wine.sh --com-inno publish/instalador/GenesisPDV-Setup-0.13.0.exe`
+       verde — instala a 1.0.0 pelo Setup (os três atalhos), recusa as quatro adulteradas antes de aplicar (outra
+       chave, feed refeito com o sha256 do invasor, pacote trocado, manifesto do canal beta), atualiza para a 1.0.1 pelo
+       delta (o remontado conferido arquivo por arquivo, com o "Reaberto pelo Velopack na 1.0.1" no `spike.log`), a
+       1.0.2 falha na migração e a primeira tentativa da volta é forçada a não ser aplicada (a 1.0.2 fica com a volta
+       em andamento, sem dizer que voltou), a abertura seguinte da 1.0.2 restaura o banco sem migrar e volta para a
+       1.0.1 na segunda tentativa, com o banco no esquema 2 e a "Versão instalada: 1.0.1", a 1.0.2 fica recusada, a
+       versão velha assinada e o manifesto anterior são recusados como antigos, e o GenesisPDV 0.13.0 instalado pelo
+       Inno fica intocado, com o mutex dele visto pelo app do Velopack (conferido a cada 5 s, por até 120 s, em vez da
+       espera fixa de 20 s). Refeito depois da revisão do bloco, com o pacote do roteiro gerado de novo. O gancho da
+       primeira execução não se confere no Wine (o ensaio abre o app direto, sem o `VELOPACK_FIRSTRUN` do Setup).
+     - **Pendente (o que decide o PR-22):** o `ROTEIRO-WINDOWS.txt` no Windows de verdade, pelo dono (o pacote é o
+       `publish/velopack-spike/velopack-spike-roteiro.zip` que o `gerar-pacotes-teste.sh` gera, ~150 MB, com o
+       `.sha256`): (b) e (c) comprovados lá, o SmartScreen do Setup.exe baixado (uma vez por caixa; as atualizações não
+       passam por ele) e o Smart App Control (F3-Q35 b: ligado, os binários sem Authenticode devem ser bloqueados; o
+       passo P4 do roteiro anota e para). Sem o roteiro registrado, o PR-22 não começa e a F3-Q33 volta ao dono (plano ›
+       F3-B8).

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { jcs } from '../jcs.js';
 import { NUMERO_VENDA_MAXIMO } from './contratos.js';
 import {
+  ACOES_LIBERACAO_FASE3,
   ACOES_LIBERACAO_VENDA,
   CONTRATOS_EVENTOS,
   formaVendaCancelada,
@@ -202,6 +203,25 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
 
   it('ações de liberação: as que o PDV gera (AcaoLiberacao) são as da conferência', () => {
     expect([...ACOES_LIBERACAO_VENDA]).toEqual(CONFERENCIAS.acoes_liberacao_venda);
+  });
+
+  it('ações de liberação da Fase 3 (F3-B3): só constantes, sem repetir as que o PDV já gera, aceitas pelo contrato da venda', () => {
+    expect(new Set(ACOES_LIBERACAO_FASE3).size).toBe(ACOES_LIBERACAO_FASE3.length);
+    expect(
+      ACOES_LIBERACAO_FASE3.filter((a) => (ACOES_LIBERACAO_VENDA as readonly string[]).includes(a)),
+    ).toEqual([]);
+    // O campo é texto livre (o PDV instalado não recusa a venda de um mais novo): toda ação nova passa no contrato de
+    // verdade da venda, na liberação da fixture com a ação trocada (a de item e a da venda inteira).
+    const comAcao = (acao: string, item: boolean) =>
+      com('venda.finalizada.payload.json', (v) => {
+        v.liberacoes[0].acao = acao;
+        if (!item) v.liberacoes[0].item_venda_id = null;
+      });
+    for (const a of ACOES_LIBERACAO_FASE3)
+      for (const item of [true, false])
+        expect(problemas(payloadVendaFinalizadaSchema, comAcao(a, item)), `${a} (item: ${item})`).toEqual([]);
+    // Controle: o mesmo caminho recusa uma ação fora do formato (o teste depende do schema, não de uma cópia da regra).
+    expect(payloadVendaFinalizadaSchema.safeParse(comAcao('Ação inválida', true)).success).toBe(false);
   });
 
   it('movimentos canceláveis pelo caixa: os que o PDV deixa cancelar (TipoMovimentoCaixa.Cancelaveis) são os da conferência', () => {

@@ -346,3 +346,38 @@ describe('token anterior reutilizado (SYNC 3.7)', () => {
     expect((await linhaControle(t.id)).token_hash).toBe(novo.hash);
   });
 });
+
+describe('janela do protocolo (SYNC 17.2; F3-B5)', () => {
+  it('X-Genesis-Protocolo: 0 é 426 PROTOCOLO_NAO_SUPORTADO em estado, pull, heartbeat, push e ativação; o 1 passa', async () => {
+    const t = await ativar();
+    const zero = (token?: string) => ({ ...cabecalhos(token), 'X-Genesis-Protocolo': '0' });
+    const heartbeat = JSON.parse(
+      readFileSync(new URL('heartbeat.requisicao.json', FIXTURES), 'utf8'),
+    ) as object;
+    const respostas = [
+      await amb.http().get('/sync/estado').set(zero(t.token)),
+      await amb.http().get('/sync/pull').query({ fluxo: 'catalogo', desde: '0' }).set(zero(t.token)),
+      await amb.http().post('/sync/heartbeat').set(zero(t.token)).send(heartbeat),
+      await amb
+        .http()
+        .post('/sync/push')
+        .set(zero(t.token))
+        .send({ lote_id: uuidv7(), terminal_id: t.id, enviado_em: new Date().toISOString(), eventos: [] }),
+      await amb.http().post('/sync/ativar').set(zero()).send(ATIVAR),
+    ];
+    for (const r of respostas) {
+      expect(r.status, JSON.stringify(r.body)).toBe(426);
+      const envelope = envelopeErroSyncSchema.parse(r.body);
+      expect(envelope.erro).toMatchObject({
+        codigo: 'PROTOCOLO_NAO_SUPORTADO',
+        detalhes: { protocolo_minimo: 1 },
+      });
+    }
+    // Ausente continua 400 (não vira o 0), e o mesmo terminal com o protocolo 1 segue atendido.
+    const { 'X-Genesis-Protocolo': _, ...semProtocolo } = cabecalhos(t.token);
+    const ausente = await amb.http().get('/sync/estado').set(semProtocolo);
+    expect(ausente.status).toBe(400);
+    expect(ausente.body.erro.codigo).toBe('REQUISICAO_INVALIDA');
+    expect((await estado(t.token)).status).toBe(200);
+  });
+});

@@ -125,5 +125,7 @@ public static class PermissoesPdv
         "pdv.venda.acrescimo", "pdv.venda.consultar", "pdv.crediario.receber", "pdv.documento.reimprimir",
         "pdv.cliente.cadastro_rapido", "pdv.orcamento.importar", "pdv.orcamento.criar", "pdv.comanda.operar",
         "pdv.pedido.operar", "pdv.fiscal.retransmitir", "pdv.relatorio.resumo_diario",
+        // Fase 3, F3-B3 (D84): o operador empresta cascos até o limite por cliente; o caixa só usa no F3-B40.
+        "pdv.vasilhame.comodato",
     };
 }

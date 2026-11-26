@@ -76,8 +76,13 @@ public sealed record EventoGravado(long Sequencia, HoraDoFato Hora);
 /// (<see cref="EstadoConexao.VersoesSchemaNuvem"/>), salvo os tipos da 1B (<see cref="TiposSempreAceitos"/>) e o
 /// terminal de demonstração. Tipo que a API não conhece voltaria <c>SCHEMA_DESCONHECIDO</c>, que é transitório e para o
 /// lote inteiro (D18): recusado aqui, o fato não é gravado e a tela avisa. Sem nenhum handshake desde a migração
-/// <c>TabelasCaixa</c> (coluna nula: terminal da 1B atualizado que abriu sem internet), o tipo vale como aceito: a
-/// implantação é sempre API primeiro, e o caixa nunca trava por falta de internet (O18).</item>
+/// <c>TabelasCaixa</c> (coluna nula: terminal da 1B atualizado que abriu sem internet), a v1 de qualquer tipo vale como
+/// aceita: a implantação é sempre API primeiro, e o caixa nunca trava por falta de internet (O18).</item>
+/// <item>Versões (SYNC 17.5; Fase 3, F3-B4): a fábrica do evento grava a <b>maior versão comum anunciada</b>
+/// (<see cref="VersaoParaGravar"/>) entre as que ela sabe montar e as do último handshake; com a coluna nula, sempre a
+/// v1, porque uma API antiga aplica a v1 e a versão nova só é anunciada no fim da onda. A tela nova da onda (e a ação nova
+/// de auditoria que ela grava) só abre com o recurso anunciado (<see cref="RecursoDisponivel"/>), que com a coluna nula
+/// fica indisponível até o primeiro handshake.</item>
 /// </list>
 /// A trava da D22 não passa por aqui: é do banco (<see cref="TravaDesativacao"/>), e vale para qualquer gravação.
 /// </summary>
@@ -221,37 +226,88 @@ public sealed class GravadorOutbox(IRelogioOutbox relogio, string? versaoApp = n
     public static async Task<bool> TipoAceitoAsync(PdvDbContext db, string tipo, int versao, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(db);
-        if (TiposSempreAceitos.Contains(tipo))
+        if (versao == 1 && TiposSempreAceitos.Contains(tipo))
         {
             return true;
         }
 
-        var versoes = await db.EstadoConexao.AsNoTracking().Select(c => c.VersoesSchemaNuvem).FirstOrDefaultAsync(ct);
-        return TipoAnunciado(versoes, tipo, versao);
+        return TipoAnunciado(await VersoesSchemaNuvemAsync(db, ct), tipo, versao);
     }
 
     /// <summary>
     /// O JSON <c>{"tipo": [1, 2]}</c> gravado do handshake traz <paramref name="tipo"/> na <paramref name="versao"/>.
-    /// Nulo = nenhum handshake desde a migração <c>TabelasCaixa</c>: aceito (padrão até a confirmação do dono, README ›
-    /// decisão 51). A API já foi atualizada quando o PDV da 1C chega; se não foi, o evento fica pendente com
-    /// <c>SCHEMA_DESCONHECIDO</c> (transitório) até ela aplicar o tipo, e o próximo handshake passa a valer.
+    /// Nulo = nenhum handshake desde a migração <c>TabelasCaixa</c>: a v1 é aceita (padrão até a confirmação do dono,
+    /// README › decisão 51). A API já foi atualizada quando o PDV da 1C chega; se não foi, o evento fica pendente com
+    /// <c>SCHEMA_DESCONHECIDO</c> (transitório) até ela aplicar o tipo, e o próximo handshake passa a valer. Uma versão
+    /// acima da v1 só com o anúncio (F3-B4; README › decisão 96): sem handshake, nem a API nova a anuncia ainda (o
+    /// anúncio é no fim da onda), e a API antiga não a aplica. Os tipos da 1B (<see cref="TiposSempreAceitos"/>) valem
+    /// sempre na v1.
     /// </summary>
     public static bool TipoAnunciado(string? versoesSchema, string tipo, int versao)
     {
-        if (TiposSempreAceitos.Contains(tipo) || string.IsNullOrWhiteSpace(versoesSchema))
+        if (versao == 1 && (TiposSempreAceitos.Contains(tipo) || string.IsNullOrWhiteSpace(versoesSchema)))
         {
             return true;
         }
 
+        return VersoesAnunciadas(versoesSchema, tipo)?.Contains(versao) == true;
+    }
+
+    /// <summary>
+    /// SYNC 17.5 (F3-B4): a versão que a fábrica grava, a maior entre <paramref name="conhecidas"/> (as que o caixa sabe
+    /// montar) que a nuvem anunciou no último handshake. Sem handshake (coluna nula ou vazia), a v1, se o caixa a conhece:
+    /// a v1 nunca sai de <c>versoes_schema</c> e toda API que tem o tipo a aplica. Os tipos da 1B, sem o tipo no anúncio,
+    /// também a v1. Nulo = nenhuma versão comum (a API não aplica o tipo): a tela não deixa começar a função.
+    /// </summary>
+    public static int? VersaoParaGravar(string? versoesSchema, string tipo, IReadOnlyCollection<int> conhecidas)
+    {
+        ArgumentNullException.ThrowIfNull(conhecidas);
+        var comuns = conhecidas.Where(v => TipoAnunciado(versoesSchema, tipo, v)).ToList();
+        return comuns.Count == 0 ? null : comuns.Max();
+    }
+
+    /// <summary>
+    /// O portão das telas novas de uma onda e das ações novas de auditoria que elas gravam (F3-B4; plano da Fase 3 ›
+    /// "O PDV escolhe a versão"): o recurso existe só quando o último handshake anunciou <paramref name="tipo"/> na
+    /// <paramref name="versao"/>. Ao contrário do <see cref="TipoAnunciado"/>, sem handshake (coluna nula) o recurso fica
+    /// <b>indisponível</b>: o caixa recém-atualizado que abre sem internet continua como a versão anterior até falar com
+    /// a nuvem. A v1 dos tipos da 1B está sempre disponível.
+    /// </summary>
+    public static bool RecursoDisponivel(string? versoesSchema, string tipo, int versao) =>
+        (versao == 1 && TiposSempreAceitos.Contains(tipo)) || VersoesAnunciadas(versoesSchema, tipo)?.Contains(versao) == true;
+
+    /// <summary><see cref="VersaoParaGravar"/> com o <c>versoes_schema</c> do último handshake.</summary>
+    public static async Task<int?> VersaoParaGravarAsync(PdvDbContext db, string tipo, IReadOnlyCollection<int> conhecidas, CancellationToken ct = default) =>
+        VersaoParaGravar(await VersoesSchemaNuvemAsync(db, ct), tipo, conhecidas);
+
+    /// <summary><see cref="RecursoDisponivel"/> com o <c>versoes_schema</c> do último handshake.</summary>
+    public static async Task<bool> RecursoDisponivelAsync(PdvDbContext db, string tipo, int versao, CancellationToken ct = default) =>
+        RecursoDisponivel(await VersoesSchemaNuvemAsync(db, ct), tipo, versao);
+
+    /// <summary>O <c>versoes_schema</c> gravado no último handshake (nulo antes do primeiro).</summary>
+    public static async Task<string?> VersoesSchemaNuvemAsync(PdvDbContext db, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        return await db.EstadoConexao.AsNoTracking().Select(c => c.VersoesSchemaNuvem).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>As versões de <paramref name="tipo"/> no JSON do handshake; nulo sem handshake, JSON inválido ou sem o tipo.</summary>
+    private static HashSet<int>? VersoesAnunciadas(string? versoesSchema, string tipo)
+    {
+        if (string.IsNullOrWhiteSpace(versoesSchema))
+        {
+            return null;
+        }
+
         try
         {
-            return JsonNode.Parse(versoesSchema) is JsonObject anunciados
-                   && anunciados[tipo] is JsonArray aceitas
-                   && aceitas.Any(v => v is JsonValue n && n.TryGetValue<int>(out var aceita) && aceita == versao);
+            return JsonNode.Parse(versoesSchema) is JsonObject anunciados && anunciados[tipo] is JsonArray aceitas
+                ? [.. aceitas.Select(v => v is JsonValue n && n.TryGetValue<int>(out var aceita) ? aceita : 0).Where(v => v > 0)]
+                : null;
         }
         catch (JsonException)
         {
-            return false;
+            return null;
         }
     }
 

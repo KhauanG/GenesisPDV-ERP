@@ -204,6 +204,15 @@ export const ALERTA_RELOGIO_SUSPEITO = 'RELOGIO_SUSPEITO';
  */
 export const ALERTA_RELOGIO_DESVIO = 'RELOGIO_DESVIO';
 
+/**
+ * SYNC 9.22 (F3-B4): o lote `auditoria.registros` trouxe uma ação que esta versão da nuvem não conhece (o caixa é mais
+ * novo que a API). O registro é gravado com a ação `acao_desconhecida` e o texto original, e o lote segue aplicado.
+ * Aviso, um aberto por terminal e ação (`acao_desconhecida:<terminal>:<ação>`, com as ocorrências somadas em
+ * `dados`), no terminal (`entidade = 'terminais'`), até alguém com `terminais.gerenciar` marcar "Ciente" (em geral
+ * depois de atualizar a API, para as próximas virem com a ação certa).
+ */
+export const ALERTA_AUDITORIA_ACAO_DESCONHECIDA = 'AUDITORIA_ACAO_DESCONHECIDA';
+
 /** SYNC 12.3, 12.4 e 21.2 (ERP 12.4): desvio absoluto acima disto é aviso (âmbar). */
 export const DESVIO_RELOGIO_AVISO_MS = 2 * 60_000;
 /** Acima disto é crítico ("Relógio do computador errado", vermelho). */

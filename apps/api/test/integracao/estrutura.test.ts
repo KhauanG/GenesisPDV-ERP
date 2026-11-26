@@ -149,6 +149,8 @@ describe('Lojas – assistente de primeira configuração (MD 7.13)', () => {
     );
     expect(nums).toEqual([
       { tipo: 'nfe', dono: 'nuvem', serie: 1, modelo: 55 },
+      // Vales emitidos no ERP (caixa 00, MD 3.13.2; F3-B1).
+      { tipo: 'vale', dono: 'nuvem', serie: null, modelo: null },
       { tipo: 'venda', dono: 'nuvem', serie: null, modelo: null },
     ]);
     const [aud] = await consultar(

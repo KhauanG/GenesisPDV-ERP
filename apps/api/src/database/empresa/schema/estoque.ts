@@ -424,7 +424,12 @@ export const itensAcertoEstoque = pgTable(
   ],
 );
 
-/** P (MD 3.5.6): cascos em comodato com o cliente; aqui por depender de `produtos`. */
+/**
+ * P (MD 3.5.6): cascos em comodato com o cliente; aqui por depender de `produtos`. Sem CHECK `quantidade >= 0` desde
+ * a 0030 (F3-B2; README da API › decisão 221): o saldo é a soma dos movimentos na ordem em que chegam e pode ficar
+ * negativo por um tempo (a baixa de um caixa antes do empréstimo de outro), com o alerta
+ * `VASILHAME_COMODATO_NEGATIVO`, como o vale (padrões da Fase 3). O caixa mostra no mínimo 0.
+ */
 export const saldosVasilhamePessoas = pgTable(
   'saldos_vasilhame_pessoas',
   {
@@ -447,7 +452,6 @@ export const saldosVasilhamePessoas = pgTable(
     }),
     uniqueIndex('uq_saldos_vasilhame_pessoas').on(t.pessoaId, t.produtoVasilhameId),
     index('ix_saldos_vasilhame_pessoas_produto_vasilhame_id').on(t.produtoVasilhameId),
-    check('ck_saldos_vasilhame_pessoas_quantidade', sql`quantidade >= 0`),
   ],
 );
 

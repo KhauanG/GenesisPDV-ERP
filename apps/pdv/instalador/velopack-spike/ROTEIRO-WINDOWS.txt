@@ -1,0 +1,101 @@
+ROTEIRO DO WINDOWS — spike do Velopack (F3-B8)
+=============================================
+
+O que é: um programa de teste, sem tela de venda, que prova no Windows de verdade duas coisas que o atualizador do PDV
+vai precisar (README do PDV, decisão 100):
+  (b) o caixa só aplica uma versão nova se o "manifesto" dela estiver assinado com a chave certa e os arquivos
+      baixados forem exatamente os assinados;
+  (c) se a versão nova falhar ao atualizar o banco, o próprio caixa restaura o banco e volta sozinho para a versão
+      anterior, sem ninguém mandar.
+Nada aqui mexe no GenesisPDV instalado, no banco do caixa nem na ativação: o programa de teste se chama
+"GenesisPDV Spike", fica na pasta do seu usuário e guarda os dados em C:\ProgramData\GenesisPDV.Spike.
+A chave usada é DE TESTE (gerada na sessão e descartável): não é a chave de assinatura de verdade.
+
+Onde fazer: num PC com Windows 10 ou 11 (de preferência o caixa da loja Treino, ou o seu PC), com a conta de
+usuário comum que o caixa usa. Leva uns 20 minutos. Anote o resultado de cada passo (OK / diferente, e o texto
+que apareceu) e mande no fim os arquivos C:\ProgramData\GenesisPDV.Spike\logs\spike.log e
+%LOCALAPPDATA%\velopack\velopack_GenesisPDV.Spike.log (o registro do próprio Velopack). Nenhum dos dois tem senha
+ou dado da loja.
+
+Preparação
+----------
+P1. Copie o velopack-spike-roteiro.zip para o PC e confira o sha256 no PowerShell:
+      Get-FileHash .\velopack-spike-roteiro.zip
+    O resultado tem de ser igual ao do arquivo velopack-spike-roteiro.zip.sha256 (sem diferença de maiúsculas).
+P2. Extraia o zip em C:\SpikeVelopack (fica C:\SpikeVelopack\roteiro\...).
+P3. Abra o PowerShell (o comum, NÃO "como administrador") e vá para a pasta:
+      cd C:\SpikeVelopack\roteiro
+P4. Anote se o "Controle Inteligente de Aplicativos" (Smart App Control) está ligado:
+    Configurações > Privacidade e segurança > Segurança do Windows > Controle de aplicativos e do navegador >
+    Configurações do Controle Inteligente de Aplicativos. (Se estiver "Ativado", o passo 1 provavelmente vai ser
+    bloqueado: anote e pare — é a resposta da F3-Q35 b.)
+
+1. Instalar a 1.0.0
+-------------------
+1.1 Dê dois cliques em 1-instalar-GenesisPDV.Spike-1.0.0-Setup.exe. O Windows pode mostrar "O Windows protegeu o
+    computador" (o programa não tem o selo de fabricante): clique em "Mais informações" e "Executar assim mesmo".
+    Anote se apareceu e se pediu senha de administrador (não deve pedir).
+1.2 Abre uma janela preta com "Primeira execução" e "Pronto para vender (banco no esquema 1)". Pressione Enter
+    para fechar. (Se não abrir sozinha, abra pelo atalho "GenesisPDV Spike" da área de trabalho.)
+1.3 Confira: atalho "GenesisPDV Spike" na área de trabalho e no menu Iniciar; e em
+    %AppData%\Microsoft\Windows\Start Menu\Programs\Startup (cole na barra do Explorer) um atalho dele (é o
+    "abrir ao entrar no Windows" por usuário). Anote.
+
+Daqui em diante, os comandos usam o programa instalado:
+      $spike = "$env:LOCALAPPDATA\GenesisPDV.Spike\current\GenesisPDV.Spike.exe"
+
+2. Versões adulteradas: todas têm de ser RECUSADAS, e a versão continua 1.0.0
+-----------------------------------------------------------------------------
+Para cada pasta abaixo, rode o comando, anote a linha "ERRO: RECUSADO ..." e pressione Enter:
+2.1 & $spike procurar --fonte C:\SpikeVelopack\roteiro\ruim-assinatura-de-outra-chave
+    esperado: "Assinatura recusada: assinada por outra chave."
+2.2 & $spike procurar --fonte C:\SpikeVelopack\roteiro\ruim-feed-refeito
+    esperado: "o feed não é o que o manifesto assinou (sha256 diferente)"
+2.3 & $spike procurar --fonte C:\SpikeVelopack\roteiro\ruim-pacote-trocado
+    esperado: "RECUSADO no download: ... não confere com o manifesto"
+2.4 & $spike procurar --fonte C:\SpikeVelopack\roteiro\ruim-canal-trocado
+    esperado: "o manifesto é do canal 'beta', não do 'win'"
+2.5 & $spike estado
+    esperado: "Versão instalada: 1.0.0".
+
+3. Atualização boa: 1.0.0 -> 1.0.1
+----------------------------------
+3.1 & $spike procurar --fonte C:\SpikeVelopack\roteiro\feed-1.0.1
+    esperado: "Baixando a 1.0.1 (1 delta(s))", "Pacote remontado pelos deltas conferido arquivo por arquivo",
+    "Conferido (...)", "Aplicando a 1.0.1"; a janela fecha, aparece (ou não) uma janelinha de progresso do Velopack, e
+    o programa reabre sozinho com "ATUALIZADO: 1.0.0 → 1.0.1", "Pacote da 1.0.1 guardado para a volta" e "Pronto para
+    vender (banco no esquema 2)". Anote se pediu administrador (não deve)
+    e se o SmartScreen apareceu de novo (não deve).
+
+4. Atualização que falha na migração: 1.0.1 -> 1.0.2 -> volta sozinho para a 1.0.1
+-----------------------------------------------------------------------------------
+4.1 & $spike procurar --fonte C:\SpikeVelopack\roteiro\feed-1.0.2
+    esperado: aplica a 1.0.2, reabre, mostra "A migração do banco falhou na 1.0.2", "Banco restaurado do backup",
+    "Voltando para a 1.0.1 pelo pacote guardado"; fecha e reabre de novo, agora com "VOLTA FEITA: a 1.0.2 falhou
+    ... voltou sozinho para a 1.0.1" e "Pronto para vender (banco no esquema 2)".
+4.2 & $spike estado
+    esperado: "Versão instalada: 1.0.1", "recusadas: 1.0.2", banco "esquema=2".
+4.3 & $spike procurar --fonte C:\SpikeVelopack\roteiro\feed-1.0.2
+    esperado: "A 1.0.2 falhou antes neste computador e fica recusada até sair uma mais nova." (não aplica de novo).
+4.4 Feche tudo, abra pelo atalho da área de trabalho: tem de abrir a 1.0.1 ("Pronto para vender (banco no
+    esquema 2)"), sem tentar a 1.0.2.
+
+5. Voltar a uma versão velha, assinada de verdade: RECUSADO
+-----------------------------------------------------------
+5.1 & $spike procurar --fonte C:\SpikeVelopack\roteiro\ruim-versao-velha-assinada
+    esperado: "manifesto antigo: a mínima permitida dele (1.0.0) é menor que a de um já aceito (1.0.1)".
+5.2 & $spike procurar --fonte C:\SpikeVelopack\roteiro\feed-1.0.1
+    esperado: também "manifesto antigo" (o manifesto de antes não volta a valer depois de um mais novo).
+
+6. Convivência com o GenesisPDV instalado (só se este PC tiver o GenesisPDV do instalador atual)
+----------------------------------------------------------------------------------------------
+6.1 Abra o GenesisPDV de verdade e, com ele aberto: & $spike mutex
+    esperado: "O mutex Global\GenesisPDV.Instancia existe". Feche o GenesisPDV e rode de novo: "não existe".
+6.2 Confira que o GenesisPDV de verdade continua em C:\Program Files\GenesisPDV, abre normal e que nada mudou em
+    C:\ProgramData\GenesisPDV (o teste só escreve em C:\ProgramData\GenesisPDV.Spike).
+
+7. Limpeza
+----------
+7.1 Configurações > Aplicativos > Aplicativos instalados > "GenesisPDV Spike" > Desinstalar (sem administrador).
+7.2 Apague C:\SpikeVelopack, C:\ProgramData\GenesisPDV.Spike e %LOCALAPPDATA%\GenesisPDV.Spike.Estado.
+7.3 Mande as anotações e os dois logs (copiados antes do 7.1 e do 7.2) para a sessão.

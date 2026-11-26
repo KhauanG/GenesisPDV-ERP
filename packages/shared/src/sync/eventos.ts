@@ -219,6 +219,28 @@ export const ACOES_LIBERACAO_VENDA = [
 ] as const;
 
 /**
+ * Ações de `liberacoes` que o caixa da Fase 3 vai gerar (F3-B3; plano da Fase 3 › Padrões): só constantes, para o PDV e
+ * a API usarem o mesmo texto. O campo continua texto livre no contrato (acima), então nenhuma delas muda o
+ * `venda.finalizada` v1 nem recusa a venda do PDV instalado. Ficam fora de `ACOES_LIBERACAO_VENDA` (as que o PDV já
+ * gera, conferidas pelos dois lados) até o bloco que as gera: `limite_valor` (F3-B24), `consumo_interno` (F3-B52),
+ * `alterar_preco` (F3-B16), `tipo_preco` (F3-B17), `lote_vencido` (F3-B21), `peso_manual` (F3-B22), `comodato` (F3-B40,
+ * acima de `pdv.vasilhame_comodato_max_por_cliente`), `troca_fora_prazo`, `troca_dinheiro` e `vale_avulso`
+ * (F3-B47, F3-B48; ligadas à troca ou ao vale, não à venda). README da API › decisão 222.
+ */
+export const ACOES_LIBERACAO_FASE3 = [
+  'limite_valor',
+  'consumo_interno',
+  'alterar_preco',
+  'tipo_preco',
+  'lote_vencido',
+  'peso_manual',
+  'comodato',
+  'troca_fora_prazo',
+  'troca_dinheiro',
+  'vale_avulso',
+] as const;
+
+/**
  * `vendas.motivo_cancelamento` no cancelamento da venda (O6, dono): texto livre de 15 a 255 caracteres, contados e
  * gravados sem os espaços das pontas, nas duas formas do `venda.cancelada`. O PDV (`Venda.MotivoCancelamento*`) e
  * este schema rodam as mesmas bordas (`testes/sync/eventos.conferencias.json`).
@@ -1095,4 +1117,31 @@ export const COLUNAS_FORA_DO_PAYLOAD = {
     nuvem: ['cancelado', 'cancelado_em', 'cancelado_por_id', 'motivo_cancelamento'],
     erp: [],
   },
+  // Tabelas da Fase 3 que sobem por evento (F3-B3; SYNC 9.16, 9.17, 9.19; migrações 0029 e 0030). Os contratos dos
+  // eventos que as levam (`troca.registrada`, `vale.*`, `orcamento.*`) vêm nos F3-B41 a B44 e no F3-B60 em diante, e o
+  // `contratos-eventos.spec.ts` passa a conferi-las quando cada um entrar; até lá ele confere só que estas colunas
+  // existem nas tabelas.
+  trocas: {
+    /** `codigo` pela sequência da nuvem; `origem` = 'pdv' (o padrão) no que vem do caixa; o cancelamento não tem evento do caixa (SYNC 9.16). */
+    nuvem: ['codigo', 'origem', 'cancelada_em', 'motivo_cancelamento'],
+    erp: [],
+  },
+  itens_troca: { nuvem: [], erp: [] },
+  vales: {
+    /** As de cancelamento vêm no `vale.cancelado` (SYNC 9.17), como as do `caixa.movimento_cancelado`. */
+    nuvem: ['cancelado_em', 'cancelado_por_id', 'motivo_cancelamento'],
+    erp: [],
+  },
+  /** O evento que aplicou o movimento é gravado pela nuvem. */
+  movimentos_vale: { nuvem: ['evento_id'], erp: [] },
+  orcamentos: {
+    /**
+     * `codigo` volta no resultado do push (SYNC 9.19); `valido_ate` é gerada; a conversão vem no `orcamento.convertido`
+     * e a reserva é da consulta online (F3-B6, F3-B61).
+     */
+    nuvem: ['codigo', 'valido_ate', 'venda_id', 'convertido_em', 'reservado_terminal_id', 'reservado_ate'],
+    /** A resposta do cliente ("Marcar resposta" ou o link público, ERP 15.1) só existe no ERP. */
+    erp: ['respondido', 'respondido_em', 'resposta_observacao'],
+  },
+  itens_orcamento: { nuvem: [], erp: [] },
 } as const;

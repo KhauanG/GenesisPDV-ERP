@@ -15,12 +15,28 @@ using F = GenesisPDV.Sync.Protocolo.FormatoProtocolo;
 namespace GenesisPDV.Sync.Push;
 
 /// <summary>
+/// Um recurso da nuvem (F3-B4; SYNC 17.5): o tipo de evento e a versão cujo anúncio em <c>versoes_schema</c> libera as
+/// telas e as ações de auditoria de uma onda (<see cref="GravadorOutbox.RecursoDisponivel"/>).
+/// </summary>
+public sealed record RecursoNuvem(string Tipo, int Versao)
+{
+    /// <summary>Onda R3 da Fase 3 (preço, suspensão, balança, lote): <c>venda.finalizada</c> v2, anunciada no F3-B30.</summary>
+    public static RecursoNuvem OndaR3 { get; } = new("venda.finalizada", 2);
+
+    /// <summary>Onda R4 da Fase 3, o comodato: <c>vasilhame.movimentado</c> v2, anunciado no F3-B53.</summary>
+    public static RecursoNuvem ComodatoR4 { get; } = new("vasilhame.movimentado", 2);
+}
+
+/// <summary>
 /// Catálogos da nuvem que o <c>auditoria.registros</c> precisa respeitar: <c>ACOES_AUDITORIA</c> e
 /// <c>MOTIVOS_FALHA_LOGIN</c> de <c>packages/shared/src/enums.ts</c> (o <c>CicloOnlineTests.Catalogos_do_pdv_sao_os_da_nuvem</c> lê
 /// o arquivo e confere as duas listas). Ação fora do catálogo derrubaria o evento inteiro na API (<c>PAYLOAD_INVALIDO</c>), e
 /// também a que está no catálogo mas só o servidor grava (<c>ACOES_AUDITORIA_SO_SERVIDOR</c>: <c>terminal_revogado</c>,
 /// <c>permissoes_alteradas</c>, <c>evento_descartado</c>…; README da API › decisão 211): o PDV nunca grava uma delas no
 /// <c>log_auditoria_local</c> (o <c>DescritorAuditoriaTests.Nenhuma_acao_gravada_e_reservada_ao_servidor</c> confere).
+/// Desde o F3-B4 a API nova grava a ação que não conhece como <c>acao_desconhecida</c> em vez de recusar o lote, mas a
+/// API antiga continua recusando: por isso as ações da Fase 3 (<see cref="AcoesAuditoriaFase3"/>) só sobem com o recurso
+/// da onda delas anunciado.
 /// </summary>
 public static class CatalogosNuvem
 {
@@ -32,6 +48,38 @@ public static class CatalogosNuvem
         "evento_descartado", "evento_reprocessado", "lacuna_substituida", "relogio_regrediu", "acesso_suporte", "segredo_entregue",
         "token_anterior_reutilizado", "hardware_alterado", "idade_confirmada", "idade_recusada", "horario_restrito_liberado", "hash_fora_dos_limites",
         "sangria_recusada", "pix_confirmado_manual", "reimpressao", "pix_recebedor_alterado", "recalcular_saldos",
+        "acao_desconhecida",
+    ];
+
+    /// <summary>
+    /// <c>ACOES_AUDITORIA_FASE3</c> (F3-B3) e o recurso da onda que libera cada uma (F3-B4; README › decisão 96): a ação só
+    /// sobe no lote com o recurso anunciado no último handshake (<see cref="GravadorOutbox.RecursoDisponivel"/>), e a tela
+    /// que a grava abre pelo mesmo portão. Uma API anterior ao F3-B3 recusaria o lote inteiro com a ação (o
+    /// <c>auditoria.registros</c> não passa pelo T13). Onda R3 (F3-B13 a B30, anúncio no F3-B30): o <c>venda.finalizada</c>
+    /// v2; onda R4 (anúncio no F3-B53): o comodato, pelo <c>vasilhame.movimentado</c> v2. Padrão até a confirmação do
+    /// dono; o bloco que anunciar outra versão para a ação muda aqui.
+    /// </summary>
+    public static IReadOnlyDictionary<string, RecursoNuvem> AcoesAuditoriaFase3 { get; } = new Dictionary<string, RecursoNuvem>(StringComparer.Ordinal)
+    {
+        ["preco_alterado"] = RecursoNuvem.OndaR3,
+        ["tipo_preco_alterado"] = RecursoNuvem.OndaR3,
+        ["acrescimo_total"] = RecursoNuvem.OndaR3,
+        ["lote_vencido_liberado"] = RecursoNuvem.OndaR3,
+        ["peso_digitado"] = RecursoNuvem.OndaR3,
+        ["venda_suspensa"] = RecursoNuvem.OndaR3,
+        ["venda_recuperada"] = RecursoNuvem.OndaR3,
+        ["limite_valor_liberado"] = RecursoNuvem.OndaR3,
+        ["comodato_emprestado"] = RecursoNuvem.ComodatoR4,
+    };
+
+    /// <summary>
+    /// As ações que o lote leva com o <c>versoes_schema</c> do último handshake: as do catálogo de sempre e as da Fase 3
+    /// cujo recurso está anunciado.
+    /// </summary>
+    public static IReadOnlyList<string> AcoesEnviaveis(string? versoesSchema) =>
+    [
+        .. AcoesAuditoria,
+        .. AcoesAuditoriaFase3.Where(a => GravadorOutbox.RecursoDisponivel(versoesSchema, a.Value.Tipo, a.Value.Versao)).Select(a => a.Key),
     ];
 
     public static IReadOnlyList<string> MotivosFalhaLogin { get; } =
@@ -62,14 +110,18 @@ public sealed partial class OutboxSync(IDbContextFactory<PdvDbContext> fabrica, 
     public const string TipoAuditoria = "auditoria.registros";
     public static readonly TimeSpan EsperaAuditoria = TimeSpan.FromMinutes(5);
 
-    private static readonly string[] Acoes = [.. CatalogosNuvem.AcoesAuditoria];
     private static readonly HashSet<string> Motivos = new(CatalogosNuvem.MotivosFalhaLogin, StringComparer.Ordinal);
+
+    /// <summary>Ações que sobem agora: as do catálogo e as da Fase 3 com o recurso anunciado (F3-B4).</summary>
+    private static async Task<string[]> AcoesAsync(PdvDbContext db, CancellationToken ct) =>
+        [.. CatalogosNuvem.AcoesEnviaveis(await GravadorOutbox.VersoesSchemaNuvemAsync(db, ct))];
 
     /// <summary>Registros do catálogo ainda sem lote.</summary>
     public async Task<int> AuditoriaPendenteAsync(CancellationToken ct = default)
     {
         await using var db = await fabrica.CreateDbContextAsync(ct);
-        return await db.LogAuditoriaLocal.CountAsync(l => l.EventoId == null && Acoes.Contains(l.Acao), ct);
+        var acoes = await AcoesAsync(db, ct);
+        return await db.LogAuditoriaLocal.CountAsync(l => l.EventoId == null && acoes.Contains(l.Acao), ct);
     }
 
     /// <summary>
@@ -86,8 +138,9 @@ public sealed partial class OutboxSync(IDbContextFactory<PdvDbContext> fabrica, 
             return false;
         }
 
+        var acoes = await AcoesAsync(db, ct);
         var linhas = await db.LogAuditoriaLocal
-            .Where(l => l.EventoId == null && Acoes.Contains(l.Acao))
+            .Where(l => l.EventoId == null && acoes.Contains(l.Acao))
             .OrderBy(l => l.OcorridoEm)
             .Take(RegistrosPorLote)
             .ToListAsync(ct);

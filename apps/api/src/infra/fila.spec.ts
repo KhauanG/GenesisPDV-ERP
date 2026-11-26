@@ -86,9 +86,17 @@ describe('registrarEventosFila', () => {
 });
 
 describe('OPCOES_FILAS', () => {
-  it('a fila das tarefas expira em 1 h; as outras seguem em 15 min', () => {
+  it('a fila das tarefas expira em 1 h; a da manutenção online não repete; as outras seguem em 15 min', () => {
     expect(OPCOES_FILAS[FILAS.tarefa].expireInSeconds).toBe(3600);
-    for (const fila of Object.values(FILAS).filter((f) => f !== FILAS.tarefa)) {
+    expect(OPCOES_FILAS[FILAS.manutencaoOnline]).toEqual({
+      retryLimit: 0,
+      retryDelay: 10,
+      retryBackoff: true,
+      expireInSeconds: 300,
+    });
+    for (const fila of Object.values(FILAS).filter(
+      (f) => f !== FILAS.tarefa && f !== FILAS.manutencaoOnline,
+    )) {
       expect(OPCOES_FILAS[fila]).toEqual({ retryLimit: 5, retryDelay: 10, retryBackoff: true, expireInSeconds: 900 });
     }
   });

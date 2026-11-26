@@ -32,6 +32,8 @@ export const FILAS = {
   tarefasInterrompidas: 'genesis-tarefas-interrompidas',
   /** Alerta da transferência parada em trânsito ou com divergência a tratar (F2-B26, decisão 174), a cada hora. */
   alertaTransferencias: 'genesis-alerta-transferencias',
+  /** Tarefa por minuto das chamadas online do caixa (F3-B6, decisão 225): a retenção de `requisicoes_terminal`. */
+  manutencaoOnline: 'genesis-manutencao-online',
 } as const;
 export type NomeFila = (typeof FILAS)[keyof typeof FILAS];
 
@@ -40,7 +42,8 @@ const OPCOES_PADRAO = { retryLimit: 5, retryDelay: 10, retryBackoff: true, expir
 /**
  * Opções de cada fila no pg-boss. A das `tarefas` expira em 1 h: a importação grande passa dos 15 min, e o job
  * expirado com o handler ainda rodando só gerava o aviso de "handler overrun" e uma retentativa vazia. Quem recupera
- * a tarefa de um processo que morreu é o sinal + a varredura (decisão 150), não a expiração.
+ * a tarefa de um processo que morreu é o sinal + a varredura (decisão 150), não a expiração. A da manutenção online
+ * (por minuto) não repete e expira em 5 min.
  */
 export const OPCOES_FILAS: Record<NomeFila, typeof OPCOES_PADRAO> = {
   [FILAS.tarefa]: { ...OPCOES_PADRAO, expireInSeconds: 60 * 60 },
@@ -50,6 +53,8 @@ export const OPCOES_FILAS: Record<NomeFila, typeof OPCOES_PADRAO> = {
   [FILAS.verificacaoRazao]: OPCOES_PADRAO,
   [FILAS.tarefasInterrompidas]: OPCOES_PADRAO,
   [FILAS.alertaTransferencias]: OPCOES_PADRAO,
+  // A ocorrência do minuto seguinte é a nova tentativa: retentativas só se acumulariam atrás dela.
+  [FILAS.manutencaoOnline]: { ...OPCOES_PADRAO, retryLimit: 0, expireInSeconds: 5 * 60 },
 };
 
 export type Trabalho = (dados: Record<string, unknown>, job: Job<Record<string, unknown>>) => Promise<void>;

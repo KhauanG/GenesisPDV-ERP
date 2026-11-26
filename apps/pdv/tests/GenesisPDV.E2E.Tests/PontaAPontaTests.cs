@@ -3,9 +3,11 @@ using GenesisPDV.App.Servicos;
 using GenesisPDV.App.Tests;
 using GenesisPDV.App.ViewModels;
 using GenesisPDV.Core.Produtos;
+using GenesisPDV.Data;
 using GenesisPDV.Data.Entidades;
 using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Cliente;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GenesisPDV.E2E.Tests;
@@ -18,7 +20,8 @@ namespace GenesisPDV.E2E.Tests;
 /// <item>Código gerado pela API do ERP e ativação pela tela do assistente.</item>
 /// <item>Carga inicial dos 7 fluxos e login offline com o PIN definido no ERP.</item>
 /// <item>Preço alterado no ERP (<c>PUT /api/produtos/:id</c>) chega ao caixa em até 60 s.</item>
-/// <item>O heartbeat informa o <c>cursor_pull</c> do catálogo igual ao teto da nuvem.</item>
+/// <item>O heartbeat informa o <c>cursor_pull</c> do catálogo igual ao teto da nuvem; a promoção, o vale e o orçamento
+/// da Fase 3 estão no SQLite (F3-B7).</item>
 /// <item>Revogar aceitando pendências com a venda aberta: a tela fica na venda até ela ser cancelada, depois vai para a
 /// desativação; a auditoria do login e a do cancelamento sobem e a nuvem confirma a desativação.</item>
 /// <item>Um segundo terminal no mesmo caixa (liberado pela confirmação, sem salto de numeração) revogado imediatamente:
@@ -72,6 +75,18 @@ public sealed class PontaAPontaTests
                 var teto = (await cliente.PullAsync("catalogo", cursor ?? 0, 1)).CursorTeto;
                 return cursor == teto;
             }, "cursor_pull do catálogo no teto", CicloAte);
+
+            // 4b. Fase 3 (F3-B7): a promoção, o vale e o orçamento que o servidor.ts semeou desceram ao SQLite na carga
+            // inicial, com a `valido_ate` do orçamento calculada aqui (o pull não a grava).
+            await using (var db = pdv.Servicos.GetRequiredService<FabricaPdvDb>().CreateDbContext())
+            {
+                Assert.Equal(1, await db.Set<PromocaoRegistro>().CountAsync());
+                Assert.Equal(1, await db.Set<PromocaoItemRegistro>().CountAsync());
+                Assert.Equal(1, await db.Set<ValeRegistro>().CountAsync());
+                var orcamento = await db.Set<OrcamentoRegistro>().SingleAsync();
+                Assert.Equal(orcamento.Data.AddDays(orcamento.DiasValidade), orcamento.ValidoAte);
+                Assert.Equal(1, await db.Set<ItemOrcamentoRegistro>().CountAsync(i => i.OrcamentoId == orcamento.Id));
+            }
 
             // 5. Revogar aceitando pendências com a venda aberta: a barra avisa, a tela fica na venda e a nuvem não confirma
             // (o cancelamento ainda gera auditoria). Cancelada a venda, a tela vai para a desativação, a auditoria do login e

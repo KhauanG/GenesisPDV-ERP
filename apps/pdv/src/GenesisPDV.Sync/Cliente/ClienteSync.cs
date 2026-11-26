@@ -64,7 +64,9 @@ public interface IClienteSync
     /// <summary>
     /// Chamada online que altera estado (reservas, comandas, PIX, renovação de token — SYNC 20.4): o
     /// <paramref name="requisicaoId"/> é gerado uma vez por operação lógica e repetido em toda nova tentativa, para a API
-    /// devolver a mesma resposta. Na renovação de token ele fica em <c>configuracao_terminal['token.pendente']</c>.
+    /// devolver a mesma resposta. Na renovação de token ele fica em <c>configuracao_terminal['token.pendente']</c>. As
+    /// reservas e as outras chamadas online do balcão passam por <see cref="ChamadaOnline.AlterarComRepeticaoAsync{T}"/>,
+    /// que repete com o mesmo id depois de um timeout (F3-B6).
     /// </summary>
     Task<T> AlterarAsync<T>(HttpMethod metodo, string rota, object? corpo, Guid requisicaoId, CancellationToken ct = default);
 

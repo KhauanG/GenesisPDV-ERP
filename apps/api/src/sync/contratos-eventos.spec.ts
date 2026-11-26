@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import * as caixa from '../database/empresa/schema/caixa.js';
 import * as financeiro from '../database/empresa/schema/financeiro.js';
+import * as orcamentos from '../database/empresa/schema/orcamentos.js';
+import * as trocasVales from '../database/empresa/schema/trocas-vales.js';
 import * as vendas from '../database/empresa/schema/vendas.js';
 
 /**
@@ -226,22 +228,106 @@ describe('contrato dos payloads × tabelas da nuvem', () => {
     expect([...contrato.TIPOS_FECHAMENTO_CAIXA]).toEqual([...caixa.TIPOS_FECHAMENTO_CAIXA]);
   });
 
+  it('COLUNAS_FORA_DO_PAYLOAD só cita colunas que existem, inclusive nas tabelas da Fase 3 ainda sem contrato (F3-B3)', () => {
+    // As da Fase 3 (trocas, vales, orçamentos) ganham contrato nos blocos dos eventos; até lá, um nome errado aqui
+    // passaria calado, porque elas não estão em `TABELAS`.
+    const tabelas: Record<string, Table> = {
+      ...Object.fromEntries(TABELAS.map(([nome, tabela]) => [nome, tabela])),
+      trocas: trocasVales.trocas,
+      itens_troca: trocasVales.itensTroca,
+      vales: trocasVales.vales,
+      movimentos_vale: trocasVales.movimentosVale,
+      orcamentos: orcamentos.orcamentos,
+      itens_orcamento: orcamentos.itensOrcamento,
+    };
+    const inexistentes: string[] = [];
+    for (const [nome, fora] of Object.entries(
+      contrato.COLUNAS_FORA_DO_PAYLOAD as Record<
+        string,
+        { nuvem: readonly string[]; erp: readonly string[] }
+      >,
+    )) {
+      const tabela = tabelas[nome];
+      if (!tabela) {
+        inexistentes.push(nome);
+        continue;
+      }
+      const colunas = new Set(Object.values(getTableColumns(tabela)).map((c) => c.name));
+      for (const c of [...fora.nuvem, ...fora.erp])
+        if (!colunas.has(c) || PADRAO.includes(c)) inexistentes.push(`${nome}.${c}`);
+    }
+    expect(inexistentes).toEqual([]);
+  });
+
   it('handler de tipo contratado valida com o schema do contrato, não com um próprio', async () => {
     // O PDV gera o payload que a fixture fixa; um schema paralelo na API deixaria os dois divergirem calados. A nuvem
     // só anuncia em `versoes_schema` o tipo que tem handler (T13): na 1C eles entram no C5 (caixa), C6b e C7.
+    // As versões anteriores que o handler converte (`versoes`, F3-B4) também usam o schema do contrato.
     const { HANDLERS } = await import('./eventos.js');
     for (const [tipo, c] of Object.entries(contrato.CONTRATOS_EVENTOS)) {
+      const doContrato = c.versoes as Record<string, z.ZodType>;
       for (const [versao, handler] of Object.entries(HANDLERS[tipo] ?? {})) {
-        expect({
-          tipo,
-          versao,
-          mesmo: handler.schema === (c.versoes as Record<string, z.ZodType>)[versao],
-        }).toEqual({
-          tipo,
-          versao,
-          mesmo: true,
-        });
+        const schemas: Array<[string, z.ZodType]> = [
+          [versao, handler.schema],
+          ...Object.entries(handler.versoes ?? {}).map(([n, v]): [string, z.ZodType] => [n, v.schema]),
+        ];
+        for (const [n, schema] of schemas) {
+          expect({ tipo, versao: n, mesmo: schema === doContrato[n] }).toEqual({
+            tipo,
+            versao: n,
+            mesmo: true,
+          });
+        }
       }
     }
+  });
+});
+
+describe('versões por tipo e upcasters (SYNC 17.5; F3-B4)', () => {
+  /**
+   * Fixture `<tipo>[.vN][.variante].payload.json` → tipo e versão (sem `.vN`, a v1). O tipo é o maior prefixo que
+   * está no catálogo de handlers (`venda.cancelada.finalizada` é o `venda.cancelada` na forma A).
+   */
+  function tipoDaFixture(nome: string, tipos: readonly string[]): { tipo: string; versao: number } | null {
+    const base = nome.replace(/\.payload\.json$/, '');
+    const tipo = [...tipos]
+      .sort((a, b) => b.length - a.length)
+      .find((t) => base === t || base.startsWith(`${t}.`));
+    if (!tipo) return null;
+    const versao = /^\.v(\d+)(?:\.|$)/.exec(base.slice(tipo.length));
+    return { tipo, versao: versao ? Number(versao[1]) : 1 };
+  }
+
+  it('toda fixture vN passa pelo upcast até a versão atual do handler', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { HANDLERS } = await import('./eventos.js');
+    const { converterPayload, resolverHandler } = await import('./handlers/comum.js');
+    const pasta = new URL('../../../../packages/shared/testes/sync/', import.meta.url);
+    const fixtures = readdirSync(pasta).filter((f) => f.endsWith('.payload.json'));
+    expect(fixtures.length).toBeGreaterThan(0);
+    const resultados = fixtures.map((f) => {
+      const alvo = tipoDaFixture(f, Object.keys(HANDLERS));
+      if (!alvo) return { fixture: f, ok: false, motivo: 'tipo fora do catálogo' };
+      const r = resolverHandler(HANDLERS, alvo.tipo, alvo.versao);
+      if (!r) return { fixture: f, ok: false, motivo: `v${alvo.versao} sem handler` };
+      const payload: unknown = JSON.parse(readFileSync(new URL(f, pasta), 'utf8'));
+      const c = converterPayload(r, alvo.versao, payload);
+      return c.success ? { fixture: f, ok: true } : { fixture: f, ok: false, motivo: c };
+    });
+    expect(resultados.filter((r) => !r.ok)).toEqual([]);
+  });
+
+  it('versoes_schema anuncia sempre a v1 de venda.finalizada e de vasilhame.movimentado (o PDV instalado grava a v1)', async () => {
+    const { versoesSchemaAceitas } = await import('./eventos.js');
+    const anunciadas = versoesSchemaAceitas();
+    expect(anunciadas['venda.finalizada']).toContain(1);
+    expect(anunciadas['vasilhame.movimentado']).toContain(1);
+    // O formato do `GET /sync/estado` não muda: tipo → versões inteiras em ordem, e os da 1B continuam na v1.
+    for (const [tipo, versoes] of Object.entries(anunciadas)) {
+      expect({ tipo, versoes }).toEqual({ tipo, versoes: [...versoes].sort((a, b) => a - b) });
+      expect(versoes.every((v) => Number.isInteger(v) && v >= 1)).toBe(true);
+    }
+    expect(anunciadas['auditoria.registros']).toEqual([1]);
+    expect(anunciadas['terminal.configuracao_alterada']).toEqual([1]);
   });
 });

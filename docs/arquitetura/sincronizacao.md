@@ -230,9 +230,11 @@ escala com `zod` (`/^-?\d{1,13}\.\d{2}$/` para dinheiro etc.) e recusa número J
 | 409 | `LACUNA_INVALIDA` | `declarar_lacuna` cuja faixa não começa na `proxima_sequencia_esperada` (cobre sequência já recebida ou deixaria outra lacuna antes); a mesma declaração repetida não é erro (8.6) | Esquece a faixa; o próximo push mostra a lacuna certa | não |
 | 409 | `TERMINAL_CLONADO` | `X-Genesis-Id-Hardware` diverge do registrado e há sinais de duas instâncias | Bloqueia vendas; suporte decide (20.5) | não |
 | 409 | `HARDWARE_ALTERADO` | `X-Genesis-Id-Hardware` diverge do registrado (sem sinais de clone) e a troca ainda não foi aprovada no ERP (20.5) | Bloqueia vendas; mantém o outbox; continua só heartbeat, `GET /sync/estado` e pull **sem segredos**; mostra "Hardware alterado — aguardando aprovação no ERP" | não (exige aprovação) |
+| 409 | `REQUISICAO_EM_ANDAMENTO` | Chamada online que altera estado repetida enquanto a original (mesmo terminal e `X-Requisicao-Id`) ainda está sendo atendida, além da espera de 10 s (20.4) | Repete com o mesmo id depois do `Retry-After` | sim |
 | 413 | `LOTE_GRANDE_DEMAIS` | Lote acima dos limites (19.2) | Divide o lote ao meio e reenvia | sim |
 | 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só a repetição da mesma requisição: tardia ou com o token já usado), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
 | 422 | `LIBERACAO_INVALIDA` | `autorizado_por_id` de `declarar_lacuna`/`recuperar_lacuna` não é usuário ativo da empresa com `pdv.config.fiscal` e acesso à loja do terminal (8.6); nada do lote é processado | Mensagem na tela; outro supervisor libera | não |
+| 422 | `REQUISICAO_DIVERGENTE` | O mesmo `X-Requisicao-Id` numa chamada online com outra rota (`detalhes.motivo = operacao`) ou outro pedido (`pedido`) (20.4) | Bug do caixa: registra em `log_local`, não repete | não |
 | 426 | `PROTOCOLO_NAO_SUPORTADO` | `X-Genesis-Protocolo` abaixo do mínimo da API | Força atualização do app; o push dos pendentes continua permitido enquanto o protocolo estiver na janela de suporte (17.2) | não |
 | 429 | `LIMITE_TAXA` | Limite por terminal/empresa (20.3) | Respeita `Retry-After` | sim |
 | 429 | `IP_BLOQUEADO` | Ativação: 5 falhas por IP em 10 min (modelo 2.6) | Mostra "aguarde 30 min" | sim |
@@ -971,7 +973,14 @@ que uma linha que **deixa de pertencer** ao terminal não fique esquecida no PDV
   filtrando `excluido_em is null` nas telas (modelo 4.2).
 - Restaurar (`excluido_em = null`) gera `versao` nova e desce.
 - Como nada sincronizável é apagado fisicamente na nuvem, **o cursor nunca expira**: um terminal offline por 60 dias
-  retoma do cursor antigo e recebe todas as exclusões. Não existe "cursor velho demais".
+  retoma do cursor antigo e recebe todas as exclusões. Não existe "cursor velho demais" — **menos nas tabelas com janela
+  por tempo** (MD 6.2: `vales` no `pessoas` e `vendas_status_pdv` no `operacao`, D90). Nelas, a mudança que tirou a
+  linha da janela enquanto o caixa estava parado (o ERP cancela o vale no 5º dia, o caixa volta no 100º) já passou dos
+  90 dias quando ele puxa: não desce, e o cursor passa por cima dela. Por isso o PDV sem pull com sucesso do fluxo há
+  mais de 80 dias (90 menos uma folga de 10 para a diferença de relógio; ou nunca, com o cursor já andado) apaga a
+  cópia da tabela com janela (menos o vale `criado_localmente` e o de venda ou evento local em curso) e volta o cursor
+  do fluxo a 0 antes do pull; a descida traz de novo o que está na janela (README do PDV › decisão 99). A purga das
+  linhas que saem da janela pelo relógio usa a hora corrigida para a nuvem (12.3), não a do Windows.
 - O PDV pode compactar localmente (sem apagar) as linhas excluídas há mais de 180 dias de tabelas grandes
   (`produtos_codigos_barras`, `pessoas_telefones`), removendo-as do índice FTS — continuam na tabela para que um
   upsert posterior funcione.
@@ -3157,12 +3166,20 @@ Agregado `auditoria` (id = id do lote). Enviado a cada 5 min ou 200 registros; n
 
 A nuvem grava `auditoria` (`origem = 'pdv'`, `terminal_id`, `loja_id`, `evento_id`, mesmo `id` do registro local) e
 `historico_logins` (`origem = 'pdv'`). Registro com `id` já existente → ignorado (idempotente por `pk_auditoria`).
-Ação fora de `ACOES_AUDITORIA`, ou uma das que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da
-revogação `terminal_revogado`, `token_anterior_reutilizado`, as decisões da fila `evento_descartado` e
-`evento_reprocessado`, `lacuna_substituida` e as alterações feitas só no ERP), recusa o evento (`PAYLOAD_INVALIDO`,
-com as ações em `detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria
-como estado do servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do
-10.4) só aceita a linha que o próprio servidor gravou, nunca uma do lote do terminal.
+Uma das ações que só o servidor grava (`ACOES_AUDITORIA_SO_SERVIDOR`: o estado da revogação `terminal_revogado`,
+`token_anterior_reutilizado`, as decisões da fila `evento_descartado` e `evento_reprocessado`, `lacuna_substituida`,
+as alterações feitas só no ERP e a própria `acao_desconhecida`) recusa o evento (`PAYLOAD_INVALIDO`, com as ações em
+`detalhes.acoes`); os outros eventos do lote seguem. O PDV não gera nenhuma delas. Quem lê a auditoria como estado do
+servidor (a revogação do 4.3 item 6, a decisão gravada da ativação do 3.4, o cancelamento duplo do 10.4) só aceita a
+linha que o próprio servidor gravou, nunca uma do lote do terminal. A ação **fora** de `ACOES_AUDITORIA` (o caixa mais
+novo que a API; Fase 3, F3-B4) não recusa mais o lote, que este evento não passa pelo T13 e travaria para sempre: o
+registro é gravado com a ação `acao_desconhecida` e o texto original (até 64 caracteres; o payload aceita a `acao`
+até 64) na frente da descrição, e a nuvem abre o `AUDITORIA_ACAO_DESCONHECIDA` (aviso, no terminal, um aberto por
+terminal e ação, com as ocorrências somadas, até o "Ciente"); o resultado do evento traz `acoes_desconhecidas`. As
+ações que o caixa da Fase 3 vai gravar (`ACOES_AUDITORIA_FASE3`: preço alterado, F8, acréscimo, lote vencido, peso
+digitado, venda suspensa e recuperada, limite de valor, comodato) entram no catálogo da nuvem **antes** do PDV que as
+grava (F3-B3), e o caixa só as envia com o recurso da onda disponível (17.5): a API anterior ao F3-B4 ainda recusaria
+a ação que não conhece.
 
 ### 9.23 `terminal.configuracao_alterada`
 
@@ -3761,6 +3778,14 @@ antigo e o primeiro vale do novo teriam o mesmo código (violação de `uq_vales
 caixa `00`. A composição está no modelo 3.13.2 (`vales.codigo`) e no PDV 23.2; um "UUID v7 encurtado + DV" não
 garantiria unicidade em 11 dígitos.
 
+| Regra (F3-B5) | Detalhe |
+|---|---|
+| Onde está | `packages/shared/src/vales.ts` (`montarCodigoVale`, `conferirCodigoVale`) e `GenesisPDV.Core/Vales/CodigoVale.cs`, com os mesmos vetores (`packages/shared/testes/sync/vale.codigo.vetores.json`) |
+| Limites | Loja 1–99, caixa 0–99, sequencial 1 a `VALE_NUMERO_MAXIMO` (9.999.999); montar fora deles é erro de programação |
+| Leitura | Sem espaço, tab, CR e LF nas pontas (só esses: o BOM e o NEL não saem, igual na nuvem e no caixa) e com o prefixo em qualquer caixa de letra; o DV (Luhn sobre os 11 dígitos) é conferido antes dos limites, para um dígito trocado aparecer sempre como erro de digitação; loja `00` e sequencial 0 são recusados |
+| Cupom de troca (D95) | `CT` + loja (2) + caixa (2) + número da venda (12, até `NUMERO_VENDA_MAXIMO`, inclusive a faixa de renumeração) + DV Luhn sobre os 16 dígitos (`montarCupomTroca`, `conferirCupomTroca`): um erro de digitação não acha outra venda |
+| Código de conferência (D96) | 4 dígitos aleatórios impressos no vale, pedidos no uso com `pdv.vale_exige_conferencia`. A nuvem e o caixa guardam só o resumo (`vales.conferencia_hash`): `pbkdf2-sha256$<iterações>$<sal>$<resumo>`, PBKDF2-HMAC-SHA-256 de `<código do vale>:<4 dígitos>` com sal de 16 bytes por vale (base64url sem `=`, 87 caracteres com as 100.000 iterações padrão; a conferência aceita de 10.000 a 1.000.000). README da API › decisão 224 |
+
 ### 13.5 Número de comanda
 
 | Modo | Regra |
@@ -4058,10 +4083,13 @@ desce ao PDV. Só o saldo desce.
 Hoje `vendas` não desce ao PDV (modelo 6.2). Mas três coisas mudam uma venda do terminal fora dele: cancelamento pelo
 ERP, devolução registrada em **outro** caixa (troca de venda de outro caixa, PDV 30.1) e status fiscal resolvido pela
 nuvem. Para a Gestão de vendas (F12) não oferecer cancelar/trocar algo já cancelado/devolvido, o fluxo `operacao`
-inclui a projeção **`vendas_status_pdv`** (modelo 3.11.9): uma linha por venda do terminal T alterada por origem que
-não seja o próprio T (ERP, evento de outro terminal, tarefa fiscal), gravada na mesma transação da alteração, com
-`id` (= `vendas.id`), `terminal_id`, `status`, `status_fiscal`, `devolucao`, `cancelada_em`, `cancelamento_origem` e
-`versao`; desce com filtro `terminal_id = T` e `atualizado_em > now() − interval '90 days'`. No PDV ela é um espelho
+inclui a projeção **`vendas_status_pdv`** (modelo 3.11.9): uma linha por venda do caixa de T alterada por origem que
+não seja o terminal que a criou (ERP, evento de outro terminal, tarefa fiscal), gravada na mesma transação da
+alteração, com `id` (= `vendas.id`), `caixa_id`, `terminal_id` (o terminal que criou a venda), `status`,
+`status_fiscal`, `devolucao`, `cancelada_em`, `cancelamento_origem` e `versao`; desce pelo **caixa** da venda (`caixa_id` = caixa de T, imutável) e
+`atualizado_em > now() − interval '90 days'`, para o terminal que substituiu outro no mesmo caixa receber o status das
+vendas antigas (tabela criada na migração 0030, F3-B2; no fluxo desde o F3-B7; a linha que passa dos 90 dias sem
+mudança sai do PDV pela purga no fim do pull de `operacao`, porque a saída pelo relógio não gera versão). No PDV ela é um espelho
 com o mesmo nome: a Gestão de vendas lê `vendas` local com `left join vendas_status_pdv` e, quando há linha, as
 colunas da projeção prevalecem. O PDV **nunca** regrava a própria `vendas` com esses valores (a tabela de movimento
 continua imutável localmente). Além disso, operações destrutivas sobre venda
@@ -4088,6 +4116,7 @@ antiga (cancelar, trocar) consultam a API quando online.
 | Mudanças compatíveis não mudam a versão | Campo novo opcional na resposta, tabela nova num fluxo, coluna nova numa projeção, tipo de evento novo, código de erro novo (o PDV trata código desconhecido pela classe HTTP) |
 | Janela de suporte | A API atende o protocolo atual e o anterior por pelo menos **12 meses**; `POST /sync/push` aceita o anterior ao anterior por **18 meses** (para esvaziar outboxes de caixas esquecidos) |
 | Fora da janela | `426 PROTOCOLO_NAO_SUPORTADO` em pull/heartbeat; push só pela recuperação assistida (22.3) |
+| Como a API conta (F3-B5) | `JANELA_PROTOCOLO` em `apps/api/src/sync/terminal.ts`: o atual e, para cada anterior, a data em que deixou de ser o atual (a API com o seguinte em produção). O anterior vale em todo endpoint por 12 meses dessa data; o push aceita também o anterior ao anterior, até 18 meses depois de cada um deixar de ser o atual. Um protocolo abaixo do atual sem data (o `0`, que nunca existiu) está fora: `426` com `protocolo_minimo`. O cabeçalho ausente, negativo ou não inteiro continua `400 REQUISICAO_INVALIDA`, e o inteiro acima de `Number.MAX_SAFE_INTEGER` passou a ser também (antes do F3-B5 era atendido como o atual); acima do atual, dentro desse limite, é atendido como o atual (a ordem de implantação não deixa acontecer). O `protocolo.minimo` do heartbeat é o do pull. Hoje só existe o protocolo `1` (README da API › decisão 224) |
 | Ordem de implantação | **API primeiro, PDV depois**: nenhuma versão do PDV é publicada antes de a API em produção aceitar seus `versao_schema` e protocolo |
 
 ### 17.3 Versão mínima do aplicativo
@@ -4145,9 +4174,10 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   `GravadorOutbox` recusa o evento de tipo ou versão não anunciados, sem gravar o fato (a abertura de caixa numa API sem
   o handler do `caixa.aberto` não acontece; a tela pergunta antes). `auditoria.registros` e
   `terminal.configuracao_alterada`, que toda API desde a 1B aplica, não dependem do anúncio. Sem nenhum handshake
-  gravado desde a atualização (coluna nula), todo tipo vale como aceito: a implantação é sempre API primeiro e o caixa
-  nunca trava por falta de internet (O18); se a API ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO`
-  (transitório). Padrão até a confirmação do dono (README do PDV › decisão 51).
+  gravado desde a atualização (coluna nula), a v1 de todo tipo vale como aceita (uma versão acima da v1, só anunciada,
+  desde o F3-B4): a implantação é sempre API primeiro e o caixa nunca trava por falta de internet (O18); se a API
+  ainda não tiver o tipo, o evento espera com `SCHEMA_DESCONHECIDO` (transitório). Padrão até a confirmação do dono
+  (README do PDV › decisão 51).
 - **Release R2 do PDV (Fase 2, F2-B45):** as mudanças de `Esquema.g.cs` da Fase 2 (as colunas calculadas das imagens
   em 6.12 e os espelhos `produtos_grupos_complementos`/`produtos_complementos`, MD 3.6.8) entram numa **única** migração
   EF (`FaseDois`), com uma só volta do cursor do `catalogo` (17.4.2; a versão local das marcas e das categorias também
@@ -4155,10 +4185,28 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   nova (campos e tabelas desconhecidos descartados, 6.10), e a API vai para a produção antes do 0.12.0 (17.2). O
   `itens_venda_complementos.complemento_id` ganha a FK para `produtos_complementos` (`on delete set null`, exclusão
   física bloqueada), e o handler grava nulo o id que a nuvem não conhece (README da API › decisão 191).
+- **Release R3 do PDV (Fase 3, F3-B7):** todas as tabelas que descem na Fase 3 (`promocoes` e `promocoes_itens` no
+  `catalogo`, `vales` no `pessoas`, `orcamentos`, `itens_orcamento` e `vendas_status_pdv` no `operacao`; MD 6.1, 6.2)
+  entram numa **única** migração EF (`FaseTres`), que volta a 0 os cursores desses três fluxos e do `configuracao`
+  (os templates `recibo_venda` e `orcamento_*` passaram a descer, MD 3.1.3), sem mexer em versão local, carga inicial
+  nem `ressincronizar` (17.4.2). O PDV instalado descarta as tabelas novas e o cursor avança (6.10); a matriz com o PDV
+  das tags contra a API nova é o `apps/api/test/e2e-pdv/compatibilidade.sh` (README da API › decisão 226, do PDV ›
+  99). A publicação de `ressincronizar_fluxo` por migração da nuvem começa no F3-B67.
 - **Consultas online não passam pelo T13** (Fase 2, F2-B35): o `GET /sync/consultas/saldos-outras-lojas` do `F4` (1.4)
   não grava evento nem anuncia tipo ou versão; o PDV novo diante da API antiga recebe 404 e mostra "requer conexão". A
   Fase 2 inteira mantém `venda.finalizada` v1 (a `variacao_id` e o `lote_id` já existem nele) e não acrescenta nada a
   `versoes_schema`.
+- **Fase 3 (F3-B4): o mecanismo.** O handler de um tipo aplica a versão dele e as anteriores pelo `upcast` encadeado
+  (`HandlerEvento.versoes`: o schema de cada versão, o do contrato, e a conversão **pura** para a seguinte); a versão de
+  origem chega ao handler (`ContextoHandler.versaoOrigem`) e **as regras de recusa da versão de origem continuam
+  valendo** (o `venda.finalizada` v1 com `emprestados > 0` não vira comodato no Reprocessar). A falha da conversão é
+  `PAYLOAD_INVALIDO` (determinística: corrige-se o upcaster e reprocessa), nunca `ERRO_INTERNO`. O Reprocessar, o
+  "Aplicar com novo número" e o "Reprocessar todos" passam pelo mesmo caminho do push. `versoes_schema` lista **só as
+  versões anunciadas** (o formato `tipo → versões` não muda): a versão que o handler já aceita fica fora até o último
+  bloco da onda (`anunciada: false`), e a v1 de `venda.finalizada` e de `vasilhame.movimentado` nunca sai dentro da
+  janela de 12 meses. O PDV grava a **maior versão comum anunciada**; sem nenhum handshake depois da atualização, a
+  v1, e os recursos novos (`RecursoDisponivel(tipo, versao)`, o portão das telas da onda e das ações novas de
+  auditoria, 9.22) ficam indisponíveis até o primeiro handshake (README da API › decisão 223; do PDV › decisão 96).
 - `SCHEMA_DESCONHECIDO` é **transitório** com backoff de 10 min e alerta para a plataforma: o evento é válido, a API é
   que está atrasada.
 - `itens_venda.fiscal_snapshot` tem versão própria (`schema_fiscal`, modelo 3.11.3), independente de
@@ -4362,10 +4410,46 @@ Resposta `429 LIMITE_TAXA` com `Retry-After`.
 |---|---|
 | Push | TLS + idempotência: repetir um lote não tem efeito (8.4) |
 | Pull, heartbeat, estado | Leitura/telemetria: repetir é inofensivo |
-| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h e devolve a **mesma resposta** para a mesma requisição. Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
+| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h em `requisicoes_terminal` (modelo-de-dados.md 3.15.5) e devolve a **mesma resposta** para a mesma requisição (mecanismo abaixo). Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
 | Ativação | Código de uso único + `requisicao_ativacao_id` (3.4) |
 | Token roubado | Revogação imediata; rotação periódica idempotente; uso do token anterior após troca gera alerta (3.7); uso de outra máquina → `HARDWARE_ALTERADO` sem segredos (20.5) |
 | Renovação de token | `requisicao_id` guardado em `terminais_pdv.token_renovacao_requisicao_id`; repetição sem efeito (3.7) |
+
+**Mecanismo da idempotência online** (F3-B6; README da API › decisão 225, do PDV › 98). Vale para toda rota online que
+altera estado (`/sync/consultas/*`, endpoint `online`: exige o hardware registrado, 20.5):
+
+1. Numa **transação só**, a API apaga a linha do mesmo (terminal, requisição) com mais de 24 h
+   (`RETENCAO_REQUISICAO_ONLINE_HORAS`: depois disso o id é uma requisição nova, com a limpeza em dia ou não) e insere a
+   linha "em andamento" (`status_http` nulo) com `insert … on conflict do nothing` **antes** de qualquer efeito. Se o
+   efeito grava tabela que desce (`travaVersao` da rota), a trava 7300001 é a **primeira instrução** da transação, antes
+   dessa linha, esperada sem limite como no push (MD 1.5): a linha tem FK para `terminais`, e a checagem da FK segura
+   `FOR KEY SHARE` na linha do terminal até o commit, enquanto o push pega a 7300001 e depois `FOR UPDATE` nela; a
+   7300001 depois da linha seria a ordem invertida, e deadlock. Antes do `insert`, a API pega ela mesma o `FOR KEY
+   SHARE` do terminal, fora do `lock_timeout` do passo 2: a espera atrás do `FOR UPDATE` do push, do heartbeat ou da
+   revogação não é a requisição original e não vira 409.
+2. Se outra transação já inseriu a mesma chave e não terminou, o `insert` **espera** por ela (até 10 s,
+   `lock_timeout`): ela confirmou → nada é inserido e a resposta gravada dela volta; ela desfez (o efeito falhou) → esta
+   requisição faz o efeito; a espera venceu → `409 REQUISICAO_EM_ANDAMENTO` com `Retry-After: 1`, nada feito. Com
+   `travaVersao`, a repetição espera a original já na 7300001 e, quando ela confirma, encontra a resposta gravada (sem o
+   409).
+3. O efeito roda na mesma transação (com `travaVersao`, já com a 7300001; sem ela, o efeito não a pega) e a
+   resposta (`status_http`, `resposta`, `concluida_em`) é gravada **no mesmo commit**. A primeira resposta e as
+   repetições saem do mesmo `jsonb` gravado: o mesmo status e o mesmo JSON, byte a byte; a repetição traz
+   `X-Genesis-Resposta-Repetida: 1` (só para log e diagnóstico).
+4. A repetição confere a rota (`endpoint`) e o resumo do pedido (`corpo_sha256` = SHA-256 do JCS de
+   `{parametros, corpo}`, os parâmetros do caminho e o corpo como chegou): o mesmo id com outra rota ou outro pedido é
+   `422 REQUISICAO_DIVERGENTE` (`detalhes.motivo` = `operacao` ou `pedido`), sem efeito e sem a resposta da outra.
+5. O id de **outro terminal** é outra chave: isolado, faz o próprio efeito. O erro do efeito (regra de negócio ou falha)
+   desfaz tudo, inclusive a linha: só o sucesso fica gravado, e a repetição avalia de novo (nunca dois efeitos).
+6. Retenção: a tarefa por minuto da API (`genesis-manutencao-online`) apaga as linhas com mais de 24 h, em lotes, nas
+   empresas com terminal em contato nas últimas 26 h; a expiração das reservas (TTL de 10 min, 14.4) entra nela.
+
+No PDV, `ChamadaOnline.AlterarComRepeticaoAsync` repete com o **mesmo** id e o mesmo corpo depois de um timeout, de uma
+queda de conexão, de um 502/504 sem o envelope da API e do `409 REQUISICAO_EM_ANDAMENTO` (respeitando o `Retry-After`,
+com teto de 3 s), 3 tentativas no total, 500 ms entre elas; qualquer outra resposta (inclusive o 422) sobe na hora, e
+esgotadas as tentativas o chamador consulta o estado antes do caminho offline. Cada tentativa tem o prazo das chamadas
+online que alteram estado (`TemposLimiteSync.Outras`, 30 s): com a API que aceita a conexão e não responde, o pior caso é
+3 × 30 s + 2 × 0,5 s ≈ 91 s. O prazo próprio das chamadas do balcão (como os 3 s das consultas) é decidido no F3-B45.
 
 ### 20.5 Terminal clonado ou copiado
 
@@ -4570,6 +4654,7 @@ descartes) e as abas "Eventos com erro" (11.4) e "Perdas prováveis" (22.4).
 | `VENDA_SEM_DOCUMENTO_FISCAL` | 10.5 | aviso |
 | `RELOGIO_SUSPEITO` | Hora de um evento no futuro (> 5 min), no passado (antes da ativação − 1 dia ou > 400 dias) ou anterior à do evento anterior (12.4); um aberto por terminal e motivo, "Ciente" no detalhe do terminal | aviso (`info` na regressão marcada pelo caixa, uma por regressão, somadas por terminal na tela) |
 | `RELOGIO_DESVIO` | Desvio do relógio informado no heartbeat acima de 2 min (12.4, T40); fecha sozinho com o desvio de volta a até 2 min ou com a saída do terminal | aviso; crítico > 5 min |
+| `AUDITORIA_ACAO_DESCONHECIDA` | Lote `auditoria.registros` com uma ação fora de `ACOES_AUDITORIA` (9.22; Fase 3, F3-B4): a linha é gravada como `acao_desconhecida`, com o texto original na descrição; um aberto por terminal e ação (chave `acao_desconhecida:<terminal>:<ação>`, `dados.ocorrencias` somadas; até 20 ações diferentes abrem alerta por lote), "Ciente" no detalhe do terminal depois de atualizar a API | aviso |
 | `SESSAO_FECHADA_POR_SUBSTITUICAO` | Sessão de caixa fechada pela nuvem na substituição ou revogação do terminal, ou aberta depois disso pelo terminal antigo (MD 3.12.1; T16, 9.3); um por sessão | aviso |
 | `SANGRIA_ACIMA_DO_ESTIMADO`, `FECHAMENTO_EVENTOS_PENDENTES` | Sangria acima do `dinheiro_estimado_antes` (9.4); fechamento com eventos do turno em `erro`/`retido` (9.6) | aviso |
 | `ESTOQUE_NEGATIVO`, `VALE_SALDO_NEGATIVO`, `LIMITE_CREDITO_EXCEDIDO`, `ORCAMENTO_CONVERTIDO_DUAS_VEZES`, `COMANDA_CONFLITO`, `COMANDA_ITENS_APOS_FECHAMENTO`, `VENDA_INCONSISTENTE`, `PRODUTO_INATIVO_VENDIDO`, `CANCELAMENTO_DUPLO`, `ESTORNO_PENDENTE`, `RECEBIMENTO_CREDIARIO_A_MAIOR`, `VASILHAME_COMODATO_DIVERGENTE` | Regra de negócio aplicada com conflito (9.20, 9.25, 9.26, 10.4) | aviso |
@@ -4884,7 +4969,7 @@ este arquivo primeiro"). Itens aplicados ficam na tabela só para rastreabilidad
 | M10 | 2.3 `empresas` | "`status <> 'ativa'` → `EMPRESA_SUSPENSA` (ERP e sync do PDV)": restringir a pull/heartbeat; push aceito em `suspensa` (20.6) | Aplicado |
 | M11 | 3.11.3 `itens_venda` | A ficha técnica vendida precisa de snapshot para a baixa: hoje só no payload (`componentes_estoque`); avaliar coluna `componentes_estoque jsonb` para auditoria. O combo (kit) não precisa: desde 30/10/2026 os componentes escolhidos são linhas de `itens_venda` (`kit_componente_id`, `kit_alternativa_id`) | Em aberto: avaliação (hoje o snapshot fica só no payload `componentes_estoque`) |
 | M12 | 3.9.4 `contas_financeiras` | Decidido: **não** há pessoa "CONSUMIDOR FINAL" no seed (7.12); venda `por_venda` sem cliente gera `contas_financeiras` com `pessoa_id` nulo, exibida como "Consumidor final" (10.2) | Aplicado |
-| M13 | 3.11.9 `vendas_status_pdv` | Projeção de status das vendas do terminal alteradas fora dele (16.3) no fluxo `operacao`; no PDV é espelho lido com `left join`, sem regravar `vendas` | Aplicado |
+| M13 | 3.11.9 `vendas_status_pdv` | Projeção de status das vendas do caixa alteradas fora do terminal de origem (16.3; `terminal_id` = terminal que criou a venda) no fluxo `operacao`; no PDV é espelho lido com `left join`, sem regravar `vendas` | Aplicado |
 | M14 | 3.14.1 `documentos_fiscais` | Valor `a_verificar` em `ck_documentos_fiscais_status` e coluna `chave_substituta varchar(44)` (tpEmis=1 sem resposta substituída em contingência, PDV 18.4, 9.11); `pagamentos_venda.transferido_de_id uuid` (3.11.4, reemissão como nova venda, 9.9) | Aplicado |
 | M15 | 1.5 | Recomendar que serviços do ERP que gravam tabelas sincronizáveis peguem a trava de ordenação no início da transação (`fn_trava_versao()`), para evitar deadlock com a aplicação de eventos (8.3) | Aplicado |
 | M16 | 3.1.2 catálogo | Chave nova `pdv.permite_pin_curto` (4.3); permissão nova `pdv.vale.emitir` (9.17) | Aplicado (chave no modelo 3.1.2; permissão no catálogo de permissões do PDV) |

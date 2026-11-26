@@ -4,6 +4,7 @@
  * com `fn_versao_local` ou sem trigger, o cursor do PDV poderia pular linhas.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { TABELAS_FN_VERSAO_SEM_FLUXO } from '../../src/database/empresa/versionamento.js';
 import { REGISTRO_FLUXOS, TABELAS_DOS_FLUXOS, nomeTabela } from '../../src/sync/fluxos.js';
 import { consultar, criarAmbiente, type Ambiente, type EmpresaTeste } from './ambiente.js';
 
@@ -41,6 +42,41 @@ describe('triggers das tabelas do pull (MD 1.5)', () => {
       expect(mapa.get(tabela), `${tabela}: trigger tg_${tabela}_versao`).toBe('fn_versao');
       expect(indices.has(`ix_${tabela}_versao`), `${tabela}: índice ix_${tabela}_versao`).toBe(true);
     }
+  });
+
+  it('tabelas que vão descer com o fluxo num bloco seguinte: fn_versao e índice, fora dos fluxos', async () => {
+    const triggers = await consultar<{ tabela: string; funcao: string }>(
+      emp.nomeBanco,
+      `select c.relname as tabela, p.proname as funcao from pg_trigger t
+       join pg_class c on c.oid = t.tgrelid join pg_proc p on p.oid = t.tgfoid
+       where not t.tgisinternal and t.tgname = 'tg_' || c.relname || '_versao'`,
+    );
+    const mapa = new Map(triggers.map((t) => [t.tabela, t.funcao]));
+    const indices = new Set(
+      (
+        await consultar<{ indexname: string }>(
+          emp.nomeBanco,
+          "select indexname from pg_indexes where schemaname = 'public' and indexname like 'ix\\_%\\_versao'",
+        )
+      ).map((i) => i.indexname),
+    );
+    for (const tabela of TABELAS_FN_VERSAO_SEM_FLUXO) {
+      expect(mapa.get(tabela), `${tabela}: trigger tg_${tabela}_versao`).toBe('fn_versao');
+      expect(indices.has(`ix_${tabela}_versao`), `${tabela}: índice ix_${tabela}_versao`).toBe(true);
+      // Ao entrar num fluxo, a tabela sai da lista (e o Esquema.g.cs muda junto).
+      expect(TABELAS_DOS_FLUXOS, tabela).not.toContain(tabela);
+    }
+    // F3-B7: as que o F3-B1 e o F3-B2 deixaram de fora entraram nos fluxos (uma volta de cursor na R3).
+    expect(TABELAS_FN_VERSAO_SEM_FLUXO).toEqual([]);
+    for (const tabela of [
+      'vales',
+      'promocoes',
+      'promocoes_itens',
+      'orcamentos',
+      'itens_orcamento',
+      'vendas_status_pdv',
+    ])
+      expect(TABELAS_DOS_FLUXOS, tabela).toContain(tabela);
   });
 
   it('nenhuma tabela aparece em dois fluxos (cada linha desce por um único cursor)', () => {

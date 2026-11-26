@@ -49,6 +49,10 @@ const PDV_OPERADOR = [
   'pdv.pedido.operar',
   'pdv.fiscal.retransmitir',
   'pdv.relatorio.resumo_diario',
+  // Fase 3, F3-B3 (D84, a recomendação da F3-Q13): o operador empresta até o limite por cliente
+  // (`pdv.vasilhame_comodato_max_por_cliente`) e o supervisor libera acima dele. O recurso nasce desligado
+  // (`pdv.vasilhame_comodato` = Não) e o caixa só o mostra na versão que o entende (F3-B40).
+  'pdv.vasilhame.comodato',
 ];
 
 const PDV_SUPERVISOR = [
@@ -70,6 +74,10 @@ const PDV_SUPERVISOR = [
   'pdv.venda.exceder_limite_valor',
   'pdv.pagamento.forma_com_senha',
   'pdv.pagamento.confirmar_pix_manual',
+  // Fase 3, F3-B3 (D102; PDV 31.2, coluna "Supervisor" ✔): a baixa interna (avarias e uso na loja) é liberada pelo
+  // supervisor. As formas `consumo_interno` continuam inativas no seed e indisponíveis no caixa (`TiposDaFase`) até o
+  // F3-B52, então nada muda na loja agora.
+  'pdv.pagamento.consumo_interno',
   'pdv.crediario.desconto_juros',
   'pdv.troca.realizar',
   'pdv.vale.emitir',
@@ -93,7 +101,14 @@ const PDV_SUPERVISOR = [
  * FECHADO continua sem cancelamento no PDV (D23, PC-1), e essa permissão não existe. O desconto acima do limite vem do
  * "Limite de desconto %" do usuário (PDV 12.3), não do perfil. Sem acesso ao ERP.
  */
-const PDV_ENCARREGADO = [...PDV_SUPERVISOR, 'pdv.venda.cancelar_venda_finalizada'];
+const PDV_ENCARREGADO = [
+  ...PDV_SUPERVISOR,
+  'pdv.venda.cancelar_venda_finalizada',
+  // Fase 3, F3-B3 (D91, a recomendação da F3-Q20): todo dinheiro que sai da gaveta por troca ou resgate de vale passa
+  // pelo PIN do dono (Administrador) ou do Encarregado, e o Supervisor de caixa continua pedindo a liberação. (Sem
+  // ponto e vírgula neste comentário: o teste do PDV lê a declaração até o primeiro.)
+  'pdv.troca.devolver_dinheiro',
+];
 
 const PDV_GERENTE = pdv.filter((c) => !SOMENTE_MASTER.has(c));
 
@@ -104,6 +119,7 @@ const ERP_GERENTE = [
     'produtos.',
     'categorias.',
     'marcas.',
+    'promocoes.',
     'restricoes_horario.',
     'grupos_preco.',
     'formas_pagamento.',
@@ -167,6 +183,11 @@ const ERP_ESTOQUISTA = [
   'produtos.editar',
   'produtos.exportar',
   'produtos.importar',
+  // Fase 3, F3-B3: quem edita produtos edita as promoções (a mesma regra da migração 0031 nos perfis personalizados;
+  // README da API › decisão 222); excluir fica com o Gerente e o Administrador.
+  'promocoes.ver',
+  'promocoes.criar',
+  'promocoes.editar',
   'categorias.ver',
   'marcas.ver',
   'grupos_preco.ver',
@@ -241,11 +262,12 @@ export const PERFIS_PADRAO: readonly PerfilPadrao[] = Object.freeze([
     chaveSistema: 'encarregado',
     nome: 'Encarregado',
     descricao:
-      'Perfil do sistema, só PDV: Supervisor de caixa + cancelar a venda paga do caixa aberto (libera ações no caixa); para quem libera na loja sem gerente',
+      'Perfil do sistema, só PDV: Supervisor de caixa + cancelar a venda paga do caixa aberto e devolver dinheiro na troca (libera ações no caixa); para quem libera na loja sem gerente',
     permissoes: [...new Set(PDV_ENCARREGADO)],
-    // A do G1, antes da resposta do dono de 05/11/2026 (decisão 78 do README do PDV).
+    // A do G1, antes da resposta do dono de 05/11/2026 (decisão 78 do README do PDV), e a de antes da D91 (F3-B3).
     descricoesAnteriores: [
       'Perfil do sistema, só PDV: as mesmas permissões do Supervisor de caixa (libera ações no caixa); para quem libera na loja sem gerente',
+      'Perfil do sistema, só PDV: Supervisor de caixa + cancelar a venda paga do caixa aberto (libera ações no caixa); para quem libera na loja sem gerente',
     ],
   },
 ]);

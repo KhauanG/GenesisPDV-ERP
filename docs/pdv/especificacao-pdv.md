@@ -199,18 +199,18 @@ este terminal que também sobem por evento (`vales` emitidos no caixa, `comandas
 | `templates_documentos`, `atalhos_pdv` | Templates de impressão; tabela de atalhos (Atalho / Habilitado / Ordem) |
 | `usuarios`, `usuarios_lojas`, `perfis`, `permissoes`, `perfis_permissoes`, `usuarios_permissoes` | **Todos** os usuários da empresa (projeção sem dados pessoais e **sem `senha_hash`**: a senha do ERP nunca desce, sincronizacao.md 4.1), com o PIN `senha_pdv_hash` (argon2id) só de quem tem acesso à loja do terminal (lojas permitidas ou Usuário Master); `senha_pdv_hash` desce `null` para os demais, que assim não logam neste caixa |
 | `produtos`, `produtos_codigos_barras`, `produtos_categorias`, `produtos_lojas`, `produtos_tributacao_uf`, `produtos_precos_quantidade`, `grupos_preco_quantidade`, `grupos_preco_quantidade_faixas`, `produtos_componentes`, `produtos_componentes_alternativas`, `produtos_variacoes`, `produtos_variacoes_valores`, `atributos_variacao`, `atributos_variacao_valores`, `produtos_grupos_complementos`, `produtos_complementos`, `produtos_relacionados`, `produtos_lotes` | Produtos (ativos e inativos, para histórico), códigos de barras e embalagens (fator/preço), preços e estoque mínimo da loja, faixas de preço por quantidade, composição do combo (posições e alternativas) e ficha técnica, variações, complementos, lotes/validades |
-| `promocoes`, `promocoes_itens` | Promoções vigentes da loja (seção 11.4) |
+| `promocoes`, `promocoes_itens` | Promoções de todas as lojas (o PDV aplica só as vigentes, ativas e da loja; seção 11.4) |
 | `restricoes_horario_venda` | Horários proibidos de venda por categoria/idade mínima (seção 10.11) |
 | `categorias`, `marcas`, `unidades_medida` | Para busca, exibição e fracionamento |
 | `pessoas`, `pessoas_categorias`, `pessoas_telefones`, `pessoas_enderecos`, `pessoas_aliases`, `pessoas_relevancia_loja` | Clientes, consumidores e funcionários relevantes na loja (busca offline, crediário, crédito funcionário); aliases de pessoas mescladas |
 | `saldos_estoque`, `saldos_lote` | Saldo do **estoque vinculado** à loja (ADR-03) e por lote, com a `versao` |
 | `saldos_credito_pessoas`, `parcelas_credito_pessoas` | Saldo em aberto de crediário/crédito funcionário por pessoa e as parcelas abertas (recebimento no caixa, 16.13) |
 | `saldos_vasilhame_pessoas` | Cascos em comodato por pessoa (seção 10.12) |
-| `vales` | Vales-compra/vale-troca ativos da empresa (código, saldo, validade) |
+| `vales` | Vales-compra/vale-troca da empresa na janela do caixa (D90): os utilizáveis e os que mudaram nos últimos 90 dias; o PDV apaga sozinho os que saem da janela (vencidos ou zerados há mais de 90 dias), menos o emitido nele e ainda não confirmado; online consulta qualquer vale (F3-B7) |
 | `formas_pagamento` | Formas ativas com uso PDV, da loja ou sem loja |
 | `orcamentos`, `itens_orcamento` | Orçamentos/pré-vendas ativos da loja |
 | `comandas`, `itens_comanda` | Comandas abertas da loja (FUT, módulo opcional; vazias na Ice Beer) |
-| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste terminal alterado pela nuvem |
+| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste caixa alterado fora do terminal de origem nos últimos 90 dias (pelo caixa: o terminal substituto recebe o das vendas do antigo; a linha mais antiga sai pela purga local, F3-B7) |
 | `ncms`, `ncms_ibpt`, `cfops`, `cfops_grupos`, `meios_pagamento_fiscais`, `ufs`, `municipios`, `paises`, `cst_ibs_cbs`, `classificacoes_tributarias_ibs_cbs`, `aliquotas_ibs_cbs`, `parametros_fiscais_uf` | Referências fiscais (validação do item em 10.2, tributos aproximados, tPag, IBS/CBS; prazos, limites e URLs da UF da loja, 18) |
 
 **Tabelas de movimento (nascem no PDV, sobem como eventos):**
@@ -1504,8 +1504,9 @@ vale ficam na PDV-2.
      faltantes`, ao preço do casco, `vasilhame_item_origem_id` = item cheio. É venda de mercadoria: entra na NFC-e com
      o NCM do casco e CFOP 5102 (validar com o contador).
    - [PDV-2] `faltantes > 0`, cliente identificado e `pdv.vasilhame_comodato = true` (nova chave, padrão `false`) → o operador
-     pode escolher "Emprestar cascos": nenhum item fiscal; imprime o comprovante não fiscal **"Termo de empréstimo de
-     vasilhame"** em 2 vias (cliente, quantidade, casco, valor de referência, assinatura); o saldo vai para
+     com `pdv.vasilhame.comodato` (D84) pode escolher "Emprestar cascos" (acima de
+     `pdv.vasilhame_comodato_max_por_cliente`, padrão 6 cascos de saldo do cliente, o supervisor libera): nenhum item fiscal;
+     imprime o comprovante não fiscal **"Termo de empréstimo de vasilhame"** em 2 vias (cliente, quantidade, casco, valor de referência, assinatura); o saldo vai para
      `saldos_vasilhame_pessoas`.
    - `faltantes < 0` (trouxe mais cascos) → os excedentes são tratados como devolução avulsa (abaixo).
 3. Cancelar o item cheio cancela o item de casco vinculado; alterar a quantidade do item cheio pergunta de novo os
@@ -2879,7 +2880,7 @@ estadual, municipal, fonte e chave).
 |---|---|---|
 | DANFE NFC-e | Toda venda em loja NFC-e (seção 18.5) | FISCAL |
 | Comprovantes TEF (via cliente / estabelecimento) | Após o cupom, por transação | PDV-3 |
-| **Cupom de troca** | Se **Imprime cupom de troca** ligado: após o cupom, automático; senão sob demanda (`Ctrl+Shift+T` logo após a venda ou pela Gestão de vendas). Sem preços; itens e quantidades; código de barras `CT` + id curto da venda; "Válido para troca até dd/mm/aaaa" = data da venda + **Dias de validade do cupom de troca** | PDV-2 |
+| **Cupom de troca** | Se **Imprime cupom de troca** ligado: após o cupom, automático; senão sob demanda (`Ctrl+Shift+T` logo após a venda ou pela Gestão de vendas). Sem preços; itens e quantidades; código de barras `CT` + loja (2) + caixa (2) + número da venda (12) + DV Luhn (sincronizacao.md 13.4; `GenesisPDV.Core/Vales/CodigoVale.cs`, F3-B5); "Válido para troca até dd/mm/aaaa" = data da venda + **Dias de validade do cupom de troca** | PDV-2 |
 | Comprovante de crediário / crédito funcionário | 2 vias com parcelas e assinatura | PDV-2 |
 | Vale-compra / vale-troca | Na emissão: código em barras, valor, saldo, validade, **frases de bloqueio e rodapé do vale compra** (aba Vendas) | PDV-2 |
 | Comprovantes de abertura, sangria, reforço | Se **Imprime sangria automaticamente** (2 vias com assinatura de operador e de quem retira); senão sob demanda | PDV-1 |
@@ -3304,7 +3305,9 @@ flowchart TD
   nova venda for menor que o crédito, o restante vira vale-troca impresso (ou dinheiro, com permissão).
 - **Vale-troca**: código = `VC` + `lojas.codigo` (2 dígitos) + `numero_caixa` (2) + `sequencias_locais['vale']`
   (7) + DV **Luhn** (1) sobre os 11 dígitos anteriores (sincronizacao.md 13.4; ex.: loja 1, caixa 2, sequencial 8 →
-  `VC010200000080`), único sem consultar a nuvem. Gravado na tabela `vales` (inserção local, `tipo = 'vale_troca'`,
+  `VC010200000080`; a regra e os vetores no `CodigoVale` do Core, F3-B5), único sem consultar a nuvem. Com
+  `pdv.vale_exige_conferencia` (D96), o vale sai também com o código de conferência de 4 dígitos (`ConferenciaVale`),
+  impresso e guardado só como resumo. Gravado na tabela `vales` (inserção local, `tipo = 'vale_troca'`,
   `origem_tipo = 'troca'`) + `movimentos_vale` (`emissao`). O vale de troca sobe **dentro do `troca.registrada`**
   (sem `vale.emitido`, que é só para emissão avulsa — senão a nuvem contaria a emissão duas vezes). Impresso com as
   **frases de bloqueio e rodapé do vale compra**. Validade = data de emissão + **Data de Expiração do Vale Compra**
@@ -3940,6 +3943,7 @@ Legenda: ✔ tem; L = pede liberação de supervisor; — não tem.
 | `pdv.troca.fora_prazo` | Troca fora do prazo / sem venda de origem | L | L | ✔ | PDV-2 |
 | `pdv.troca.devolver_dinheiro` | Devolver em dinheiro | L | L | ✔ | PDV-2 |
 | `pdv.vale.emitir` | Emissão avulsa de vale (`vale.emitido`, sincronizacao.md 9.17) | L | ✔ | ✔ | PDV-2 |
+| `pdv.vasilhame.comodato` | Emprestar cascos em comodato (10.12; D84) até `pdv.vasilhame_comodato_max_por_cliente`; acima, o supervisor libera (liberação `comodato`) | ✔ | ✔ | ✔ | PDV-2 |
 | `pdv.documento.reimprimir` | Reimprimir documentos | ✔ | ✔ | ✔ | PDV-1 |
 | `pdv.gaveta.abrir_avulsa` | Abrir gaveta sem venda | L | ✔ | ✔ | PDV-1 |
 | `pdv.cliente.cadastro_rapido` | Cadastro rápido de cliente | ✔ | ✔ | ✔ | PDV-2 |
@@ -3967,7 +3971,9 @@ Legenda: ✔ tem; L = pede liberação de supervisor; — não tem.
 gerente. Tem a coluna **Supervisor** (as "L" dela continuam "L" para ele) **mais o cancelamento da venda paga**
 (`pdv.venda.cancelar_venda_finalizada`; resposta do dono de 05/11/2026, diferente do Supervisor de caixa): cancela
 sozinho, ou libera com o PIN, a venda paga **da sessão de caixa aberta** — a de caixa fechado continua sem cancelamento
-no PDV (D23, abaixo). Nada de `pdv.config.*` nem `pdv.auditoria.ver_local`.
+no PDV (D23, abaixo). Pela D91 (F3-B3), também **devolve dinheiro** na troca e no resgate do vale
+(`pdv.troca.devolver_dinheiro`), que o Supervisor de caixa continua pedindo. Nada de `pdv.config.*` nem
+`pdv.auditoria.ver_local`.
 O Painel de saúde e o Sobre da Central valem para quem tem `pdv.acesso.entrar` (PC-7). Não há permissão para cancelar
 venda de caixa já fechado (D23: só pelo ERP, na Fase 3).
 
@@ -4248,6 +4254,17 @@ no PIX, a liberação do gerente), p50 0,59 s e p95 1,6 s; outbox vazio 0,5 s de
   `versao_schema`), para que nenhum caixa perca vendas por estar desatualizado.
 - Versão abaixo de `versao_minima`: aviso por 3 dias de carência; depois, a atualização é obrigatória no próximo login
   (sem bloquear a subida dos eventos pendentes).
+- **Desenho conferido no spike F3-B8 (README do PDV › decisão 100), para o PR-22:** Velopack por usuário do Windows
+  (sem administrador); o pacote montado no Linux pelo `vpk` fixo; a "assinatura" é um manifesto por canal
+  (`manifesto.<canal>.json` + `.sig` do `ssh-keygen -Y sign`, Ed25519, com a chave privada só no PC do dono e a
+  pública no build) com o sha256 do feed, de cada pacote (completo e delta) e de cada arquivo de dentro do completo, e
+  a **versão mínima permitida**, que o caixa guarda como piso e só sobe (um manifesto antigo, mesmo assinado, é
+  recusado); tudo conferido antes do download e de novo antes de aplicar; nada se aplica sozinho na abertura; a volta
+  usa o pacote da versão anterior guardado pelo próprio caixa, só depois de uma falha de migração local, com o banco
+  restaurado e a versão que falhou recusada naquele caixa; a volta fica "em andamento" (com o backup) até a versão
+  anterior abrir, e se repete se a que falhou abrir de novo. A mínima permitida do manifesto nunca é a versão
+  publicada (fica igual ou abaixo da anterior em uso) e é separada do `versao_minima` acima. Comprovado no Wine; o
+  roteiro no Windows do dono decide.
 - **PDV-1 (implantação I3, README do PDV › decisão 62):** sem o atualizador, a versão nova é o instalador manual
   (`GenesisPDV-Setup-x.y.z.exe` por cima da instalada, que mantém banco, backups e ativação). Com o `versao_minima`
   acima da versão do app, o login mostra o aviso com a versão e o instalador a usar, e a recusa da ativação (426) e o

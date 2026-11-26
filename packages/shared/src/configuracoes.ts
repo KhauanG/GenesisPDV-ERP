@@ -159,6 +159,10 @@ const LINHAS: Linha[] = [
   // O20 (dono, 31/10/2026): o caixa não pede confirmação de maioridade (`vendas.idade_confirmada_por_id` fica nulo).
   ['pdv.confirmacao_idade', umDe(['por_venda', 'por_item', 'desligado']), 'desligado', LP],
   ['pdv.vasilhame_comodato', bool, false, LP],
+  // Fase 3, F3-B3 (D84, a recomendação da F3-Q13): cascos em comodato por cliente que o operador com
+  // `pdv.vasilhame.comodato` empresta sozinho (o saldo do cliente depois do empréstimo); acima, o supervisor libera
+  // (liberação `comodato`); 0 = todo empréstimo pede o supervisor. Só vale com `pdv.vasilhame_comodato` ligada (F3-B40).
+  ['pdv.vasilhame_comodato_max_por_cliente', inteiro(0, 9999), 6, LP],
   // Decisão do dono (D29, 31/10/2026): o cancelamento da venda devolve ao cliente os vazios que ele trouxe.
   ['pdv.cancelamento_devolve_vazios', bool, true, LP],
   ['pdv.pix_manual_exige_supervisor', bool, true, LP],
@@ -182,6 +186,10 @@ const LINHAS: Linha[] = [
   ['pdv.crediario_exige_senha_cliente', bool, false, LP],
   ['pdv.vale_exige_online', bool, false, LP],
   ['pdv.vale_exige_cliente_acima', dinheiro, '0.00', LP],
+  // Fase 3, F3-B3 (D96, a recomendação da F3-Q25): o vale sai com um código de conferência de 4 dígitos aleatórios
+  // (a nuvem guarda só o resumo, `vales.conferencia_hash`) e o uso pede os 4 dígitos além do código lido; Não = só o
+  // código. O formato do resumo e a conferência no caixa são do F3-B41 e do F3-B46.
+  ['pdv.vale_exige_conferencia', bool, true, LP],
   ['pdv.troca_kit_parcial', bool, false, LP],
   ['pdv.devolucao_emite_nfe_entrada', bool, false, LP],
   ['pdv.delivery_emite_nota_na_saida', bool, true, LP],

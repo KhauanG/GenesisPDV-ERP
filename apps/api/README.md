@@ -7431,6 +7431,429 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        primeira implantação de um commit com o OP-B9 pelo vigia; nenhuma tag, release ou ref criada. Sem migração;
        API, ERP e PDV sem mudança.
 
+### Fase 3 – PR-17 base do protocolo e do esquema (API)
+
+220. **Esquema da nuvem 1 da Fase 3: trocas, vales, reservas e requisições do terminal** (F3-B1; plano
+     `docs/planos/fase3-plano.md`; MD 3.13, 3.11.3; SYNC 9.16, 9.17, 14.4, 20.4; D87 a D97; migração
+     `0029_fase3_vales_trocas`; `src/database/empresa/schema/trocas-vales.ts`). Só o esquema: os eventos
+     `troca.registrada` e `vale.*`, as reservas, as consultas e a idempotência usam estas tabelas sem migração nova
+     (F3-B6, B41 a B45), e o fluxo que leva `vales` ao caixa é do F3-B7. Escolhas técnicas, sem pergunta ao dono:
+     - **Tabelas.** `trocas` (`codigo` pela `seq_codigo_trocas`, criada antes das tabelas; nulo no MD porque o PDV não
+       numera, mas o default sempre preenche na nuvem), `itens_troca`, `vales`, `movimentos_vale`, `reservas_vale` e
+       `requisicoes_terminal` (pk `(terminal_id, requisicao_id)`, log técnico sem `versao`; `status_http`/`resposta`
+       nulos enquanto a requisição está em andamento, `ck_requisicoes_terminal_concluida`; a coluna `corpo_sha256`,
+       além do plano, deixa o F3-B6 recusar o mesmo `X-Requisicao-Id` com outro corpo sem migração nova; retenção de
+       24 h pelo `ix_requisicoes_terminal_criada_em`). CHECKs da MD mais os que a descrição dela já implicava:
+       `ck_vales_valor_original` (> 0), `ck_vales_origem_tipo`, `ck_vales_cancelado` e `ck_trocas_cancelada`
+       (cancelado com a data), `ck_trocas_valor` e `ck_itens_troca_valores` (≥ 0) e o `ck_movimentos_vale_sinal`
+       (emissão e estorno da utilização positivos, utilização negativa; o cancelamento, −saldo, fica livre porque o
+       saldo pode ser negativo). **Saldo do vale sem `CHECK >= 0`** (D89: o mesmo vale em dois caixas sem internet
+       aplica e alerta, nunca recusa). `vales.conferencia_hash` (D96) anulável: o formato do resumo e a chave
+       `pdv.vale_exige_conferencia` são do F3-B41.
+     - **FKs.** Só para cadastro (loja, caixa, terminal, sessão, usuário, pessoa, produto, variação, lote) e para a
+       linha que sobe no **mesmo** evento (`trocas.vale_id` e `trocas.movimento_caixa_id`, SYNC 9.16; o handler grava
+       o vale e o movimento antes da troca; `trocas.venda_nova_id` é preenchida pela própria nuvem). **Sem FK** nas
+       colunas que o PDV envia e que apontam para documento de outro evento (`trocas.venda_origem_id`,
+       `itens_troca.item_venda_origem_id`, `movimentos_vale.venda_id`/`pagamento_venda_id`/`troca_id`,
+       `reservas_vale.venda_id`/`pagamento_venda_id`, `vales.origem_id`), e as que já existiam continuam sem FK
+       (`pagamentos_venda.vale_id`, `movimentos_caixa.troca_id`, `movimentos_vasilhame.vale_id`): a ordem entre
+       terminais não é garantida e um 23503 recusaria um fato consumado (padrões da Fase 3).
+     - **Versão.** `vales` (C, ↕) já nasce com `fn_versao` (a trava 7300001) e `ix_vales_versao`, mas fica fora de
+       `TABELAS_FN_VERSAO` (que gera os espelhos do PDV) até o fluxo entrar: a lista nova
+       `TABELAS_FN_VERSAO_SEM_FLUXO` (`versionamento.ts`) é conferida pelo `test:sync-triggers` (trigger, índice e
+       fora dos fluxos). As outras quatro: `fn_versao_local` (`TABELAS_FN_VERSAO_LOCAL`). O `Esquema.g.cs` **não
+       muda**: nenhuma tabela nova está num fluxo nem em `TABELAS_MOVIMENTO_PDV`; o PDV instalado (o mais antigo em
+       uso tratado como 0.10.0 até a lista do dono, que vai no corpo do PR-17) não vê diferença.
+     - **Imutabilidade.** `trocas`: só `venda_nova_id` (uma vez, de nulo para a venda), `status` (`registrada` →
+       `cancelada`, terminal) e as colunas de cancelamento (`tg_trocas_imutavel` com `fn_protege_imutavel` e
+       `tg_trocas_transicao`, como a `fn_vendas_transicao` da 0012). `itens_troca` e `movimentos_vale`: nada (o saldo
+       é a soma dos movimentos; a correção é um movimento novo). As três com exclusão física proibida
+       (`fn_exclusao_fisica_proibida` da 0028, `DELETE` e `TRUNCATE`).
+     - **Item da venda fechada** (`tg_itens_venda_imutavel`, `BEFORE UPDATE OR DELETE`): com a venda do item (a de
+       antes e a de depois, se o UPDATE troca a venda) fora de `STATUS_VENDA_ABERTOS` (argumento do trigger, conferido
+       pelo teste), só mudam `quantidade_devolvida`, `versao` e `atualizado_em`, e a exclusão é recusada
+       (`DOCUMENTO_IMUTAVEL`, que a API traduz para 422). No rascunho do ERP (F3-B56) incluir, alterar e excluir
+       continuam livres. O **INSERT fica de fora**: o handler do `venda.finalizada` grava o cabeçalho já finalizado e
+       depois as linhas (a ordem das FKs), e quem garante as linhas é a conferência do documento. As colunas de custo
+       **não** ficam livres: conferido com grep, nenhum `update` de `itens_venda` em `src` (o custo é gravado no
+       INSERT; o `recalcular-saldos` e a compensação do Definir não tocam no item). Sem trava no trigger: quem escreve
+       pega a venda (o rascunho do F3-B56, com `for update`).
+     - **Seed.** `ESTORNO_VASILHAME_EMPRESTADO` e `ESTORNO_BAIXA_INTERNA` (+1, `venda`; a lacuna do MD 7.3, D85 e
+       D102) em `TIPOS_MOVIMENTO_ESTOQUE` e, nas empresas existentes, pela própria migração (`on conflict do
+       nothing`; o `db:migrate:empresas` também recarrega as referências depois). A numeração `vale` do caixa 0 (dono
+       `nuvem`; os vales emitidos no ERP usam o caixa `00`, MD 3.13.2) em `garantirNumeracoesLoja` e, nas lojas que
+       já existiam, pela migração.
+     - **Diagnóstico antes da implantação** (a preparação da 0029, `PREPARACOES_MIGRACAO_EMPRESA`, só de leitura e
+       fora da transação, decisão 146): conta `pagamentos_venda.vale_id`, `vendas.orcamento_id` e
+       `itens_venda.promocao_id` preenchidos em cada banco de empresa. Deveria dar zero (nenhum PDV publicado os
+       preenche); diferente de zero vira aviso no terminal do `db:migrate:empresas` (só na VPS) e as três contagens
+       vão para a `auditoria_plataforma` (`migracao_preparada`). Não bloqueia: uma `raise` dentro da migração
+       deixaria um banco de empresa migrado e outro não, e a migração não toca nessas colunas.
+     - **Testes.** `test/integracao/migracao-vales-trocas.test.ts` (a empresa nova e a existente com a mesma
+       estrutura; a existente com venda finalizada, cancelada, rascunho, sessão e movimento de caixa da 0028 sem
+       nenhuma linha diferente depois; o diagnóstico; um caso inválido por CHECK; o saldo negativo aceito; as chaves
+       únicas; a imutabilidade e a exclusão proibida; o item da venda fechada e o do rascunho), o
+       `test:sync-triggers`, o `versionamento` e a numeração do caixa 0 no `estrutura`, nos PostgreSQL 16 e 18.
+
+221. **Esquema da nuvem 2 da Fase 3: promoções, orçamentos, a projeção de status e a conferência do fechamento**
+     (F3-B2; plano `docs/planos/fase3-plano.md`; MD 3.6.11, 3.11.1, 3.11.9, 3.12.4, 3.5.6, 3.1.3; SYNC 16.3; D78,
+     D79, D114, D116, D118; migração `0030_fase3_promocoes_orcamentos`; `schema/produtos.ts`, `schema/orcamentos.ts`
+     (novo), `schema/vendas.ts`, `schema/caixa.ts`, `schema/estoque.ts`). Só o esquema: o cadastro de promoções é do
+     F3-B34, os orçamentos do F3-B60 em diante, o `registrarStatusPdv` do F3-B10, a conferência do F3-B9, o comodato
+     do F3-B39, e os fluxos que levam promoções, orçamentos e a projeção ao caixa, do F3-B7. Escolhas técnicas, sem
+     pergunta ao dono:
+     - **Tabelas.** `promocoes` (C, ↓; `parametros` só como objeto, o formato por tipo fica no contrato do shared do
+       F3-B34; os cinco tipos da MD, com o combo guardado para depois pela D78; `acumulativa` guardada pela D79),
+       `promocoes_itens` (alvo produto **ou** categoria), `orcamentos` (`seq_codigo_orcamentos`, `valido_ate`
+       `generated always as (data + dias_validade) stored`, a reserva `reservado_terminal_id`/`reservado_ate`
+       sempre junta), `itens_orcamento`, `vendas_status_pdv` (P, ↓ caixa), `conferencias_caixa` (uma por fechamento,
+       `uq_conferencias_caixa_fechamento`: refazer pela D114 altera a mesma linha) e `conferencias_caixa_formas`.
+       CHECKs da MD mais os que a descrição dela já implicava (`ck_promocoes_parametros`, `ck_promocoes_dias_semana`
+       como o de `restricoes_horario_venda`, `ck_promocoes_lojas`, `ck_promocoes_itens_quantidade`,
+       `ck_orcamentos_valores`, `ck_orcamentos_origem` e `ck_orcamentos_origem_terminal` (orçamento do caixa com o
+       terminal, D118), `ck_orcamentos_convertido`, `ck_orcamentos_reserva`, `ck_itens_orcamento_valores`, os da
+       projeção com as listas de `vendas`, `ck_conferencias_caixa_situacao` e `ck_conferencias_caixa_formas_valor`).
+     - **`vendas_status_pdv` pelo caixa.** Além do MD original (filtro `terminal_id`), a projeção tem `caixa_id`
+       (o da venda), e o pull do F3-B7 vai filtrar por ele: o terminal que substituiu outro no mesmo caixa recebe o
+       status das vendas antigas (padrões da Fase 3). As duas colunas são imutáveis (`fn_filtro_imutavel`, MD 6.4
+       regra 2), `ix_vendas_status_pdv_caixa_id_versao` serve ao pull e o `id` é o da venda (PK e FK, sem default:
+       a nuvem sempre grava a projeção junto da mudança na venda). MD 3.11.9, 6.2 e 6.4 e SYNC 16.3 corrigidas.
+     - **FKs.** Para cadastro (loja, pessoa, usuário, terminal, produto, variação, categoria, caixa, forma, fechamento)
+       e `orcamentos.venda_id` (gravada pela própria nuvem ao aplicar a venda da conversão). **Sem FK nova** nas
+       colunas que o PDV envia (`vendas.orcamento_id`, `itens_venda.promocao_id` e `item_orcamento_id`, além do
+       `pagamentos_venda.vale_id` da decisão 220), conferido pelo teste **pela coluna** (`pg_constraint` com
+       `pg_attribute`), não pelo nome da constraint, para uma FK com outro nome também falhar; a MD 3.11.2 diz o
+       mesmo. `conferencias_caixa.conta_financeira_id` sem FK até `contas_financeiras` (Fase 4).
+     - **Versão.** As cinco que vão descer (`promocoes`, `promocoes_itens`, `orcamentos`, `itens_orcamento`,
+       `vendas_status_pdv`) já nascem com `fn_versao` e `ix_<tabela>_versao`, em `TABELAS_FN_VERSAO_SEM_FLUXO` até o
+       F3-B7 (o `test:sync-triggers` confere o trigger, o índice e que nenhuma está num fluxo); `valido_ate` é gerada,
+       então entra em `COLUNAS_ISENTAS_VERSAO` (`fn_versao('valido_ate')`; o `versionamento` confere). A conferência
+       não sai da nuvem: `fn_versao_local`. Autoria (AU) em `promocoes`, `orcamentos` e `conferencias_caixa`.
+     - **Exclusão física proibida** (`fn_exclusao_fisica_proibida` da 0028, `DELETE` e `TRUNCATE`) em `promocoes`,
+       como o plano pede, e também em `promocoes_itens`, `orcamentos` e `itens_orcamento`, pelo mesmo motivo: o caixa
+       offline pode ter na venda o `promocao_id`, o `orcamento_id` ou o `item_orcamento_id` (sem FK) de uma linha que
+       a nuvem precisa continuar conhecendo, e a linha que desce só sai do caixa como tombstone (MD 6.4 regra 4).
+       `loja_id` do orçamento imutável (`tg_orcamentos_filtro_imutavel`).
+     - **Comodato comutativo.** Sai o `ck_saldos_vasilhame_pessoas_quantidade` (`quantidade >= 0`): o saldo é a soma
+       dos movimentos na ordem em que chegam e pode ficar negativo por um tempo, com o alerta
+       `VASILHAME_COMODATO_NEGATIVO` (o handler é do F3-B39, que corrige também o texto da SYNC 9.26, hoje "aplica até
+       zerar"). O gerador leva o CHECK ao `Esquema.g.cs` (o espelho perde a linha), mas o PDV **não** cria CHECK da
+       nuvem nos espelhos (só os próprios, `criado_localmente` e o formato do `id`; o `EsquemaNuvemTests` compara os
+       CHECKs só das tabelas de movimento), então não há migração EF nem mudança no caixa instalado: a mudança não
+       precisa esperar a `FaseTres` (F3-B7).
+     - **Template padrão.** O `uq_templates_documentos_padrao` do MD 3.1.3 **já existe desde a 0002** (SQL
+       customizado, por isso fora do snapshot do drizzle-kit), com a mesma definição. O plano partiu de uma leitura que
+       não o viu: nenhum banco pode ter dois "padrão" do mesmo tipo e loja, então não há o que desmarcar nem
+       auditoria a gravar, e a 0030 não toca nele. O teste confere a definição do índice e o efeito (o segundo padrão
+       da mesma loja, ou de "todas", é recusado; o de outra loja convive; o excluído deixa de contar).
+     - **Compatibilidade.** Nenhuma tabela nova num fluxo nem em `TABELAS_MOVIMENTO_PDV` e nenhuma coluna nova nas
+       tabelas de movimento: o PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) não vê diferença. Nenhum dado existente muda.
+     - **Testes.** `test/integracao/migracao-promocoes-orcamentos.test.ts` (a empresa nova e a existente com a mesma
+       estrutura; a existente, com venda, sessão fechada com fechamento, cliente com cascos em comodato e os templates
+       do seed, sem nenhuma linha diferente depois; um caso inválido por CHECK; o comodato negativo aceito; os filtros
+       imutáveis; a exclusão física proibida; a coluna gerada e a versão; as chaves únicas; o template padrão), o
+       `test:sync-triggers`, o `versionamento` e a autoria do `cadastros-fase1`, nos PostgreSQL 16 e 18.
+
+222. **Permissões, perfis, chaves e ações de auditoria da Fase 3** (F3-B3; plano `docs/planos/fase3-plano.md`; ERP 8.8,
+     11.3, 11.4; PDV 10.12, 31.2; D84, D91, D96, D102; migração de dados `0031_fase3_permissoes`;
+     `packages/shared/src/{permissoes,perfis-padrao,configuracoes,enums}.ts`, `sync/eventos.ts`). Só catálogo e dados:
+     nenhuma tela nem regra de caixa nova (o cadastro de promoções é do F3-B34, o comodato do F3-B39/B40, a troca e o
+     vale dos F3-B41 a B48, a baixa interna do F3-B52). Escolhas técnicas, sem pergunta ao dono:
+     - **Catálogo.** `promocoes.ver/criar/editar/excluir` no grupo Produtos (como o ERP 11.4) e
+       `pdv.vasilhame.comodato` no grupo "PDV – Venda", com liberação. O menu de Promoções passa de `produtos.ver` para
+       `promocoes.ver` (README do ERP › decisão 86).
+     - **Perfis padrão (PDV 31.2 e decisões do dono).** Promoções: Administrador e Gerente com as quatro, Estoquista
+       com ver/criar/editar (quem edita produtos edita promoções, a mesma regra da migração; com "Altera preço do produto
+       no ERP" = Não, o F3-B34 aplica às promoções a mesma trava de preço do cadastro do produto). Comodato (D84, a
+       recomendação da F3-Q13 = B): no Operador de caixa e, por ele, no Supervisor e no Encarregado; o recurso nasce
+       desligado (`pdv.vasilhame_comodato` = Não), o operador empresta até `pdv.vasilhame_comodato_max_por_cliente` e o
+       supervisor libera acima (liberação `comodato`). Ler a D84 como "só o supervisor empresta" a faria igual à opção
+       (D), que o dono não escolheu. `pdv.troca.devolver_dinheiro` no Encarregado (D91: fica com o Administrador e o
+       Encarregado; o Supervisor de caixa continua pedindo a liberação; a descrição do perfil muda e a anterior entra em
+       `descricoesAnteriores`). `pdv.pagamento.consumo_interno` no Supervisor (e no Encarregado): a PDV 31.2 já dava ✔ ao
+       Supervisor e a D102 manda o supervisor liberar a baixa interna; as formas `consumo_interno` continuam inativas e
+       fora de `TiposDaFase` no caixa até o F3-B52, então nada muda na loja agora. O `permissoes.spec.ts` confere a
+       matriz das permissões que a fase usa nos perfis de caixa.
+     - **Migração 0031 (só dados).** A permissão efetiva de promoções de cada usuário passa a ser a de produtos de hoje
+       (MD 3.3.4: perfil ∪ concedidas − negadas): (1) todo perfil não excluído com `produtos.editar` ativa, personalizado
+       **ou de sistema**, ganha `promocoes.ver/criar/editar`, com uma linha `permissoes_alteradas` (origem `sistema`, o
+       antes e o incluído, como o `PUT /perfis/:id`) e `permissoes_versao` + 1 dos usuários dele; (2) o ajuste por
+       usuário de `produtos.editar` (concedida ou negada) vale também para as três, e a negada de `produtos.excluir`
+       para `promocoes.excluir`, com a auditoria do usuário. Sem o item (2), o usuário com `produtos.editar` negada num
+       perfil que a tem passaria a criar promoções; (3) o perfil de sistema que o seed completa com promoções
+       (Administrador, Gerente, Estoquista; o `permissoes.spec.ts` do shared confere a lista fixa da 0031 contra o
+       `PERFIS_PADRAO` de hoje) e de que a empresa tirou a permissão de produtos correspondente fica com a linha de
+       promoções **já excluída**, que o seed respeita como "a empresa removeu" (`aplicarSeedEmpresa` não volta linha
+       excluída). A migração põe as quatro chaves no catálogo antes (`on conflict do nothing`, com o texto e a ordem do
+       shared do F3-B3; o pós-migração acerta os dois com o shared de cada versão e recarrega o catálogo só depois das
+       migrações, e a FK `fk_perfis_permissoes_permissao` exige a chave; o teste confere os valores fixos do SQL logo
+       depois da 0031 e os do shared de hoje depois do pós-migração), pega a trava de versão primeiro
+       (`fn_trava_versao`) e garante a partição da auditoria do mês. O resto da matriz (comodato, devolução em dinheiro,
+       baixa interna) chega aos perfis de sistema pelo seed do pós-migração. Na empresa nova, a 0031 não acha perfis e
+       o seed faz tudo.
+     - **Chaves** (com o padrão da recomendação de cada pergunta, todas por loja e no PDV):
+       `pdv.vasilhame_comodato_max_por_cliente` (inteiro 0–9999, padrão 6 cascos de saldo do cliente depois do
+       empréstimo; 0 = todo empréstimo pede o supervisor) e `pdv.vale_exige_conferencia` (padrão Sim; o formato do
+       resumo é do F3-B41). A `pdv.limite_padrao_cliente_pdv` já existia. Sem tela no ERP neste bloco (Parâmetros-PDV é
+       do F3-B12): valem os padrões.
+     - **Ações de auditoria** (`ACOES_AUDITORIA_FASE3`, espalhada em `ACOES_AUDITORIA`): `preco_alterado`,
+       `tipo_preco_alterado`, `acrescimo_total`, `lote_vencido_liberado`, `peso_digitado`, `venda_suspensa`,
+       `venda_recuperada`, `limite_valor_liberado` e `comodato_emprestado`, aceitas pela API desde já (o
+       `auditoria.registros` não passa pelo T13) e nenhuma reservada ao servidor. O PDV **não** muda: o
+       `CatalogosNuvem.AcoesAuditoria` do caixa continua sem elas (o `CicloOnlineTests` confere que a lista da nuvem
+       espalha a da fase e que as duas não se cruzam), e o caixa só as envia com o recurso da onda disponível (F3-B4).
+       `venda_recuperada` é o nome que o caixa já grava **só localmente** desde a 1C (a venda interrompida por uma
+       queda): quando o PDV passar a enviá-la, sobem as duas, e o F3-B23 distingue a da venda suspensa pelo `depois`.
+       A `acao_desconhecida` (a proteção da versão futura) é do F3-B4.
+     - **Liberações** (`ACOES_LIBERACAO_FASE3`, só constantes): `limite_valor`, `consumo_interno`, `alterar_preco`,
+       `tipo_preco`, `lote_vencido`, `peso_manual`, `comodato`, `troca_fora_prazo`, `troca_dinheiro` e `vale_avulso`.
+       Ficam fora de `ACOES_LIBERACAO_VENDA` (as que o PDV já gera, conferidas com o `AcaoLiberacao` do caixa) até o
+       bloco que as gera; o campo continua texto livre, então nenhuma muda o `venda.finalizada` v1.
+     - **`COLUNAS_FORA_DO_PAYLOAD`** das tabelas da fase que sobem por evento (SYNC 9.16, 9.17, 9.19): `trocas` (o
+       `codigo` da sequência, a `origem` e o cancelamento), `itens_troca` (nada), `vales` (o cancelamento, que vem no
+       `vale.cancelado`), `movimentos_vale` (o `evento_id`), `orcamentos` (o `codigo` do resultado do push, a
+       `valido_ate` gerada, a conversão, a reserva e, como do ERP, a resposta do cliente) e `itens_orcamento` (nada). O
+       `contratos-eventos.spec.ts` confere desde já que cada coluna citada existe na tabela; a conferência completa
+       contra o contrato entra com cada evento.
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) recebe no pull as chaves, permissões e linhas novas e as ignora (permissão desconhecida no
+       caixa não libera nada; a chave sem leitor fica no espelho); nenhum evento nem `versoes_schema` muda. No PDV
+       deste branch só o `PermissoesPdv.PerfilOperador` (o operador de demonstração e os testes) ganha o comodato, para
+       continuar igual ao `PDV_OPERADOR` do shared.
+     - **Testes.** `test/integracao/migracao-permissoes-fase3.test.ts` (uma empresa de antes do F3-B3 com perfis
+       personalizados com e sem `produtos.editar`, a permissão removida, um perfil excluído, ajustes concedidos e negados
+       por usuário e perfis de sistema mexidos pela empresa: a permissão efetiva de promoções de cada usuário é a de
+       produtos de antes, nada mais muda fora da regra e da matriz, nenhuma linha sai, a auditoria e a
+       `permissoes_versao` de quem mudou, o seed reaplicado sem efeito, a descrição do Encarregado e a empresa nova
+       pelo seed), o `permissoes.spec.ts` (matriz), o `configuracoes.spec.ts`, os de contrato no shared e na API, o
+       `menu.test.ts` do ERP e o `CicloOnlineTests` do PDV.
+
+223. **Versões de payload por tipo, upcasters e a auditoria com ação desconhecida** (F3-B4; plano
+     `docs/planos/fase3-plano.md` › Padrões, "Versões por onda" e "Auditoria com ação desconhecida"; SYNC 9.22 e 17.5;
+     `sync/handlers/comum.ts`, `sync/aplicacao.ts`, `sync/eventos.ts`, `terminais/fila-decisao.ts`). Só o mecanismo:
+     nenhum tipo muda de versão e `versoes_schema` continua igual (o `venda.finalizada` v2 é da onda R3, F3-B13 em diante;
+     o anúncio, do F3-B30). Escolhas técnicas, sem pergunta ao dono:
+     - **Catálogo.** O formato `CatalogoHandlers` (tipo → versão → handler) não muda; o `HandlerEvento` ganha `versoes`
+       (as anteriores que ele aplica: cada uma com o schema do contrato e o `upcast` para a **seguinte**, vN → vN+1) e
+       `anunciada` (padrão `true`). `resolverHandler` acha quem aplica a versão do evento: o handler da própria versão ou o
+       primeiro acima cujo encadeamento cobre cada passo; versão acima da maior conhecida (ou um buraco no encadeamento)
+       continua `SCHEMA_DESCONHECIDO` (transitório: o evento espera a API ser atualizada). `converterPayload` valida cada
+       passo no schema da versão em que está, converte e, no fim, valida no schema do handler.
+     - **O upcast é puro e roda a cada aplicação.** No push, no Reprocessar, no "Aplicar com novo número" e na tarefa de
+       "Reprocessar todos": todos passam por `aplicarEvento`, sobre o envelope remontado da linha (`envelopeDaLinha`), e
+       `eventos_recebidos.payload` continua o original. Corrigir um upcaster e reprocessar resolve o evento que foi a `erro`
+       por defeito dele. A `FilaDecisao` recebe o catálogo pelo construtor (o padrão é o `HANDLERS`; os testes injetam o
+       tipo de teste), como o `PushSync`.
+     - **Falha da conversão é `PAYLOAD_INVALIDO`** (erro de regra, nunca `ERRO_INTERNO`): o payload fora do schema da
+       versão de origem dá a mensagem de sempre ("Payload fora do schema do tipo."); o convertido fora do schema da versão
+       seguinte, "Payload convertido da vN fora do schema da vM.", e a exceção de um upcaster com defeito, "Falha na
+       conversão do payload da vN para a vN+1.", com `versao_origem`, `versao` e a mensagem da exceção nos detalhes. A
+       conversão é determinística: tentar de novo não resolveria, e o `ERRO_INTERNO` gastaria as tentativas do push. O
+       `ErroRegraEvento`/`ErroTransitorioEvento` lançado de propósito pelo upcaster sobe como está, mas só depois da
+       retenção por dependência (8.5), como o payload inválido.
+     - **A versão de origem chega ao handler** (`ContextoHandler.versaoOrigem`): é com ela que as regras de recusa da
+       versão de origem continuam valendo (o `venda.finalizada` v1 com `emprestados > 0` não vira comodato no Reprocessar).
+       O `entidades` e o `dependencias` do handler leem o payload já convertido.
+     - **`versoes_schema` lista só as versões anunciadas** (`versoesSchemaAceitas`, formato `Record<string, number[]>`
+       mantido): a do handler e as das `versoes`, menos as `anunciada: false`; o tipo sem versão anunciada sai da lista.
+       A versão aceita e ainda não anunciada é aplicada se chegar, mas nenhum PDV a grava (o caixa escolhe a maior comum
+       anunciada, README do PDV › decisão 96). A v1 de `venda.finalizada` e de `vasilhame.movimentado` nunca sai: o
+       `contratos-eventos.spec.ts` confere, junto com a regra de que toda versão (a do handler e as das `versoes`) valida
+       com o schema do contrato (`CONTRATOS_EVENTOS[tipo].versoes`) e de que toda fixture `*.payload.json` passa pelo
+       upcast até a versão do handler (fixture `<tipo>.vN[.variante].payload.json`; sem `.vN`, a v1).
+     - **Auditoria com ação desconhecida** (SYNC 9.22). O `auditoria.registros` não passa pelo T13, então o caixa mais novo
+       que a API, com uma ação que ela não conhece, travava o lote para sempre (`PAYLOAD_INVALIDO`). Agora a ação fora de
+       `ACOES_AUDITORIA` é gravada como **`acao_desconhecida`**, com o texto original na frente da descrição
+       (`[Ação do caixa desconhecida nesta versão da nuvem: "…"]`, até 64 caracteres; o lote aceita a `acao` até 64, a
+       coluna continua com 40) e o alerta **`AUDITORIA_ACAO_DESCONHECIDA`** (aviso, no terminal, um aberto por terminal e
+       ação, com as ocorrências somadas em `dados`; reaplicar o mesmo lote não soma, porque só conta o registro inserido;
+       no máximo 20 ações diferentes abrem alerta por lote, para um caixa com defeito não encher a tela),
+       que aparece no detalhe e na listagem de terminais com o "Ciente" (README do ERP › decisão 87). O resultado do
+       evento traz `acoes_desconhecidas`. As **reservadas ao servidor** continuam recusando o lote inteiro, e a própria
+       `acao_desconhecida` entra nelas (só o servidor a grava: um caixa que a mandasse forjaria a marca). A ação vai na
+       descrição, e não no `antes`/`depois`, porque esses são o estado do registro (a tela do ERP os mostra como diferença).
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) não vê diferença: `versoes_schema` é o mesmo, todos os tipos continuam na v1 e as ações que ele
+       manda são do catálogo. O caixa com a ação de uma versão futura, que antes travava o lote, agora sobe.
+     - **Testes.** `aplicacao.spec.ts` (um tipo v1/v2 injetado: a v1 pelo upcast com a versão de origem, a v2 direto, a
+       v3 transitória, a regra da v1 depois do upcast, as três falhas de conversão, a v2 não anunciada fora da lista, o
+       encadeamento v1 → v2 → v3 e o `resolverHandler`), `contratos-eventos.spec.ts` (fixtures pelo upcast, a v1 sempre
+       anunciada) e `test/integracao/versoes-eventos.test.ts` (o payload original gravado; o v1 em `erro` por defeito do
+       upcaster, que o Reprocessar resolve depois da correção; o v1 recusado pela regra da v1 que continua recusado; o
+       lote com ação desconhecida aplicado, com a linha, a descrição e o alerta, idempotente, e o "Ciente"; a ação de 64
+       caracteres pelo banco e o teto de 20 alertas por lote; a reservada ao servidor recusada; a v2 aceita e não
+       anunciada fora do `versoesSchemaAceitas` do catálogo do teste; o `dependencias` e o `entidades` do handler pelo
+       payload convertido, com a v1 retida gravando a entidade e retendo quem depende dela; o erro de regra do upcaster
+       retido pela dependência e, sem ela, com o próprio código; o transitório do upcaster transitório, aplicado no
+       reenvio; a v3 sem efeito). O `relogio.test.ts` trocou a ação inventada (que não é mais erro) por uma
+       reservada ao servidor.
+
+224. **Códigos do vale e do cupom de troca, o código de conferência do vale e a janela do protocolo** (F3-B5; plano
+     `docs/planos/fase3-plano.md`; SYNC 13.4 e 17.2, MD 3.13.2; D95 e D96; `packages/shared/src/vales.ts`,
+     `sync/terminal.ts`). Só a regra e os vetores: nenhum evento, tela ou tabela muda (quem emite, lê e grava o vale é do
+     F3-B41 em diante). Escolhas técnicas, sem pergunta ao dono:
+     - **Vale** (`montarCodigoVale`/`conferirCodigoVale`): `VC` + loja (1–99) + caixa (0–99; o `00` é o caixa do sistema,
+       dos vales do ERP) + sequencial (1 a `VALE_NUMERO_MAXIMO`) + DV Luhn sobre os 11 dígitos, como a SYNC 13.4 e o
+       `ck_vales_codigo`. **Cupom de troca** (`montarCupomTroca`/`conferirCupomTroca`): `CT` + loja + caixa + número da
+       venda com 12 dígitos (1 a `NUMERO_VENDA_MAXIMO`, inclusive a faixa de renumeração) + DV Luhn sobre os 16. Montar
+       fora dos limites é erro de programação (`RangeError`); conferir o que foi lido nunca lança: devolve as partes ou o
+       motivo (`FORMATO`, `DIGITO_VERIFICADOR`, `LOJA` 00 ou `NUMERO` 0), com o DV conferido **antes** dos limites (um
+       dígito trocado sempre aparece como erro de digitação). A leitura tira das pontas só espaço, tab, CR e LF
+       (lista explícita: o `trim()` do JS e o `Trim()` do .NET divergem no BOM e no NEL) e aceita o prefixo em minúsculas
+       (leitor configurado de outro jeito ou digitação); o código devolvido é o normalizado. Os padrões do PDV terminam
+       em `\z` (o `$` do .NET casaria antes de um `\n` final, o do JS não), e os vetores cobrem o `\n` final, o BOM e o
+       NEL.
+     - **Código de conferência do vale** (D96): 4 dígitos sorteados pelo gerador criptográfico, sem viés
+       (`gerarCodigoConferenciaVale`), e o resumo `pbkdf2-sha256$<iterações>$<sal>$<resumo>` (PBKDF2-HMAC-SHA-256, sal
+       de 16 bytes por vale, resumo de 32 bytes, base64url sem `=`; 87 caracteres com as 100.000 iterações padrão, no
+       `varchar(100)` de `vales.conferencia_hash`) sobre `<código do vale>:<4 dígitos>`: o resumo copiado de um vale não
+       serve em outro. As iterações ficam no resumo e a conferência aceita de 10.000 a 1.000.000 (sobe o custo depois sem
+       invalidar vale impresso, e um resumo forjado não prende a CPU); a comparação é em tempo constante; entrada
+       inválida dá `false`. Com 10.000 combinações, quem tem o banco descobre os 4 dígitos de um vale por força bruta de
+       qualquer jeito; o PBKDF2 só encarece isso (minutos por vale em vez de milissegundos) e o sal impede uma tabela
+       pronta. A proteção da D96 é contra quem **não** tem o banco: o caixa pede os 4 dígitos que só o vale impresso
+       traz (o limite de tentativas no caixa é do F3-B46). A Web Crypto (`globalThis.crypto`) roda no Node e no
+       navegador, então o `@genesis/shared` continua servindo ao ERP; o resumo é assíncrono.
+     - **Vetores** em `packages/shared/testes/sync/vale.codigo.vetores.json` (o exemplo da SYNC `VC010200000080`, o
+       caixa 100 e o sequencial 0 recusados, o DV errado, um dígito trocado e dois vizinhos invertidos, o `CT` com um
+       dígito trocado, os resumos com sal fixo, o resumo de outro vale e as iterações fora da faixa). Os códigos e os
+       resumos foram conferidos fora das duas implementações (Luhn e `hashlib.pbkdf2_hmac` do Python) antes de entrar no
+       arquivo; o `vales.spec.ts` (shared) e o `CodigoValeVetoresTests` do PDV (README do PDV › decisão 97) leem o
+       mesmo arquivo.
+     - **Janela do protocolo** (SYNC 17.2): `JANELA_PROTOCOLO` (`atual` e, por protocolo anterior, a data em que deixou
+       de ser o atual) e `protocoloAceito(protocolo, endpoint)`: o anterior vale em todos os endpoints por 12 meses
+       (`MESES_PROTOCOLO_ANTERIOR`), e o `POST /sync/push` aceita também o anterior ao anterior, até 18 meses
+       (`MESES_PROTOCOLO_PUSH`) depois de cada um deixar de ser o atual; fora disso, `426 PROTOCOLO_NAO_SUPORTADO` com o
+       `protocolo_minimo` do endpoint. Protocolo abaixo do atual sem data (o 0, que nunca existiu) está fora; acima do
+       atual continua atendido como o atual (a ordem de implantação, API antes do PDV, não deixa acontecer). O
+       `protocolo.minimo` do heartbeat sai de `protocoloMinimo('pull')` e o `versao_protocolo` da resposta da ativação, do
+       mesmo `PROTOCOLO_ATUAL` (subir o protocolo é só trocar a `JANELA_PROTOCOLO`). **Duas mudanças de comportamento:**
+       o `X-Genesis-Protocolo: 0`, antes cabeçalho inválido (400), agora é 426, como a SYNC pede para fora da janela; e o
+       inteiro acima de `Number.MAX_SAFE_INTEGER` (`9007199254740993`, `1e21`), antes atendido como o atual, agora é 400
+       (o `Number.isSafeInteger` no lugar do `Number.isInteger`). O ausente continua 400 (o vazio não vira 0) e todo
+       inteiro de 1 até o `MAX_SAFE_INTEGER` é lido como antes. Hoje só existe o protocolo 1, então nada muda para o PDV
+       instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no corpo do PR-17: todos mandam
+       `1`). A ativação usa a regra dos endpoints comuns (12 meses).
+     - **Testes.** `packages/shared/src/vales.spec.ts` (os vetores, a volta de todo código montado, qualquer dígito
+       trocado recusado, o sorteio e o resumo novo), `sync/terminal.spec.ts` (o 0 em todos os endpoints, o ausente, o
+       negativo, o não inteiro e o inteiro grande em 400, e uma janela futura injetada com o 3 atual: o 2 por 12 meses em
+       todo endpoint e por 18 no push, o 1 só no push até os 18 meses, três atrás nunca; a mesma janela pelo
+       `lerCabecalhos` e pelo `AutenticacaoTerminal.autenticar`, que confere que cada rota repassa o seu endpoint) e, em `test/integracao/token.test.ts`, o
+       `X-Genesis-Protocolo: 0` pela API de verdade em estado, pull, heartbeat, push e ativação (426 no envelope do
+       protocolo), o ausente em 400 e o 1 atendido.
+
+225. **Idempotência das chamadas online do caixa que alteram estado** (F3-B6; plano `docs/planos/fase3-plano.md`; SYNC
+     20.4 e 2.5, MD 3.15.5; `sync/online/idempotencia.ts`, `sync/atendimento.ts`, `sync/online/manutencao-online.ts`).
+     O mecanismo que as reservas de vale (F3-B45) e de orçamento (F3-B60) usam; nenhuma rota de verdade ainda, nenhuma
+     migração (a tabela é da 0029, F3-B1) e nada muda para o PDV instalado. Escolhas técnicas, sem pergunta ao dono:
+     - **Uma transação** (`IdempotenciaOnline.executar`): apaga a linha do mesmo (terminal, `X-Requisicao-Id`) com mais
+       de `RETENCAO_REQUISICAO_ONLINE_HORAS` (24, no shared; depois disso o id é uma requisição nova, com a limpeza em
+       dia ou não), insere a linha "em andamento" com `on conflict do nothing` **antes** do efeito, roda o efeito e grava
+       `status_http`/`resposta`/`concluida_em` no mesmo commit. A espera pela linha da outra transação é a do próprio
+       PostgreSQL (o `insert` com conflito numa linha ainda não confirmada espera o fim dela): confirmada, volta a
+       resposta dela; desfeita, esta faz o efeito. A espera tem `lock_timeout` de 10 s
+       (`SYNC_ESPERA_REQUISICAO_ONLINE_MS`), só no `insert`; vencida, `409 REQUISICAO_EM_ANDAMENTO` (novo, transitório)
+       com `Retry-After: 1`.
+     - **Ordem das travas** (correção da revisão do bloco): a linha de `requisicoes_terminal` tem FK para `terminais`, e
+       a checagem dela segura `FOR KEY SHARE` na linha do terminal até o commit; o push (e o heartbeat que confirma)
+       pega a 7300001 e depois `FOR UPDATE` nessa linha. Por isso o efeito que grava tabela que desce declara
+       `travaVersao` (`RotaOnline`/`PedidoOnline`) e a 7300001 é a **primeira instrução** da transação
+       (`tenancy.transacao({ travaVersao, esperaSemLimite: true })`, MD 1.5), antes da linha, e não "o mais tarde
+       possível" dentro do efeito, que daria a ordem invertida e deadlock; com ela, a repetição espera a original na
+       7300001 e já encontra a resposta gravada. E antes do `insert` a API pega o `FOR KEY SHARE` do terminal ela
+       mesma, fora do `lock_timeout`: o 55P03 que vira `REQUISICAO_EM_ANDAMENTO` só pode ser a linha concorrente da
+       mesma chave, nunca a espera atrás de um `FOR UPDATE` do push, do heartbeat ou da revogação. Tirar a FK do log
+       técnico também resolveria, mas pediria migração (a 0029 já está na `main`) e perderia a garantia do vínculo.
+     - **A mesma resposta, byte a byte**: a primeira também sai do `jsonb` gravado (`update … returning resposta`), então
+       a ordem das chaves e o `Date` em ISO são os mesmos nas repetições; a repetição traz `X-Genesis-Resposta-Repetida:
+       1` (`CABECALHO_RESPOSTA_REPETIDA`, só para log). O status é o gravado (`res.status`).
+     - **Resumo do pedido**: `corpo_sha256` = SHA-256 do JCS de `{parametros, corpo}` (os parâmetros do caminho e o corpo
+       como chegou, antes da validação; a ordem das chaves não conta); `endpoint` = a rota com o método, como o
+       controller declara (`POST /sync/consultas/vales/:id/reservar`, até 80). Outra rota ou outro pedido com o mesmo id:
+       `422 REQUISICAO_DIVERGENTE` (novo, não transitório) com `detalhes.motivo` (`operacao`/`pedido`), sem a resposta
+       da outra. O id de outro terminal é outra chave.
+     - **Só o sucesso é gravado**: o erro do efeito (4xx de regra ou falha) desfaz a linha junto; a repetição avalia de
+       novo, nunca com dois efeitos. Guardar a recusa exigiria um savepoint entre a linha e o efeito e não protege nada
+       a mais (sem efeito, repetir é seguro).
+     - **Rota online** (`atenderOnline`): o terminal pelo endpoint novo `online` do `EndpointSync` (com o hardware
+       registrado, SYNC 20.5; empresa suspensa recusada como o pull), o corpo `adiado` lido depois do token (decisão 199)
+       e validado **antes** da transação (o 400 não toca em `requisicoes_terminal`). `noTerminal` e `corpoDoTerminal`
+       saíram do `SyncController` para `sync/atendimento.ts` sem mudança de comportamento, para outros controllers e o
+       teste seguirem o mesmo caminho. O limite de 120/min por terminal (SYNC 20.3) entra com as rotas (F3-B45).
+     - **Tarefa por minuto** (`ManutencaoOnline`, fila `genesis-manutencao-online`, cron `* * * * *`, sem retentativa e
+       expirando em 5 min: a ocorrência seguinte é a nova tentativa; conta na Prontidão como as outras filas da
+       plataforma): apaga as linhas com mais de 24 h em lotes de 5.000, só nas empresas com terminal em contato nas
+       últimas 26 h (`terminais_pdv.ultimo_contato_em`, gravado em toda chamada com o hardware registrado), para não
+       abrir conexão a cada minuto com quem não tem caixa. A expiração das reservas (TTL de 10 min) entra nela no F3-B45.
+     - **Testes.** `test/integracao/requisicoes-online.test.ts`, com uma rota de teste montada só nele
+       (`criarAmbiente({ controllersExtras })`, a opção nova de `criarAplicacao`/`AppModule.registrar`, só dos testes):
+       a mesma requisição em sequência e ao mesmo tempo (duas com folga e quatro juntas: um efeito, o mesmo texto de
+       resposta, uma marcada como repetida), outro terminal, a retenção (24 h e 1 min = nova; 23 h e 59 min = a mesma),
+       outro corpo, outro parâmetro e outra rota (422), o corpo com as chaves em outra ordem (a mesma), o efeito que falha
+       e a original que falha com a repetição esperando, a espera vencida (409 com `Retry-After`; nos dois, a segunda
+       chamada sai só quando a primeira já dorme no efeito, pelo `pg_stat_activity`, e não depois de um tempo fixo), a
+       espera atrás do `FOR UPDATE` do terminal (201, não 409), a ordem das travas com `travaVersao` (o `FOR UPDATE`
+       do push que já tem a 7300001 passa na hora; a repetição espera na 7300001 e recebe a resposta gravada), o 400,
+       o hardware divergente e o 401 sem linha, e a limpeza em lotes (só as vencidas; a empresa sem terminal em contato nem é
+       aberta); `sync/online/idempotencia.spec.ts` (o resumo e a operação acima de 80) e o `fila.spec.ts`.
+
+226. **Fluxos de pull da Fase 3 e o espelho do PDV numa só volta de cursor** (F3-B7; plano `docs/planos/fase3-plano.md`;
+     MD 6.1, 6.2, 3.1.3, 3.11.9, 3.13.2; SYNC 6, 16.3, 17.4; D90; `sync/fluxos.ts`, `sync/pull.ts`,
+     `database/empresa/versionamento.ts`, `Esquema.g.cs`). Sem migração na nuvem (as tabelas são da 0029 e da 0030); o
+     lado do caixa (espelhos, migração EF `FaseTres` e a purga local) é a decisão 99 do PDV. Escolhas técnicas, sem
+     pergunta ao dono:
+     - **Onde cada tabela desce.** `promocoes` e `promocoes_itens` no `catalogo`, todas as linhas (o PDV filtra `lojas`,
+       vigência e `ativo`, MD 6.2); `vales` no `pessoas`, de todas as lojas; `orcamentos` (`loja_id = X`, imutável) e
+       `itens_orcamento` (pelo pai, `exists` no orçamento da loja) e `vendas_status_pdv` no `operacao`. As comandas
+       (Fase 8) e o `cobrancas_pix` continuam fora do `operacao`: a cobrança é D ↕ (MD 3.11.6; o PIX dinâmico desce com
+       `terminal_id = T`, MD 6.2) e entra no fluxo com o PIX dinâmico (Fase 6), quando a tabela ganhar `fn_versao`. Nenhuma coluna omitida: o
+       `conferencia_hash` do vale desce para a conferência dos 4 dígitos sem internet (D96 com D89), e o
+       `orcamentos.valido_ate`, gerada, desce como gerada (só muda junto de `data` e `dias_validade`, que versionam; o
+       `Esquema.g.cs` a marca `Gerada: true` e o PDV a calcula). `TABELAS_FN_VERSAO_SEM_FLUXO` ficou vazia (as seis
+       tabelas que o F3-B1 e o F3-B2 deixaram de fora entraram nos fluxos); a lista fica para a próxima tabela que nascer
+       antes do fluxo.
+     - **Janela dos vales (D90, F3-Q19 = A)**, `valeNaJanela`: desce o vale que mudou nos últimos 90 dias
+       (`atualizado_em`) **ou** que continua utilizável (`status = 'ativo'`, `saldo > 0` e vencido há no máximo 90 dias
+       pelo `hojeNaEmpresa`: o vencido com saldo ainda se libera com o supervisor, D88). Fica de fora o vencido, zerado,
+       negativo (D89), usado, expirado ou cancelado sem mudança há mais de 90 dias; online o caixa consulta qualquer
+       vale (F3-B45). `DIAS_JANELA_PDV = 90`, a mesma constante do status de venda, com o espelho em C#
+       (`PurgaJanelas.DiasJanela`) pelo mesmo número; sem chave de configuração (a D90 decidiu o número).
+     - **Status das vendas pelo caixa**: `EscopoTerminal` ganhou o `caixaId` (de `TerminalAutenticado`, o
+       `terminais.caixa_id`), e o filtro é `caixa_id = caixa do terminal and atualizado_em > now() − 90 dias`
+       (`ix_vendas_status_pdv_caixa_id_versao`). O terminal que substituiu outro no mesmo caixa recebe o status das
+       vendas do antigo (SYNC 16.3; padrões da Fase 3); o de outro caixa da mesma loja, não.
+     - **Saída pelo relógio sem tombstone**: o vale e o status que saem da janela só pelo tempo não ganham versão nova
+       (nenhuma tarefa toca a linha: tocar milhares de vales por dia encheria o pull de todos os caixas para nada). O PDV
+       purga a própria cópia pelo complemento exato do mesmo critério, na última página do fluxo (decisão 99 do PDV),
+       como a purga de pessoas do SEG-B13, pela hora corrigida para a nuvem (o relógio do Windows adiantado apagaria o
+       que ainda está na janela, e a linha apagada não desce de novo). A mudança real (o ERP cancela o vale) volta a linha
+       à janela com versão nova; a que acontece e envelhece com o caixa parado há mais que a janela não desce mais, e o
+       PDV parado assim recarrega a tabela do cursor 0 (decisão 99 do PDV) — a exceção ao "cursor nunca expira" da
+       SYNC 6.8, registrada lá.
+     - **Templates do PDV pela MD 3.1.3** (`TEMPLATES_PDV`, exportado): `cupom_cabecalho`, `cupom_rodape`,
+       `recibo_venda`, `vale_compra`, `orcamento_logado` e `orcamento_nao_logado`; o `recibo_receber` (recibo da baixa de
+       contas a receber, ERP 9.6) saiu, porque o caixa não o imprime. Como as linhas do seed dos tipos novos são antigas,
+       a `FaseTres` do PDV volta também o cursor do `configuracao` (o plano listava só `catalogo`, `pessoas` e `operacao`;
+       o fluxo é pequeno) e apaga as cópias locais do `recibo_receber`.
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) recebe as tabelas novas e as ignora com log, sem travar o cursor (decisões 51 e 85 do PDV); o
+       `versoes_schema` não muda. A API vai à produção antes do PDV 0.14.0 (R3), cuja migração `FaseTres` volta os
+       cursores para baixar o que o anterior descartou.
+     - **Testes.** `test/integracao/sync-fluxos-fase3.test.ts` (as promoções com as listas em JSON, inclusive a inativa
+       e a de outra loja; os vales na janela — o utilizável, o de outra loja, o zerado há 89 e há 91 dias, o vencido há 89
+       e há 91 dias, o negativo, o cancelado e o vencido que mudou ontem — e o cancelamento pelo ERP que devolve o de 91
+       dias à janela; o orçamento da loja 2 que não desce ao terminal da loja 1, os itens pelo pai e a `valido_ate`; o
+       status de 91 dias e o de outro caixa que não descem; o teto que avança com o fluxo vazio; o terminal substituto
+       do mesmo caixa; os templates), `sync-triggers.test.ts` (a lista sem fluxo vazia e as seis tabelas nos fluxos),
+       `versionamento.test.ts`, `migracao-promocoes-orcamentos.test.ts` e `verificar:esquema-pdv`. A matriz com o PDV
+       instalado de verdade: `test/e2e-pdv/compatibilidade.sh` extrai o PDV de cada tag (`pdv-v0.10.0` e `pdv-v0.13.0`
+       por padrão, por `git archive`), sobe a API do e2e desta árvore — o `servidor.ts` semeia agora uma promoção
+       inativa, um vale e um orçamento com item —, roda o `GenesisPDV.E2E.Tests` da tag contra ela e confere
+       (`conferir-compatibilidade.ts`) que um terminal daquela versão informou no heartbeat os cursores do `catalogo`, do
+       `pessoas` e do `operacao` além das linhas novas. Local e fora do CI (precisa das tags no clone). O PDV desta árvore,
+       no mesmo e2e (`PontaAPontaTests`), confere que a promoção, o vale e o orçamento com item chegaram ao SQLite.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

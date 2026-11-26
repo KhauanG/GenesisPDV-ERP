@@ -99,11 +99,16 @@ describe('gerador do Esquema.g.cs do PDV (MD 4.1)', () => {
       escala: 2,
       gerada: true,
     });
-    // Só as colunas `generated` ficam marcadas (o handler do C6 não as inclui no INSERT).
+    // Só as colunas `generated` ficam marcadas (o handler do C6 não as inclui no INSERT; o PDV calcula a do espelho de
+    // orçamentos e o aplicador do pull não a grava, F3-B7).
     const geradas = tabelas.flatMap((t) =>
       t.colunas.filter((c) => c.gerada).map((c) => `${t.nome}.${c.nome}`),
     );
-    expect(geradas.sort()).toEqual(['fechamentos_caixa.diferenca', 'fechamentos_caixa_formas.diferenca']);
+    expect(geradas.sort()).toEqual([
+      'fechamentos_caixa.diferenca',
+      'fechamentos_caixa_formas.diferenca',
+      'orcamentos.valido_ate',
+    ]);
     expect(gerarCsharp(tabelas)).toContain(
       'new("diferenca", "numeric(15, 2)", typeof(decimal), Nulo: false, Escala: 2, Gerada: true),',
     );

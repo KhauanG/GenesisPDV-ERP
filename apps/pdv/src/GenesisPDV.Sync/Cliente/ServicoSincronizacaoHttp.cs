@@ -1212,6 +1212,12 @@ public sealed class ServicoSincronizacaoHttp : IServicoSincronizacao, IAsyncDisp
             }
 
             var cursor = estado?.Cursor ?? 0;
+            // Fluxo com janela por tempo parado por mais tempo que a janela (F3-B7; SYNC 6.8): recarrega do cursor 0.
+            if (await _aplicador.RecarregarJanelaSeParadoAsync(fluxo, ct))
+            {
+                cursor = 0;
+            }
+
             for (var pagina = 0; pagina < 1_000; pagina++)
             {
                 RespostaPull r;

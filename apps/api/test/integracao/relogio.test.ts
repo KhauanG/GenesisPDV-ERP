@@ -427,8 +427,9 @@ describe('RELOGIO_SUSPEITO por evento (SYNC 12.4)', () => {
     // O 2 se perdeu no caixa; volta depois (backup) 5 min antes do 1, sem a marca: regressão.
     const e2 = evento(p, em(-5 * MIN));
     const e3 = evento(p, em(MIN));
-    // O 4 volta com a ação fora do catálogo (erro de regra gravado à parte, `gravarFalha`) e 1 dia no futuro.
-    const e4 = evento(p, daqui(DIA), { acao: 'acao_inventada' });
+    // O 4 volta com uma ação reservada ao servidor (erro de regra gravado à parte, `gravarFalha`; a ação fora do
+    // catálogo deixou de ser recusada no F3-B4) e 1 dia no futuro.
+    const e4 = evento(p, daqui(DIA), { acao: 'terminal_revogado' });
     const e5 = evento(p, em(2 * MIN));
     const declarar = (de: number) => ({
       declarar_lacuna: {
@@ -463,9 +464,9 @@ describe('RELOGIO_SUSPEITO por evento (SYNC 12.4)', () => {
 
   it('o evento em erro também é avaliado, uma vez (na transação que grava o erro)', async () => {
     const p = await novoPonto();
-    // Hash divergente (erro na mesma transação) e ação fora do catálogo (erro de regra gravado à parte).
+    // Hash divergente (erro na mesma transação) e ação reservada ao servidor (erro de regra gravado à parte).
     const hash = evento(p, daqui(DIA), { hashErrado: true });
-    const acao = evento(p, daqui(DIA + MIN), { acao: 'acao_inventada' });
+    const acao = evento(p, daqui(DIA + MIN), { acao: 'terminal_revogado' });
     expect(await pushOk(p, [hash, acao])).toEqual([
       'rejeitado:PAYLOAD_INVALIDO',
       'rejeitado:PAYLOAD_INVALIDO',

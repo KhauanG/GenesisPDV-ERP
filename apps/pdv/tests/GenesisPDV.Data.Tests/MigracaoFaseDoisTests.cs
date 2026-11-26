@@ -31,7 +31,7 @@ public class MigracaoFaseDoisTests
         {
             // Terminal no PDV 0.11.0, com o pull já além das versões que a API nova gravou.
             Executar(conexao, "insert into estado_sincronizacao (fluxo, cursor, carga_inicial_concluida, linhas_recebidas, ressincronizar) "
-                + "values ('catalogo', 9000, 1, 900, 0), ('configuracao', 5000, 1, 120, 0), ('acesso', 300, 1, 10, 1)");
+                + "values ('catalogo', 9000, 1, 900, 0), ('referencia', 5000, 1, 120, 0), ('acesso', 300, 1, 10, 1)");
             Executar(conexao, "insert into marcas (id, codigo, descricao, sem_marca, exibe_site, ordem, criado_em, atualizado_em, versao) "
                 + $"values ('{marca}', 7, 'CERVEJARIA FICTICIA', 0, 0, 0, '2026-11-11T12:00:00.000Z', '2026-11-11T12:00:00.000Z', 8990)");
             Executar(conexao, "insert into categorias (id, nome, caminho, caminho_nomes, nivel, ordem, ativa, exibe_pdv, exibe_menu_digital, exibe_totem, exibe_site, criado_em, atualizado_em, versao) "
@@ -48,7 +48,8 @@ public class MigracaoFaseDoisTests
         Assert.Equal(0L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'catalogo'"));
         Assert.Equal(1L, banco.Escalar("select carga_inicial_concluida from estado_sincronizacao where fluxo = 'catalogo'"));
         Assert.Equal(0L, banco.Escalar("select ressincronizar from estado_sincronizacao where fluxo = 'catalogo'"));
-        Assert.Equal(5000L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'configuracao'"));
+        // Um fluxo que nenhuma migração seguinte volta (a `FaseTres` volta o `configuracao`, o `pessoas` e o `operacao`).
+        Assert.Equal(5000L, banco.Escalar("select cursor from estado_sincronizacao where fluxo = 'referencia'"));
         Assert.Equal(1L, banco.Escalar("select ressincronizar from estado_sincronizacao where fluxo = 'acesso'"));
         Assert.Equal(0L, banco.Escalar($"select versao from marcas where id = '{marca}'"));
         Assert.Equal(0L, banco.Escalar($"select versao from categorias where id = '{categoria}'"));

@@ -180,7 +180,10 @@ public class TaxaEntregaRegistro : LinhaEspelho
     public bool Ativo { get; set; }
 }
 
-/// <summary><c>templates_documentos</c>: Templates impressos pelo PDV (cupom, vale, recibo de crediário).</summary>
+/// <summary>
+/// <c>templates_documentos</c>: Templates impressos pelo PDV: cupom, recibo da venda, vale e orçamento (MD 3.1.3; o
+/// <c>recibo_receber</c> não desce desde o F3-B7).
+/// </summary>
 public class TemplateDocumentoRegistro : LinhaEspelho
 {
     public string Tipo { get; set; } = string.Empty;

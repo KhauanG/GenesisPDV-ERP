@@ -5,7 +5,7 @@
  */
 import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, Type } from '@nestjs/common';
 import { criarEmpresaSchema, type CriarEmpresaEntrada, completarCnpj } from '@genesis/shared';
 import pg from 'pg';
 import request from 'supertest';
@@ -109,7 +109,7 @@ async function reservarFaixaLivre(): Promise<{ base: number; trava: pg.Client }>
 export const SENHA_TESTE = 'SenhaNova123';
 
 export async function criarAmbiente(
-  opcoes: { comApp?: boolean; env?: Record<string, string> } = {},
+  opcoes: { comApp?: boolean; env?: Record<string, string>; controllersExtras?: Type[] } = {},
 ): Promise<Ambiente> {
   const bancoControle = `genesis_t_${Date.now().toString(36)}${randomBytes(3).toString('hex')}_ctl`;
   const url = urlDoBanco(bancoControle);
@@ -134,7 +134,7 @@ export async function criarAmbiente(
   await seedControle(servicos.controle, servicos.servidores);
   let app: INestApplication | null = null;
   if (opcoes.comApp !== false) {
-    app = (await criarAplicacao(config, servicos)).app;
+    app = (await criarAplicacao(config, servicos, { controllersExtras: opcoes.controllersExtras })).app;
     await app.init();
     // Servidor já escutando: o supertest não abre uma porta nova por requisição.
     await app.listen(0, '127.0.0.1');

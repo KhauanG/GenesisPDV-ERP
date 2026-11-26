@@ -117,7 +117,17 @@ public sealed partial class CicloOnlineTests
     public async Task Catalogos_do_pdv_sao_os_da_nuvem()
     {
         var enums = File.ReadAllText(Path.Combine(Fixtures.Pasta("shared"), "enums.ts"));
+        // As da Fase 3 (F3-B3) entram na nuvem antes de qualquer PDV que as grave: a lista da nuvem espalha
+        // `ACOES_AUDITORIA_FASE3`, e o caixa só as envia com o recurso da onda de cada uma anunciado (F3-B4,
+        // `AcoesAuditoriaFase3`). As demais são as mesmas, na mesma ordem.
         Assert.Equal(ListaTs(enums, "ACOES_AUDITORIA"), CatalogosNuvem.AcoesAuditoria);
+        Assert.Contains("...ACOES_AUDITORIA_FASE3,", Declaracao(enums, "ACOES_AUDITORIA"), StringComparison.Ordinal);
+        var fase3 = ListaTs(enums, "ACOES_AUDITORIA_FASE3");
+        Assert.Contains("venda_suspensa", fase3);
+        Assert.Equal(fase3.Order(StringComparer.Ordinal), CatalogosNuvem.AcoesAuditoriaFase3.Keys.Order(StringComparer.Ordinal));
+        Assert.Empty(fase3.Intersect(CatalogosNuvem.AcoesAuditoria, StringComparer.Ordinal));
+        // A `acao_desconhecida` (F3-B4) é do catálogo e só o servidor a grava.
+        Assert.Contains("acao_desconhecida", ListaTs(enums, "ACOES_AUDITORIA_SO_SERVIDOR"));
         Assert.Equal(ListaTs(enums, "MOTIVOS_FALHA_LOGIN"), CatalogosNuvem.MotivosFalhaLogin);
     }
 
@@ -254,9 +264,13 @@ public sealed partial class CicloOnlineTests
         Assert.DoesNotContain(Core.Caixa.PermissoesPdv.CancelarVendaFinalizada, supervisor);
         // Sem fixar a formatação do prettier: a declaração espalha o supervisor e acrescenta só o cancelamento da venda paga
         // (a composição exata fica no `permissoes.spec.ts`).
+        // A D91 (F3-B3) acrescenta a devolução em dinheiro na troca (e o resgate do vale), que o Supervisor também não tem.
         var encarregado = DeclaracaoTs(perfis, "PDV_ENCARREGADO");
         Assert.Contains("...PDV_SUPERVISOR", encarregado, StringComparison.Ordinal);
-        Assert.Equal([Core.Caixa.PermissoesPdv.CancelarVendaFinalizada], Regex.Matches(encarregado, "'([a-z_.]+)'").Select(m => m.Groups[1].Value));
+        Assert.Equal(
+            [Core.Caixa.PermissoesPdv.CancelarVendaFinalizada, "pdv.troca.devolver_dinheiro"],
+            Regex.Matches(encarregado, "'([a-z_.]+)'").Select(m => m.Groups[1].Value));
+        Assert.DoesNotContain("pdv.troca.devolver_dinheiro", supervisor);
         Assert.Contains("chaveSistema: 'encarregado'", perfis, StringComparison.Ordinal);
         Assert.DoesNotContain("cancelar_venda_sessao_fechada", permissoes, StringComparison.Ordinal);
     }
@@ -274,6 +288,14 @@ public sealed partial class CicloOnlineTests
         Assert.True(inicio >= 0, nome);
         var fim = fonte.IndexOf("];", inicio, StringComparison.Ordinal);
         return [.. Regex.Matches(fonte[inicio..fim], "'([a-z_.]+)'").Select(m => m.Groups[1].Value)];
+    }
+
+    /// <summary>A declaração <c>export const nome = [ … ] as const</c> inteira, com os espalhamentos.</summary>
+    private static string Declaracao(string fonte, string nome)
+    {
+        var inicio = fonte.IndexOf($"export const {nome} = [", StringComparison.Ordinal);
+        Assert.True(inicio >= 0, nome);
+        return fonte[inicio..fonte.IndexOf("] as const", inicio, StringComparison.Ordinal)];
     }
 
     private static List<string> ListaTs(string fonte, string nome)

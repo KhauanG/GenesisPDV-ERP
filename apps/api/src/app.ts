@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, Type } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import cookieParser from 'cookie-parser';
@@ -15,21 +15,30 @@ export interface Aplicacao {
   servicos: Servicos;
 }
 
+/** Só os testes passam: controllers a mais (a rota de teste da idempotência online, F3-B6). */
+export interface OpcoesAplicacao {
+  controllersExtras?: Type[];
+}
+
 export async function criarAplicacao(
   config: Configuracao,
   servicos = criarServicos(config),
+  opcoes: OpcoesAplicacao = {},
 ): Promise<Aplicacao> {
   const logger = pino({
     level: config.log.nivel,
     ...(config.log.legivel ? { transport: { target: 'pino-pretty', options: { singleLine: true } } } : {}),
   });
-  const app = await NestFactory.create<NestExpressApplication>(AppModule.registrar(servicos, logger), {
-    // Sem os parsers globais do Nest (JSON e formulário): o corpo JSON é lido pelo `CorpoJsonGuard` depois da
-    // autenticação, com o limite da rota, e formulário não é aceito (decisão 199).
-    bodyParser: false,
-    bufferLogs: true,
-    logger: config.log.nivel === 'silent' ? false : undefined,
-  });
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule.registrar(servicos, logger, opcoes.controllersExtras),
+    {
+      // Sem os parsers globais do Nest (JSON e formulário): o corpo JSON é lido pelo `CorpoJsonGuard` depois da
+      // autenticação, com o limite da rota, e formulário não é aceito (decisão 199).
+      bodyParser: false,
+      bufferLogs: true,
+      logger: config.log.nivel === 'silent' ? false : undefined,
+    },
+  );
   app.useLogger(app.get(Logger));
   // Só os proxies declarados em TRUST_PROXY definem o IP do cliente (limite de taxa, auditoria, historico_logins).
   app.set('trust proxy', config.trustProxy);
