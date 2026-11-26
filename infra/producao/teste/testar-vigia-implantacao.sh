@@ -152,6 +152,20 @@ if ! command -v systemd-analyze >/dev/null; then
   SEM_ANALYZE=1
 else
   SEM_ANALYZE=0
+  # O systemd do Ubuntu 26.04 avisa, no verify, sobre unidades do sistema que não são do vigia (o CPUAccounting=
+  # removido, em xfs_scrub_all.service e walinuxagent.service no runner do GitHub). O dublê põe esses avisos antes da
+  # saída do systemd-analyze de verdade, em qualquer Ubuntu: só o aviso sobre as unidades do vigia conta, e o motivo
+  # da recusa tem de mostrá-lo mesmo depois deles.
+  ANALYZE_REAL=$(command -v systemd-analyze)
+  cat >"$T/bin/systemd-analyze" <<DUBLE
+#!/usr/bin/env bash
+if [ "\${1:-}" = verify ]; then
+  for u in xfs_scrub_all.service system-xfs_scrub.slice walinuxagent.service; do
+    echo "/usr/lib/systemd/system/\$u:26: Support for option CPUAccounting= has been removed and it is ignored" >&2
+  done
+fi
+exec "$ANALYZE_REAL" "\$@"
+DUBLE
 fi
 # date: o `+%H` (a hora da janela) vem de $DUBLE/hora (padrão 10:00, fora da janela); o resto, o date de verdade.
 cat >"$T/bin/date" <<'DUBLE'
@@ -258,8 +272,10 @@ resultado_visto() { awk -v p="$1" '$1 == p { r = $2 } END { print r }' "$VIGIA/v
 if [ "$SEM_ANALYZE" = 0 ]; then
   systemd-analyze verify "$VIGIA_DIR/genesis-vigia.service" "$VIGIA_DIR/genesis-vigia.timer" >"$T/verify" 2>&1 ||
     falha "systemd-analyze verify: $(cat "$T/verify")"
-  [ ! -s "$T/verify" ] || falha "systemd-analyze verify com avisos: $(cat "$T/verify")"
-  confere "unidades do systemd: systemd-analyze verify sem erros nem avisos"
+  # Como no instalar-vigia.sh: só conta o aviso sobre as unidades do vigia (os das outras unidades do sistema, não).
+  grep -q 'CPUAccounting' "$T/verify" || falha "o dublê do systemd-analyze não pôs os avisos de outras unidades"
+  ! grep -q 'genesis-vigia' "$T/verify" || falha "systemd-analyze verify com avisos: $(grep 'genesis-vigia' "$T/verify")"
+  confere "unidades do systemd: systemd-analyze verify sem erros nem avisos sobre elas (com avisos de outras unidades)"
 else
   printf '\033[1;33m-\033[0m systemd-analyze não instalado: verificação das unidades pulada\n'
 fi
