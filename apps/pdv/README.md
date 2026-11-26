@@ -4335,3 +4335,27 @@ reimpresso continua o original, com o número do caixa.
       shared; qualquer dígito trocado recusado; o `\n` no fim, o BOM e o NEL recusados como no shared; o sorteio e o resumo
       novo) e o `ContratosTests` do Sync, que agora sabe
       que o arquivo novo da pasta é do Core.
+98. **Repetição das chamadas online que alteram estado com o mesmo `X-Requisicao-Id`** (F3-B6; SYNC 20.4 e 2.5; README
+    da API › decisão 225; `GenesisPDV.Sync/Cliente/ChamadaOnline.cs`). O lado do caixa da idempotência online: a API
+    guarda a resposta da primeira em `requisicoes_terminal` e devolve a mesma; o caixa só precisa repetir com o mesmo id.
+    - **`ChamadaOnline.AlterarComRepeticaoAsync`** (extensão do `IClienteSync`, sobre o `AlterarAsync` que já mantinha o
+      id da operação): repete com o **mesmo** id e o mesmo corpo quando o caixa não sabe se a nuvem aplicou — o prazo da
+      rota estourou (`TaskCanceledException` com `TimeoutException`), a conexão caiu (`HttpRequestException`) ou o
+      gateway respondeu 502/504 sem o envelope da API — e quando a nuvem pede (`409 REQUISICAO_EM_ANDAMENTO`, com o
+      `Retry-After` limitado a `EsperaMaxima`, 3 s). `RepeticaoOnline.Padrao`: 3 tentativas no total, 500 ms entre elas.
+      A política não tem prazo total: cada tentativa tem o prazo da rota no `ClienteSyncHttp`, o
+      `TemposLimiteSync.Outras` (30 s, o mesmo da renovação do token), então com a API que aceita a conexão e não
+      responde o pior caso é 3 × 30 s + 2 × 0,5 s ≈ 91 s com o cliente no balcão. O prazo próprio das chamadas do balcão
+      (como os 3 s do `TemposLimiteSync.Consulta` das consultas) fica para o F3-B45, que traz as rotas e o primeiro uso.
+      Qualquer outra resposta sobe na hora: o `422 REQUISICAO_DIVERGENTE` (o mesmo id com outro corpo é bug e não se
+      repete), as recusas de regra, o 500 (a transação da API foi desfeita; repetir só repetiria o erro) e o
+      cancelamento de quem chamou. Esgotadas as tentativas, sobe a última falha e quem chama (as reservas do F3-B45 e do
+      F3-B63) consulta o estado antes do caminho offline (SYNC 9.20).
+    - Nenhuma tela, evento, migração EF, `Esquema.g.cs` nem versão do PDV muda; ninguém chama a extensão ainda (as rotas
+      online da API chegam com o F3-B45). O PDV instalado não muda de comportamento.
+    - **Testes.** `ChamadaOnlineTests` (Sync.Tests): o timeout repete com o mesmo id e o mesmo corpo e devolve a resposta
+      da API; a queda de conexão e o 504 sem envelope também repetem; o `REQUISICAO_EM_ANDAMENTO` espera o `Retry-After`
+      no teto (o de 30 s espera os 200 ms do teto, nem menos nem mais) e abaixo dele (o de 1 s espera 1 s, e não a
+      `Espera` da política); o 422 `REQUISICAO_DIVERGENTE`, o 409 de regra, o `HARDWARE_ALTERADO`, o 500 e o 404 não repetem; as
+      tentativas esgotadas sobem o timeout com todas no mesmo id e o prazo inteiro da rota em cada uma; o cancelamento de quem chamou e a política de uma
+      tentativa não repetem.

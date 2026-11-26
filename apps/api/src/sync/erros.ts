@@ -17,6 +17,8 @@ export const CODIGOS_SYNC = {
   LACUNA_INVALIDA: 409,
   TERMINAL_CLONADO: 409,
   HARDWARE_ALTERADO: 409,
+  /** A mesma requisição online ainda em andamento além da espera (SYNC 20.4; F3-B6): repete com o mesmo id. */
+  REQUISICAO_EM_ANDAMENTO: 409,
   LOTE_GRANDE_DEMAIS: 413,
   CODIGO_INVALIDO: 422,
   CODIGO_EXPIRADO: 422,
@@ -24,6 +26,8 @@ export const CODIGOS_SYNC = {
   LIMITE_PLANO: 422,
   CAIXA_OCUPADO: 422,
   LIBERACAO_INVALIDA: 422,
+  /** O mesmo `X-Requisicao-Id` com outra rota ou outro corpo (SYNC 20.4; F3-B6): bug do caixa, sem efeito. */
+  REQUISICAO_DIVERGENTE: 422,
   PROTOCOLO_NAO_SUPORTADO: 426,
   LIMITE_TAXA: 429,
   IP_BLOQUEADO: 429,

@@ -230,9 +230,11 @@ escala com `zod` (`/^-?\d{1,13}\.\d{2}$/` para dinheiro etc.) e recusa número J
 | 409 | `LACUNA_INVALIDA` | `declarar_lacuna` cuja faixa não começa na `proxima_sequencia_esperada` (cobre sequência já recebida ou deixaria outra lacuna antes); a mesma declaração repetida não é erro (8.6) | Esquece a faixa; o próximo push mostra a lacuna certa | não |
 | 409 | `TERMINAL_CLONADO` | `X-Genesis-Id-Hardware` diverge do registrado e há sinais de duas instâncias | Bloqueia vendas; suporte decide (20.5) | não |
 | 409 | `HARDWARE_ALTERADO` | `X-Genesis-Id-Hardware` diverge do registrado (sem sinais de clone) e a troca ainda não foi aprovada no ERP (20.5) | Bloqueia vendas; mantém o outbox; continua só heartbeat, `GET /sync/estado` e pull **sem segredos**; mostra "Hardware alterado — aguardando aprovação no ERP" | não (exige aprovação) |
+| 409 | `REQUISICAO_EM_ANDAMENTO` | Chamada online que altera estado repetida enquanto a original (mesmo terminal e `X-Requisicao-Id`) ainda está sendo atendida, além da espera de 10 s (20.4) | Repete com o mesmo id depois do `Retry-After` | sim |
 | 413 | `LOTE_GRANDE_DEMAIS` | Lote acima dos limites (19.2) | Divide o lote ao meio e reenvia | sim |
 | 422 | `CODIGO_INVALIDO`, `CODIGO_EXPIRADO`, `CODIGO_USADO` (só a repetição da mesma requisição: tardia ou com o token já usado), `LIMITE_PLANO`, `CAIXA_OCUPADO` | Ativação (3.3); código usado/cancelado por outra ativação responde `CODIGO_INVALIDO` genérico | Mensagem específica no assistente | não |
 | 422 | `LIBERACAO_INVALIDA` | `autorizado_por_id` de `declarar_lacuna`/`recuperar_lacuna` não é usuário ativo da empresa com `pdv.config.fiscal` e acesso à loja do terminal (8.6); nada do lote é processado | Mensagem na tela; outro supervisor libera | não |
+| 422 | `REQUISICAO_DIVERGENTE` | O mesmo `X-Requisicao-Id` numa chamada online com outra rota (`detalhes.motivo = operacao`) ou outro pedido (`pedido`) (20.4) | Bug do caixa: registra em `log_local`, não repete | não |
 | 426 | `PROTOCOLO_NAO_SUPORTADO` | `X-Genesis-Protocolo` abaixo do mínimo da API | Força atualização do app; o push dos pendentes continua permitido enquanto o protocolo estiver na janela de suporte (17.2) | não |
 | 429 | `LIMITE_TAXA` | Limite por terminal/empresa (20.3) | Respeita `Retry-After` | sim |
 | 429 | `IP_BLOQUEADO` | Ativação: 5 falhas por IP em 10 min (modelo 2.6) | Mostra "aguarde 30 min" | sim |
@@ -4393,10 +4395,46 @@ Resposta `429 LIMITE_TAXA` com `Retry-After`.
 |---|---|
 | Push | TLS + idempotência: repetir um lote não tem efeito (8.4) |
 | Pull, heartbeat, estado | Leitura/telemetria: repetir é inofensivo |
-| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h em `requisicoes_terminal` (modelo-de-dados.md 3.15.5) e devolve a **mesma resposta** para a mesma requisição. Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
+| Endpoints online que alteram estado (reservas de vale, crédito e orçamento, PIX, comandas online) | `X-Requisicao-Id` obrigatório; a API guarda (terminal, requisição) por 24 h em `requisicoes_terminal` (modelo-de-dados.md 3.15.5) e devolve a **mesma resposta** para a mesma requisição (mecanismo abaixo). Depois de um timeout, o PDV repete com o mesmo id e, persistindo a falha, consulta o estado (`GET /comandas/{id}`, `GET /orcamentos/{codigo}`, `GET /vales/{codigo}`) antes de cair para o caminho offline (9.20) |
 | Ativação | Código de uso único + `requisicao_ativacao_id` (3.4) |
 | Token roubado | Revogação imediata; rotação periódica idempotente; uso do token anterior após troca gera alerta (3.7); uso de outra máquina → `HARDWARE_ALTERADO` sem segredos (20.5) |
 | Renovação de token | `requisicao_id` guardado em `terminais_pdv.token_renovacao_requisicao_id`; repetição sem efeito (3.7) |
+
+**Mecanismo da idempotência online** (F3-B6; README da API › decisão 225, do PDV › 98). Vale para toda rota online que
+altera estado (`/sync/consultas/*`, endpoint `online`: exige o hardware registrado, 20.5):
+
+1. Numa **transação só**, a API apaga a linha do mesmo (terminal, requisição) com mais de 24 h
+   (`RETENCAO_REQUISICAO_ONLINE_HORAS`: depois disso o id é uma requisição nova, com a limpeza em dia ou não) e insere a
+   linha "em andamento" (`status_http` nulo) com `insert … on conflict do nothing` **antes** de qualquer efeito. Se o
+   efeito grava tabela que desce (`travaVersao` da rota), a trava 7300001 é a **primeira instrução** da transação, antes
+   dessa linha, esperada sem limite como no push (MD 1.5): a linha tem FK para `terminais`, e a checagem da FK segura
+   `FOR KEY SHARE` na linha do terminal até o commit, enquanto o push pega a 7300001 e depois `FOR UPDATE` nela; a
+   7300001 depois da linha seria a ordem invertida, e deadlock. Antes do `insert`, a API pega ela mesma o `FOR KEY
+   SHARE` do terminal, fora do `lock_timeout` do passo 2: a espera atrás do `FOR UPDATE` do push, do heartbeat ou da
+   revogação não é a requisição original e não vira 409.
+2. Se outra transação já inseriu a mesma chave e não terminou, o `insert` **espera** por ela (até 10 s,
+   `lock_timeout`): ela confirmou → nada é inserido e a resposta gravada dela volta; ela desfez (o efeito falhou) → esta
+   requisição faz o efeito; a espera venceu → `409 REQUISICAO_EM_ANDAMENTO` com `Retry-After: 1`, nada feito. Com
+   `travaVersao`, a repetição espera a original já na 7300001 e, quando ela confirma, encontra a resposta gravada (sem o
+   409).
+3. O efeito roda na mesma transação (com `travaVersao`, já com a 7300001; sem ela, o efeito não a pega) e a
+   resposta (`status_http`, `resposta`, `concluida_em`) é gravada **no mesmo commit**. A primeira resposta e as
+   repetições saem do mesmo `jsonb` gravado: o mesmo status e o mesmo JSON, byte a byte; a repetição traz
+   `X-Genesis-Resposta-Repetida: 1` (só para log e diagnóstico).
+4. A repetição confere a rota (`endpoint`) e o resumo do pedido (`corpo_sha256` = SHA-256 do JCS de
+   `{parametros, corpo}`, os parâmetros do caminho e o corpo como chegou): o mesmo id com outra rota ou outro pedido é
+   `422 REQUISICAO_DIVERGENTE` (`detalhes.motivo` = `operacao` ou `pedido`), sem efeito e sem a resposta da outra.
+5. O id de **outro terminal** é outra chave: isolado, faz o próprio efeito. O erro do efeito (regra de negócio ou falha)
+   desfaz tudo, inclusive a linha: só o sucesso fica gravado, e a repetição avalia de novo (nunca dois efeitos).
+6. Retenção: a tarefa por minuto da API (`genesis-manutencao-online`) apaga as linhas com mais de 24 h, em lotes, nas
+   empresas com terminal em contato nas últimas 26 h; a expiração das reservas (TTL de 10 min, 14.4) entra nela.
+
+No PDV, `ChamadaOnline.AlterarComRepeticaoAsync` repete com o **mesmo** id e o mesmo corpo depois de um timeout, de uma
+queda de conexão, de um 502/504 sem o envelope da API e do `409 REQUISICAO_EM_ANDAMENTO` (respeitando o `Retry-After`,
+com teto de 3 s), 3 tentativas no total, 500 ms entre elas; qualquer outra resposta (inclusive o 422) sobe na hora, e
+esgotadas as tentativas o chamador consulta o estado antes do caminho offline. Cada tentativa tem o prazo das chamadas
+online que alteram estado (`TemposLimiteSync.Outras`, 30 s): com a API que aceita a conexão e não responde, o pior caso é
+3 × 30 s + 2 × 0,5 s ≈ 91 s. O prazo próprio das chamadas do balcão (como os 3 s das consultas) é decidido no F3-B45.
 
 ### 20.5 Terminal clonado ou copiado
 

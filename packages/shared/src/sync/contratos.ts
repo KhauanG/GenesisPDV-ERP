@@ -650,6 +650,19 @@ export type RespostaRenovarToken = z.infer<typeof respostaRenovarTokenSchema>;
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
+ * Chamadas online que alteram estado (reservas de vale, crédito e orçamento, comandas, PIX; SYNC 20.4; F3-B6): a API
+ * guarda (terminal, `X-Requisicao-Id`) em `requisicoes_terminal` por este tempo e devolve a mesma resposta à mesma
+ * requisição. Depois dele o mesmo id é uma requisição nova (o PDV só repete em segundos, depois de um timeout).
+ */
+export const RETENCAO_REQUISICAO_ONLINE_HORAS = 24;
+
+/**
+ * Cabeçalho da resposta devolvida de `requisicoes_terminal` (a repetição de uma requisição já atendida, SYNC 20.4),
+ * com o valor `1`: só para o log do caixa e o diagnóstico; o corpo e o status são os da primeira vez.
+ */
+export const CABECALHO_RESPOSTA_REPETIDA = 'X-Genesis-Resposta-Repetida';
+
+/**
  * Chave que liga o F4 "Outras lojas" da pesquisa F2 (Fase 2, F2-B35; F2-Q12 = roadmap D53, vale a recomendação): por
  * loja, desce ao PDV. Desligada, o caixa não consulta e a API responde `403 ESCOPO_INVALIDO`. A linha do catálogo
  * (`configuracoes.ts`) a escreve por extenso.

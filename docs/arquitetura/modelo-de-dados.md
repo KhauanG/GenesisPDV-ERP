@@ -4406,7 +4406,12 @@ o evento que referencia uma entidade cujo evento criador está em `erro`/`retido
 #### 3.15.5 `requisicoes_terminal` (L mutável, —)
 
 Requisições online do caixa que alteram estado (reservas de vale e de orçamento, sincronizacao.md 20.4; migração 0029,
-F3-B1; o uso é do F3-B6): a mesma requisição devolve a mesma resposta.
+F3-B1; o uso é do F3-B6, `apps/api/src/sync/online/idempotencia.ts`): a mesma requisição devolve a mesma resposta. A
+linha entra "em andamento" no começo da transação do efeito e recebe a resposta no mesmo commit; a repetição espera a
+linha da outra transação (`on conflict`). `corpo_sha256` = SHA-256 do JCS de `{parametros, corpo}`. Retenção de 24 h:
+a linha mais velha é apagada pela própria requisição que a reusa e pela tarefa por minuto da API. A FK para
+`terminais` trava a linha do terminal (`FOR KEY SHARE`) até o commit: o efeito que grava tabela que desce pega a
+7300001 **antes** desta linha (1.5), na mesma ordem do push (7300001 e depois `FOR UPDATE` do terminal).
 
 | Coluna | Tipo | Nulo | Padrão | Descrição |
 |---|---|---|---|---|

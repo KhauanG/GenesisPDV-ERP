@@ -356,7 +356,9 @@ Em cada pergunta, "na loja" diz o que muda para quem está no balcão.
   diante de uma API antiga recebe 404 e cai no caminho offline.
 - **Ordem das travas na transação:** a trava global de ordenação de versões (7300001, `fn_versao`) é pega **o mais tarde possível**
   (padrão de `fila-decisao.ts:5`), porque `vales`, `vendas_status_pdv` e `saldos_vasilhame_pessoas` descem e cada push com vale,
-  troca ou comodato passa a pegá-la.
+  troca ou comodato passa a pegá-la. Exceção: nas chamadas online (F3-B6, SYNC 20.4) a 7300001 é a **primeira** instrução
+  (`travaVersao` da rota), antes da linha de `requisicoes_terminal`, cuja FK trava a linha do terminal que o push trava
+  depois da 7300001.
 
 **Preços, itens e dinheiro**
 - Quantidade do complemento por unidade do item; o adicional entra no `preco_unitario` e no `preco_tabela`.
@@ -670,6 +672,14 @@ corpo do PR-17.
   (um efeito, a mesma resposta), de outro terminal e depois da expiração; Sync.Tests da repetição depois de um timeout.
 - **Pronto:** o mecanismo pronto e documentado na SYNC 20.4 e no README da API.
 - **Depende de:** F3-B1.
+- [**Feito no F3-B6** (README da API › decisão 225, do PDV › 98): `sync/online/idempotencia.ts` (`IdempotenciaOnline`),
+  `sync/atendimento.ts` (`atenderOnline`, endpoint `online` com o hardware) e a tarefa por minuto
+  `sync/online/manutencao-online.ts` (fila `genesis-manutencao-online`, onde a expiração das reservas do F3-B45 entra).
+  Códigos novos `409 REQUISICAO_EM_ANDAMENTO` (a espera de 10 s pela original vencida, `Retry-After: 1`) e
+  `422 REQUISICAO_DIVERGENTE` (o mesmo id com outra rota ou outro pedido). Só o sucesso fica gravado; a primeira resposta
+  e as repetições saem do mesmo `jsonb`. No PDV, `ChamadaOnline.AlterarComRepeticaoAsync` (3 tentativas com o mesmo id).
+  O limite de 120/min por terminal (SYNC 20.3) entra com as rotas do F3-B45. Versão do PDV mais antiga em uso tratada
+  como 0.10.0 até a lista do dono, que vai no corpo do PR-17 (nada muda para o instalado).]
 
 #### F3-B7 – Fluxos de pull da Fase 3 e o espelho do PDV numa só volta de cursor (SYNC 6.1, 16.3, 17.4)
 - **Tamanho:** M/G · **Rigor:** completo (sincronização)
@@ -1314,7 +1324,10 @@ corpo do PR-17.
   campos da troca, sem custo; **limites de privacidade** em toda consulta por cliente: só a janela de `pdv.dias_validade_cupom_troca`,
   no máximo 20 resultados, CPF mascarado na resposta, limite de taxa por terminal, auditoria da consulta com o operador informado pelo
   caixa (só como registro, sem autoridade); contratos no zod e no `Protocolo/Contratos.cs`; SYNC 14.4, PDV 16.11 e ERP 15.4.4
-  corrigidas para as rotas.
+  corrigidas para as rotas; **o prazo de cada tentativa das reservas no balcão** (pendência do F3-B6: hoje o
+  `ChamadaOnline` usa o `TemposLimiteSync.Outras`, 30 s, e o pior caso das 3 tentativas é ≈ 91 s), com um teste que o fixe; as
+  rotas que gravam tabela que desce declaram `travaVersao` no `atenderOnline` (a 7300001 antes da linha de
+  `requisicoes_terminal`, decisão 225 da API).
 - **Migrações:** nenhuma.
 - **Testes:** duas reservas de R$ 3 num vale de R$ 4,50 (a segunda 409); reserva sem em-uso vence (relógio injetado); em-uso pelo
   heartbeat; repetição com o mesmo `X-Requisicao-Id` (em sequência e ao mesmo tempo); outra empresa recusada; busca por CPF fora da

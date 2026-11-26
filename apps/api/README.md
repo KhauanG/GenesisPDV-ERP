@@ -7743,6 +7743,61 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `X-Genesis-Protocolo: 0` pela API de verdade em estado, pull, heartbeat, push e ativação (426 no envelope do
        protocolo), o ausente em 400 e o 1 atendido.
 
+225. **Idempotência das chamadas online do caixa que alteram estado** (F3-B6; plano `docs/planos/fase3-plano.md`; SYNC
+     20.4 e 2.5, MD 3.15.5; `sync/online/idempotencia.ts`, `sync/atendimento.ts`, `sync/online/manutencao-online.ts`).
+     O mecanismo que as reservas de vale (F3-B45) e de orçamento (F3-B60) usam; nenhuma rota de verdade ainda, nenhuma
+     migração (a tabela é da 0029, F3-B1) e nada muda para o PDV instalado. Escolhas técnicas, sem pergunta ao dono:
+     - **Uma transação** (`IdempotenciaOnline.executar`): apaga a linha do mesmo (terminal, `X-Requisicao-Id`) com mais
+       de `RETENCAO_REQUISICAO_ONLINE_HORAS` (24, no shared; depois disso o id é uma requisição nova, com a limpeza em
+       dia ou não), insere a linha "em andamento" com `on conflict do nothing` **antes** do efeito, roda o efeito e grava
+       `status_http`/`resposta`/`concluida_em` no mesmo commit. A espera pela linha da outra transação é a do próprio
+       PostgreSQL (o `insert` com conflito numa linha ainda não confirmada espera o fim dela): confirmada, volta a
+       resposta dela; desfeita, esta faz o efeito. A espera tem `lock_timeout` de 10 s
+       (`SYNC_ESPERA_REQUISICAO_ONLINE_MS`), só no `insert`; vencida, `409 REQUISICAO_EM_ANDAMENTO` (novo, transitório)
+       com `Retry-After: 1`.
+     - **Ordem das travas** (correção da revisão do bloco): a linha de `requisicoes_terminal` tem FK para `terminais`, e
+       a checagem dela segura `FOR KEY SHARE` na linha do terminal até o commit; o push (e o heartbeat que confirma)
+       pega a 7300001 e depois `FOR UPDATE` nessa linha. Por isso o efeito que grava tabela que desce declara
+       `travaVersao` (`RotaOnline`/`PedidoOnline`) e a 7300001 é a **primeira instrução** da transação
+       (`tenancy.transacao({ travaVersao, esperaSemLimite: true })`, MD 1.5), antes da linha, e não "o mais tarde
+       possível" dentro do efeito, que daria a ordem invertida e deadlock; com ela, a repetição espera a original na
+       7300001 e já encontra a resposta gravada. E antes do `insert` a API pega o `FOR KEY SHARE` do terminal ela
+       mesma, fora do `lock_timeout`: o 55P03 que vira `REQUISICAO_EM_ANDAMENTO` só pode ser a linha concorrente da
+       mesma chave, nunca a espera atrás de um `FOR UPDATE` do push, do heartbeat ou da revogação. Tirar a FK do log
+       técnico também resolveria, mas pediria migração (a 0029 já está na `main`) e perderia a garantia do vínculo.
+     - **A mesma resposta, byte a byte**: a primeira também sai do `jsonb` gravado (`update … returning resposta`), então
+       a ordem das chaves e o `Date` em ISO são os mesmos nas repetições; a repetição traz `X-Genesis-Resposta-Repetida:
+       1` (`CABECALHO_RESPOSTA_REPETIDA`, só para log). O status é o gravado (`res.status`).
+     - **Resumo do pedido**: `corpo_sha256` = SHA-256 do JCS de `{parametros, corpo}` (os parâmetros do caminho e o corpo
+       como chegou, antes da validação; a ordem das chaves não conta); `endpoint` = a rota com o método, como o
+       controller declara (`POST /sync/consultas/vales/:id/reservar`, até 80). Outra rota ou outro pedido com o mesmo id:
+       `422 REQUISICAO_DIVERGENTE` (novo, não transitório) com `detalhes.motivo` (`operacao`/`pedido`), sem a resposta
+       da outra. O id de outro terminal é outra chave.
+     - **Só o sucesso é gravado**: o erro do efeito (4xx de regra ou falha) desfaz a linha junto; a repetição avalia de
+       novo, nunca com dois efeitos. Guardar a recusa exigiria um savepoint entre a linha e o efeito e não protege nada
+       a mais (sem efeito, repetir é seguro).
+     - **Rota online** (`atenderOnline`): o terminal pelo endpoint novo `online` do `EndpointSync` (com o hardware
+       registrado, SYNC 20.5; empresa suspensa recusada como o pull), o corpo `adiado` lido depois do token (decisão 199)
+       e validado **antes** da transação (o 400 não toca em `requisicoes_terminal`). `noTerminal` e `corpoDoTerminal`
+       saíram do `SyncController` para `sync/atendimento.ts` sem mudança de comportamento, para outros controllers e o
+       teste seguirem o mesmo caminho. O limite de 120/min por terminal (SYNC 20.3) entra com as rotas (F3-B45).
+     - **Tarefa por minuto** (`ManutencaoOnline`, fila `genesis-manutencao-online`, cron `* * * * *`, sem retentativa e
+       expirando em 5 min: a ocorrência seguinte é a nova tentativa; conta na Prontidão como as outras filas da
+       plataforma): apaga as linhas com mais de 24 h em lotes de 5.000, só nas empresas com terminal em contato nas
+       últimas 26 h (`terminais_pdv.ultimo_contato_em`, gravado em toda chamada com o hardware registrado), para não
+       abrir conexão a cada minuto com quem não tem caixa. A expiração das reservas (TTL de 10 min) entra nela no F3-B45.
+     - **Testes.** `test/integracao/requisicoes-online.test.ts`, com uma rota de teste montada só nele
+       (`criarAmbiente({ controllersExtras })`, a opção nova de `criarAplicacao`/`AppModule.registrar`, só dos testes):
+       a mesma requisição em sequência e ao mesmo tempo (duas com folga e quatro juntas: um efeito, o mesmo texto de
+       resposta, uma marcada como repetida), outro terminal, a retenção (24 h e 1 min = nova; 23 h e 59 min = a mesma),
+       outro corpo, outro parâmetro e outra rota (422), o corpo com as chaves em outra ordem (a mesma), o efeito que falha
+       e a original que falha com a repetição esperando, a espera vencida (409 com `Retry-After`; nos dois, a segunda
+       chamada sai só quando a primeira já dorme no efeito, pelo `pg_stat_activity`, e não depois de um tempo fixo), a
+       espera atrás do `FOR UPDATE` do terminal (201, não 409), a ordem das travas com `travaVersao` (o `FOR UPDATE`
+       do push que já tem a 7300001 passa na hora; a repetição espera na 7300001 e recebe a resposta gravada), o 400,
+       o hardware divergente e o 401 sem linha, e a limpeza em lotes (só as vencidas; a empresa sem terminal em contato nem é
+       aberta); `sync/online/idempotencia.spec.ts` (o resumo e a operação acima de 80) e o `fila.spec.ts`.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

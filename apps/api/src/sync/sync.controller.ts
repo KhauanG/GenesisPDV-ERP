@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { Publico } from '../autorizacao/decorators.js';
-import { CorpoJson, lerCorpoJson, limiteDaFaixa, type OpcoesCorpoJson } from '../comum/corpo-json.js';
+import { CorpoJson, type OpcoesCorpoJson } from '../comum/corpo-json.js';
 import { LimiteTaxaGuard } from '../autorizacao/limite-taxa.guard.js';
 import { Req, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
@@ -32,7 +32,8 @@ import {
   validarSync,
 } from './contratos.js';
 import { ErroSync } from './erros.js';
-import { exigirHardware, lerCabecalhos, type EndpointSync, type TerminalAutenticado } from './terminal.js';
+import { corpoDoTerminal, noTerminal } from './atendimento.js';
+import { lerCabecalhos, type EndpointSync, type TerminalAutenticado } from './terminal.js';
 
 /**
  * Corpo das rotas que autenticam o terminal (decisão 199): lido só depois do token e do hardware conferidos. O lote do
@@ -53,39 +54,21 @@ const CORPO_TOKEN: OpcoesCorpoJson = { faixa: 'padrao', adiado: true };
 export class SyncController {
   constructor(@Inject(SERVICOS) private readonly s: Servicos) {}
 
-  private async noTerminal<T>(
+  private noTerminal<T>(
     req: RequisicaoGenesis,
     res: Response,
     endpoint: EndpointSync,
     fn: (t: TerminalAutenticado) => Promise<T>,
   ): Promise<T> {
-    const t = await this.s.terminalAuth.autenticar(req, endpoint);
-    const r = await this.s.tenancy.executarNaEmpresa(t.contexto, async () => {
-      // O alerta vem antes do 409 de hardware: o clone em outra máquina também é registrado (SYNC 3.7).
-      if (t.tokenAnteriorReutilizado) await this.s.token.registrarAnteriorReutilizado(t);
-      exigirHardware(t, endpoint);
-      return fn(t);
-    });
-    res.setHeader('X-Agora-Servidor', new Date().toISOString());
-    return r;
+    return noTerminal(this.s, req, res, endpoint, fn);
   }
 
   /**
-   * O corpo da rota `adiado`, já com o terminal autenticado; recusado, o resto é descartado e a conexão continua (o
-   * prazo esgotado fecha). Depois de lido, o terminal é conferido de novo no controle (`conferirDeNovo`).
+   * O corpo da rota `adiado`, já com o terminal autenticado (`corpoDoTerminal`): depois de lido, o terminal é conferido
+   * de novo no controle.
    */
-  private async corpo(
-    req: RequisicaoGenesis,
-    t: TerminalAutenticado,
-    opcoes: OpcoesCorpoJson,
-  ): Promise<unknown> {
-    const corpo = await lerCorpoJson(req, limiteDaFaixa(this.s.config, opcoes.faixa), {
-      comprimido: opcoes.comprimido,
-      drenarAoRecusar: true,
-      prazoMs: this.s.config.corpoJson.prazoLeituraMs,
-    });
-    await this.s.terminalAuth.conferirDeNovo(t);
-    return corpo;
+  private corpo(req: RequisicaoGenesis, t: TerminalAutenticado, opcoes: OpcoesCorpoJson): Promise<unknown> {
+    return corpoDoTerminal(this.s, req, t, opcoes);
   }
 
   @UseGuards(LimiteTaxaGuard)

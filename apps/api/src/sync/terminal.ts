@@ -84,7 +84,9 @@ export type EndpointSync =
   | 'eventos-status'
   | 'recuperar'
   | 'consulta-saldos'
-  | 'arquivos';
+  | 'arquivos'
+  /** As chamadas online que alteram estado (reservas, comandas, PIX; SYNC 20.4, F3-B6: `atenderOnline`). */
+  | 'online';
 
 /**
  * SYNC 3.7: o anterior só conta como reutilizado quando o atual já funcionou há mais que isso. Absorve a corrida do
@@ -99,12 +101,15 @@ export const MARGEM_TOKEN_ANTERIOR_MS = 30_000;
  * nota, quem retirou a sangria): uma cópia do token em outra máquina não os lê, e a reidratação só serve ao push, que
  * já exige o hardware. A consulta de saldos das outras lojas (F2-B35) mostra o estoque da empresa inteira: só o caixa
  * registrado a usa. As imagens do catálogo (`arquivos`, F2-B45) não exigem: são os mesmos cadastros que o pull entrega.
+ * As chamadas online que alteram estado (`online`, F3-B6) reservam saldo de vale e orçamento da empresa: também só o
+ * caixa registrado.
  */
 const ENDPOINTS_COM_HARDWARE: ReadonlySet<EndpointSync> = new Set([
   'push',
   'token',
   'recuperar',
   'consulta-saldos',
+  'online',
 ]);
 
 export function exigirHardware(t: TerminalAutenticado, endpoint: EndpointSync): void {

@@ -32,6 +32,8 @@ import { TerminaisErp } from './terminais/terminais.service.js';
 import { HeartbeatSync } from './sync/heartbeat.js';
 import { ArquivosSync } from './sync/arquivos.js';
 import { ConsultasSync } from './sync/consultas.js';
+import { IdempotenciaOnline } from './sync/online/idempotencia.js';
+import { CRON_MANUTENCAO_ONLINE, ManutencaoOnline } from './sync/online/manutencao-online.js';
 import { RecuperarSync } from './sync/recuperar.js';
 import { PullSync } from './sync/pull.js';
 import { PushSync } from './sync/push.js';
@@ -92,6 +94,13 @@ export interface Servicos {
   recuperar: RecuperarSync;
   /** Consultas online do caixa no `/sync/*` (F2-B35): o saldo das outras lojas no F4 da pesquisa. */
   consultas: ConsultasSync;
+  /**
+   * Idempotência das chamadas online do caixa que alteram estado (SYNC 20.4; F3-B6, decisão 225): uma vez por terminal
+   * e `X-Requisicao-Id`, a repetição com a resposta gravada (`sync/online/idempotencia.ts`).
+   */
+  idempotencia: IdempotenciaOnline;
+  /** Tarefa por minuto das chamadas online (F3-B6): a retenção de 24 h de `requisicoes_terminal`. */
+  manutencaoOnline: ManutencaoOnline;
   /** `GET /sync/arquivos/{id}` (F2-B45, decisão 192): a variante `pdv_256` das imagens do catálogo para o caixa. */
   arquivosSync: ArquivosSync;
   token: TokenTerminal;
@@ -227,6 +236,13 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     trabalhoPorEmpresas(FILAS.alertaTransferencias, () => alertaTransferencias.executar()),
   );
   fila.agendar(FILAS.alertaTransferencias, CRON_ALERTA_TRANSFERENCIAS);
+  // F3-B6 (decisão 225): a retenção de 24 h das requisições online do caixa, a cada minuto.
+  const manutencaoOnline = new ManutencaoOnline(controle, resolvedor, tenancy);
+  fila.registrar(
+    FILAS.manutencaoOnline,
+    trabalhoPorEmpresas(FILAS.manutencaoOnline, () => manutencaoOnline.executar()),
+  );
+  fila.agendar(FILAS.manutencaoOnline, CRON_MANUTENCAO_ONLINE);
   // F2-B3 (decisão 147): só verifica o razão e abre o alerta; desligada sem `VERIFICACAO_RAZAO_CRON`, o que também
   // remove o agendamento gravado no pg-boss quando ela esteve ligada (senão o cron seguia criando jobs sem consumidor).
   const verificacaoRazao = new VerificacaoRazao(controle, resolvedor, tenancy);
@@ -273,6 +289,8 @@ export function criarServicos(config: Configuracao, opcoes: { executadoPor?: str
     heartbeat: new HeartbeatSync(controle, tenancy, auditoria),
     recuperar: new RecuperarSync(tenancy),
     consultas: new ConsultasSync(tenancy),
+    idempotencia: new IdempotenciaOnline(tenancy),
+    manutencaoOnline,
     arquivosSync: new ArquivosSync({ tenancy, armazenamento }),
     token: new TokenTerminal(controle, tenancy, auditoria),
     fila,
