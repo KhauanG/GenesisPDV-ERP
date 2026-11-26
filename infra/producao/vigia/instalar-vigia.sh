@@ -169,7 +169,8 @@ conferir_unidades() {
     return 0
   fi
   if ! saida=$(systemd-analyze verify "$d/$SERVICO" "$d/$TIMER" 2>&1) || grep -q 'genesis-vigia' <<<"$saida"; then
-    echo "o systemd-analyze verify recusou as unidades: $(grep -m 3 . <<<"$saida" | tr '\n' ' ')"
+    # As linhas sobre as unidades do vigia primeiro: o systemd mais novo (Ubuntu 26.04) avisa antes sobre outras.
+    echo "o systemd-analyze verify recusou as unidades: $({ grep -m 3 'genesis-vigia' <<<"$saida" || grep -m 3 . <<<"$saida"; } | tr '\n' ' ')"
     return 1
   fi
 }
