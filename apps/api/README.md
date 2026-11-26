@@ -7907,6 +7907,55 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        sobrando e de valor inválido; o aviso do evento retido e o do cálculo divergente; o comprovante com e sem
        `movimentos_caixa.imprimir`, de outra loja e do estorno).
 
+228. **Núcleo de estorno da venda e a projeção `vendas_status_pdv`, sem mudar o comportamento do caixa** (F3-B10; plano
+     `docs/planos/fase3-plano.md`; SYNC 10.4, 16.3; MD 3.11.9; `vendas/estorno-venda.ts`, `sync/status-pdv.ts`,
+     `sync/handlers/cancelamento.ts`). Sem migração (a projeção é da 0030, decisão 221) e sem PDV. Escolhas técnicas,
+     sem pergunta ao dono:
+     - **O núcleo do estorno de estoque sai do handler** para `vendas/estorno-venda.ts`, para o cancelamento pelo ERP
+       (F3-B11) e o cancelamento de venda com troca (F3-B44) usarem a mesma regra: `ESTORNO_DO_MOVIMENTO` e
+       `tiposEstornados` (os vazios trazidos só com `pdv.cancelamento_devolve_vazios`, `lerDevolveVazios`, D29),
+       `movimentosParaEstornar` (os movimentos ainda sem estorno; imutáveis, lidos antes da 7300001),
+       `linhasDeEstorno` (o `estorno_de_id`, o sinal oposto, o custo da saída original, T20, o mesmo estoque, tipo,
+       lote e item, a data do cancelamento; a origem — terminal e evento, nulos no ERP — vem de quem chama) e
+       `estornarEstoqueDaVenda` (o motor e o `compensarDefinir`, 15.3). O handler `venda.cancelada` (forma A) passou a
+       usá-lo e continua exportando `ESTORNO_DO_MOVIMENTO`, `tiposEstornados`, `CHAVE_CANCELAMENTO_DEVOLVE_VAZIOS`,
+       `MovimentoDaVenda` e `estornosDaVenda` para quem já os importava. O `cancelamento.spec.ts`, a integração do
+       cancelamento, o `movimentos.spec` e o `recalcular-saldos` passam sem mudança.
+     - **Vendido menos o devolvido** (Padrões da Fase 3, "troca × cancelamento"): `quantidadesDevolvidas` lê os itens
+       com `quantidade_devolvida > 0`, **com a linha da venda travada** (a troca do F3-B43 muda o devolvido com a mesma
+       trava), e `quantidadesAEstornar` estorna, **por grupo** de movimentos do item (item, tipo, produto, variação e
+       sinal), `soma do grupo × (vendido − devolvido) ÷ vendido`, arredondado **uma** vez a 3 casas: o `VENDA_PDV` do
+       item dá exatamente o que sobrou dele, o `BAIXA_INSUMO` a parte dos insumos do que não voltou (o produzido
+       devolvido não devolve os insumos, Padrões), e o item devolvido por inteiro não estorna nada (o movimento fica de
+       fora; a troca já deu a entrada). O grupo existe porque o motor divide a saída sem lote em FEFO (um movimento por
+       lote e a sobra sem lote, com o mesmo `documento_item_id`): arredondar cada lote somaria estoque que não existe
+       (3 lotes de 1 com 1 devolvida dariam 3 × 0,667 = 2,001). O devolvido do grupo (`partesDevolvidas`) ocupa os
+       movimentos na **ordem do id**, cada um até a quantidade dele, e o cancelamento estorna o resto: é o critério que
+       a troca do F3-B43 deve usar para o lote da entrada ("o lote dos movimentos da venda de origem", Padrões) — com
+       o devolvido acumulado do item, a entrada vai para o lote que `partesDevolvidas` dá a mais —, para o
+       cancelamento estornar os lotes que a troca não devolveu. O bloco de vasilhames (o `documento_item_id` derivado,
+       T4) não é item: os vazios voltam inteiros. Hoje nenhuma venda tem devolução (sem o `troca.registrada`), e a conta dá
+       a linha de antes; a integração simula a troca pondo o devolvido à mão (a única coluna livre do item finalizado,
+       `tg_itens_venda_imutavel`).
+     - **`registrarStatusPdv(tx, vendaId, origem)`** (`sync/status-pdv.ts`; `origem` = `'nuvem'` ou `{ terminalId }`)
+       grava a projeção com o estado **atual** da venda, lido na transação: a mudança da nuvem (ERP, tarefa fiscal) ou
+       de outro terminal faz o upsert pelo `id` da venda (`caixa_id` e `terminal_id` só no `INSERT`, imutáveis); a
+       venda sem terminal (do ERP, no caixa 0) não tem caixa que a leia e não grava. **Desvio pequeno do plano** (que
+       diz "grava só quando a origem não é o terminal da venda"): a mudança do próprio terminal não **cria** a linha,
+       mas **atualiza** a que já existe — senão a linha antiga, que prevalece no caixa (SYNC 16.3), contradiria o que
+       ele acabou de fazer (o ERP resolveu o fiscal e, depois, o caixa cancelou; o caixa ofereceria cancelar de novo).
+       A forma A chama no fim do `aplicar`; hoje nenhuma linha existe antes do F3-B11, então nada muda. A escrita passa
+       pelo `fn_versao` (a 7300001): quem chama faz isso depois das outras escritas, com a venda travada; o mesmo estado
+       de novo não gera versão.
+     - **Testes.** `vendas/estorno-venda.spec.ts` (sem devolução, a linha de antes; troca parcial, o insumo na
+       proporção, o id em maiúsculas; o devolvido por inteiro; os vazios inteiros; a origem do ERP sem terminal),
+       `sync/status-pdv.spec.ts` (a decisão: nuvem, outro terminal, o próprio, sem terminal),
+       `test/integracao/cancelamento-vasilhame-eventos.test.ts` (o cancelamento do caixa com um item de troca parcial,
+       um devolvido por inteiro e um sem troca: estorna 7 de 12, nada e 3, sem a projeção) e
+       `test/integracao/sync-fluxos-fase3.test.ts` (o `registrarStatusPdv` do próprio terminal sem linha não grava; o da
+       nuvem grava o estado atual e o repetido não gera versão; o de outro terminal grava e o do próprio, depois,
+       atualiza; o caixa puxa as duas linhas pelo fluxo `operacao`).
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

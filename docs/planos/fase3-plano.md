@@ -795,6 +795,16 @@ corpo do PR-17.
   `registrarStatusPdv`.
 - **Pronto:** extração sem diferença de comportamento.
 - **Depende de:** F3-B7.
+- [**Feito (F3-B10)** (README da API › decisão 228; SYNC 16.3): o núcleo em `vendas/estorno-venda.ts`
+  (`movimentosParaEstornar`, `quantidadesDevolvidas` lido com a venda travada,
+  `partesDevolvidas`/`quantidadesAEstornar`/`linhasDeEstorno` na proporção do vendido menos o devolvido, por grupo de
+  movimentos do item (a saída dividida em FEFO soma exatamente o que sobrou; o devolvido ocupa os lotes na ordem do id,
+  o critério do lote da troca no F3-B43) — o `VENDA_PDV` exato, o `BAIXA_INSUMO` na mesma proporção, o item devolvido
+  por inteiro de fora, os vazios inteiros — e `estornarEstoqueDaVenda`, o motor com o `compensarDefinir`), usado pelo
+  handler, que continua exportando os nomes antigos. `registrarStatusPdv(tx, vendaId, 'nuvem' | { terminalId })`, com um
+  ajuste: a mudança do próprio terminal não cria a linha, mas atualiza a que já existe (senão a linha antiga, que
+  prevalece no caixa, contradiria o cancelamento dele); a forma A o chama no fim (hoje sem efeito: nada cria a linha
+  antes do F3-B11). Além dos testes previstos, a integração simula a troca pondo o `quantidade_devolvida` à mão.]
 
 #### F3-B11 – Cancelar venda pelo ERP (ERP 15.4.3; SYNC 10.4)
 - **Tamanho:** M · **Rigor:** completo (estorna documento, estoque)
@@ -1345,7 +1355,8 @@ corpo do PR-17.
 - **Entregas:** contrato v1 e fixtures das 3 resoluções; handler `trocas.ts`: `trocas`/`itens_troca`; o vale da troca **dentro** do
   evento (vale-troca e troca imediata; nunca `vale.emitido`); `devolucao_troca` em `movimentos_caixa`; `TROCA_PDV` pelo
   `lancarDocumento` no tipo vendável ou no `avaria` (F3-Q22, sem entrada seguida de saída), ao custo do item de origem e no lote da
-  origem (Padrões); `quantidade_devolvida` limitada com `TROCA_ACIMA_DO_VENDIDO`; `vendas.devolucao`; `registrarStatusPdv` quando a venda
+  origem (Padrões; com a saída dividida em FEFO, o lote que `partesDevolvidas` do F3-B10 dá a mais com o devolvido
+  acumulado, para o cancelamento estornar os lotes que a troca não devolveu); `quantidade_devolvida` limitada com `TROCA_ACIMA_DO_VENDIDO`; `vendas.devolucao`; `registrarStatusPdv` quando a venda
   é de outro terminal; `trocas.venda_nova_id` preenchida pelo handler da venda que paga com o vale da troca; dependências (sessão;
   venda de origem do mesmo terminal); regra do restante na devolução parcial.
 - **Migrações:** nenhuma.

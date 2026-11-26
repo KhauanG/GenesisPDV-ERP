@@ -737,7 +737,7 @@ export const parcelasVenda = pgTable(
  * O `id` é o da venda (PK e FK, sem default). Desce pelo **caixa** da venda (`caixa_id`), não pelo terminal: o
  * terminal que substituiu outro no mesmo caixa recebe o status das vendas antigas (padrões da Fase 3); `terminal_id`
  * guarda o terminal que criou a venda. As duas são imutáveis (`tg_vendas_status_pdv_filtro_imutavel`, MD 6.4 regra
- * 2). O upsert na mesma transação da mudança (`registrarStatusPdv`) é do F3-B10.
+ * 2). O upsert na mesma transação da mudança é o `registrarStatusPdv` (`sync/status-pdv.ts`, F3-B10, decisão 228).
  */
 export const vendasStatusPdv = pgTable(
   'vendas_status_pdv',

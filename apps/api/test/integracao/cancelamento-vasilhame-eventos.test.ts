@@ -1857,6 +1857,83 @@ describe('alerta.cadastro (SYNC 9.24)', () => {
   });
 });
 
+describe('núcleo do estorno com troca (F3-B10; Padrões da Fase 3)', () => {
+  it('item com quantidade_devolvida estorna só o vendido menos o devolvido; devolvido por inteiro não estorna', async () => {
+    const p = await novoPonto();
+    const parcial = await criarProduto({ nome: 'CERVEJA LATA B10' });
+    const inteiro = await criarProduto({ nome: 'REFRIGERANTE B10' });
+    const semTroca = await criarProduto({ nome: 'AGUA B10' });
+    await entrada([
+      [parcial, '20', '2'],
+      [inteiro, '20', '3'],
+      [semTroca, '20', '1'],
+    ]);
+    const v = venda(p, [
+      { produto: parcial, quantidade: '12.000' },
+      { produto: inteiro, quantidade: '2.000' },
+      { produto: semTroca, quantidade: '3.000' },
+    ]);
+    await pushOk(p, [evento(p, 'venda.finalizada', v)]);
+    // A troca (F3-B43) ainda não existe: o devolvido é posto à mão, a única coluna que muda no item finalizado.
+    await consultar(emp.nomeBanco, 'update itens_venda set quantidade_devolvida = $2 where id = $1', [
+      v.itens_venda[0]!.id,
+      '5.000',
+    ]);
+    await consultar(emp.nomeBanco, 'update itens_venda set quantidade_devolvida = quantidade where id = $1', [
+      v.itens_venda[1]!.id,
+    ]);
+    const [r] = await pushOk(p, [evento(p, 'venda.cancelada', cancelamento(p, v))]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 2 } });
+    const estornos = (await movimentosDoDocumento('venda', v.vendas.id)).filter(
+      (m) => m.tipo_movimento === 'CANC_VENDA_PDV',
+    );
+    expect(estornos.map((m) => [m.produto_id, m.quantidade, m.custo_unitario]).sort()).toEqual(
+      [
+        [parcial, '7.000', '2.0000'],
+        [semTroca, '3.000', '1.0000'],
+      ].sort(),
+    );
+    // A troca daria a entrada dos 5 e dos 2 devolvidos: aqui, sem ela, o saldo fica sem esses.
+    expect([await saldo(parcial), await saldo(inteiro), await saldo(semTroca)]).toEqual([15, 18, 20]);
+    // Nenhuma linha da projeção: o próprio terminal cancelou e a nuvem não tinha mudado a venda (SYNC 16.3).
+    expect(
+      await consultar(emp.nomeBanco, 'select 1 from vendas_status_pdv where id = $1', [v.vendas.id]),
+    ).toEqual([]);
+  });
+
+  it('a linha da projeção que a nuvem já gravou acompanha o cancelamento pelo próprio caixa (SYNC 16.3)', async () => {
+    const p = await novoPonto();
+    const produto = await criarProduto({ nome: 'CERVEJA PROJECAO B10' });
+    await entrada([[produto, '10', '2']]);
+    const v = venda(p, [{ produto, quantidade: '1.000' }]);
+    await pushOk(p, [evento(p, 'venda.finalizada', v)]);
+    // A linha que a nuvem gravaria antes (o fiscal resolvido no 3F, o ERP no F3-B11): o estado da venda finalizada,
+    // que no caixa prevalece sobre a `vendas` local.
+    await consultar(
+      emp.nomeBanco,
+      `insert into vendas_status_pdv (id, caixa_id, terminal_id, status, status_fiscal, devolucao)
+       select id, caixa_id, terminal_id, status, status_fiscal, devolucao from vendas where id = $1`,
+      [v.vendas.id],
+    );
+    const linha = async () =>
+      (
+        await consultar<{ status: string; cancelamento_origem: string | null; versao: string }>(
+          emp.nomeBanco,
+          'select status, cancelamento_origem, versao::text from vendas_status_pdv where id = $1',
+          [v.vendas.id],
+        )
+      )[0];
+    const antes = await linha();
+    expect(antes).toMatchObject({ status: 'finalizada', cancelamento_origem: null });
+    const [r] = await pushOk(p, [evento(p, 'venda.cancelada', cancelamento(p, v))]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    // Sem a chamada no fim da forma A, a linha continuaria "finalizada" e o caixa ofereceria cancelar de novo.
+    const depois = await linha();
+    expect(depois).toMatchObject({ status: 'cancelada', cancelamento_origem: 'pdv' });
+    expect(BigInt(depois!.versao)).toBeGreaterThan(BigInt(antes!.versao));
+  });
+});
+
 describe('ordem de lançamento do razão (F2-B2)', () => {
   it('no fim da suíte, a cadeia de cada linha fecha por seq_lancamento e o replay repete o razão', async () => {
     expect(await conferirRazaoDasEmpresas(amb.bancoControle)).toBeGreaterThan(0);

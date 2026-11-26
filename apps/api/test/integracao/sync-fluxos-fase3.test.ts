@@ -3,14 +3,19 @@
  * inteiras no `catalogo`, os vales de todas as lojas na janela da D90 no `pessoas`, e o `operacao` ganha os orçamentos
  * da loja (os itens pelo pai) e o status das vendas do **caixa** do terminal alteradas nos últimos 90 dias, inclusive
  * para o terminal que substituiu outro no mesmo caixa. O teto avança com o fluxo vazio (só a outra loja mudou) e os
- * templates do PDV seguem a MD 3.1.3 (`recibo_venda` e `orcamento_*` descem, `recibo_receber` não).
+ * templates do PDV seguem a MD 3.1.3 (`recibo_venda` e `orcamento_*` descem, `recibo_receber` não). O
+ * `registrarStatusPdv` (F3-B10, decisão 228) grava a linha com o estado atual da venda quando a mudança é da nuvem ou de
+ * outro terminal, só mantém em dia a que já existe quando é do próprio terminal e não gera versão sem mudança real.
  */
 import { generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { montarCodigoVale, respostaPullSchema, type Ativar } from '@genesis/shared';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DIAS_JANELA_PDV, TEMPLATES_PDV } from '../../src/sync/fluxos.js';
+import { registrarStatusPdv, type OrigemMudancaVenda } from '../../src/sync/status-pdv.js';
+import type { DbEmpresa } from '../../src/tenancy/tenancy.js';
 import {
   conectar,
   consultar,
@@ -402,6 +407,93 @@ describe('operacao: orçamentos da loja e status das vendas do caixa (MD 3.11.1,
     const daLoja2 = await puxar(terminalLoja2.token, 'operacao');
     expect(ids(daLoja2.alteracoes, 'orcamentos')).toContain(orcamentoLoja2);
     expect(ids(daLoja2.alteracoes, 'vendas_status_pdv')).toEqual([vendaLoja2]);
+  });
+
+  it('registrarStatusPdv: a nuvem e outro terminal gravam o estado atual; o próprio terminal só atualiza a linha', async () => {
+    /** A mudança e o registro na mesma transação, como o handler e o ERP farão. */
+    async function mudar(vendaId: string, origem: OrigemMudancaVenda, alteracao?: string) {
+      const c = await conectar(emp.nomeBanco);
+      try {
+        await c.query('begin');
+        if (alteracao) await c.query(`update vendas set ${alteracao} where id = $1`, [vendaId]);
+        const gravou = await registrarStatusPdv(
+          drizzle(c) as unknown as DbEmpresa,
+          vendaId.toUpperCase(),
+          origem,
+        );
+        await c.query('commit');
+        return gravou;
+      } catch (e) {
+        await c.query('rollback');
+        throw e;
+      } finally {
+        await c.end();
+      }
+    }
+    const linha = async (vendaId: string) =>
+      (
+        await consultar<{
+          status: string;
+          devolucao: string;
+          cancelamento_origem: string | null;
+          versao: string;
+        }>(
+          emp.nomeBanco,
+          'select status, devolucao, cancelamento_origem, versao::text from vendas_status_pdv where id = $1',
+          [vendaId],
+        )
+      )[0];
+    const { cursor } = await puxar(terminal1.token, 'operacao');
+
+    // O próprio terminal, sem linha: nada (o caixa já sabe o que fez).
+    const doCaixa = await venda(loja1, caixa1, terminal1.id);
+    expect(
+      await mudar(
+        doCaixa,
+        { terminalId: terminal1.id },
+        "status = 'cancelada', cancelada_em = now(), motivo_cancelamento = 'Cliente desistiu', cancelamento_origem = 'pdv'",
+      ),
+    ).toBe(false);
+    expect(await linha(doCaixa)).toBeUndefined();
+
+    // A nuvem (o cancelamento pelo ERP do F3-B11): a linha com o estado atual, presa ao caixa e ao terminal da venda.
+    const peloErp = await venda(loja1, caixa1, terminal1.id);
+    expect(
+      await mudar(
+        peloErp,
+        'nuvem',
+        "status = 'cancelada', cancelada_em = now(), motivo_cancelamento = 'Cliente desistiu', cancelamento_origem = 'erp'",
+      ),
+    ).toBe(true);
+    const primeira = await linha(peloErp);
+    expect(primeira).toMatchObject({ status: 'cancelada', devolucao: 'nenhuma', cancelamento_origem: 'erp' });
+    // O mesmo estado de novo não gera versão (o caixa não puxa a linha outra vez).
+    expect(await mudar(peloErp, 'nuvem')).toBe(true);
+    expect((await linha(peloErp))!.versao).toBe(primeira!.versao);
+
+    // Outro terminal (a troca no caixa 02, F3-B43) grava; depois o próprio terminal muda e a linha acompanha.
+    // O `registrarStatusPdv` só compara o terminal com o da venda (não o procura no banco): qualquer outro id serve, sem
+    // depender do terminal que outro teste ativou no caixa 02.
+    const trocada = await venda(loja1, caixa1, terminal1.id);
+    expect(await mudar(trocada, { terminalId: uuidv7() }, "devolucao = 'parcial'")).toBe(true);
+    expect(await linha(trocada)).toMatchObject({ status: 'finalizada', devolucao: 'parcial' });
+    expect(
+      await mudar(
+        trocada,
+        { terminalId: terminal1.id },
+        "status = 'cancelada', cancelada_em = now(), motivo_cancelamento = 'Cliente desistiu', cancelamento_origem = 'pdv'",
+      ),
+    ).toBe(true);
+    expect(await linha(trocada)).toMatchObject({ status: 'cancelada', cancelamento_origem: 'pdv' });
+
+    const { alteracoes } = await puxar(terminal1.token, 'operacao', cursor);
+    expect(ids(alteracoes, 'vendas_status_pdv').sort()).toEqual([peloErp, trocada].sort());
+    expect(alteracoes.find((a) => a.linha.id === trocada)!.linha).toMatchObject({
+      caixa_id: caixa1,
+      terminal_id: terminal1.id,
+      status: 'cancelada',
+      devolucao: 'parcial',
+    });
   });
 
   it('o terminal substituto do mesmo caixa recebe o status das vendas do terminal antigo', async () => {

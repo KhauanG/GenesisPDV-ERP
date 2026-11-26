@@ -4095,6 +4095,14 @@ colunas da projeção prevalecem. O PDV **nunca** regrava a própria `vendas` co
 continua imutável localmente). Além disso, operações destrutivas sobre venda
 antiga (cancelar, trocar) consultam a API quando online.
 
+Na nuvem, a gravação é uma só, `registrarStatusPdv(tx, venda, origem)` (`apps/api/src/sync/status-pdv.ts`, F3-B10),
+chamada depois das outras escritas da transação, com a linha da venda travada: copia o estado **atual** de `vendas`
+para a projeção quando a mudança é da nuvem ou de outro terminal (upsert pelo `id`; `caixa_id` e `terminal_id` só no
+`INSERT`); quando é do próprio terminal da venda, **não cria** a linha, mas **atualiza** a que já existe (senão a linha
+antiga, que prevalece no PDV, contradiria o que o caixa acabou de fazer: o ERP resolveu o fiscal e, depois, o caixa
+cancelou). A venda sem terminal (do ERP, no caixa 0) não tem projeção. O `venda.cancelada` (A) chama com a origem do
+terminal; o cancelamento pelo ERP (F3-B11) e a troca em outro caixa (F3-B43), com a deles.
+
 ---
 
 ## 17. Versionamento do app, do protocolo e do banco local
