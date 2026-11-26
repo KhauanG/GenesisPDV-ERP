@@ -4424,3 +4424,108 @@ reimpresso continua o original, com o número do caixa.
       o exemplo de tabela desconhecida passou de `promocoes` para `comandas`), `EsquemaNuvemTests` com as tabelas novas e
       os testes da `FaseDois` e da `FormasPagamentoLojas` com um fluxo que a `FaseTres` não volta; no e2e (`PontaAPontaTests`), a
       promoção, o vale e o orçamento com item que o `servidor.ts` semeia chegam ao SQLite na carga inicial.
+
+100. **Spike do Velopack: empacotar no Linux, manifesto assinado e volta local depois de uma migração que falhou**
+     (F3-B8; plano da Fase 3 › F3-B8 e PR-22; F3-Q33 = D103 (A), F3-Q35 = D105; PDV 32.6; plano
+     `docs/planos/operacao-sem-actions-plano.md` › OP-B3 ampliado). **Protótipo descartável** em
+     `instalador/velopack-spike/` (fora do `GenesisPDV.slnx`, com `Directory.Build.props` e `Directory.Packages.props`
+     próprios, que param a busca do MSBuild: nada dele entra no PDV, e o `packages.lock.json` dele é versionado e não
+     muda no publish, porque o RID, o autocontido e o arquivo único estão no csproj). Sai no F3-B33. Nada muda no PDV,
+     no instalador Inno, no protocolo (`versoes_schema`) nem na versão (0.13.0).
+     - **Critério (a), comprovado na sessão:** o `vpk "[win]" pack -r win-x64` do **vpk 1.2.161** (fixo, com o
+       `contentHash` do nuget.org conferido; a biblioteca `Velopack` na mesma versão) monta no Linux, sem Wine, o
+       completo, o delta, o feed `releases.<canal>.json` (SHA1 e SHA256), o `Setup.exe` e o portátil; só pede o `zstd`
+       do apt para o delta. O `gerar-pacotes-teste.sh` confere a lista de arquivos de cada `.nupkg` (o exe, o stub, o
+       `Squirrel.exe`/`Update.exe`, o `sq.version`), a versão, o RID e o canal do `.nuspec` e o Setup da 1.0.0.
+     - **Critério (b): o manifesto assinado** (`manifesto.<canal>.json` + `.sig`, ao lado do feed;
+       `ProtoAtualizacao/FonteAssinada.cs`, um `IUpdateSource` na frente do `UpdateManager`). Antes de o Velopack ver
+       qualquer versão: a assinatura sobre os bytes exatos do manifesto, com a chave pública embutida no build; o app e o
+       canal escritos nele; o **piso** (a maior "versão mínima permitida" já aceita, que só sobe); o sha256 do feed; e cada
+       pacote do feed igual ao do manifesto (nome, tipo, versão, tamanho e sha256 obrigatório; o Velopack cairia para o
+       SHA1 sem ele). Os abaixo da mínima permitida saem do feed. Cada download é conferido de novo contra o manifesto.
+       **Assinatura = o formato SSHSIG do OpenSSH** (`ssh-keygen -Y sign -n genesispdv-atualizacao`, Ed25519): o dono
+       assina no PC dele com o OpenSSH que já vem no Windows 10/11, sem instalar nada, com a chave protegida por senha;
+       o caixa confere com o BouncyCastle 2.7.0 que o PDV já usa (`AssinaturaSsh.cs`, ~100 linhas, só Ed25519, contexto
+       fixo, a chave tem de ser a embutida). Sem assinatura do Authenticode: o `Update.exe` e o `setup.exe` do Velopack
+       também saem sem ela.
+     - **Achado: o completo remontado pelos deltas não é o completo publicado.** O `Update.exe patch` monta os mesmos
+       arquivos, byte a byte, num zip diferente (outro sha256 do `.nupkg`; conferido arquivo por arquivo), e o
+       `UpdateManager` **não** confere o remontado contra o feed. O manifesto leva então, no completo, o sha256 de cada
+       arquivo de dentro dele (`conteudo`), e antes de aplicar o app aceita o `.nupkg` da pasta do Velopack só se o
+       sha256 do arquivo for o assinado ou se a lista de arquivos (sem nome repetido) e o sha256 de cada um forem
+       exatamente os assinados. O `DownloadUpdatesAsync` extrai o `Update.exe` novo do pacote antes disso (no
+       `finally`): por isso o manifesto e o feed são conferidos **antes** do download, e os deltas e a base são todos
+       conferidos (a base é o pacote local).
+     - **Achado: o Velopack apaga o pacote instalado da pasta dele quando um download é recusado** (o
+       `CleanPackagesExcept` no `finally`), e sem ele não há delta nem para onde voltar. O app guarda o pacote da versão
+       que abriu sem erro numa pasta própria (`%LocalAppData%\GenesisPDV.Spike.Estado\anterior`, com o sha256), já na
+       abertura, e o devolve à pasta do Velopack antes de procurar atualização.
+     - **Critério (c): a volta local.** `SetAutoApplyOnStartup(false)`: o Velopack não aplica sozinho, na abertura, o
+       pacote mais novo da pasta (é o padrão dele, e passaria por cima das conferências e da regra "só no login ou depois
+       do fechamento"). Antes de aplicar: o backup do banco e a atualização pendente gravada (de, para, backup). Na
+       abertura da versão nova, a migração falhou: o app restaura o banco do backup, **recusa a versão neste computador**
+       (não a baixa de novo até sair uma mais nova), confere o pacote guardado (sha256 e o piso da mínima permitida: a
+       volta abaixo dela é proibida e o caixa pede o suporte com o banco já restaurado), tira da pasta do Velopack todos
+       os `.nupkg`, copia o anterior e o aplica pelo `Update.exe` (`ApplyUpdatesAndRestart`). A pasta limpa é
+       obrigatória: o `UpdateExe.Apply` **omite** o `--package` quando o arquivo não está lá, e o `Update.exe` aplica o
+       mais novo da pasta (a versão que falhou). O `apply --package` do `Update.exe` aceita versão menor (não confere
+       "downgrade"), e é ele que reescreve a entrada de desinstalação (DisplayVersion volta) e os atalhos. Nenhum
+       comando, argumento ou campo do manifesto pede volta: só a falha local da migração. **A ordem da volta (ajuste
+       da revisão do F3-B8):** a atualização pendente, com o backup, **só sai quando a versão de destino da volta
+       abre**; até lá a volta fica gravada como **em andamento** (de, para, motivo, tentativas), não como feita. Na
+       abertura, o "VOLTA FEITA" só aparece (e o estado só é limpo) com a versão instalada igual à de destino. Se a
+       versão que falhou abre de novo com a volta em andamento (o `Update.exe` não aplicou: falta de energia entre o
+       fechamento e o apply, arquivo travado pelo antivírus, a chamada lançou exceção), o app **não migra**: restaura o
+       banco do backup outra vez e repete a volta, até 3 tentativas (depois, pede o suporte com o banco restaurado).
+       Sem isso, uma volta que não chegou a ser aplicada deixava o estado dizendo "voltou", sem a referência ao backup,
+       e a abertura seguinte da versão que falhou migrava o banco pela metade sem ter como desfazer. Uma busca de
+       atualização com a volta em andamento é recusada. O ensaio no Wine força a primeira tentativa a falhar (a
+       variável `GENESIS_SPIKE_FALHAR_VOLTA`, lida só pelo pacote de teste da migração que falha). Os ganchos de
+       primeira execução e de reabertura do Velopack só registram: rodam dentro do `VelopackApp.Run()`, antes de o log
+       existir, então as linhas deles ficam guardadas e entram no `spike.log` logo depois (o console já em UTF-8): a
+       reabertura pelo `Update.exe` fica provada no log que o dono manda.
+     - **Regra de publicação da mínima permitida (para o F3-B31/B33):** a `versao_minima_permitida` do manifesto fica
+       **sempre igual ou abaixo da versão anterior em uso nos caixas**, nunca a própria versão publicada: o caixa grava
+       a mínima do manifesto como piso **antes** de baixar, e a volta abaixo do piso é proibida, então um manifesto da
+       0.14.2 com mínima 0.14.2 tiraria a volta automática justo da publicação que força a atualização (a migração da
+       0.14.2 falha, o banco é restaurado, mas o caixa fica na 0.14.2, que não abre o banco, até o suporte). Ela é um
+       valor **diferente** do `versao_minima` do heartbeat (o que força a atualização, com os 3 dias de carência e o
+       426 na ativação): o `implantar.sh pdv publicar` do F3-B31 recebe os dois separados e **recusa** a mínima
+       permitida igual ou acima da versão publicada. Subir a mínima permitida serve para barrar uma versão velha com
+       defeito (impedir que o caixa volte a ela), não para forçar a versão nova.
+     - **Critério (d): convivência com o Inno.** O Velopack instala por usuário (`%LocalAppData%\<packId>`, sem
+       administrador, com a entrada de desinstalação em HKCU), com os atalhos da área de trabalho, do menu Iniciar e o
+       da pasta Inicializar **do usuário** (`--shortcuts Desktop,StartMenuRoot,Startup`), no lugar do "Iniciar com o
+       Windows" do HKLM do Inno (para qualquer usuário): o caixa passa a abrir sozinho só na conta em que foi instalado,
+       o que já é o caso pela DPAPI CurrentUser do token (D21). O mutex `Global\GenesisPDV.Instancia` é do app, não do
+       instalador: o app instalado pelo Velopack vê o do PDV do Inno aberto. Os dados continuam em
+       `%ProgramData%\GenesisPDV`, que o Inno criou com MODIFICAR para Usuários e não apaga ao desinstalar: na passagem
+       (F3-B33), desinstalar o Inno e instalar o Velopack não mexe neles. **Um caixa novo, sem o Inno antes**, não terá
+       essa ACL (o Velopack não roda como administrador): a pasta criada pela conta do caixa serve a ela, mas o F3-B33
+       decide como preparar um caixa novo (o Inno só para a primeira vez, ou um passo de administrador do roteiro).
+       O piso e as recusadas ficam fora da pasta do Velopack e sobrevivem a desinstalar e reinstalar (a proteção contra a
+       versão velha não some com uma reinstalação).
+     - **Desenho do F3-B32/B33, confirmado com estes ajustes:** a fonte com o manifesto na frente do `UpdateManager`; o
+       sha256 de cada arquivo do completo no manifesto; o auto-aplicar desligado; o pacote instalado guardado na
+       abertura; a pasta do Velopack limpa antes da volta; a volta em andamento até a versão de destino abrir (a
+       pendente e o backup mantidos, repetida se a que falhou abrir de novo); a versão que falhou recusada localmente; o
+       piso persistido, com a mínima permitida do manifesto nunca a versão publicada; a assinatura pelo `ssh-keygen` do
+       Windows (a chave pública do dono no build, a privada só no PC dele, com senha).
+       O endereço do feed vem fixo no build (só `https`); no protótipo, o `--fonte <pasta>` é só para o roteiro.
+     - **Ensaio no Wine (sessão, 26/11/2026):** `ensaiar-no-wine.sh --com-inno publish/instalador/GenesisPDV-Setup-0.13.0.exe`
+       verde — instala a 1.0.0 pelo Setup (os três atalhos), recusa as quatro adulteradas antes de aplicar (outra
+       chave, feed refeito com o sha256 do invasor, pacote trocado, manifesto do canal beta), atualiza para a 1.0.1 pelo
+       delta (o remontado conferido arquivo por arquivo, com o "Reaberto pelo Velopack na 1.0.1" no `spike.log`), a
+       1.0.2 falha na migração e a primeira tentativa da volta é forçada a não ser aplicada (a 1.0.2 fica com a volta
+       em andamento, sem dizer que voltou), a abertura seguinte da 1.0.2 restaura o banco sem migrar e volta para a
+       1.0.1 na segunda tentativa, com o banco no esquema 2 e a "Versão instalada: 1.0.1", a 1.0.2 fica recusada, a
+       versão velha assinada e o manifesto anterior são recusados como antigos, e o GenesisPDV 0.13.0 instalado pelo
+       Inno fica intocado, com o mutex dele visto pelo app do Velopack (conferido a cada 5 s, por até 120 s, em vez da
+       espera fixa de 20 s). Refeito depois da revisão do bloco, com o pacote do roteiro gerado de novo. O gancho da
+       primeira execução não se confere no Wine (o ensaio abre o app direto, sem o `VELOPACK_FIRSTRUN` do Setup).
+     - **Pendente (o que decide o PR-22):** o `ROTEIRO-WINDOWS.txt` no Windows de verdade, pelo dono (o pacote é o
+       `publish/velopack-spike/velopack-spike-roteiro.zip` que o `gerar-pacotes-teste.sh` gera, ~150 MB, com o
+       `.sha256`): (b) e (c) comprovados lá, o SmartScreen do Setup.exe baixado (uma vez por caixa; as atualizações não
+       passam por ele) e o Smart App Control (F3-Q35 b: ligado, os binários sem Authenticode devem ser bloqueados; o
+       passo P4 do roteiro anota e para). Sem o roteiro registrado, o PR-22 não começa e a F3-Q33 volta ao dono (plano ›
+       F3-B8).

@@ -4254,6 +4254,17 @@ no PIX, a liberação do gerente), p50 0,59 s e p95 1,6 s; outbox vazio 0,5 s de
   `versao_schema`), para que nenhum caixa perca vendas por estar desatualizado.
 - Versão abaixo de `versao_minima`: aviso por 3 dias de carência; depois, a atualização é obrigatória no próximo login
   (sem bloquear a subida dos eventos pendentes).
+- **Desenho conferido no spike F3-B8 (README do PDV › decisão 100), para o PR-22:** Velopack por usuário do Windows
+  (sem administrador); o pacote montado no Linux pelo `vpk` fixo; a "assinatura" é um manifesto por canal
+  (`manifesto.<canal>.json` + `.sig` do `ssh-keygen -Y sign`, Ed25519, com a chave privada só no PC do dono e a
+  pública no build) com o sha256 do feed, de cada pacote (completo e delta) e de cada arquivo de dentro do completo, e
+  a **versão mínima permitida**, que o caixa guarda como piso e só sobe (um manifesto antigo, mesmo assinado, é
+  recusado); tudo conferido antes do download e de novo antes de aplicar; nada se aplica sozinho na abertura; a volta
+  usa o pacote da versão anterior guardado pelo próprio caixa, só depois de uma falha de migração local, com o banco
+  restaurado e a versão que falhou recusada naquele caixa; a volta fica "em andamento" (com o backup) até a versão
+  anterior abrir, e se repete se a que falhou abrir de novo. A mínima permitida do manifesto nunca é a versão
+  publicada (fica igual ou abaixo da anterior em uso) e é separada do `versao_minima` acima. Comprovado no Wine; o
+  roteiro no Windows do dono decide.
 - **PDV-1 (implantação I3, README do PDV › decisão 62):** sem o atualizador, a versão nova é o instalador manual
   (`GenesisPDV-Setup-x.y.z.exe` por cima da instalada, que mantém banco, backups e ativação). Com o `versao_minima`
   acima da versão do app, o login mostra o aviso com a versão e o instalador a usar, e a recusa da ativação (426) e o

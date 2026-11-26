@@ -733,6 +733,23 @@ corpo do PR-17.
 - **Testes:** um pacote de teste gerado na sessão; o roteiro do Windows com o resultado de (b) e (c) registrado.
 - **Pronto:** decisão registrada, com o desenho do F3-B32/B33 confirmado ou ajustado.
 - **Depende de:** —.
+- [**Feito no F3-B8** (README do PDV › decisão 100; `operacao-sem-actions-plano.md` › OP-B3 ampliado): protótipo
+  descartável em `apps/pdv/instalador/velopack-spike/` (fora do `GenesisPDV.slnx`; sai no F3-B33). (a) **comprovado na
+  sessão** com o vpk 1.2.161 fixo, sem Wine (só o `zstd`). (b) o manifesto é assinado no formato SSHSIG do
+  `ssh-keygen -Y sign` (Ed25519, o OpenSSH que já vem no Windows: o dono não instala nada), conferido por um
+  `IUpdateSource` na frente do `UpdateManager` antes de qualquer download, com o piso da mínima permitida que só sobe.
+  (c) a volta pelo pacote guardado na pasta própria, com o banco restaurado e a versão que falhou recusada localmente;
+  a volta fica "em andamento" (a pendente e o backup mantidos) até a versão anterior abrir, e se repete sem migrar se a
+  que falhou abrir de novo; a mínima permitida do manifesto nunca é a versão publicada (regra do F3-B31).
+  (d) instalação por usuário, sem administrador, o mutex do app visto entre as duas instalações e os dados em
+  `%ProgramData%` intocados. **Ensaio no Wine verde** (`ensaiar-no-wine.sh --com-inno`, com o 0.13.0 do Inno instalado).
+  Achados que ajustam o F3-B32: o completo remontado pelos deltas tem outro sha256 (os mesmos arquivos em outro zip),
+  então o manifesto leva o sha256 de cada arquivo de dentro do completo; o Velopack apaga o pacote instalado quando um
+  download é recusado e aplica sozinho na abertura o mais novo da pasta, e o `UpdateExe.Apply` aplica o mais novo quando
+  o pacote pedido não está na pasta. **Pendente:** o `ROTEIRO-WINDOWS.txt` no Windows do dono (o pacote
+  `velopack-spike-roteiro.zip` gerado pelo `gerar-pacotes-teste.sh`), que decide se o PR-22 começa; a lista de versões
+  dos caixas do dono vai no corpo do PR-17 (até lá, o mais antigo em uso é tratado como 0.10.0; nada muda para ele
+  neste bloco).]
 
 ### PR-18 – ERP: conferência, cancelamento e parâmetros
 
@@ -1116,6 +1133,10 @@ corpo do PR-17.
     nunca é bloqueado); `canal` no `app` (contrato e fixtures);
   - `infra/producao/implantar.sh pdv publicar --canal --minima`: grava em `versoes_app_pdv` e publica o feed em
     `download.<domínio>/pdv/<canal>/` (o comando roda na VPS pelo dono, OP-B2);
+    [**ajuste do spike F3-B8** (README do PDV › decisão 100, regra de publicação): o `--minima` (o `versao_minima` do
+    heartbeat, que força com a carência) e a `versao_minima_permitida` do manifesto assinado são **dois valores
+    separados**; a do manifesto fica igual ou abaixo da versão anterior em uso nos caixas, e o comando **recusa** a
+    mínima permitida igual ou acima da versão publicada (senão o caixa perde a volta automática dessa versão);]
   - ERP: a exceção de canal na tela Terminais e a tela 19.5 mínima (lista e marcar a mínima); o canal da empresa no painel da plataforma
     só se ainda não estiver lá.
 - **Migrações:** controle `0007` (provisória).
@@ -1136,6 +1157,18 @@ corpo do PR-17.
     no cache, **por decisão do próprio app** (nunca por comando remoto);
   - depois da carência, atualização obrigatória no login (o push continua); comando `atualizar_app` atendido (só "procure agora"; nunca
     escolhe versão); situação na Central.
+  - [**Ajustes do spike F3-B8** (README do PDV › decisão 100): a conferência é um `IUpdateSource` na frente do
+    `UpdateManager` (manifesto `manifesto.<canal>.json` + `.sig` SSHSIG, o sha256 do feed, cada pacote igual ao do
+    manifesto, o piso da mínima permitida persistido e só subindo); o completo remontado pelos deltas é conferido pelo
+    sha256 de cada arquivo de dentro dele (o manifesto leva a lista); `SetAutoApplyOnStartup(false)`; o pacote da versão
+    que abriu sem erro guardado numa pasta própria já na abertura e devolvido à pasta do Velopack antes de procurar
+    (o Velopack o apaga quando um download é recusado); antes da volta, a pasta do Velopack só com o pacote anterior (o
+    `UpdateExe.Apply` aplica o mais novo quando o pedido falta); a versão que falhou recusada neste computador; a
+    atualização pendente (com o backup) mantida até a versão de destino da volta abrir, a volta gravada como "em
+    andamento" (não "feita") antes do `ApplyUpdatesAndRestart`, o "volta feita" só com a versão instalada igual à de
+    destino, e, se a versão que falhou abrir de novo com a volta em andamento, o banco restaurado outra vez sem migrar e
+    a volta repetida (até 3 tentativas, depois o suporte); busca de atualização recusada com a volta em andamento. Teste
+    com feed falso: a aplicação da volta que lança exceção, e a abertura seguinte que restaura e volta.]
 - **Arquivos:** `apps/pdv/src/GenesisPDV.App/Servicos/Atualizacao/` (novo), `GenesisPDV.Sync/Ciclo/ProcessadorComandos.cs`,
   `GenesisPDV.App/ViewModels/LoginViewModel.cs`, Central do PDV.
 - **Migrações:** nenhuma.
@@ -1157,6 +1190,13 @@ corpo do PR-17.
     conta do caixa, conferir a venda e a sincronização antes do caixa seguinte;
   - página de download atualizada; a mínima só sobe depois de todos os caixas migrados (senão a ativação recebe 426);
   - README do PDV e `infra/producao/README.md`.
+  - [**Ajustes do spike F3-B8** (README do PDV › decisão 100; OP-B3 ampliado): o pacote sai do vpk fixo no Linux, sem
+    Wine; o Setup.exe de cada versão se guarda logo depois do `pack` dela; a assinatura é o `ssh-keygen -Y sign -n
+    genesispdv-atualizacao` no PC do dono (sem ferramenta nova), e a sessão confere o `.sig` antes da publicação; o
+    Velopack instala por usuário, com o atalho da inicialização do usuário no lugar do "Iniciar com o Windows" do HKLM;
+    um caixa novo, sem o Inno antes, não tem a ACL do `%ProgramData%\GenesisPDV` (decidir aqui como prepará-lo); a
+    `versao_minima_permitida` de cada manifesto fica igual ou abaixo da versão anterior em uso nos caixas, nunca a
+    publicada, e é um valor separado do `versao_minima` do heartbeat (o roteiro de publicação diz os dois).]
 - **Migrações:** nenhuma.
 - **Testes:** shellcheck; conteúdo do pacote (lista de arquivos, versão, sha256); roteiro manual no Windows registrado.
 - **Pronto:** todos os caixas na 0.14.1 pelo Velopack; a R4 sai por este caminho.
