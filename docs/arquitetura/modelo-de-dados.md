@@ -977,7 +977,7 @@ restritiva** que a da UF (prazo menor); a API recusa a mais permissiva. Valores 
 - `uq_templates_documentos_padrao unique nulls not distinct (tipo, loja_id) where padrao and excluido_em is null`
   (desde a migração 0002; conferido na 0030, F3-B2: nenhum banco pode ter dois padrões do mesmo tipo e loja);
   `ck_templates_documentos_tipo`, `ck_templates_documentos_formato`. Desce ao PDV: tipos `cupom_*`, `recibo_venda`,
-  `vale_compra`, `orcamento_*`.
+  `vale_compra`, `orcamento_*` (F3-B7: o `recibo_receber`, que descia até a Fase 2, saiu do filtro).
 
 #### 3.1.4 `numeracoes` (C, —)
 
@@ -2289,7 +2289,7 @@ Promoções cadastradas no ERP (ERP › Promoções) e aplicadas pelo PDV depois
   `ck_promocoes_parametros (jsonb_typeof(parametros) = 'object')` (o formato por tipo é do contrato do shared, F3-B34);
   `ck_promocoes_dias_semana` (como `restricoes_horario_venda`: de 1 a 7 dias entre 0 e 6);
   `ck_promocoes_lojas (lojas is null or cardinality(lojas) >= 1)`.
-- Migração 0030 (F3-B2): `fn_versao` e `ix_promocoes_versao` já na criação (o fluxo `catalogo` passa a lê-la no F3-B7);
+- Migração 0030 (F3-B2): `fn_versao` e `ix_promocoes_versao` já na criação (o fluxo `catalogo` a lê desde o F3-B7, todas as linhas);
   autoria; **exclusão física proibida** (`fn_exclusao_fisica_proibida`, `DELETE` e `TRUNCATE`): o caixa offline pode
   ter na venda o `promocao_id` (sem FK em `itens_venda`) de uma promoção que a nuvem precisa continuar conhecendo, e a
   linha só sai do caixa como tombstone. Só inativação (`ativo`) ou exclusão lógica.
@@ -3311,7 +3311,7 @@ Tabela de atalhos (Configurações › PDV: Atalho / Habilitado / Ordem), por em
   própria nuvem ao aplicar a venda da conversão). `vendas.orcamento_id` e `itens_venda.item_orcamento_id` continuam
   **sem** FK (o PDV os envia).
 - Migração 0030 (F3-B2): `seq_codigo_orcamentos`; `fn_versao('valido_ate')` (a gerada é isenta de versão) e
-  `ix_orcamentos_versao` já na criação (o fluxo `operacao` passa a lê-la no F3-B7); autoria; `loja_id` imutável
+  `ix_orcamentos_versao` já na criação (o fluxo `operacao` a lê desde o F3-B7, com a `valido_ate` descendo como gerada: o PDV a calcula); autoria; `loja_id` imutável
   (`tg_orcamentos_filtro_imutavel`, 6.4 regra 2); exclusão física proibida (o caixa pode ter na venda o
   `orcamento_id`), como nos itens.
 - Situação exibida no ERP 15.1 (derivada): `cancelado` → Cancelado; `convertido` → Convertido; `aberto` e vencido →
@@ -3763,7 +3763,8 @@ cancelar ou trocar uma venda já cancelada ou devolvida.
 - Upsert **na mesma transação** de qualquer alteração dessas colunas de `vendas` cuja origem não seja o próprio
   terminal (ERP, evento de outro terminal, tarefa fiscal). Alterações feitas pelo próprio terminal não geram linha
   (ele já tem o estado).
-- Desce no fluxo `operacao` (F3-B7) com filtro `caixa_id = caixa do terminal T` e `atualizado_em > now() − interval '90 days'`. No PDV é um
+- Desce no fluxo `operacao` (F3-B7) com filtro `caixa_id = caixa do terminal T` e `atualizado_em > now() − interval '90 days'`;
+  a linha que passa dos 90 dias sem mudança não ganha versão nova e o PDV a purga no fim do pull de `operacao`. No PDV é um
   espelho (4.2) com o mesmo nome; a Gestão de vendas lê `vendas` local com `left join vendas_status_pdv` e, quando há
   linha, as colunas da projeção prevalecem. O PDV nunca regrava a própria `vendas` com esses valores (a tabela de
   movimento continua imutável localmente).
@@ -4073,7 +4074,8 @@ emitidos no ERP usam o caixa `00` (dono `nuvem`).
 - `uq_vales_codigo (codigo)`; `ix_vales_pessoa_id`; `ck_vales_codigo (codigo ~ '^VC[0-9]{12}$')`, `ck_vales_tipo`, `ck_vales_status`,
   `ck_vales_origem_tipo`, `ck_vales_valor_original (valor_original > 0)`,
   `ck_vales_cancelado (status <> 'cancelado' or cancelado_em is not null)`. **Sem** `CHECK (saldo >= 0)`.
-  `fn_versao` e `ix_vales_versao` desde a migração 0029 (desce ao caixa no fluxo `pessoas`, F3-B7).
+  `fn_versao` e `ix_vales_versao` desde a migração 0029; desce ao caixa no fluxo `pessoas` desde o F3-B7, na janela
+  da D90 (6.2): o utilizável e o que mudou nos últimos 90 dias; o PDV purga a cópia que sai da janela pelo relógio.
 
 `movimentos_vale`: CP, `vale_id uuid not null`, `tipo varchar(20) not null` (`emissao`, `utilizacao`,
 `estorno_utilizacao`, `cancelamento`, `expiracao`, `ajuste`), `valor numeric(15,2) not null` (emissão +, utilização −),
@@ -5090,11 +5092,11 @@ X = loja do terminal; E = `lojas.estoque_id` de X; T = o terminal. "Todas" = sem
 | `pessoas_categorias`, `saldos_credito_pessoas`, `parcelas_credito_pessoas`, `saldos_vasilhame_pessoas` | pela pessoa (mesmo critério) | — |
 | `pessoas_enderecos`, `pessoas_telefones` | pela pessoa, só com relevância de motivo diferente de `funcionario` (D19: o funcionário desce para login e identificação, sem contato) | Quando só sobra `funcionario`, o PDV apaga o contato local ao receber a relevância excluída (3.5.4) |
 | `pessoas_aliases` | todas | Só ids (resolve `pessoa_id` de cadastro rápido mesclado) |
-| `vales` | todas | — |
+| `vales` | Janela do caixa (D90, F3-Q19 = A): `atualizado_em > now() − 90 dias` **ou** (`status = 'ativo'`, `saldo > 0` e `validade >= hoje − 90 dias`, hoje no fuso da empresa), de todas as lojas | — (o `conferencia_hash` desce para a conferência offline, D96). Quem sai da janela pelo relógio não ganha versão: o PDV apaga a cópia pelo mesmo critério no fim do pull de `pessoas` (menos o `criado_localmente` e o de venda ou evento local em curso), pela hora corrigida para a nuvem; o caixa parado há mais que a janela apaga a cópia e puxa o fluxo do cursor 0 (SYNC 6.8); online o caixa consulta qualquer vale |
 | `orcamentos`, `itens_orcamento` | `loja_id = X` (itens pelo pai) | — |
 | `comandas`, `itens_comanda` | `loja_id = X` (itens pelo pai) | — |
 | `cobrancas_pix` | `terminal_id = T` | — |
-| `vendas_status_pdv` | `caixa_id` = caixa de T e `atualizado_em > now() − 90 dias` | Projeção de status (3.11.9); `vendas` em si não desce |
+| `vendas_status_pdv` | `caixa_id` = caixa de T e `atualizado_em > now() − 90 dias` | Projeção de status (3.11.9); `vendas` em si não desce. A linha de mais de 90 dias sai do PDV pela purga no fim do pull de `operacao`; o caixa parado há mais que a janela apaga a cópia e puxa o fluxo do cursor 0 (SYNC 6.8) |
 
 Tabelas que **não** descem: todo o financeiro, compras/NF-e de entrada, acertos, transferências, movimentos de estoque,
 auditoria, arquivos, `terminais`, `eventos_recebidos`, `entidades_evento`, `comandos_terminal` (vão no heartbeat), `numeracoes` (só na

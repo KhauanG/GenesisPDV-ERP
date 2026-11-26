@@ -41,10 +41,11 @@ requisicao_id } }` (SYNC 2.4, `erros.ts`). Cabeçalhos `X-Genesis-*` obrigatóri
 ## Escopo da Fase 0 e decisões
 
 - **Fluxos**: `configuracao`, `acesso`, `referencia` (sem IBPT/IBS-CBS), `catalogo`, `estoque` e `pessoas` com as
-  tabelas e filtros do MD 6.2 (Fase 1A, README da API › decisão 36); `operacao` sem tabelas — o pull responde vazio
-  com o cursor no teto. Configurações que descem: as chaves marcadas PDV no catálogo
-  `packages/shared/src/configuracoes.ts` (MD 3.1.2). Templates do PDV: `cupom_cabecalho`, `cupom_rodape`,
-  `vale_compra`, `recibo_receber`.
+  tabelas e filtros do MD 6.2 (Fase 1A, README da API › decisão 36). Fase 3 (F3-B7, decisão 226): `catalogo` com as
+  promoções, `pessoas` com os vales na janela da D90 e `operacao` com os orçamentos da loja e o status das vendas do
+  caixa dos últimos 90 dias (sem linha da loja, o pull responde vazio com o cursor no teto). Configurações que descem:
+  as chaves marcadas PDV no catálogo `packages/shared/src/configuracoes.ts` (MD 3.1.2). Templates do PDV (MD 3.1.3):
+  `cupom_cabecalho`, `cupom_rodape`, `recibo_venda`, `vale_compra`, `orcamento_logado`, `orcamento_nao_logado`.
 - **Formas de pagamento por loja** (Fase 1C, C8b; README da API › decisão 136): `formas_pagamento_lojas` desce com
   `loja_id is null or = X` (a linha nula = "todas"); `formas_pagamento` só com vínculo de "todas" ou da loja X, vivo
   ou excluído — a forma de outra loja não desce, e a exclusão do vínculo tira a forma do caixa. Mudar as lojas toca a

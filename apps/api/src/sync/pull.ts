@@ -112,7 +112,12 @@ export class PullSync {
       [terminal.lojaId],
     );
     if (!rows[0]) throw new ErroSync('LOJA_INATIVA', 'Loja do terminal não encontrada.');
-    return { terminalId: terminal.terminalId, lojaId: terminal.lojaId, estoqueId: rows[0].estoque_id };
+    return {
+      terminalId: terminal.terminalId,
+      lojaId: terminal.lojaId,
+      estoqueId: rows[0].estoque_id,
+      caixaId: terminal.caixaId,
+    };
   }
 
   /** Teto no snapshot (SYNC 6.4 passo 3): `max` sem filtro de loja (descida no índice `ix_<tabela>_versao`). */

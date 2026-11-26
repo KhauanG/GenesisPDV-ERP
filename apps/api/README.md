@@ -7798,6 +7798,62 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        o hardware divergente e o 401 sem linha, e a limpeza em lotes (só as vencidas; a empresa sem terminal em contato nem é
        aberta); `sync/online/idempotencia.spec.ts` (o resumo e a operação acima de 80) e o `fila.spec.ts`.
 
+226. **Fluxos de pull da Fase 3 e o espelho do PDV numa só volta de cursor** (F3-B7; plano `docs/planos/fase3-plano.md`;
+     MD 6.1, 6.2, 3.1.3, 3.11.9, 3.13.2; SYNC 6, 16.3, 17.4; D90; `sync/fluxos.ts`, `sync/pull.ts`,
+     `database/empresa/versionamento.ts`, `Esquema.g.cs`). Sem migração na nuvem (as tabelas são da 0029 e da 0030); o
+     lado do caixa (espelhos, migração EF `FaseTres` e a purga local) é a decisão 99 do PDV. Escolhas técnicas, sem
+     pergunta ao dono:
+     - **Onde cada tabela desce.** `promocoes` e `promocoes_itens` no `catalogo`, todas as linhas (o PDV filtra `lojas`,
+       vigência e `ativo`, MD 6.2); `vales` no `pessoas`, de todas as lojas; `orcamentos` (`loja_id = X`, imutável) e
+       `itens_orcamento` (pelo pai, `exists` no orçamento da loja) e `vendas_status_pdv` no `operacao`. As comandas
+       (Fase 8) e o `cobrancas_pix` continuam fora do `operacao`: a cobrança é D ↕ (MD 3.11.6; o PIX dinâmico desce com
+       `terminal_id = T`, MD 6.2) e entra no fluxo com o PIX dinâmico (Fase 6), quando a tabela ganhar `fn_versao`. Nenhuma coluna omitida: o
+       `conferencia_hash` do vale desce para a conferência dos 4 dígitos sem internet (D96 com D89), e o
+       `orcamentos.valido_ate`, gerada, desce como gerada (só muda junto de `data` e `dias_validade`, que versionam; o
+       `Esquema.g.cs` a marca `Gerada: true` e o PDV a calcula). `TABELAS_FN_VERSAO_SEM_FLUXO` ficou vazia (as seis
+       tabelas que o F3-B1 e o F3-B2 deixaram de fora entraram nos fluxos); a lista fica para a próxima tabela que nascer
+       antes do fluxo.
+     - **Janela dos vales (D90, F3-Q19 = A)**, `valeNaJanela`: desce o vale que mudou nos últimos 90 dias
+       (`atualizado_em`) **ou** que continua utilizável (`status = 'ativo'`, `saldo > 0` e vencido há no máximo 90 dias
+       pelo `hojeNaEmpresa`: o vencido com saldo ainda se libera com o supervisor, D88). Fica de fora o vencido, zerado,
+       negativo (D89), usado, expirado ou cancelado sem mudança há mais de 90 dias; online o caixa consulta qualquer
+       vale (F3-B45). `DIAS_JANELA_PDV = 90`, a mesma constante do status de venda, com o espelho em C#
+       (`PurgaJanelas.DiasJanela`) pelo mesmo número; sem chave de configuração (a D90 decidiu o número).
+     - **Status das vendas pelo caixa**: `EscopoTerminal` ganhou o `caixaId` (de `TerminalAutenticado`, o
+       `terminais.caixa_id`), e o filtro é `caixa_id = caixa do terminal and atualizado_em > now() − 90 dias`
+       (`ix_vendas_status_pdv_caixa_id_versao`). O terminal que substituiu outro no mesmo caixa recebe o status das
+       vendas do antigo (SYNC 16.3; padrões da Fase 3); o de outro caixa da mesma loja, não.
+     - **Saída pelo relógio sem tombstone**: o vale e o status que saem da janela só pelo tempo não ganham versão nova
+       (nenhuma tarefa toca a linha: tocar milhares de vales por dia encheria o pull de todos os caixas para nada). O PDV
+       purga a própria cópia pelo complemento exato do mesmo critério, na última página do fluxo (decisão 99 do PDV),
+       como a purga de pessoas do SEG-B13, pela hora corrigida para a nuvem (o relógio do Windows adiantado apagaria o
+       que ainda está na janela, e a linha apagada não desce de novo). A mudança real (o ERP cancela o vale) volta a linha
+       à janela com versão nova; a que acontece e envelhece com o caixa parado há mais que a janela não desce mais, e o
+       PDV parado assim recarrega a tabela do cursor 0 (decisão 99 do PDV) — a exceção ao "cursor nunca expira" da
+       SYNC 6.8, registrada lá.
+     - **Templates do PDV pela MD 3.1.3** (`TEMPLATES_PDV`, exportado): `cupom_cabecalho`, `cupom_rodape`,
+       `recibo_venda`, `vale_compra`, `orcamento_logado` e `orcamento_nao_logado`; o `recibo_receber` (recibo da baixa de
+       contas a receber, ERP 9.6) saiu, porque o caixa não o imprime. Como as linhas do seed dos tipos novos são antigas,
+       a `FaseTres` do PDV volta também o cursor do `configuracao` (o plano listava só `catalogo`, `pessoas` e `operacao`;
+       o fluxo é pequeno) e apaga as cópias locais do `recibo_receber`.
+     - **Compatibilidade.** O PDV instalado (o mais antigo em uso tratado como 0.10.0 até a lista do dono, que vai no
+       corpo do PR-17) recebe as tabelas novas e as ignora com log, sem travar o cursor (decisões 51 e 85 do PDV); o
+       `versoes_schema` não muda. A API vai à produção antes do PDV 0.14.0 (R3), cuja migração `FaseTres` volta os
+       cursores para baixar o que o anterior descartou.
+     - **Testes.** `test/integracao/sync-fluxos-fase3.test.ts` (as promoções com as listas em JSON, inclusive a inativa
+       e a de outra loja; os vales na janela — o utilizável, o de outra loja, o zerado há 89 e há 91 dias, o vencido há 89
+       e há 91 dias, o negativo, o cancelado e o vencido que mudou ontem — e o cancelamento pelo ERP que devolve o de 91
+       dias à janela; o orçamento da loja 2 que não desce ao terminal da loja 1, os itens pelo pai e a `valido_ate`; o
+       status de 91 dias e o de outro caixa que não descem; o teto que avança com o fluxo vazio; o terminal substituto
+       do mesmo caixa; os templates), `sync-triggers.test.ts` (a lista sem fluxo vazia e as seis tabelas nos fluxos),
+       `versionamento.test.ts`, `migracao-promocoes-orcamentos.test.ts` e `verificar:esquema-pdv`. A matriz com o PDV
+       instalado de verdade: `test/e2e-pdv/compatibilidade.sh` extrai o PDV de cada tag (`pdv-v0.10.0` e `pdv-v0.13.0`
+       por padrão, por `git archive`), sobe a API do e2e desta árvore — o `servidor.ts` semeia agora uma promoção
+       inativa, um vale e um orçamento com item —, roda o `GenesisPDV.E2E.Tests` da tag contra ela e confere
+       (`conferir-compatibilidade.ts`) que um terminal daquela versão informou no heartbeat os cursores do `catalogo`, do
+       `pessoas` e do `operacao` além das linhas novas. Local e fora do CI (precisa das tags no clone). O PDV desta árvore,
+       no mesmo e2e (`PontaAPontaTests`), confere que a promoção, o vale e o orçamento com item chegaram ao SQLite.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

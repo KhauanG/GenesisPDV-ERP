@@ -3,9 +3,11 @@
  * terminal, E = estoque da loja, T = terminal) e colunas que não descem. Toda tabela registrada aqui usa
  * `fn_versao` (trava de ordenação): `TABELAS_FN_VERSAO` e o teste `test:sync-triggers` saem desta lista.
  *
- * Fase 1A: `catalogo`, `estoque` e `pessoas` ganharam as tabelas de produtos, saldos e pessoas; `operacao` continua sem
- * tabelas (orçamentos/comandas/PIX/status de venda chegam nas fases que as criam: o pull devolve vazio e o cursor avança
- * até o teto); `referencia` ainda não tem IBPT/IBS-CBS (README › Decisões de implementação).
+ * Fase 1A: `catalogo`, `estoque` e `pessoas` ganharam as tabelas de produtos, saldos e pessoas; `referencia` ainda não
+ * tem IBPT/IBS-CBS (README › Decisões de implementação). Fase 3 (F3-B7; README › decisão 226): `catalogo` ganha as
+ * promoções, `pessoas` os vales (janela da D90) e `operacao` os orçamentos da loja e o status das vendas do caixa
+ * (janela de 90 dias). As comandas chegam com o módulo delas (Fase 8); `cobrancas_pix` (D ↕: o PIX dinâmico desce com
+ * `terminal_id = T`, MD 6.2) entra no `operacao` com o PIX dinâmico (Fase 6), quando a tabela ganhar `fn_versao`.
  */
 import { CHAVES_CONFIGURACAO_PDV, CONFIGURACOES_POR_CHAVE, type Fluxo } from '@genesis/shared';
 import { sql, type SQL } from 'drizzle-orm';
@@ -29,6 +31,7 @@ import {
   gruposPrecoQuantidade,
   gruposPrecoQuantidadeFaixas,
   impressorasDestino,
+  itensOrcamento,
   lojas,
   lojasBanners,
   marcas,
@@ -36,6 +39,7 @@ import {
   municipios,
   ncms,
   numeracoesFaixas,
+  orcamentos,
   paises,
   parametrosFiscaisUf,
   parcelasCreditoPessoas,
@@ -62,6 +66,8 @@ import {
   produtosTributacaoUf,
   produtosVariacoes,
   produtosVariacoesValores,
+  promocoes,
+  promocoesItens,
   restricoesHorarioVenda,
   saldosCreditoPessoas,
   saldosEstoque,
@@ -75,6 +81,8 @@ import {
   usuarios,
   usuariosLojas,
   usuariosPermissoes,
+  vales,
+  vendasStatusPdv,
 } from '../database/empresa/schema/index.js';
 
 // A lista dos fluxos é parte do contrato com o PDV (resposta da ativação, query do pull): mora no shared.
@@ -85,6 +93,8 @@ export interface EscopoTerminal {
   terminalId: string;
   lojaId: string;
   estoqueId: string;
+  /** Caixa do terminal (`terminais.caixa_id`): o terminal substituto do mesmo caixa recebe o que era do antigo. */
+  caixaId: string;
 }
 
 export interface TabelaFluxo {
@@ -103,8 +113,37 @@ export interface TabelaFluxo {
   calculadas?: Record<string, CampoCalculado>;
 }
 
-/** Tipos de template impressos pelo PDV (cupom, vale, recibo de crediário). */
-const TEMPLATES_PDV = ['cupom_cabecalho', 'cupom_rodape', 'vale_compra', 'recibo_receber'];
+/**
+ * Tipos de template impressos pelo PDV (MD 3.1.3): cupom, recibo não fiscal da venda, vale e orçamento (F3-B7). O
+ * `recibo_receber` (recibo de contas a receber, impresso na baixa pelo ERP, ERP 9.6) não desce: o caixa não o usa, e a
+ * migração EF `FaseTres` apaga as cópias que o PDV anterior recebeu (a saída do filtro não tem tombstone, SYNC 4.1).
+ */
+export const TEMPLATES_PDV = [
+  'cupom_cabecalho',
+  'cupom_rodape',
+  'recibo_venda',
+  'vale_compra',
+  'orcamento_logado',
+  'orcamento_nao_logado',
+] as const;
+
+/**
+ * Janelas por tempo dos fluxos (D90; MD 6.2): o vale que saiu do uso e o status de venda deixam de descer depois de
+ * `DIAS_JANELA_PDV` dias sem mudança. Quem sai da janela pelo relógio não ganha versão nova: o PDV purga a própria
+ * cópia pelo mesmo critério (`PurgaJanelas` no `AplicadorPull`, README do PDV › decisão 99), na última página do fluxo,
+ * pela hora corrigida para a nuvem. A mudança que tira a linha da janela e envelhece com o caixa parado (o vale
+ * cancelado no 5º dia, o caixa de volta no 100º) também não desce: o PDV parado há mais que a janela apaga a cópia da
+ * tabela e puxa o fluxo do cursor 0 (a exceção ao "cursor nunca expira" da SYNC 6.8).
+ */
+export const DIAS_JANELA_PDV = 90;
+/**
+ * Vale na janela do caixa (D90, F3-Q19 = A): mudou nos últimos 90 dias, ou continua utilizável (`ativo`, com saldo e
+ * vencido há no máximo 90 dias; o vencido com saldo ainda se libera com o supervisor, D88). Fora disso — vencido,
+ * zerado, usado ou cancelado há mais de 90 dias — não desce; online o caixa consulta qualquer vale (F3-B45).
+ */
+export const valeNaJanela = () =>
+  sql`t.atualizado_em > now() - make_interval(days => ${DIAS_JANELA_PDV})
+    or (t.status = 'ativo' and t.saldo > 0 and t.validade >= ${hojeNaEmpresa} - ${DIAS_JANELA_PDV}::int)`;
 
 /** Loja nula (todas) ou a loja do terminal. */
 const lojaNulaOuX = (e: EscopoTerminal) => sql`t.loja_id is null or t.loja_id = ${e.lojaId}`;
@@ -334,6 +373,9 @@ export const REGISTRO_FLUXOS: Readonly<Record<Fluxo, readonly TabelaFluxo[]>> = 
       tabela: produtosLotes,
       filtro: (e) => sql`t.estoque_id is null or t.estoque_id = ${e.estoqueId}`,
     },
+    // Promoções (F3-B7; MD 3.6.11): todas as linhas, o PDV filtra `lojas`, vigência e `ativo` (MD 6.2).
+    { tabela: promocoes },
+    { tabela: promocoesItens },
     { tabela: restricoesHorarioVenda, filtro: lojaNulaOuX },
     { tabela: gruposPrecoQuantidade },
     { tabela: gruposPrecoQuantidadeFaixas, filtro: lojaNulaOuX },
@@ -375,8 +417,26 @@ export const REGISTRO_FLUXOS: Readonly<Record<Fluxo, readonly TabelaFluxo[]>> = 
     { tabela: saldosCreditoPessoas, filtro: pessoaRelevante('pessoa_id') },
     { tabela: parcelasCreditoPessoas, filtro: pessoaRelevante('pessoa_id') },
     { tabela: saldosVasilhamePessoas, filtro: pessoaRelevante('pessoa_id') },
+    // Vales de todas as lojas na janela da D90 (F3-B7; MD 3.13.2): `conferencia_hash` desce para a conferência dos 4
+    // dígitos sem internet (D96, D89).
+    { tabela: vales, filtro: valeNaJanela },
   ],
-  operacao: [],
+  operacao: [
+    // Orçamentos da loja do terminal (MD 3.11.1; `loja_id` imutável, MD 6.4 regra 2), os itens pelo pai.
+    { tabela: orcamentos, filtro: (e) => sql`t.loja_id = ${e.lojaId}` },
+    {
+      tabela: itensOrcamento,
+      filtro: (e) =>
+        sql`exists (select 1 from orcamentos o where o.id = t.orcamento_id and o.loja_id = ${e.lojaId})`,
+    },
+    // Status das vendas alteradas fora do terminal (MD 3.11.9, SYNC 16.3): pelo **caixa** (imutável), não pelo
+    // terminal, para o substituto receber o das vendas antigas; só as mudanças dos últimos 90 dias.
+    {
+      tabela: vendasStatusPdv,
+      filtro: (e) =>
+        sql`t.caixa_id = ${e.caixaId} and t.atualizado_em > now() - make_interval(days => ${DIAS_JANELA_PDV})`,
+    },
+  ],
 };
 
 export function nomeTabela(t: PgTable): string {

@@ -5,8 +5,10 @@ using GenesisPDV.Core.Comum;
 using GenesisPDV.Data;
 using GenesisPDV.Data.Convencoes;
 using GenesisPDV.Data.Entidades;
+using GenesisPDV.Data.Manutencao;
 using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Protocolo;
+using GenesisPDV.Sync.Relogio;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
@@ -36,6 +38,12 @@ public sealed record ResultadoPagina(int Recebidas, int Gravadas, int Ignoradas,
 /// as filhas saem do espelho (exceção à regra 6.4.4); quando só sobra <c>funcionario</c>, saem telefones e endereços
 /// (D19). A purga adiada pelo trabalho em curso é reavaliada a cada ciclo, na última página do fluxo <c>pessoas</c>
 /// (<see cref="PessoasSemRelevanciaAsync"/>): a relevância excluída desce uma vez só.</item>
+/// <item>Janelas por tempo (F3-B7; D90): na última página de <c>pessoas</c> saem os vales fora da janela e na de
+/// <c>operacao</c> o status de venda com mais de 90 dias (<see cref="PurgaJanelas"/>): quem sai pelo relógio não desce. A
+/// hora da purga é a corrigida pelo desvio para a nuvem (<c>relogioNuvem</c>, SYNC 12.3), porque o filtro da
+/// API corta pelo <c>now()</c> de lá; sem amostra confiável, a purga espera o ciclo seguinte. O fluxo parado por mais
+/// tempo que a janela recarrega a tabela do zero (<see cref="RecarregarJanelaSeParadoAsync"/>).</item>
+/// <item>Coluna gerada na nuvem (<c>orcamentos.valido_ate</c>) não é gravada: o SQLite a calcula.</item>
 /// <item>Índice da pesquisa F2 (F2-B36, <see cref="IndiceBuscaProdutos"/>): o texto dos produtos gravados e dos produtos
 /// das marcas e categorias gravadas é recalculado na mesma transação, sob um <c>SAVEPOINT</c> (a falha desfaz só o índice
 /// e marca a reconstrução, que o próprio pull tenta de novo a cada <see cref="IntervaloReconstrucaoIndice"/>).</item>
@@ -43,7 +51,10 @@ public sealed record ResultadoPagina(int Recebidas, int Gravadas, int Ignoradas,
 /// A linha adiada por evento local pendente (MD 4.4.12) entra com os espelhos que têm escrita local (vales, comandas),
 /// em fases seguintes: os fluxos da Fase 1B são todos mestres na nuvem.
 /// </summary>
-public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogger<AplicadorPull> log)
+/// <param name="relogio">Relógio do SO: hora do cursor (<c>ultimo_pull_em</c>) e intervalos locais.</param>
+/// <param name="relogioNuvem">Relógio corrigido pelo desvio para a nuvem, só para as janelas por tempo; nulo (testes e
+/// bancos de versões anteriores) = <paramref name="relogio"/>.</param>
+public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogger<AplicadorPull> log, RelogioSync? relogioNuvem = null)
 {
     private const string ColunaVersao = "versao";
     private const string ColunaCriadoLocalmente = "criado_localmente";
@@ -58,6 +69,13 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
         "pessoas_categorias", "pessoas_enderecos", "pessoas_telefones", "saldos_credito_pessoas", "parcelas_credito_pessoas",
         "saldos_vasilhame_pessoas",
     ];
+
+    /// <summary>Tabela com janela por tempo de cada fluxo (D90; MD 6.2): purgada na última página, recarregada no fluxo parado.</summary>
+    private static readonly Dictionary<string, string> TabelaComJanela = new(StringComparer.Ordinal)
+    {
+        [FluxosSync.Pessoas] = "vales",
+        [FluxosSync.Operacao] = "vendas_status_pdv",
+    };
 
     /// <summary>Intervalo mínimo entre as tentativas de reconstruir o índice da pesquisa durante o pull (F2-B36).</summary>
     public static readonly TimeSpan IntervaloReconstrucaoIndice = TimeSpan.FromMinutes(15);
@@ -230,6 +248,33 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
                 }
             }
 
+            // Janelas por tempo (F3-B7; D90): por estado, como a purga de pessoas, uma vez por ciclo na última página. Só
+            // com o espelho no banco (o aplicador também roda sobre o banco de uma versão anterior nos testes de
+            // compatibilidade; na abertura do app as migrações vêm antes). A hora é a da nuvem: o relógio do Windows
+            // adiantado apagaria o que a nuvem ainda tem na janela, e a linha apagada aqui não desce de novo (a versão
+            // dela não mudou); sem amostra confiável, a purga fica para o ciclo seguinte.
+            var janela = TabelaComJanela.GetValueOrDefault(pagina.Fluxo);
+            if (!pagina.TemMais && janela is not null && (await ColunasLocaisAsync(conexao, tx, janela, ct)).Count > 0)
+            {
+                var saidas = 0;
+                if (HoraDaNuvem() is not { } agoraNuvem)
+                {
+                    log.LogDebug("Pull {Fluxo}: purga da janela de {Tabela} adiada (relógio ainda sem amostra da nuvem)", pagina.Fluxo, janela);
+                }
+                else
+                {
+                    saidas = janela == "vales"
+                        ? await PurgaJanelas.PurgarValesAsync(conexao, tx, agoraNuvem, ct)
+                        : await PurgaJanelas.PurgarStatusVendasAsync(conexao, tx, agoraNuvem, ct);
+                }
+
+                if (saidas > 0)
+                {
+                    log.LogInformation("Pull {Fluxo}: {Linhas} linha(s) de {Tabela} saíram da janela de {Dias} dias e do espelho local",
+                        pagina.Fluxo, saidas, janela, PurgaJanelas.DiasJanela);
+                }
+            }
+
             // Sob um SAVEPOINT: a falha do índice (FTS5 corrompida) desfaz só ele e marca a reconstrução; a página e o
             // cursor seguem, e a pesquisa passa à busca em memória até a reconstrução.
             if (await IndiceBuscaProdutos.AtualizarAsync(conexao, tx, indice["produtos"], indice["marcas"], indice["categorias"], relogio.Agora, ct) is { } falha)
@@ -269,6 +314,13 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
             // grava a constante, ver Preparar).
             if (!locais.ContainsKey(propriedade.Name) || propriedade.Name == ColunaCriadoLocalmente)
             {
+                // Coluna gerada na nuvem e aqui (`orcamentos.valido_ate`, F3-B7): o `pragma table_info` não a lista e o
+                // SQLite a calcula (recusaria o valor); não é coluna desconhecida.
+                if (tabela.Colunas.FirstOrDefault(c => c.Nome == propriedade.Name) is { Gerada: true })
+                {
+                    continue;
+                }
+
                 if (avisados.Add($"{alt.Tabela}.{propriedade.Name}"))
                 {
                     log.LogInformation("Pull {Fluxo}: coluna desconhecida {Tabela}.{Coluna} ignorada", fluxo, alt.Tabela, propriedade.Name);
@@ -333,6 +385,88 @@ public sealed class AplicadorPull(FabricaPdvDb fabrica, IRelogio relogio, ILogge
 
         comando.Prepare();
         return (comando, colunas);
+    }
+
+    /// <summary>
+    /// Hora das janelas por tempo: a corrigida pelo desvio para a nuvem (SYNC 12.3), a referência do <c>now()</c> que corta
+    /// a janela na API. Sem amostra confiável neste boot (<c>relogio_confiavel = false</c>), nula; sem o relógio da nuvem
+    /// (testes, bancos de versões anteriores), a do SO.
+    /// </summary>
+    private DateTimeOffset? HoraDaNuvem() => relogioNuvem switch
+    {
+        null => relogio.Agora,
+        { Confiavel: true } r => r.Agora,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Fluxo parado por mais tempo que a janela (F3-B7; SYNC 6.8; README do PDV › decisão 99): sem pull com sucesso há
+    /// mais de <c>DiasJanela − MargemRecargaDias</c> dias (ou nunca, com o cursor já andado), a mudança que tirou uma linha
+    /// da janela enquanto o caixa estava parado já envelheceu e não desce mais — o vale cancelado no ERP continuaria
+    /// "ativo" aqui. Apaga a cópia da tabela com janela do fluxo (<see cref="PurgaJanelas.DescartarCopiaAsync"/>) e volta
+    /// o cursor a 0 na mesma transação; a descida que vem a seguir traz de novo o que está na janela (as outras tabelas do
+    /// fluxo passam pelo upsert por versão sem mudar). A idade é a maior entre o relógio do SO, que gravou a hora do
+    /// último pull, e o corrigido. Chamado antes do pull do fluxo; devolve se recarregou.
+    /// </summary>
+    public async Task<bool> RecarregarJanelaSeParadoAsync(string fluxo, CancellationToken ct = default)
+    {
+        if (TabelaComJanela.GetValueOrDefault(fluxo) is not { } tabela)
+        {
+            return false;
+        }
+
+        await using var conexao = new SqliteConnection(fabrica.StringConexao);
+        await conexao.OpenAsync(ct);
+        await ExecutarAsync(conexao, null, $"{PragmasSqlite.Comando} PRAGMA synchronous=FULL;", ct);
+        await using var tx = (SqliteTransaction)await conexao.BeginTransactionAsync(ct);
+        if ((await ColunasLocaisAsync(conexao, tx, tabela, ct)).Count == 0)
+        {
+            return false;
+        }
+
+        long cursor;
+        string? ultimoSucesso;
+        await using (var cmd = conexao.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "select cursor, ultimo_pull_sucesso_em from estado_sincronizacao where fluxo = $fluxo";
+            cmd.Parameters.AddWithValue("$fluxo", fluxo);
+            await using var leitor = await cmd.ExecuteReaderAsync(ct);
+            if (!await leitor.ReadAsync(ct))
+            {
+                return false;
+            }
+
+            cursor = leitor.GetInt64(0);
+            ultimoSucesso = leitor.IsDBNull(1) ? null : leitor.GetString(1);
+        }
+
+        if (cursor == 0)
+        {
+            return false;
+        }
+
+        var limite = TimeSpan.FromDays(PurgaJanelas.DiasJanela - PurgaJanelas.MargemRecargaDias);
+        var agora = relogioNuvem is { Confiavel: true } r && r.Agora > relogio.Agora ? r.Agora : relogio.Agora;
+        if (ultimoSucesso is not null && agora - DataHoraUtcTexto.Ler(ultimoSucesso) <= limite)
+        {
+            return false;
+        }
+
+        var saidas = await PurgaJanelas.DescartarCopiaAsync(conexao, tx, tabela, ct);
+        await using (var cmd = conexao.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "update estado_sincronizacao set cursor = 0 where fluxo = $fluxo";
+            cmd.Parameters.AddWithValue("$fluxo", fluxo);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        await tx.CommitAsync(ct);
+        log.LogInformation(
+            "Pull {Fluxo}: sem pull com sucesso desde {Ultimo}, mais que a janela de {Dias} dias; {Linhas} linha(s) de {Tabela} saíram e o fluxo recarrega do cursor 0 (antes {Cursor})",
+            fluxo, ultimoSucesso ?? "nunca", PurgaJanelas.DiasJanela, saidas, tabela, cursor);
+        return true;
     }
 
     private async Task<IReadOnlyDictionary<string, ColunaLocal>> ColunasLocaisAsync(SqliteConnection conexao, SqliteTransaction tx, string tabela, CancellationToken ct)

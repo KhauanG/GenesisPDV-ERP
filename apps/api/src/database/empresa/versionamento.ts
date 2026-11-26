@@ -13,19 +13,10 @@ export const TABELAS_FN_VERSAO: readonly string[] = TABELAS_DOS_FLUXOS;
  * num bloco seguinte (o `Esquema.g.cs` só muda junto do fluxo, numa só volta de cursor por release; padrões da Fase 3).
  * Fora de `TABELAS_FN_VERSAO` (que gera os espelhos do PDV); o `test:sync-triggers` confere o trigger, o índice e que
  * nenhuma está num fluxo. Quando o fluxo entrar, a tabela sai daqui.
- * - `vales` (0029, F3-B1; MD 3.13.2, C ↕): o fluxo `pessoas` com o filtro da D90 é do F3-B7.
- * - `promocoes`, `promocoes_itens` (0030, F3-B2; MD 3.6.11, C ↓): fluxo `catalogo`, todas as linhas (F3-B7).
- * - `orcamentos`, `itens_orcamento` (0030, F3-B2; MD 3.11.1, C ↓ loja) e `vendas_status_pdv` (MD 3.11.9, P ↓ caixa):
- *   fluxo `operacao` (F3-B7).
+ * Vazia desde o F3-B7: `vales` (0029, F3-B1), `promocoes`/`promocoes_itens`, `orcamentos`/`itens_orcamento` e
+ * `vendas_status_pdv` (0030, F3-B2) entraram nos fluxos `pessoas`, `catalogo` e `operacao` (README › decisão 226).
  */
-export const TABELAS_FN_VERSAO_SEM_FLUXO = [
-  'vales',
-  'promocoes',
-  'promocoes_itens',
-  'orcamentos',
-  'itens_orcamento',
-  'vendas_status_pdv',
-] as const;
+export const TABELAS_FN_VERSAO_SEM_FLUXO: readonly string[] = [];
 
 /**
  * Colunas isentas de versão (argumentos do trigger `tg_<tabela>_versao`, migrações 0011, 0012 e 0016; MD 1.5; T3/T10

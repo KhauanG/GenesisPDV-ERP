@@ -708,6 +708,14 @@ corpo do PR-17.
     cursor avança (`test/e2e-pdv`).
 - **Pronto:** o PDV novo recebe as linhas no SQLite; o PDV instalado continua sincronizando e vendendo.
 - **Depende de:** F3-B2.
+- [**Feito no F3-B7** (README da API › decisão 226, do PDV › 99): a `FaseTres` volta **quatro** cursores — o
+  `configuracao` também, porque a correção do `TEMPLATES_PDV` passa a descer `recibo_venda` e `orcamento_*`, cujas linhas
+  do seed são antigas — e apaga as cópias locais do `recibo_receber`, que saiu do filtro (MD 3.1.3). A janela dos vales
+  (D90) é "mudou nos últimos 90 dias **ou** ainda utilizável (ativo, com saldo, vencido há no máximo 90 dias)", e a purga
+  local é o complemento exato, que também segura o vale de venda ou evento local em curso. A `valido_ate` do orçamento
+  desce como gerada e o SQLite a calcula. O e2e do PDV não tem o status de venda (precisa de uma venda de terminal): fica
+  na integração. A matriz com o PDV das tags é o `apps/api/test/e2e-pdv/compatibilidade.sh` (local); a lista de versões
+  do dono vai no corpo do PR-17.]
 
 #### F3-B8 – Spike do Velopack sem o Actions
 - **Tamanho:** M · **Rigor:** enxuto (documentação e protótipo descartável), com critérios de "segue / não segue"

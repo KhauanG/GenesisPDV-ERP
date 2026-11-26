@@ -4359,3 +4359,68 @@ reimpresso continua o original, com o número do caixa.
       `Espera` da política); o 422 `REQUISICAO_DIVERGENTE`, o 409 de regra, o `HARDWARE_ALTERADO`, o 500 e o 404 não repetem; as
       tentativas esgotadas sobem o timeout com todas no mesmo id e o prazo inteiro da rota em cada uma; o cancelamento de quem chamou e a política de uma
       tentativa não repetem.
+
+99. **Espelhos da Fase 3, uma volta de cursor só na migração `FaseTres` e a purga das janelas por tempo** (F3-B7; SYNC
+    6.1, 16.3, 17.4.2; MD 4.2, 6.2, 3.11.9, 3.13.2; D90; README da API › decisão 226). Só o espelho: nenhuma tela lê as
+    tabelas ainda (promoções a partir do F3-B35, vales no F3-B46, orçamentos no F9 e o status na Gestão de vendas do
+    F3-B29), nenhum evento nem `versoes_schema` muda, e a `<Version>` continua 0.13.0 até a release R3 (0.14.0, F3-B30).
+    - **Espelhos novos:** `promocoes` e `promocoes_itens` (fluxo `catalogo`; `Entidades/TabelasCatalogoComplementar.cs`),
+      `vales` (`pessoas`; `TabelasPessoas.cs`) e `orcamentos`, `itens_orcamento` e `vendas_status_pdv` (`operacao`;
+      `TabelasOperacao.cs`, novo), com os índices do MD 4.2 (`vales(codigo)`, `orcamentos(codigo)`, `promocoes_itens`
+      pelo produto e pela categoria) e os da purga (`atualizado_em` dos vales e do status). O `uuid[]` da nuvem
+      (`promocoes.lojas`) é TEXT JSON com o UUID canônico (`ListaGuidJson`, como o `text[]` e o `smallint[]`), e o
+      `ConversorLinha` grava o mesmo formato; `parametros`, `dias_semana` e `lojas` com o CHECK `json_valid`. A
+      `orcamentos.valido_ate`, gerada na nuvem, é gerada aqui (`date(data, '+' || dias_validade || ' days')`, stored):
+      o `pragma table_info` não a lista e o aplicador do pull a pula em silêncio pela marca `Gerada` do `Esquema.g.cs`
+      (o SQLite recusaria o valor). Os CHECKs de domínio da nuvem não se repetem nos espelhos (como desde a 1B).
+    - **Uma migração EF só** (`Migracoes/<data>_FaseTres.cs`), no padrão da `FaseDois` (decisão 85): cria as seis tabelas
+      e volta a 0 os cursores do `catalogo`, do `pessoas` e do `operacao` — o PDV anterior descartou as linhas delas e a
+      API vai antes à produção — e também do `configuracao`, porque o filtro dos `templates_documentos` ganhou
+      `recibo_venda` e `orcamento_*` (MD 3.1.3), cujas linhas do seed são antigas (o plano listava três; o fluxo é
+      pequeno). Nenhuma versão local volta (nenhuma coluna nova em tabela existente); a carga inicial concluída, a marca
+      `ressincronizar` e o restante do estado ficam; a venda segue durante a nova descida (upsert por versão). Saem só
+      as cópias do `recibo_receber`, que deixou de descer (saída de filtro sem tombstone, SYNC 4.1; o caixa nunca o
+      imprimiu). O 0.10.0 que passa direto para a versão nova aplica a `BuscaProdutosFts`, a `FaseDois` e a `FaseTres`
+      juntas, com o mesmo resultado. A publicação de `ressincronizar_fluxo` por migração da nuvem é do F3-B67.
+    - **Purga das janelas por tempo** (`Manutencao/PurgaJanelas.cs`, chamada pelo `AplicadorPull`): o vale e o status
+      que saem da janela só pelo relógio não ganham versão nova na nuvem, então nada os "desce". Na **última página** do
+      `pessoas` saem os vales sem mudança há mais de 90 dias que não são mais utilizáveis (vencidos há mais de 90 dias
+      pela data no fuso da empresa do espelho, zerados ou negativos, usados, expirados ou cancelados) — o complemento
+      exato do `valeNaJanela` da API —, menos o emitido aqui e ainda não confirmado (`criado_localmente`), o de uma venda
+      local em curso (pagamento com o `vale_id`) e o de um evento ainda a subir (pendente, enviando, erro temporário; o
+      recusado em quarentena não segura, como na purga de pessoas da decisão 91). Na última página do `operacao` sai o
+      status de venda com mais de 90 dias. Por estado, uma vez por ciclo; a página com `tem_mais` não purga. Só com o
+      espelho no banco (o aplicador também roda sobre o banco de uma versão anterior nos testes de compatibilidade).
+      `PurgaJanelas.DiasJanela = 90` é o `DIAS_JANELA_PDV` da API. A hora da purga é a **corrigida para a nuvem** (o
+      `RelogioSync`, passado ao `AplicadorPull` só para as janelas): o filtro da API corta pelo `now()` de lá, e o
+      Windows adiantado apagaria o que a nuvem ainda tem na janela, sem volta (a linha não ganha versão nova). Sem amostra
+      confiável do relógio neste boot (`relogio_confiavel = false`), a purga fica para o ciclo seguinte.
+    - **Recarga do fluxo parado** (`AplicadorPull.RecarregarJanelaSeParadoAsync`, chamado pelo ciclo antes do pull de
+      cada fluxo; SYNC 6.8): a mudança que tira a linha da janela e envelhece enquanto o caixa está parado (o ERP cancela
+      o vale no 5º dia, o caixa volta no 100º) não desce mais, e a cópia local ainda diria "ativo, com saldo" — com a
+      `pdv.vale_exige_online` = Não (D89), aceito sem internet. Pela D35 nada impede o caixa de ficar parado esse tempo.
+      Por isso, sem pull com sucesso do `pessoas` ou do `operacao` há mais de `DiasJanela − MargemRecargaDias` (80) dias
+      — a folga de 10 cobre a diferença entre o relógio do caixa, que gravou o `ultimo_pull_sucesso_em`, e o da nuvem; a
+      idade é a maior pelos dois relógios — ou nunca, com o cursor já andado, o PDV apaga a cópia da tabela com janela do
+      fluxo (`PurgaJanelas.DescartarCopiaAsync`: os `vales` menos o `criado_localmente`, o de venda local em curso e o de
+      evento a subir; os `vendas_status_pdv`) e volta o cursor a 0 na mesma transação. A descida traz de novo o que está
+      na janela (as outras tabelas do fluxo passam pelo upsert por versão sem mudar), e a primeira página renova o último
+      pull. Até a recarga terminar, o vale da nuvem só se consulta online (F3-B45); é a exceção ao "cursor nunca expira".
+    - **Compatibilidade.** O 0.13.0 e o 0.10.0 instalados (o mais antigo em uso tratado como 0.10.0 até a lista do dono,
+      que vai no corpo do PR-17) descartam as tabelas novas com log e o cursor avança; conferido com o PDV compilado das
+      tags contra a API nova pelo `apps/api/test/e2e-pdv/compatibilidade.sh` (README da API › decisão 226).
+    - **Testes.** `MigracaoFaseTresTests` (Data.Tests: sobre o banco do 0.10.0 e do 0.13.0 com dados, só os quatro
+      cursores voltam, uma migração da Fase 3, a versão local e os dados ficam, o `recibo_receber` sai, as tabelas novas
+      vazias; a `valido_ate` calculada pelo SQLite e lida pelo EF), `PurgaJanelasTests` (o vale zerado há 91 dias sai e o
+      de 89 fica; o criado localmente nunca sai; o negativo, o cancelado e o vencido há 91 dias saem; o vencido há 89 dias
+      e o que mudou ontem ficam; o da venda em curso e o do evento pendente ficam até terminar, o do recusado sai; o status
+      de 91 dias sai e o de 89 fica; a recarga apaga até o vale utilizável e todo status, menos o vale local, o da venda
+      em curso e o do evento), `AplicadorPullTests` (o 0.13.0 descarta as seis tabelas e o cursor avança, a
+      `FaseTres` volta os cursores e o app novo grava promoções com as listas, o vale negativo com o resumo da
+      conferência, o orçamento com a `valido_ate` calculada, os itens e o status; a última página purga e a do meio não;
+      com o Windows 91 dias adiantado e a nuvem 1 dia depois nada sai, sem amostra do relógio a purga espera; o fluxo
+      parado 100 dias recarrega do cursor 0 e o de 80 não, o cursor 0 não recarrega de novo e o cursor andado sem pull
+      registrado recarrega; os testes com a purga fixam o relógio na data das linhas, para não quebrarem com o tempo;
+      o exemplo de tabela desconhecida passou de `promocoes` para `comandas`), `EsquemaNuvemTests` com as tabelas novas e
+      os testes da `FaseDois` e da `FormasPagamentoLojas` com um fluxo que a `FaseTres` não volta; no e2e (`PontaAPontaTests`), a
+      promoção, o vale e o orçamento com item que o `servidor.ts` semeia chegam ao SQLite na carga inicial.

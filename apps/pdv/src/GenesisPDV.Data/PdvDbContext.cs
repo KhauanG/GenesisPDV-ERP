@@ -488,6 +488,39 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
         // Complementos (F2-B45): a venda da Fase 3 lê os grupos do produto e as opções do grupo.
         modelBuilder.Entity<ProdutoGrupoComplementosRegistro>().HasIndex(x => x.ProdutoId).HasDatabaseName("ix_produtos_grupos_complementos_produto_id");
         modelBuilder.Entity<ProdutoComplementoRegistro>().HasIndex(x => x.GrupoId).HasDatabaseName("ix_produtos_complementos_grupo_id");
+
+        // Fase 3 (F3-B7; MD 4.2): promoções, vales, orçamentos e status das vendas, com os índices das buscas do caixa e
+        // os da purga por janela (README do PDV › decisão 99). Arrays e JSON da nuvem em TEXT JSON, com o CHECK de formato.
+        modelBuilder.Entity<PromocaoRegistro>(e =>
+        {
+            e.ToTable("promocoes", t =>
+            {
+                t.HasCheckConstraint("ck_promocoes_parametros_json", "json_valid(parametros)");
+                t.HasCheckConstraint("ck_promocoes_dias_semana_json", "dias_semana is null or json_valid(dias_semana)");
+                t.HasCheckConstraint("ck_promocoes_lojas_json", "lojas is null or json_valid(lojas)");
+            });
+        });
+        modelBuilder.Entity<PromocaoItemRegistro>(e =>
+        {
+            e.HasIndex(x => x.PromocaoId).HasDatabaseName("ix_promocoes_itens_promocao_id");
+            e.HasIndex(x => x.ProdutoId).HasDatabaseName("ix_promocoes_itens_produto_id");
+            e.HasIndex(x => x.CategoriaId).HasDatabaseName("ix_promocoes_itens_categoria_id");
+        });
+        modelBuilder.Entity<ValeRegistro>(e =>
+        {
+            e.HasIndex(x => x.Codigo).HasDatabaseName("ix_vales_codigo");
+            e.HasIndex(x => x.PessoaId).HasDatabaseName("ix_vales_pessoa_id");
+            e.HasIndex(x => x.AtualizadoEm).HasDatabaseName("ix_vales_atualizado_em");
+        });
+        modelBuilder.Entity<OrcamentoRegistro>(e =>
+        {
+            // Gerada como na nuvem (`data + dias_validade`); o aplicador do pull não a grava (o `pragma table_info` não a
+            // lista e o Esquema.g.cs a marca como gerada).
+            e.Property(x => x.ValidoAte).HasComputedColumnSql("date(data, '+' || dias_validade || ' days')", stored: true);
+            e.HasIndex(x => x.Codigo).HasDatabaseName("ix_orcamentos_codigo");
+        });
+        modelBuilder.Entity<ItemOrcamentoRegistro>().HasIndex(x => x.OrcamentoId).HasDatabaseName("ix_itens_orcamento_orcamento_id");
+        modelBuilder.Entity<VendaStatusPdvRegistro>().HasIndex(x => x.AtualizadoEm).HasDatabaseName("ix_vendas_status_pdv_atualizado_em");
         modelBuilder.Entity<PermissaoRegistro>().HasKey(x => x.Chave);
         modelBuilder.Entity<NcmRegistro>().HasKey(x => x.Codigo);
         modelBuilder.Entity<CfopRegistro>().HasKey(x => x.Codigo);
@@ -529,6 +562,11 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
                 {
                     propriedade.SetValueConverter(new ListaCurtaJson());
                     propriedade.SetValueComparer(ListaCurtaJson.Comparador);
+                }
+                else if (propriedade.ClrType == typeof(Guid[]))
+                {
+                    propriedade.SetValueConverter(new ListaGuidJson());
+                    propriedade.SetValueComparer(ListaGuidJson.Comparador);
                 }
             }
         }
@@ -587,6 +625,7 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             ("empresa", typeof(EmpresaRegistro)),
             ("estoques", typeof(EstoqueRegistro)),
             ("impressoras_destino", typeof(ImpressoraDestinoRegistro)),
+            ("itens_orcamento", typeof(ItemOrcamentoRegistro)),
             ("lojas", typeof(LojaRegistro)),
             ("lojas_banners", typeof(LojaBannerRegistro)),
             ("marcas", typeof(MarcaRegistro)),
@@ -594,6 +633,7 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             ("municipios", typeof(MunicipioRegistro)),
             ("ncms", typeof(NcmRegistro)),
             ("numeracoes_faixas", typeof(NumeracaoFaixaRegistro)),
+            ("orcamentos", typeof(OrcamentoRegistro)),
             ("paises", typeof(PaisRegistro)),
             ("parametros_fiscais_uf", typeof(ParametroFiscalUfRegistro)),
             ("parcelas_credito_pessoas", typeof(ParcelaCreditoPessoaRegistro)),
@@ -614,6 +654,8 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             ("produtos_tributacao_uf", typeof(ProdutoTributacaoUfRegistro)),
             ("produtos_variacoes", typeof(ProdutoVariacaoRegistro)),
             ("produtos_variacoes_valores", typeof(ProdutoVariacaoValorRegistro)),
+            ("promocoes", typeof(PromocaoRegistro)),
+            ("promocoes_itens", typeof(PromocaoItemRegistro)),
             ("saldos_credito_pessoas", typeof(SaldoCreditoPessoaRegistro)),
             ("saldos_estoque", typeof(SaldoEstoqueRegistro)),
             ("saldos_lote", typeof(SaldoLoteRegistro)),
@@ -625,6 +667,8 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             ("usuarios", typeof(UsuarioRegistro)),
             ("usuarios_lojas", typeof(UsuarioLojaRegistro)),
             ("usuarios_permissoes", typeof(UsuarioPermissaoRegistro)),
+            ("vales", typeof(ValeRegistro)),
+            ("vendas_status_pdv", typeof(VendaStatusPdvRegistro)),
     ];
 
     private static string Lista(IEnumerable<string> valores) => string.Join(",", valores.Select(v => $"'{v}'"));

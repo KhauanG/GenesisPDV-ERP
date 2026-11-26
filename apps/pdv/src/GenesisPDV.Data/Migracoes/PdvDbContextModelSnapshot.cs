@@ -2404,6 +2404,100 @@ namespace GenesisPDV.Data.Migracoes
                         });
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemOrcamentoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<long>("DescontoItem")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("desconto_item");
+
+                    b.Property<string>("Descricao")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("descricao");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("Observacao")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("observacao");
+
+                    b.Property<string>("OrcamentoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("orcamento_id");
+
+                    b.Property<long>("PrecoUnitario")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("preco_unitario");
+
+                    b.Property<string>("ProdutoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("produto_id");
+
+                    b.Property<long>("Quantidade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantidade");
+
+                    b.Property<int>("Sequencia")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("sequencia");
+
+                    b.Property<string>("Unidade")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("unidade");
+
+                    b.Property<long>("ValorTotal")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("valor_total");
+
+                    b.Property<string>("VariacaoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("variacao_id");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_itens_orcamento");
+
+                    b.HasIndex("OrcamentoId")
+                        .HasDatabaseName("ix_itens_orcamento_orcamento_id");
+
+                    b.ToTable("itens_orcamento", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_itens_orcamento_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_itens_orcamento_id_uuid", "length(id) = 36");
+                        });
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
                 {
                     b.Property<string>("Id")
@@ -3818,6 +3912,183 @@ namespace GenesisPDV.Data.Migracoes
                             t.HasCheckConstraint("ck_numeracoes_faixas_criado_localmente", "criado_localmente in (0,1)");
 
                             t.HasCheckConstraint("ck_numeracoes_faixas_id_uuid", "length(id) = 36");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.OrcamentoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ativo");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("AtualizadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_por_id");
+
+                    b.Property<int>("Codigo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("codigo");
+
+                    b.Property<string>("CondicoesPagamento")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("condicoes_pagamento");
+
+                    b.Property<string>("ConvertidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("convertido_em");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("CriadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_por_id");
+
+                    b.Property<string>("Data")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("data");
+
+                    b.Property<long?>("DescontoPct")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("desconto_pct");
+
+                    b.Property<string>("DescontoTipo")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("desconto_tipo");
+
+                    b.Property<long>("DescontoValor")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("desconto_valor");
+
+                    b.Property<short>("DiasValidade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("dias_validade");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("email");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("LojaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("loja_id");
+
+                    b.Property<string>("Nome")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("nome");
+
+                    b.Property<string>("Observacoes")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("observacoes");
+
+                    b.Property<string>("Origem")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("origem");
+
+                    b.Property<string>("OrigemTerminalId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("origem_terminal_id");
+
+                    b.Property<string>("PessoaId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pessoa_id");
+
+                    b.Property<string>("ReservadoAte")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reservado_ate");
+
+                    b.Property<string>("ReservadoTerminalId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("reservado_terminal_id");
+
+                    b.Property<string>("Respondido")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("respondido");
+
+                    b.Property<string>("RespondidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("respondido_em");
+
+                    b.Property<string>("RespostaObservacao")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("resposta_observacao");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<long>("SubtotalBruto")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("subtotal_bruto");
+
+                    b.Property<string>("Telefone")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("telefone");
+
+                    b.Property<long>("Total")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("total");
+
+                    b.Property<string>("ValidoAte")
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("valido_ate")
+                        .HasComputedColumnSql("date(data, '+' || dias_validade || ' days')", true);
+
+                    b.Property<string>("VendaId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("venda_id");
+
+                    b.Property<string>("VendedorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("vendedor_id");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_orcamentos");
+
+                    b.HasIndex("Codigo")
+                        .HasDatabaseName("ix_orcamentos_codigo");
+
+                    b.ToTable("orcamentos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_orcamentos_ativo", "ativo in (0,1)");
+
+                            t.HasCheckConstraint("ck_orcamentos_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_orcamentos_id_uuid", "length(id) = 36");
                         });
                 });
 
@@ -6681,6 +6952,192 @@ namespace GenesisPDV.Data.Migracoes
                         });
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.PromocaoItemRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("CategoriaId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("categoria_id");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("Papel")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("papel");
+
+                    b.Property<string>("ProdutoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("produto_id");
+
+                    b.Property<string>("PromocaoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("promocao_id");
+
+                    b.Property<long>("Quantidade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantidade");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_promocoes_itens");
+
+                    b.HasIndex("CategoriaId")
+                        .HasDatabaseName("ix_promocoes_itens_categoria_id");
+
+                    b.HasIndex("ProdutoId")
+                        .HasDatabaseName("ix_promocoes_itens_produto_id");
+
+                    b.HasIndex("PromocaoId")
+                        .HasDatabaseName("ix_promocoes_itens_promocao_id");
+
+                    b.ToTable("promocoes_itens", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_promocoes_itens_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_promocoes_itens_id_uuid", "length(id) = 36");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.PromocaoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Acumulativa")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("acumulativa");
+
+                    b.Property<bool>("Ativo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("ativo");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("AtualizadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_por_id");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("CriadoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_por_id");
+
+                    b.PrimitiveCollection<string>("DiasSemana")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("dias_semana");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("Fim")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("fim");
+
+                    b.Property<string>("HoraFim")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("hora_fim");
+
+                    b.Property<string>("HoraInicio")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("hora_inicio");
+
+                    b.Property<string>("Inicio")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("inicio");
+
+                    b.PrimitiveCollection<string>("Lojas")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("lojas");
+
+                    b.Property<string>("Nome")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("nome");
+
+                    b.Property<string>("Parametros")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("parametros");
+
+                    b.Property<short>("Prioridade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("prioridade");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tipo");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_promocoes");
+
+                    b.ToTable("promocoes", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_promocoes_acumulativa", "acumulativa in (0,1)");
+
+                            t.HasCheckConstraint("ck_promocoes_ativo", "ativo in (0,1)");
+
+                            t.HasCheckConstraint("ck_promocoes_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_promocoes_dias_semana_json", "dias_semana is null or json_valid(dias_semana)");
+
+                            t.HasCheckConstraint("ck_promocoes_id_uuid", "length(id) = 36");
+
+                            t.HasCheckConstraint("ck_promocoes_lojas_json", "lojas is null or json_valid(lojas)");
+
+                            t.HasCheckConstraint("ck_promocoes_parametros_json", "json_valid(parametros)");
+                        });
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.RestricaoHorarioVendaRegistro", b =>
                 {
                     b.Property<string>("Id")
@@ -7861,6 +8318,134 @@ namespace GenesisPDV.Data.Migracoes
                         });
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ValeRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("CanceladoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cancelado_em");
+
+                    b.Property<string>("CanceladoPorId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cancelado_por_id");
+
+                    b.Property<string>("Codigo")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("codigo");
+
+                    b.Property<string>("ConferenciaHash")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("conferencia_hash");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("EmitidoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("emitido_em");
+
+                    b.Property<string>("EmitidoPorId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("emitido_por_id");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("LojaEmissaoId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("loja_emissao_id");
+
+                    b.Property<string>("MotivoCancelamento")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("motivo_cancelamento");
+
+                    b.Property<string>("OrigemId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("origem_id");
+
+                    b.Property<string>("OrigemTipo")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("origem_tipo");
+
+                    b.Property<string>("PessoaId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("pessoa_id");
+
+                    b.Property<long>("Saldo")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("saldo");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("TerminalEmissaoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("terminal_emissao_id");
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tipo");
+
+                    b.Property<string>("Validade")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("validade");
+
+                    b.Property<long>("ValorOriginal")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("valor_original");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_vales");
+
+                    b.HasIndex("AtualizadoEm")
+                        .HasDatabaseName("ix_vales_atualizado_em");
+
+                    b.HasIndex("Codigo")
+                        .HasDatabaseName("ix_vales_codigo");
+
+                    b.HasIndex("PessoaId")
+                        .HasDatabaseName("ix_vales_pessoa_id");
+
+                    b.ToTable("vales", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_vales_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_vales_id_uuid", "length(id) = 36");
+                        });
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.VendaRegistro", b =>
                 {
                     b.Property<string>("Id")
@@ -8187,6 +8772,85 @@ namespace GenesisPDV.Data.Migracoes
                             t.HasCheckConstraint("ck_vendas_tipo_preco", "tipo_preco in ('varejo','atacado','parcelado')");
 
                             t.HasCheckConstraint("ck_vendas_valores", "subtotal_bruto >= 0 and desconto_itens >= 0 and desconto_total >= 0 and acrescimo_total >= 0 and taxa_servico >= 0 and taxa_entrega >= 0 and valor_frete >= 0 and total >= 0 and troco >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.VendaStatusPdvRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("CaixaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("caixa_id");
+
+                    b.Property<string>("CanceladaEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cancelada_em");
+
+                    b.Property<string>("CancelamentoOrigem")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("cancelamento_origem");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<bool>("CriadoLocalmente")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false)
+                        .HasColumnName("criado_localmente");
+
+                    b.Property<string>("Devolucao")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("devolucao");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status");
+
+                    b.Property<string>("StatusFiscal")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("status_fiscal");
+
+                    b.Property<string>("TerminalId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("terminal_id");
+
+                    b.Property<long>("Versao")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_vendas_status_pdv");
+
+                    b.HasIndex("AtualizadoEm")
+                        .HasDatabaseName("ix_vendas_status_pdv_atualizado_em");
+
+                    b.ToTable("vendas_status_pdv", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_vendas_status_pdv_criado_localmente", "criado_localmente in (0,1)");
+
+                            t.HasCheckConstraint("ck_vendas_status_pdv_id_uuid", "length(id) = 36");
                         });
                 });
 

@@ -6,7 +6,7 @@
  * caixa 0 e os dois tipos de estorno. O diagnóstico da preparação conta as colunas que o PDV ainda não preenche.
  * Também os CHECKs (um caso inválido por restrição), a imutabilidade (troca, item da troca, movimento do vale e o item
  * da venda fechada), a exclusão física proibida, o saldo negativo aceito e as chaves únicas, direto no banco.
- * O `Esquema.g.cs` do PDV não muda (nenhuma tabela nova num fluxo nem em `TABELAS_MOVIMENTO_PDV`).
+ * Desde o F3-B7 só `vales` está num fluxo (`pessoas`); nenhuma tabela nova está em `TABELAS_MOVIMENTO_PDV`.
  */
 import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
@@ -369,7 +369,7 @@ afterAll(async () => {
 });
 
 describe('migração 0029_fase3_vales_trocas (F3-B1)', () => {
-  it('empresa nova e empresa existente terminam com a mesma estrutura; nada desce ao PDV ainda', async () => {
+  it('empresa nova e empresa existente terminam com a mesma estrutura; só os vales descem ao PDV (F3-B7)', async () => {
     const nova = await estrutura(bancoNovo);
     const existente = await estrutura(banco);
     expect(existente).toEqual(nova);
@@ -414,10 +414,12 @@ describe('migração 0029_fase3_vales_trocas (F3-B1)', () => {
         'uq_itens_troca_sequencia',
       ]),
     );
-    // Nenhuma tabela nova está num fluxo nem é espelho de movimento do PDV: o Esquema.g.cs não muda (F3-B7).
+    // Nenhuma tabela nova é movimento do PDV; só `vales` desce (no fluxo `pessoas` desde o F3-B7), as demais sobem por
+    // evento ou não saem da nuvem.
     for (const t of TABELAS) {
-      expect(TABELAS_DOS_FLUXOS).not.toContain(t);
       expect(TABELAS_MOVIMENTO_PDV as readonly string[]).not.toContain(t);
+      if (t === 'vales') expect(TABELAS_DOS_FLUXOS).toContain(t);
+      else expect(TABELAS_DOS_FLUXOS).not.toContain(t);
     }
   });
 
@@ -563,7 +565,7 @@ describe('migração 0029_fase3_vales_trocas (F3-B1)', () => {
       [v],
     );
     // O saldo não é coluna isenta do `fn_versao`: o UPDATE dele gera versão nova (o PDV do F3-B7 recebe o saldo novo).
-    // A trava de ordenação da versão fica no versionamento.test.ts (TABELAS_FN_VERSAO_SEM_FLUXO).
+    // A trava de ordenação da versão fica no versionamento.test.ts (TABELAS_FN_VERSAO; o fluxo `pessoas`, F3-B7).
     expect(Number(rows[0]!.versao)).toBeGreaterThan(Number(inicial[0]!.versao));
     const e = await erroDe(vale({ codigo: rows[0]!.codigo }));
     expect(e).toMatchObject({ code: '23505', constraint: 'uq_vales_codigo' });

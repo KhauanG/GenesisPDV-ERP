@@ -1,10 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using GenesisPDV.Core.Vales;
 using GenesisPDV.Data.Entidades;
+using GenesisPDV.Data.Manutencao;
 using GenesisPDV.Data.Repositorios;
 using GenesisPDV.Sync.Protocolo;
 using GenesisPDV.Sync.Pull;
+using GenesisPDV.Sync.Relogio;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GenesisPDV.Sync.Tests;
@@ -95,14 +99,15 @@ public sealed class AplicadorPullTests
         var r = await amb.Aplicador.AplicarAsync(Pagina(
             "catalogo", 50,
             ("produtos", 10, linha),
-            ("promocoes", 11, new JsonObject { ["id"] = Guid.CreateVersion7().ToString("D"), ["nome"] = "Leve 3" }),
+            // `comandas` (módulo da Fase 8) ainda não tem espelho; até o F3-B7 o exemplo era `promocoes`.
+            ("comandas", 11, new JsonObject { ["id"] = Guid.CreateVersion7().ToString("D"), ["numero"] = 3 }),
             ("vendas", 12, new JsonObject { ["id"] = Guid.CreateVersion7().ToString("D") })), ct: Ct);
         Assert.Equal(1, r.Gravadas);
         Assert.Equal(2, r.Ignoradas);
         Assert.Equal(1L, amb.Contar("produtos"));
         Assert.Equal(0L, amb.Contar("vendas"));
         Assert.Equal(50, await CursorAsync(amb, "catalogo"));
-        Assert.Contains(amb.Log.Linhas, l => l.Contains("promocoes", StringComparison.Ordinal) && l.Contains("desconhecida", StringComparison.Ordinal));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("comandas", StringComparison.Ordinal) && l.Contains("desconhecida", StringComparison.Ordinal));
         Assert.Contains(amb.Log.Linhas, l => l.Contains("coluna_da_api_nova", StringComparison.Ordinal));
     }
 
@@ -873,5 +878,331 @@ public sealed class AplicadorPullTests
         Assert.Equal(2, Tentativas());
         Assert.True(await IndiceProntoAsync(amb));
         Assert.Equal(["CERVEJA"], await PesquisarAsync(amb, "cerveja"));
+    }
+    /// <summary>
+    /// Hora das linhas de <see cref="LinhasFaseTres"/>: os testes que passam pela purga das janelas (90 dias) fixam o
+    /// relógio nela, para não dependerem da data em que rodam.
+    /// </summary>
+    private static readonly DateTimeOffset BaseFaseTres = DateTimeOffset.Parse("2026-11-26T12:00:00.000Z", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Linhas da Fase 3 como a API devolve (F3-B7; o `sync-fluxos-fase3.test.ts` da API confere o mesmo formato).</summary>
+    private static (string Tabela, long Versao, JsonObject Linha)[] LinhasFaseTres(string promocao, string vale, string orcamento, string venda)
+    {
+        const string loja = "01a18790-0000-7000-8000-0000000000a1";
+        const string outraLoja = "01a18790-0000-7000-8000-0000000000a2";
+        const string usuario = "01a18790-0000-7000-8000-0000000000e1";
+        JsonObject Datas(JsonObject linha)
+        {
+            linha["criado_em"] = "2026-11-26T12:00:00.000Z";
+            linha["atualizado_em"] = "2026-11-26T12:00:00.000Z";
+            linha["excluido_em"] = null;
+            return linha;
+        }
+
+        return
+        [
+            ("promocoes", 101, Datas(new JsonObject
+            {
+                ["id"] = promocao,
+                ["criado_por_id"] = usuario,
+                ["atualizado_por_id"] = usuario,
+                ["nome"] = "Leve 3 pague 2",
+                ["tipo"] = "leve_pague",
+                ["parametros"] = new JsonObject { ["leve"] = 3, ["pague"] = 2 },
+                ["inicio"] = null,
+                ["fim"] = null,
+                ["dias_semana"] = new JsonArray(5, 6),
+                ["hora_inicio"] = "18:00:00",
+                ["hora_fim"] = "23:59:59",
+                ["lojas"] = new JsonArray(loja.ToUpperInvariant(), outraLoja),
+                ["prioridade"] = 0,
+                ["acumulativa"] = false,
+                ["ativo"] = true,
+            })),
+            ("promocoes_itens", 102, Datas(new JsonObject
+            {
+                ["id"] = Guid.CreateVersion7().ToString("D"),
+                ["promocao_id"] = promocao,
+                ["produto_id"] = Produto,
+                ["categoria_id"] = null,
+                ["quantidade"] = "3.000",
+                ["papel"] = "gatilho",
+            })),
+            ("vales", 103, Datas(new JsonObject
+            {
+                ["id"] = vale,
+                ["codigo"] = CodigoVale.MontarVale(1, 1, 17),
+                ["tipo"] = "vale_troca",
+                ["pessoa_id"] = Pessoa,
+                ["loja_emissao_id"] = loja,
+                ["terminal_emissao_id"] = null,
+                ["valor_original"] = "50.00",
+                ["saldo"] = "-3.50",
+                ["validade"] = "2027-02-24",
+                ["status"] = "ativo",
+                ["origem_tipo"] = "troca",
+                ["origem_id"] = null,
+                ["conferencia_hash"] = "pbkdf2-sha256$600000$c2Fs$cmVzdW1v",
+                ["emitido_em"] = "2026-11-26T12:00:00.000Z",
+                ["emitido_por_id"] = usuario,
+                ["cancelado_em"] = null,
+                ["cancelado_por_id"] = null,
+                ["motivo_cancelamento"] = null,
+            })),
+            ("orcamentos", 104, Datas(new JsonObject
+            {
+                ["id"] = orcamento,
+                ["criado_por_id"] = usuario,
+                ["atualizado_por_id"] = usuario,
+                ["codigo"] = 12,
+                ["loja_id"] = loja,
+                ["pessoa_id"] = null,
+                ["nome"] = "BAR FICTICIO",
+                ["email"] = null,
+                ["telefone"] = null,
+                ["data"] = "2026-12-25",
+                ["dias_validade"] = 15,
+                // Gerada na nuvem: desce, mas o SQLite calcula a sua (o valor daqui seria recusado).
+                ["valido_ate"] = "2027-01-09",
+                ["ativo"] = true,
+                ["status"] = "aberto",
+                ["respondido"] = "nao",
+                ["respondido_em"] = null,
+                ["resposta_observacao"] = null,
+                ["vendedor_id"] = null,
+                ["desconto_tipo"] = null,
+                ["desconto_valor"] = "0.00",
+                ["desconto_pct"] = null,
+                ["subtotal_bruto"] = "60.00",
+                ["total"] = "60.00",
+                ["condicoes_pagamento"] = null,
+                ["observacoes"] = null,
+                ["origem"] = "erp",
+                ["origem_terminal_id"] = null,
+                ["venda_id"] = null,
+                ["convertido_em"] = null,
+                ["reservado_terminal_id"] = null,
+                ["reservado_ate"] = null,
+            })),
+            ("itens_orcamento", 105, Datas(new JsonObject
+            {
+                ["id"] = Guid.CreateVersion7().ToString("D"),
+                ["orcamento_id"] = orcamento,
+                ["sequencia"] = 1,
+                ["produto_id"] = Produto,
+                ["variacao_id"] = null,
+                ["descricao"] = "CERV LATA 350ML",
+                ["unidade"] = "UN",
+                ["quantidade"] = "12.000",
+                ["preco_unitario"] = "5.0000",
+                ["desconto_item"] = "0.00",
+                ["valor_total"] = "60.00",
+                ["observacao"] = null,
+            })),
+            ("vendas_status_pdv", 106, Datas(new JsonObject
+            {
+                ["id"] = venda,
+                ["caixa_id"] = "01a18790-0000-7000-8000-0000000000c1",
+                ["terminal_id"] = "01a18790-0000-7000-8000-0000000000d1",
+                ["status"] = "cancelada",
+                ["status_fiscal"] = "nao_aplicavel",
+                ["devolucao"] = "nenhuma",
+                ["cancelada_em"] = "2026-11-26T12:00:00.000Z",
+                ["cancelamento_origem"] = "erp",
+            })),
+        ];
+    }
+
+    [Fact]
+    public async Task Pdv_013_descarta_as_tabelas_da_Fase_3_sem_travar_e_a_FaseTres_traz_tudo_numa_volta()
+    {
+        // Release R3 (F3-B7; SYNC 17.4.2): a API nova vai à produção antes do PDV 0.14.0. O 0.13.0 (banco até a
+        // `FaseDois`) recebe promoções (catalogo), vales (pessoas), orçamentos e status (operacao): descarta as tabelas
+        // que não conhece e o cursor de cada fluxo avança. A `FaseTres` volta os cursores a 0 e o app novo grava tudo.
+        using var amb = await AmbienteSync.CriarAteAsync("20261111184626_FaseDois");
+        amb.Relogio.Agora = BaseFaseTres;
+        var (promocao, vale, orcamento, venda) =
+            (Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"));
+        var linhas = LinhasFaseTres(promocao, vale, orcamento, venda);
+        RespostaPull Fluxo(string fluxo, long cursor, params string[] tabelas) => Pagina(fluxo, cursor, [.. linhas.Where(l => tabelas.Contains(l.Tabela))]);
+        var paginas = new[]
+        {
+            Fluxo("catalogo", 200, "promocoes", "promocoes_itens"),
+            Fluxo("pessoas", 210, "vales"),
+            Fluxo("operacao", 220, "orcamentos", "itens_orcamento", "vendas_status_pdv"),
+        };
+
+        foreach (var pagina in paginas)
+        {
+            var antiga = await amb.Aplicador.AplicarAsync(pagina, ct: Ct);
+            Assert.Equal((0, pagina.Alteracoes.Count), (antiga.Gravadas, antiga.Ignoradas));
+            Assert.Equal(pagina.NovoCursor, await CursorAsync(amb, pagina.Fluxo));
+        }
+
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("vendas_status_pdv", StringComparison.Ordinal) && l.Contains("desconhecida", StringComparison.Ordinal));
+
+        await amb.MigrarAsync();
+        foreach (var pagina in paginas)
+        {
+            Assert.Equal(0L, await CursorAsync(amb, pagina.Fluxo));
+        }
+
+        // O app novo começa com outro aplicador (o cache das colunas locais é por processo).
+        using var logs = LoggerFactory.Create(b => b.AddProvider(amb.Log));
+        var aplicador = new AplicadorPull(amb.Fabrica, amb.Relogio, logs.CreateLogger<AplicadorPull>());
+        foreach (var pagina in paginas)
+        {
+            var nova = await aplicador.AplicarAsync(pagina, ct: Ct);
+            Assert.Equal((pagina.Alteracoes.Count, 0), (nova.Gravadas, nova.Ignoradas));
+            Assert.Equal(pagina.NovoCursor, await CursorAsync(amb, pagina.Fluxo));
+        }
+
+        // `valido_ate` é calculada pelo SQLite e não é "coluna desconhecida".
+        Assert.DoesNotContain(amb.Log.Linhas, l => l.Contains("valido_ate", StringComparison.Ordinal));
+        await using var db = amb.Fabrica.CreateDbContext();
+        var p = await db.Set<PromocaoRegistro>().SingleAsync(Ct);
+        Assert.Equal(("leve_pague", new TimeOnly(18, 0), new TimeOnly(23, 59, 59)), (p.Tipo, p.HoraInicio!.Value, p.HoraFim!.Value));
+        Assert.Equal([5, 6], p.DiasSemana!);
+        Assert.Equal([Guid.Parse("01a18790-0000-7000-8000-0000000000a1"), Guid.Parse("01a18790-0000-7000-8000-0000000000a2")], p.Lojas!);
+        Assert.Equal("[\"01a18790-0000-7000-8000-0000000000a1\",\"01a18790-0000-7000-8000-0000000000a2\"]", amb.Escalar($"select lojas from promocoes where id = '{promocao}'"));
+        Assert.Equal(JsonNode.Parse("{\"leve\":3,\"pague\":2}")!.ToJsonString(), JsonNode.Parse(p.Parametros)!.ToJsonString());
+        Assert.Equal(3m, (await db.Set<PromocaoItemRegistro>().SingleAsync(Ct)).Quantidade);
+        var v = await db.Set<ValeRegistro>().SingleAsync(Ct);
+        Assert.Equal((-3.50m, 50m, new DateOnly(2027, 2, 24), false), (v.Saldo, v.ValorOriginal, v.Validade, v.CriadoLocalmente));
+        Assert.StartsWith("pbkdf2-sha256$", v.ConferenciaHash, StringComparison.Ordinal);
+        var o = await db.Set<OrcamentoRegistro>().SingleAsync(Ct);
+        Assert.Equal((12, new DateOnly(2027, 1, 9), 60m), (o.Codigo, o.ValidoAte, o.Total));
+        var i = await db.Set<ItemOrcamentoRegistro>().SingleAsync(Ct);
+        Assert.Equal((12m, 5m, 60m), (i.Quantidade, i.PrecoUnitario, i.ValorTotal));
+        var st = await db.Set<VendaStatusPdvRegistro>().SingleAsync(Ct);
+        Assert.Equal((Guid.Parse(venda), "cancelada", "erp"), (st.Id, st.Status, st.CancelamentoOrigem));
+    }
+
+    [Fact]
+    public async Task Ultima_pagina_de_pessoas_e_de_operacao_purga_o_que_saiu_da_janela_de_90_dias()
+    {
+        // F3-B7 (D90): a linha que sai da janela pelo relógio não desce (não ganha versão nova); a última página do fluxo
+        // purga a cópia local pelo mesmo critério do filtro da API. Página com `tem_mais` não purga (o ciclo não acabou).
+        using var amb = await AmbienteSync.CriarAsync();
+        amb.Relogio.Agora = BaseFaseTres;
+        var (promocao, vale, orcamento, venda) =
+            (Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"));
+        var linhas = LinhasFaseTres(promocao, vale, orcamento, venda);
+        var valeZerado = linhas.Single(l => l.Tabela == "vales").Linha.DeepClone().AsObject();
+        valeZerado["saldo"] = "0.00";
+        valeZerado["status"] = "utilizado";
+        var status = linhas.Single(l => l.Tabela == "vendas_status_pdv").Linha.DeepClone().AsObject();
+        await amb.Aplicador.AplicarAsync(Pagina("pessoas", 10, ("vales", 10, valeZerado)), ct: Ct);
+        await amb.Aplicador.AplicarAsync(Pagina("operacao", 11, ("vendas_status_pdv", 11, status)), ct: Ct);
+        Assert.Equal((1L, 1L), (amb.Contar("vales"), amb.Contar("vendas_status_pdv")));
+
+        // 91 dias depois, sem nenhuma versão nova: a página com mais por vir não purga; a última, sim.
+        amb.Relogio.Agora = BaseFaseTres.AddDays(91);
+        var meio = Pagina("pessoas", 20) with { TemMais = true };
+        await amb.Aplicador.AplicarAsync(meio, ct: Ct);
+        Assert.Equal(1L, amb.Contar("vales"));
+        var r = await amb.Aplicador.AplicarAsync(Pagina("pessoas", 30), ct: Ct);
+        Assert.Equal(0, r.Gravadas);
+        Assert.Equal(0L, amb.Contar("vales"));
+        Assert.Equal(1L, amb.Contar("vendas_status_pdv"));
+        await amb.Aplicador.AplicarAsync(Pagina("operacao", 40), ct: Ct);
+        Assert.Equal(0L, amb.Contar("vendas_status_pdv"));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("saíram da janela", StringComparison.Ordinal));
+        Assert.Equal(30L, await CursorAsync(amb, "pessoas"));
+    }
+
+    /// <summary>Vale zerado e status de venda da fixture gravados às <see cref="BaseFaseTres"/>.</summary>
+    private static async Task<(string Vale, string Venda)> GravarValeZeradoEStatusAsync(AmbienteSync amb, JsonObject? valeAlterado = null)
+    {
+        var (promocao, vale, orcamento, venda) =
+            (Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"));
+        var linhas = LinhasFaseTres(promocao, vale, orcamento, venda);
+        var linhaVale = valeAlterado ?? linhas.Single(l => l.Tabela == "vales").Linha.DeepClone().AsObject();
+        linhaVale["id"] = vale;
+        if (valeAlterado is null)
+        {
+            linhaVale["saldo"] = "0.00";
+            linhaVale["status"] = "utilizado";
+        }
+
+        var status = linhas.Single(l => l.Tabela == "vendas_status_pdv").Linha.DeepClone().AsObject();
+        await amb.Aplicador.AplicarAsync(Pagina("pessoas", 10, ("vales", 10, linhaVale)), ct: Ct);
+        await amb.Aplicador.AplicarAsync(Pagina("operacao", 11, ("vendas_status_pdv", 11, status)), ct: Ct);
+        Assert.Equal((1L, 1L), (amb.Contar("vales"), amb.Contar("vendas_status_pdv")));
+        return (vale, venda);
+    }
+
+    [Fact]
+    public async Task Purga_das_janelas_usa_a_hora_da_nuvem_e_nao_o_relogio_do_Windows_adiantado()
+    {
+        // F3-B7: o filtro da API corta pelo now() da nuvem, e a linha que o caixa apaga não desce de novo (a versão dela
+        // não mudou). Com o Windows 91 dias adiantado e a nuvem 1 dia depois da gravação, nada sai; sem amostra do
+        // relógio neste boot, a purga espera.
+        using var amb = await AmbienteSync.CriarAsync();
+        amb.Relogio.Agora = BaseFaseTres;
+        await GravarValeZeradoEStatusAsync(amb);
+        var nuvem = new RelogioSync(amb.Fabrica, amb.Relogio);
+        var aplicador = new AplicadorPull(amb.Fabrica, amb.Relogio, NullLogger<AplicadorPull>.Instance, nuvem);
+        amb.Relogio.Agora = BaseFaseTres.AddDays(91);
+
+        await aplicador.AplicarAsync(Pagina("pessoas", 20), ct: Ct);
+        await aplicador.AplicarAsync(Pagina("operacao", 21), ct: Ct);
+        Assert.Equal((1L, 1L), (amb.Contar("vales"), amb.Contar("vendas_status_pdv")));
+
+        nuvem.Registrar(amb.Relogio.Agora, TimeSpan.FromMilliseconds(100), BaseFaseTres.AddDays(1));
+        await aplicador.AplicarAsync(Pagina("pessoas", 30), ct: Ct);
+        await aplicador.AplicarAsync(Pagina("operacao", 31), ct: Ct);
+        Assert.Equal((1L, 1L), (amb.Contar("vales"), amb.Contar("vendas_status_pdv")));
+
+        // A nuvem também chega aos 91 dias (a mediana das amostras passa a dizer o mesmo que o Windows): sai.
+        nuvem.Registrar(amb.Relogio.Agora, TimeSpan.FromMilliseconds(100), BaseFaseTres.AddDays(91));
+        nuvem.Registrar(amb.Relogio.Agora, TimeSpan.FromMilliseconds(100), BaseFaseTres.AddDays(91));
+        await aplicador.AplicarAsync(Pagina("pessoas", 40), ct: Ct);
+        await aplicador.AplicarAsync(Pagina("operacao", 41), ct: Ct);
+        Assert.Equal((0L, 0L), (amb.Contar("vales"), amb.Contar("vendas_status_pdv")));
+    }
+
+    [Fact]
+    public async Task Fluxo_parado_mais_que_a_janela_apaga_a_copia_com_janela_e_recarrega_do_cursor_0()
+    {
+        // F3-B7 (SYNC 6.8): o ERP cancela o vale no 5º dia e o caixa volta no 100º; a mudança já tem 95 dias, não desce, e
+        // a cópia local ainda diria "ativo, com saldo". Antes do pull, o fluxo parado por mais que a janela (menos a folga)
+        // descarta a cópia com janela e volta o cursor a 0. O vale emitido aqui e ainda não confirmado fica.
+        using var amb = await AmbienteSync.CriarAsync();
+        amb.Relogio.Agora = BaseFaseTres;
+        var utilizavel = LinhasFaseTres(Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"), Guid.CreateVersion7().ToString("D"),
+            Guid.CreateVersion7().ToString("D")).Single(l => l.Tabela == "vales").Linha.DeepClone().AsObject();
+        utilizavel["saldo"] = "50.00";
+        utilizavel["validade"] = "2027-11-26";
+        var (vale, _) = await GravarValeZeradoEStatusAsync(amb, utilizavel);
+        var local = Guid.CreateVersion7().ToString("D");
+        amb.Escalar($"insert into vales (id, codigo, tipo, loja_emissao_id, valor_original, saldo, validade, status, origem_tipo, emitido_em, "
+            + $"emitido_por_id, criado_em, atualizado_em, versao, criado_localmente) select '{local}', '{CodigoVale.MontarVale(1, 1, 99)}', tipo, "
+            + $"loja_emissao_id, valor_original, saldo, validade, status, origem_tipo, emitido_em, emitido_por_id, criado_em, atualizado_em, 0, 1 "
+            + $"from vales where id = '{vale}'");
+
+        // Dentro da folga (80 dias): nada muda.
+        amb.Relogio.Agora = BaseFaseTres.AddDays(PurgaJanelas.DiasJanela - PurgaJanelas.MargemRecargaDias);
+        Assert.False(await amb.Aplicador.RecarregarJanelaSeParadoAsync("pessoas", Ct));
+        Assert.Equal((10L, 2L), (await CursorAsync(amb, "pessoas"), amb.Contar("vales")));
+
+        amb.Relogio.Agora = BaseFaseTres.AddDays(100);
+        Assert.True(await amb.Aplicador.RecarregarJanelaSeParadoAsync("pessoas", Ct));
+        Assert.Equal((0L, 1L), (await CursorAsync(amb, "pessoas"), amb.Contar("vales")));
+        Assert.Equal(local, amb.Escalar("select id from vales"));
+        Assert.True(await amb.Aplicador.RecarregarJanelaSeParadoAsync("operacao", Ct));
+        Assert.Equal((0L, 0L), (await CursorAsync(amb, "operacao"), amb.Contar("vendas_status_pdv")));
+        Assert.False(await amb.Aplicador.RecarregarJanelaSeParadoAsync("catalogo", Ct));
+        Assert.Contains(amb.Log.Linhas, l => l.Contains("recarrega do cursor 0", StringComparison.Ordinal));
+
+        // Com o cursor em 0, não recarrega de novo; a primeira página da descida renova o último pull.
+        Assert.False(await amb.Aplicador.RecarregarJanelaSeParadoAsync("pessoas", Ct));
+        await amb.Aplicador.AplicarAsync(Pagina("pessoas", 15), ct: Ct);
+        Assert.False(await amb.Aplicador.RecarregarJanelaSeParadoAsync("pessoas", Ct));
+
+        // Cursor andado sem nenhum pull com sucesso registrado: também recarrega.
+        amb.Escalar("update estado_sincronizacao set ultimo_pull_sucesso_em = null where fluxo = 'pessoas'");
+        Assert.True(await amb.Aplicador.RecarregarJanelaSeParadoAsync("pessoas", Ct));
+        Assert.Equal(0L, await CursorAsync(amb, "pessoas"));
     }
 }

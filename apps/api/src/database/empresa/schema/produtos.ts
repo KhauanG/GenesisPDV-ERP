@@ -1132,8 +1132,8 @@ export const restricoesHorarioVenda = pgTable(
 // ---------------------------------------------------------------------------------------------------------------
 // Promoções (MD 3.6.11; ERP 8.8; PDV 11.4; Fase 3, F3-B2; migração 0030; README da API › decisão 221). Cadastro do
 // ERP (F3-B34) que desce a todos os caixas no fluxo `catalogo` (todas as linhas: o PDV filtra `lojas`, vigência e
-// `ativo`), aplicado pelo motor do PDV (F3-B35, B36). Até o fluxo entrar (F3-B7) as duas ficam em
-// `TABELAS_FN_VERSAO_SEM_FLUXO`; os triggers de versão, a autoria e a exclusão física proibida ficam na migração.
+// `ativo`), aplicado pelo motor do PDV (F3-B35, B36). O fluxo entrou no F3-B7 (decisão 226); os triggers de versão, a
+// autoria e a exclusão física proibida ficam na migração.
 
 /** D78: leve-pague, % no item (com faixas), preço fixo em horário e % por forma primeiro; o combo depois. */
 export const TIPOS_PROMOCAO = [

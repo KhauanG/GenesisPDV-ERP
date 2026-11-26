@@ -337,7 +337,7 @@ describe('GET /sync/estado e GET /sync/pull (SYNC 5, 6)', () => {
     ]);
   });
 
-  it('fluxo sem tabelas nesta fase (operacao) termina a carga com o cursor no teto', async () => {
+  it('fluxo sem linhas da loja (operacao, sem orçamento nem status) termina a carga com o cursor no teto', async () => {
     for (const fluxo of ['operacao']) {
       const r = await pull(fluxo, 0);
       expect(r.status).toBe(200);

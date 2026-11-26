@@ -4,9 +4,9 @@
  * para a importação no F9 ou por `ORC` + código (PDV 24.1); o caixa também cria orçamento, só online (D118), e a
  * conversão em venda chega no `venda.finalizada` (`vendas.orcamento_id`, sem FK: padrões da Fase 3).
  *
- * Até o fluxo entrar (F3-B7) as duas tabelas ficam em `TABELAS_FN_VERSAO_SEM_FLUXO` (`versionamento.ts`): já nascem
- * com `fn_versao` e o índice de versão, e o `Esquema.g.cs` só muda junto do fluxo. `valido_ate` é gerada, por isso é
- * isenta de versão (`COLUNAS_ISENTAS_VERSAO`). A sequência do `codigo`, os triggers de versão e de filtro imutável
+ * As duas nasceram com `fn_versao` e o índice de versão e entraram no fluxo `operacao` no F3-B7 (decisão 226).
+ * `valido_ate` é gerada, por isso é isenta de versão (`COLUNAS_ISENTAS_VERSAO`), e desce como coluna gerada (o PDV a
+ * calcula, `Esquema.g.cs` com `Gerada: true`). A sequência do `codigo`, os triggers de versão e de filtro imutável
  * (`loja_id`, MD 6.4 regra 2) e a autoria ficam na migração.
  */
 import { sql } from 'drizzle-orm';

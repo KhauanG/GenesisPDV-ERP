@@ -13,7 +13,6 @@ import type pg from 'pg';
 import { uuidv7 } from 'uuidv7';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { TABELAS_MOVIMENTO_PDV } from '../../src/database/esquema-pdv.js';
-import { TABELAS_FN_VERSAO_SEM_FLUXO } from '../../src/database/empresa/versionamento.js';
 import { garantirBanco } from '../../src/database/migracoes/controle.js';
 import { aplicarMigracoes } from '../../src/database/migracoes/executor.js';
 import { lerMigracoes, PASTA_MIGRACOES_EMPRESA } from '../../src/database/migracoes/journal.js';
@@ -399,13 +398,13 @@ describe('migração 0030_fase3_promocoes_orcamentos (F3-B2)', () => {
         order by 1, 2`,
     );
     expect(fksColunas).toEqual([{ tabela: 'vendas_status_pdv', coluna: 'id' }]);
-    // As que descem já nascem com fn_versao, mas fora dos fluxos (F3-B7); nenhuma é movimento do PDV.
-    for (const t of TABELAS) {
-      expect(TABELAS_DOS_FLUXOS).not.toContain(t);
-      expect(TABELAS_MOVIMENTO_PDV as readonly string[]).not.toContain(t);
-    }
+    // Nenhuma é movimento do PDV; as que descem nasceram com fn_versao e entraram nos fluxos no F3-B7 (a conferência
+    // cruzada fica no sync-triggers.test.ts); a conferência do fechamento não sai da nuvem.
+    for (const t of TABELAS) expect(TABELAS_MOVIMENTO_PDV as readonly string[]).not.toContain(t);
     for (const t of ['promocoes', 'promocoes_itens', 'orcamentos', 'itens_orcamento', 'vendas_status_pdv'])
-      expect(TABELAS_FN_VERSAO_SEM_FLUXO as readonly string[]).toContain(t);
+      expect(TABELAS_DOS_FLUXOS).toContain(t);
+    for (const t of ['conferencias_caixa', 'conferencias_caixa_formas'])
+      expect(TABELAS_DOS_FLUXOS).not.toContain(t);
   });
 
   it('na existente, nenhum dado muda (inclusive o comodato e os templates padrão)', async () => {

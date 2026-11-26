@@ -973,7 +973,14 @@ que uma linha que **deixa de pertencer** ao terminal não fique esquecida no PDV
   filtrando `excluido_em is null` nas telas (modelo 4.2).
 - Restaurar (`excluido_em = null`) gera `versao` nova e desce.
 - Como nada sincronizável é apagado fisicamente na nuvem, **o cursor nunca expira**: um terminal offline por 60 dias
-  retoma do cursor antigo e recebe todas as exclusões. Não existe "cursor velho demais".
+  retoma do cursor antigo e recebe todas as exclusões. Não existe "cursor velho demais" — **menos nas tabelas com janela
+  por tempo** (MD 6.2: `vales` no `pessoas` e `vendas_status_pdv` no `operacao`, D90). Nelas, a mudança que tirou a
+  linha da janela enquanto o caixa estava parado (o ERP cancela o vale no 5º dia, o caixa volta no 100º) já passou dos
+  90 dias quando ele puxa: não desce, e o cursor passa por cima dela. Por isso o PDV sem pull com sucesso do fluxo há
+  mais de 80 dias (90 menos uma folga de 10 para a diferença de relógio; ou nunca, com o cursor já andado) apaga a
+  cópia da tabela com janela (menos o vale `criado_localmente` e o de venda ou evento local em curso) e volta o cursor
+  do fluxo a 0 antes do pull; a descida traz de novo o que está na janela (README do PDV › decisão 99). A purga das
+  linhas que saem da janela pelo relógio usa a hora corrigida para a nuvem (12.3), não a do Windows.
 - O PDV pode compactar localmente (sem apagar) as linhas excluídas há mais de 180 dias de tabelas grandes
   (`produtos_codigos_barras`, `pessoas_telefones`), removendo-as do índice FTS — continuam na tabela para que um
   upsert posterior funcione.
@@ -4081,7 +4088,8 @@ não seja o terminal que a criou (ERP, evento de outro terminal, tarefa fiscal),
 alteração, com `id` (= `vendas.id`), `caixa_id`, `terminal_id` (o terminal que criou a venda), `status`,
 `status_fiscal`, `devolucao`, `cancelada_em`, `cancelamento_origem` e `versao`; desce pelo **caixa** da venda (`caixa_id` = caixa de T, imutável) e
 `atualizado_em > now() − interval '90 days'`, para o terminal que substituiu outro no mesmo caixa receber o status das
-vendas antigas (tabela criada na migração 0030, F3-B2; o fluxo é do F3-B7). No PDV ela é um espelho
+vendas antigas (tabela criada na migração 0030, F3-B2; no fluxo desde o F3-B7; a linha que passa dos 90 dias sem
+mudança sai do PDV pela purga no fim do pull de `operacao`, porque a saída pelo relógio não gera versão). No PDV ela é um espelho
 com o mesmo nome: a Gestão de vendas lê `vendas` local com `left join vendas_status_pdv` e, quando há linha, as
 colunas da projeção prevalecem. O PDV **nunca** regrava a própria `vendas` com esses valores (a tabela de movimento
 continua imutável localmente). Além disso, operações destrutivas sobre venda
@@ -4177,6 +4185,13 @@ export function upcast(v: number, p: unknown): VendaFinalizadaV2 {
   nova (campos e tabelas desconhecidos descartados, 6.10), e a API vai para a produção antes do 0.12.0 (17.2). O
   `itens_venda_complementos.complemento_id` ganha a FK para `produtos_complementos` (`on delete set null`, exclusão
   física bloqueada), e o handler grava nulo o id que a nuvem não conhece (README da API › decisão 191).
+- **Release R3 do PDV (Fase 3, F3-B7):** todas as tabelas que descem na Fase 3 (`promocoes` e `promocoes_itens` no
+  `catalogo`, `vales` no `pessoas`, `orcamentos`, `itens_orcamento` e `vendas_status_pdv` no `operacao`; MD 6.1, 6.2)
+  entram numa **única** migração EF (`FaseTres`), que volta a 0 os cursores desses três fluxos e do `configuracao`
+  (os templates `recibo_venda` e `orcamento_*` passaram a descer, MD 3.1.3), sem mexer em versão local, carga inicial
+  nem `ressincronizar` (17.4.2). O PDV instalado descarta as tabelas novas e o cursor avança (6.10); a matriz com o PDV
+  das tags contra a API nova é o `apps/api/test/e2e-pdv/compatibilidade.sh` (README da API › decisão 226, do PDV ›
+  99). A publicação de `ressincronizar_fluxo` por migração da nuvem começa no F3-B67.
 - **Consultas online não passam pelo T13** (Fase 2, F2-B35): o `GET /sync/consultas/saldos-outras-lojas` do `F4` (1.4)
   não grava evento nem anuncia tipo ou versão; o PDV novo diante da API antiga recebe 404 e mostra "requer conexão". A
   Fase 2 inteira mantém `venda.finalizada` v1 (a `variacao_id` e o `lote_id` já existem nele) e não acrescenta nada a

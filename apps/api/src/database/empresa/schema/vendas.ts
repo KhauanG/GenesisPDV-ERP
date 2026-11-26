@@ -732,7 +732,7 @@ export const parcelasVenda = pgTable(
  * P (↓ caixa): projeção do estado das vendas alteradas **fora** do terminal de origem (cancelamento pelo ERP,
  * devolução registrada em outro caixa, status fiscal resolvido pela nuvem; MD 3.11.9, SYNC 16.3; Fase 3, F3-B2,
  * migração 0030; README da API › decisão 221). `vendas` é ↑ (`fn_versao_local`) e não pode ser lida pelo pull; a
- * projeção tem `fn_versao` e desce no fluxo `operacao` (F3-B7; até lá em `TABELAS_FN_VERSAO_SEM_FLUXO`).
+ * projeção tem `fn_versao` e desce no fluxo `operacao` (F3-B7, decisão 226).
  *
  * O `id` é o da venda (PK e FK, sem default). Desce pelo **caixa** da venda (`caixa_id`), não pelo terminal: o
  * terminal que substituiu outro no mesmo caixa recebe o status das vendas antigas (padrões da Fase 3); `terminal_id`

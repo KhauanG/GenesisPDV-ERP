@@ -16,7 +16,7 @@
  */
 import { randomInt } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { calcularDvGtin, completarCnpj, criarEmpresaSchema } from '@genesis/shared';
+import { calcularDvGtin, completarCnpj, criarEmpresaSchema, montarCodigoVale } from '@genesis/shared';
 import { criarAplicacao } from '../../src/app.js';
 import { carregarConfiguracao } from '../../src/config/configuracao.js';
 import { garantirBanco, migrarControle, seedControle } from '../../src/database/migracoes/controle.js';
@@ -288,6 +288,12 @@ async function preparar(): Promise<void> {
   const lido = await chamar<{ versao: number }>('GET', `/api/acertos/${acerto.id}`, undefined, admin);
   await chamar('POST', `/api/acertos/${acerto.id}/efetivar`, { versao: lido.versao }, admin);
 
+  // Fase 3 (F3-B7): uma linha de cada tabela nova dos fluxos `catalogo` (promoção inativa, que nenhum caixa aplica),
+  // `pessoas` (vale) e `operacao` (orçamento com item), para o PDV desta árvore gravá-las e o PDV instalado (tags
+  // antigas, `compatibilidade.sh`) descartá-las com o cursor avançando. O status de venda (`vendas_status_pdv`) precisa de
+  // uma venda de terminal e fica na integração (`sync-fluxos-fase3.test.ts`).
+  await semearFase3(empresa.nomeBanco, lojaId, produto.id);
+
   const estado = {
     api: `${base}/`,
     codigoEmpresa: empresa.codigo,
@@ -314,6 +320,43 @@ async function preparar(): Promise<void> {
   );
   writeFileSync(estadoArquivo, JSON.stringify(estado, null, 2));
   console.log(`e2e PDV: API em ${base}, empresa ${empresa.codigo}; estado em ${estadoArquivo}`);
+}
+
+/** Linhas da Fase 3 que descem (F3-B7), inventadas e inofensivas ao roteiro: promoção inativa, vale e orçamento. */
+async function semearFase3(banco: string, lojaId: string, produtoId: string): Promise<void> {
+  const [{ id: admin }] = (await consultar<{ id: string }>(
+    banco,
+    "select id from usuarios where login = 'admin'",
+  )) as [{ id: string }];
+  const [{ id: promocao }] = (await consultar<{ id: string }>(
+    banco,
+    `insert into promocoes (nome, tipo, parametros, lojas, ativo)
+     values ('E2E LEVE 3 PAGUE 2', 'leve_pague', '{"leve":3,"pague":2}', array[$1]::uuid[], false) returning id`,
+    [lojaId],
+  )) as [{ id: string }];
+  await consultar(
+    banco,
+    "insert into promocoes_itens (promocao_id, produto_id, papel) values ($1, $2, 'gatilho')",
+    [promocao, produtoId],
+  );
+  await consultar(
+    banco,
+    `insert into vales (codigo, tipo, loja_emissao_id, valor_original, saldo, validade, origem_tipo, emitido_em, emitido_por_id)
+     values ($3, 'vale_compra', $1, '20.00', '20.00', current_date + 90, 'manual', now(), $2)`,
+    // Loja 1, caixa 00 (o vale emitido pelo ERP, SYNC 13.4), com o DV certo.
+    [lojaId, admin, montarCodigoVale(1, 0, 1)],
+  );
+  const [{ id: orcamento }] = (await consultar<{ id: string }>(
+    banco,
+    "insert into orcamentos (loja_id, nome, subtotal_bruto, total) values ($1, 'BAR E2E', '49.90', '49.90') returning id",
+    [lojaId],
+  )) as [{ id: string }];
+  await consultar(
+    banco,
+    `insert into itens_orcamento (orcamento_id, sequencia, produto_id, descricao, unidade, quantidade, preco_unitario, valor_total)
+     values ($1, 1, $2, 'CERV BRAHMA LT 350ML', 'UN', '10.000', '4.9900', '49.90')`,
+    [orcamento, produtoId],
+  );
 }
 
 let encerrando = false;

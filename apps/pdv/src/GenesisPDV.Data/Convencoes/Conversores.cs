@@ -107,3 +107,17 @@ public sealed class ListaTextoJson() : ValueConverter<string[], string>(
         v => v.Aggregate(0, (h, x) => HashCode.Combine(h, x)),
         v => v.ToArray());
 }
+
+/// <summary>
+/// Array de UUID da nuvem (<c>uuid[]</c>, ex.: <c>promocoes.lojas</c>) em TEXT JSON (<c>["…","…"]</c>, canônico minúsculo
+/// com hífens, como o <see cref="GuidTexto"/>), MD 4.1; o CHECK local é <c>json_valid</c>.
+/// </summary>
+public sealed class ListaGuidJson() : ValueConverter<Guid[], string>(
+    v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+    v => JsonSerializer.Deserialize<Guid[]>(v, (JsonSerializerOptions?)null) ?? Array.Empty<Guid>())
+{
+    public static readonly ValueComparer<Guid[]> Comparador = new(
+        (a, b) => a == null ? b == null : b != null && a.SequenceEqual(b),
+        v => v.Aggregate(0, (h, x) => HashCode.Combine(h, x)),
+        v => v.ToArray());
+}

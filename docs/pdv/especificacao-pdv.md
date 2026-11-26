@@ -199,18 +199,18 @@ este terminal que também sobem por evento (`vales` emitidos no caixa, `comandas
 | `templates_documentos`, `atalhos_pdv` | Templates de impressão; tabela de atalhos (Atalho / Habilitado / Ordem) |
 | `usuarios`, `usuarios_lojas`, `perfis`, `permissoes`, `perfis_permissoes`, `usuarios_permissoes` | **Todos** os usuários da empresa (projeção sem dados pessoais e **sem `senha_hash`**: a senha do ERP nunca desce, sincronizacao.md 4.1), com o PIN `senha_pdv_hash` (argon2id) só de quem tem acesso à loja do terminal (lojas permitidas ou Usuário Master); `senha_pdv_hash` desce `null` para os demais, que assim não logam neste caixa |
 | `produtos`, `produtos_codigos_barras`, `produtos_categorias`, `produtos_lojas`, `produtos_tributacao_uf`, `produtos_precos_quantidade`, `grupos_preco_quantidade`, `grupos_preco_quantidade_faixas`, `produtos_componentes`, `produtos_componentes_alternativas`, `produtos_variacoes`, `produtos_variacoes_valores`, `atributos_variacao`, `atributos_variacao_valores`, `produtos_grupos_complementos`, `produtos_complementos`, `produtos_relacionados`, `produtos_lotes` | Produtos (ativos e inativos, para histórico), códigos de barras e embalagens (fator/preço), preços e estoque mínimo da loja, faixas de preço por quantidade, composição do combo (posições e alternativas) e ficha técnica, variações, complementos, lotes/validades |
-| `promocoes`, `promocoes_itens` | Promoções vigentes da loja (seção 11.4) |
+| `promocoes`, `promocoes_itens` | Promoções de todas as lojas (o PDV aplica só as vigentes, ativas e da loja; seção 11.4) |
 | `restricoes_horario_venda` | Horários proibidos de venda por categoria/idade mínima (seção 10.11) |
 | `categorias`, `marcas`, `unidades_medida` | Para busca, exibição e fracionamento |
 | `pessoas`, `pessoas_categorias`, `pessoas_telefones`, `pessoas_enderecos`, `pessoas_aliases`, `pessoas_relevancia_loja` | Clientes, consumidores e funcionários relevantes na loja (busca offline, crediário, crédito funcionário); aliases de pessoas mescladas |
 | `saldos_estoque`, `saldos_lote` | Saldo do **estoque vinculado** à loja (ADR-03) e por lote, com a `versao` |
 | `saldos_credito_pessoas`, `parcelas_credito_pessoas` | Saldo em aberto de crediário/crédito funcionário por pessoa e as parcelas abertas (recebimento no caixa, 16.13) |
 | `saldos_vasilhame_pessoas` | Cascos em comodato por pessoa (seção 10.12) |
-| `vales` | Vales-compra/vale-troca ativos da empresa (código, saldo, validade) |
+| `vales` | Vales-compra/vale-troca da empresa na janela do caixa (D90): os utilizáveis e os que mudaram nos últimos 90 dias; o PDV apaga sozinho os que saem da janela (vencidos ou zerados há mais de 90 dias), menos o emitido nele e ainda não confirmado; online consulta qualquer vale (F3-B7) |
 | `formas_pagamento` | Formas ativas com uso PDV, da loja ou sem loja |
 | `orcamentos`, `itens_orcamento` | Orçamentos/pré-vendas ativos da loja |
 | `comandas`, `itens_comanda` | Comandas abertas da loja (FUT, módulo opcional; vazias na Ice Beer) |
-| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste caixa alterado fora do terminal de origem |
+| `cobrancas_pix`, `vendas_status_pdv` | Cobranças PIX dinâmicas deste terminal; estado das vendas deste caixa alterado fora do terminal de origem nos últimos 90 dias (pelo caixa: o terminal substituto recebe o das vendas do antigo; a linha mais antiga sai pela purga local, F3-B7) |
 | `ncms`, `ncms_ibpt`, `cfops`, `cfops_grupos`, `meios_pagamento_fiscais`, `ufs`, `municipios`, `paises`, `cst_ibs_cbs`, `classificacoes_tributarias_ibs_cbs`, `aliquotas_ibs_cbs`, `parametros_fiscais_uf` | Referências fiscais (validação do item em 10.2, tributos aproximados, tPag, IBS/CBS; prazos, limites e URLs da UF da loja, 18) |
 
 **Tabelas de movimento (nascem no PDV, sobem como eventos):**

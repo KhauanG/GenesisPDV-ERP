@@ -3,9 +3,8 @@
  * dos caixas online (SYNC 14.4) e o registro das requisições online que alteram estado (SYNC 20.4). Este bloco cria
  * só o esquema: os eventos `troca.registrada` e `vale.*`, as reservas e a idempotência vêm nos F3-B6, B41 a B45.
  *
- * Quem desce ao PDV: só `vales` (C, ↕; `fn_versao` com a trava de ordenação). O fluxo que a lê (`pessoas`, com o filtro
- * da D90) entra no F3-B7: até lá ela fica em `TABELAS_FN_VERSAO_SEM_FLUXO` (`versionamento.ts`) e o `Esquema.g.cs` não
- * muda. `trocas`, `itens_troca` e `movimentos_vale` sobem por evento (D, ↑) e `reservas_vale` não sai da nuvem (C, —):
+ * Quem desce ao PDV: só `vales` (C, ↕; `fn_versao` com a trava de ordenação), no fluxo `pessoas` com a janela da D90
+ * (F3-B7, `valeNaJanela` em `sync/fluxos.ts`; decisão 226). `trocas`, `itens_troca` e `movimentos_vale` sobem por evento (D, ↑) e `reservas_vale` não sai da nuvem (C, —):
  * `fn_versao_local`. `requisicoes_terminal` é log técnico, sem `versao`.
  *
  * Sem FK nas colunas que o PDV envia e que apontam para documento de outro evento (`trocas.venda_origem_id`,
