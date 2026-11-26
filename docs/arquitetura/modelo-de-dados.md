@@ -3924,6 +3924,12 @@ Conferência do gerente no ERP (ERP 14.9).
 
 Situação exibida no ERP: `aberta` (sessão aberta) · `fechada` (sem conferência) · `conferida` · `divergente`.
 
+- F3-B9 (sem migração; ERP 14.9; D114): a API grava pelo `POST /sessoes-caixa/:id/conferir`, com o `fechamentos_caixa`
+  travado e a `versao` da conferência conferida (409 na corrida); `situacao` = `conferida` quando a `diferenca` de cada
+  forma, em valor absoluto, fica dentro de `pdv.tolerancia_diferenca_caixa` da loja; refazer atualiza a linha e as formas
+  (upsert por `uq_conferencias_caixa_formas`), com a auditoria `conferir` em `sessoes_caixa`. Só existe conferência
+  para sessão com `fechamentos_caixa`; `conta_financeira_id` nulo até a Fase 4.
+
 #### 3.12.5 `recebimentos_crediario` e `pagamentos_recebimento_crediario` (D, ↑)
 
 Recebimento de parcelas de crediário/caderneta no caixa (PDV 16.13), aceito offline; sobe no `crediario.recebido`

@@ -3968,10 +3968,22 @@ nuvem com o que já chegou da sessão (pagamentos aprovados ou estornados de ven
 cancelados; o esperado é antes da `sangria_fechamento`) e aparece ao lado do calculado que o PDV mandou: diferente =
 evento da sessão ainda pendente ou retido (fila de decisão, 12.5). "Vendas" leva à listagem filtrada pela sessão
 (sem datas: a sessão esquecida aberta tem vendas de mais de um dia); enquanto esse filtro vale, a listagem de Vendas
-mostra um aviso com "Remover" (o filtro não tem campo no formulário). Fica para a Fase 3 a conferência (Conferida /
-Divergente, `fechamentos_caixa.conferir`, `POST /api/sessoes-caixa/:id/conferir`) e para a Fase 4 a quebra/sobra no
+mostra um aviso com "Remover" (o filtro não tem campo no formulário). Fica para a Fase 4 a quebra/sobra no
 financeiro; o alerta de sessão aberta há mais de 24 h está no Dashboard desde o C14 ("Caixas abertos há muito
 tempo", ERP 6, calculado com `pdv.horas_alerta_sessao`).
+
+**Fase 3 (F3-B9), a conferência** (D114 = F3-Q44 (A); README da API › decisão 227; README do ERP › decisão 88):
+`POST /api/sessoes-caixa/:id/conferir` (`fechamentos_caixa.conferir`) grava o valor conferido de **cada** forma do
+fechamento (texto decimal, até 2 casas, ≥ 0) e a observação (até 2.000). Diferença = conferido − calculado do caixa.
+"Conferida" quando a diferença de **cada** forma, em valor absoluto, está dentro de `pdv.tolerancia_diferenca_caixa` da
+loja (padrão R$ 0,00: qualquer centavo diverge), senão "Divergente"; as formas não se compensam. Só sessão com o
+fechamento do caixa (a aberta e a fechada pela nuvem sem o `caixa.fechado` mostram o motivo e o POST é 422). Refazer,
+com a mesma permissão, manda a versão lida (outra conferência gravada no meio = 409) e registra na auditoria o antes e o
+depois por forma. Avisos que não impedem: eventos do turno em erro ou retidos na nuvem e o cálculo do dinheiro da nuvem
+diferente do calculado do caixa. A listagem filtra as quatro situações (Fechada = ainda sem conferência), mostra a
+coluna Conferido e "Somente com diferença" olha o conferido quando há conferência (qualquer forma com diferença, além do
+total). A situação "Conferida/Divergente" é derivada de `conferencias_caixa`; nada do que veio do caixa muda e
+`conta_financeira_id` fica nulo até a Fase 4.
 
 **Entidades** (modelo 3.12): `sessoes_caixa`, `movimentos_caixa`, `fechamentos_caixa` e `fechamentos_caixa_formas`
 (calculado e digitado por forma, vindos do PDV), `conferencias_caixa` e `conferencias_caixa_formas` (conferido por
@@ -4130,8 +4142,14 @@ A **data filtrada é o dia operacional da sessão** (D7), como no 14.9, e não a
 da 1h da manhã fica no dia de quem abriu o caixa. Filtros: datas (padrão hoje), loja, caixa, operador, tipo, situação
 (ativos/cancelados/todos), sessão e loja de treino (O10, fora por padrão). O totalizador soma só os não cancelados; o
 cancelado aparece com a marca e os dados do cancelamento (feito no PDV, `caixa.movimento_cancelado`). O detalhe liga à
-sessão (14.9) quando o usuário tem `fechamentos_caixa.ver`. **Imprimir comprovante** espera os templates de impressão
-do ERP (3.7) e `movimento_conta_corrente_id` fica oculto até a Fase 4.
+sessão (14.9) quando o usuário tem `fechamentos_caixa.ver`. `movimento_conta_corrente_id` fica oculto até a Fase 4.
+
+**Fase 3 (F3-B9), Imprimir comprovante** (README da API › decisão 227; README do ERP › decisão 89): com
+`movimentos_caixa.imprimir`, o detalhe abre em aba nova o comprovante de layout fixo impresso pelo navegador (não há tipo
+de template para ele): 2 vias na mesma folha (a do caixa e a de quem retira), cada uma com a empresa e a loja, o
+movimento e as assinaturas do operador e de quem retira (no reforço, de quem entregou o dinheiro); o cancelado sai
+marcado. Os dados vêm de `GET /api/movimentos-caixa/:id/comprovante` (só abertura, reforço, sangria e sangria de
+fechamento).
 
 ### 15.4 Vendas
 

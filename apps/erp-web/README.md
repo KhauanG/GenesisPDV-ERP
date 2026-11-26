@@ -1588,6 +1588,36 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     aparece nos alertas do terminal, leva ao detalhe na listagem e tem o "Ciente" (com `terminais.gerenciar`), como o do
     relógio suspeito: o texto de exemplo do "O que foi verificado" fala da API atualizada. Sem tela nova.
 
+88. **Conferência do fechamento na tela do Fechamento de caixa** (Fase 3, F3-B9; ERP 14.9; D114; README da API ›
+    decisão 227; `src/paginas/vendas/FechamentosCaixa.tsx`). O bloco "Conferência" do detalhe traz, por forma, o
+    calculado, o informado e o **conferido** num campo pré-preenchido com o informado pelo operador (ou, ao refazer,
+    com a conferência anterior), a diferença (conferido − calculado) ao vivo e a previsão "Com estes valores:
+    Conferida/Divergente", pela mesma função da API (`situacaoConferencia`) e com a tolerância de agora da loja; o selo
+    gravado fica separado da previsão, para ninguém achar que já conferiu. O valor inválido trava o botão. "Conferir"
+    vira "Refazer conferência" (manda a `versao` lida; o 409 aparece no bloco). Sem `fechamentos_caixa.conferir`, o bloco
+    só mostra a conferência gravada. Os avisos da API não impedem: o de evento do turno pendente aparece no bloco; o de
+    cálculo diferente (`calculo_divergente`) sai uma vez só, no bloco "Cálculo do dinheiro" (o alerta da 1C passou a
+    ler o aviso da API, com a comparação decimal, em vez de comparar o texto na tela). Sessão aberta ou fechada pela
+    nuvem sem o fechamento: o bloco mostra o motivo. O bloco é remontado a cada sessão (`key`): o formulário guarda os
+    valores pelo id da forma, igual em todas as sessões, e a troca de sessão com o detalhe já no cache não passa pelo
+    Skeleton. Gravar atualiza também o Histórico da página, com a ação "Conferência". A listagem ganhou as situações
+    Conferida (verde) e Divergente (vermelha) no filtro e no selo e a coluna Conferido (com a diferença da
+    conferência). Testes: `src/paginas/vendas/ConferenciaCaixa.test.tsx` (o detalhe, a troca de sessão, o Histórico e a
+    listagem com uma sessão divergente).
+
+89. **Comprovante de reforço e sangria pela impressão do navegador** (Fase 3, F3-B9; ERP 15.2 e 15.3; README da API ›
+    decisão 227; `src/paginas/vendas/MovimentosCaixaComprovante.tsx`, `MovimentosCaixa.tsx`, `src/rotas.tsx`). Layout
+    fixo, como o romaneio (decisão 64): não há tipo de template para ele. O botão "Imprimir comprovante" do detalhe (só
+    com `movimentos_caixa.imprimir`) abre `/vendas/reforcos/:id/comprovante?imprimir=1` (ou `sangrias`) em aba nova, que
+    chama a impressão quando os dados chegam. Saem **2 vias na mesma folha** (`VIAS_COMPROVANTE_MOVIMENTO`: a do caixa
+    e a de quem retira), separadas por "corte aqui", cada uma com a empresa e a loja, o movimento (data, dia
+    operacional, caixa, operador, quem retira na sangria, observação, inf. adicionais) e as assinaturas do operador e de
+    quem retira (no reforço, de quem entregou o dinheiro); o cancelado sai marcado com o motivo, e o da loja de treino
+    (O10, D39: mesma empresa, mesmo cabeçalho e CNPJ) com "TREINO – SEM VALOR" em cada via, para o papel não servir de
+    prova de dinheiro que não saiu do caixa (recusar o comprovante de treino na API seria outra saída, que pediria uma
+    decisão do dono). Testes: `src/paginas/vendas/ConferenciaCaixa.test.tsx` (as vias, a impressão automática com
+    `imprimir=1` e a marca de treino).
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

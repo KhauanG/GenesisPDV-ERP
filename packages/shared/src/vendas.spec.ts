@@ -3,12 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { dec, decTexto } from './decimal.js';
 import {
   CANAIS_POR_TIPO_VENDA,
+  conferirSessaoSchema,
   diaOperacionalEm,
+  diferencaConferencia,
   filtroReforcosSchema,
   filtroSessoesCaixaSchema,
   filtroSangriasSchema,
   filtroVendasSchema,
   mesOperacionalEm,
+  OBSERVACAO_CONFERENCIA_MAX,
+  situacaoConferencia,
+  SITUACOES_SESSAO_CAIXA,
   tipoExibidoVenda,
 } from './vendas.js';
 import { CANAIS_VENDA } from './sync/eventos.js';
@@ -101,4 +106,78 @@ describe('caixa.apuracao.vetores.json', () => {
       expect(decTexto(dinheiro.minus(dec(c.sangria_fechamento)), 2)).toBe(e.gaveta_apos_sangria_fechamento);
     },
   );
+});
+
+describe('conferência do fechamento (F3-B9; D114)', () => {
+  const formas = (...pares: Array<[string, string]>) =>
+    pares.map(([valorCalculado, valorConferido]) => ({ valorCalculado, valorConferido }));
+
+  it('com a tolerância padrão (R$ 0,00), qualquer centavo de diferença numa forma é "Divergente"', () => {
+    expect(situacaoConferencia(formas(['225.00', '225.00'], ['35.00', '35.00']), '0.00')).toBe('conferida');
+    expect(situacaoConferencia(formas(['225.00', '224.99'], ['35.00', '35.00']), '0.00')).toBe('divergente');
+    expect(situacaoConferencia(formas(['225.00', '225.00'], ['35.00', '35.01']), '0')).toBe('divergente');
+  });
+
+  it('dentro da tolerância, para mais ou para menos, em cada forma; fora dela em qualquer forma, diverge', () => {
+    expect(situacaoConferencia(formas(['225.00', '224.95'], ['35.00', '35.05']), '0.05')).toBe('conferida');
+    expect(situacaoConferencia(formas(['225.00', '224.94'], ['35.00', '35.00']), '0.05')).toBe('divergente');
+    // As diferenças não se compensam entre as formas: −5 no dinheiro e +5 no PIX continuam divergentes.
+    expect(situacaoConferencia(formas(['225.00', '220.00'], ['35.00', '40.00']), '0.05')).toBe('divergente');
+    expect(situacaoConferencia(formas(['10.00', '15.00']), '5.00')).toBe('conferida');
+  });
+
+  it('forma sem venda: calculado 0 conferido 0 não diverge; conferido acima de 0 diverge; sem formas, conferida', () => {
+    expect(situacaoConferencia(formas(['0.00', '0.00'], ['35.00', '35.00']), '0.00')).toBe('conferida');
+    expect(situacaoConferencia(formas(['0.00', '2.00']), '0.00')).toBe('divergente');
+    expect(situacaoConferencia([], '0.00')).toBe('conferida');
+  });
+
+  it('a diferença é conferido − calculado em decimal, sem ponto flutuante', () => {
+    expect(diferencaConferencia('223.50', '225.00')).toBe('-1.50');
+    expect(diferencaConferencia('0.30', '0.10')).toBe('0.20');
+    expect(diferencaConferencia('9999999999999.99', '0.01')).toBe('9999999999999.98');
+  });
+
+  it('o corpo: valor em texto com vírgula ou ponto, normalizado; recusa número, sinal, 3 casas e forma repetida', () => {
+    const forma = '01a18752-3782-7bda-ad3e-2d6d1a3d1fa7';
+    const outra = '01a18752-c8a9-7970-9641-9f828b9d2434';
+    expect(
+      conferirSessaoSchema.parse({
+        formas: [
+          { formaPagamentoId: forma, valorConferido: '223,5' },
+          { formaPagamentoId: outra, valorConferido: ' 35 ' },
+        ],
+        observacao: '  ',
+      }),
+    ).toEqual({
+      versao: null,
+      formas: [
+        { formaPagamentoId: forma, valorConferido: '223.50' },
+        { formaPagamentoId: outra, valorConferido: '35.00' },
+      ],
+      observacao: null,
+    });
+    for (const valorConferido of [223.5, '-1.00', '1.005', '', '1.234,56', 'abc'])
+      expect(
+        conferirSessaoSchema.safeParse({ formas: [{ formaPagamentoId: forma, valorConferido }] }).success,
+        String(valorConferido),
+      ).toBe(false);
+    expect(
+      conferirSessaoSchema.safeParse({
+        formas: [
+          { formaPagamentoId: forma, valorConferido: '1' },
+          { formaPagamentoId: forma.toUpperCase(), valorConferido: '2' },
+        ],
+      }).success,
+    ).toBe(false);
+    const longa = 'x'.repeat(OBSERVACAO_CONFERENCIA_MAX + 1);
+    expect(conferirSessaoSchema.safeParse({ formas: [], observacao: longa }).success).toBe(false);
+    expect(conferirSessaoSchema.parse({ formas: [], versao: 3 }).versao).toBe(3);
+  });
+
+  it('as quatro situações do filtro da listagem', () => {
+    expect(SITUACOES_SESSAO_CAIXA).toEqual(['aberta', 'fechada', 'conferida', 'divergente']);
+    expect(filtroSessoesCaixaSchema.parse({ situacao: 'divergente' }).situacao).toBe('divergente');
+    expect(filtroSessoesCaixaSchema.safeParse({ situacao: 'fechada_forcado' }).success).toBe(false);
+  });
 });

@@ -234,6 +234,8 @@ const SESSAO_DETALHE: SessaoCaixaDetalhe = {
   totalCalculado: '260.00',
   totalInformado: '258.50',
   diferenca: '-1.50',
+  totalConferido: null,
+  diferencaConferida: null,
   caixaId: 'c1',
   terminalId: 't1',
   terminalDescricao: 'PC do balcão',
@@ -300,6 +302,10 @@ const SESSAO_DETALHE: SessaoCaixaDetalhe = {
     },
   ],
   vendas: { quantidade: 2, total: '60.00', canceladas: 1, totalCanceladas: '80.00' },
+  conferencia: null,
+  toleranciaConferencia: '0.00',
+  motivoSemConferencia: null,
+  avisosConferencia: [],
 };
 
 describe('<DetalheFechamentoCaixa> (ERP 14.9, C12; O3)', () => {
@@ -338,6 +344,14 @@ describe('<DetalheFechamentoCaixa> (ERP 14.9, C12; O3)', () => {
               corpo: {
                 ...SESSAO_DETALHE,
                 calculoDinheiro: { ...SESSAO_DETALHE.calculoDinheiro, esperado: '185.00' },
+                // A tela lê o alerta do aviso da API (a comparação decimal fica lá), não compara o texto.
+                avisosConferencia: [
+                  {
+                    codigo: 'calculo_divergente',
+                    mensagem:
+                      'O caixa calculou R$ 225,00 em dinheiro e o cálculo da nuvem dá R$ 185,00: ainda falta chegar (ou está retido) algum evento desta sessão.',
+                  },
+                ],
               },
             }
           : undefined,

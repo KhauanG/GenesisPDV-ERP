@@ -7854,6 +7854,59 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `pessoas` e do `operacao` além das linhas novas. Local e fora do CI (precisa das tags no clone). O PDV desta árvore,
        no mesmo e2e (`PontaAPontaTests`), confere que a promoção, o vale e o orçamento com item chegaram ao SQLite.
 
+227. **Conferência do fechamento pelo gerente e o comprovante de reforço e sangria** (F3-B9; plano
+     `docs/planos/fase3-plano.md`; ERP 14.9, 15.2, 15.3; MD 3.12.4; D114 = F3-Q44 (A); `vendas/sessoes-caixa.controller.ts`,
+     `vendas/movimentos-caixa.controller.ts`, `packages/shared/src/vendas.ts`). Sem migração (as tabelas são da 0030,
+     decisão 221) e sem PDV: nada do que veio do caixa muda. Escolhas técnicas, sem pergunta ao dono:
+     - **`POST /sessoes-caixa/:id/conferir`** (`fechamentos_caixa.conferir`; corpo `conferirSessaoSchema`): o valor
+       conferido de **cada** forma do fechamento, e só delas (faltou ou sobrou forma = 422 no campo `formas`), em texto
+       decimal com vírgula ou ponto e até 2 casas, nunca `number` (ADR-05), e a observação até 2.000. A diferença é
+       conferido − calculado do caixa (`fechamentos_caixa_formas.valor_calculado`), em `Dec`, gravada em
+       `conferencias_caixa_formas.diferenca`. A situação é `situacaoConferencia()` do shared, a mesma conta que a tela
+       faz ao vivo: "Conferida" se **toda** forma fica dentro de `pdv.tolerancia_diferenca_caixa` **da loja** (valor
+       absoluto, padrão R$ 0,00), senão "Divergente"; as formas não se compensam (−5 no dinheiro e +5 no PIX divergem).
+       A tolerância usada vai na auditoria (a conferência não tem coluna para ela; refazer usa a de agora).
+     - **Só sessão com fechamento** (padrão da Fase 3 aplicado sem pergunta, "padrão até a confirmação do dono"). A
+       sessão aberta e a fechada pela nuvem sem o `caixa.fechado` são 422, com o motivo também no detalhe
+       (`motivoSemConferencia`); loja fora das permitidas é 403 (o detalhe é 404, como antes).
+     - **Concorrência e refazer (D114).** A transação trava o `fechamentos_caixa` (`for update`; uma conferência por
+       fechamento, `uq_conferencias_caixa_fechamento`) e confere a `versao` que a tela leu (`null` na primeira): duas
+       conferências ao mesmo tempo gravam em fila e a segunda é 409 `CONFLITO_VERSAO`. Refazer altera a mesma linha e
+       faz upsert das formas (`uq_conferencias_caixa_formas`), sem acumular. A trava 7300001 não é pega: as tabelas da
+       conferência são `fn_versao_local` (não descem); o handler `caixa.aberto` que grava o `usuario_subsequente_id` do
+       fechamento só espera a linha.
+     - **Auditoria legível**: ação `conferir`, entidade `sessoes_caixa` (o Histórico do detalhe), com a descrição "Caixa
+       01 do dia 29/10/2026 conferido: Divergente (tolerância R$ 0,00 por forma). Dinheiro: calculado …, conferido …,
+       diferença …" e, ao refazer, "teve a conferência refeita: Divergente → Conferida", com o conferido "antes → depois"
+       por forma; `antes`/`depois` em JSON (situação, observação e o conferido de cada forma).
+     - **Avisos que não impedem** (`avisosConferencia` no detalhe e na resposta): `eventos_pendentes` são os eventos do
+       turno em erro ou retidos na nuvem, pela mesma conta do alerta `FECHAMENTO_EVENTOS_PENDENTES`
+       (`eventosPendentesDoTurno`, agora exportada, da abertura à `resumo.ultima_sequencia_evento`); `calculo_divergente`
+       é o dinheiro calculado pelo caixa diferente do cálculo refeito na nuvem (a condição do alerta que a 1C já
+       mostrava no "Cálculo do dinheiro"; o ERP passou a ler esse alerta deste aviso, com a comparação decimal, e não o
+       repete no bloco da conferência).
+     - **Listagem com as quatro situações** (`aberta`, `fechada` = fechada sem conferência, `conferida`, `divergente`),
+       derivadas de `conferencias_caixa`, sem mudar o `ck_sessoes_caixa_status` (que desce ao caixa); `fechada_forcado`
+       continua só exibida. Colunas novas `totalConferido` e `diferencaConferida` (soma das formas). "Somente com
+       diferença" é **sobre o conferido** quando há conferência (alguma forma com conferido ≠ calculado) e, sem ela, sobre o
+       informado — agora por forma também, além do total (antes, só `f.diferenca <> 0`: a forma trocada com total zero
+       ficava de fora).
+     - **Comprovante de reforço e sangria**: `GET /movimentos-caixa/:id/comprovante` (`movimentos_caixa.imprimir`) devolve
+       o movimento (o mesmo detalhe, com a loja permitida; outra loja = 404), a empresa e a loja (razão social, fantasia,
+       CNPJ; sem exigir `empresa.ver`, como o romaneio, decisão 175) e a hora do servidor; só os tipos das telas 15.2 e
+       15.3 (`abertura`, `reforco`, `sangria`, `sangria_fechamento`), os demais 404. O layout é fixo no ERP, pela
+       impressão do navegador (não há tipo em `TIPOS_TEMPLATE`; padrão da Fase 3, "padrão até a confirmação do dono").
+     - **Fase 4**: `conta_financeira_id` fica nulo (a quebra/sobra no financeiro); `financeiro.lanca_quebra_automatica`
+       não é lida aqui.
+     - **Testes.** `packages/shared/src/vendas.spec.ts` (situação dentro e fora da tolerância, as formas que não se
+       compensam, a forma sem venda, a diferença em decimal, o corpo); `test/integracao/consultas-vendas-caixa.test.ts`
+       (conferir Divergente com o fechamento e a sessão intocados e `conta_financeira_id` nulo, a auditoria, os filtros;
+       "Somente com diferença" com −5 no dinheiro e +5 no PIX, total 0, com e sem conferência; refazer com 409 sem a
+       versão, a tolerância da loja em R$ 2,00, o antes → depois e o upsert das formas; duas conferências ao mesmo
+       tempo; 403 sem a permissão e com a loja não permitida; 422 da aberta, da fechada pela nuvem, de forma faltando ou
+       sobrando e de valor inválido; o aviso do evento retido e o do cálculo divergente; o comprovante com e sem
+       `movimentos_caixa.imprimir`, de outra loja e do estorno).
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

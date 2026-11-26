@@ -775,6 +775,11 @@ corpo do PR-17.
   duas conferências ao mesmo tempo, loja não permitida); vitest das telas e do comprovante.
 - **Pronto:** sessão fechada aparece Conferida ou Divergente; nada do que veio do caixa muda; `conta_financeira_id` nulo até a Fase 4.
 - **Depende de:** F3-B2.
+- **[Feito (F3-B9):** como descrito, com dois ajustes registrados no README da API › decisão 227: as telas de reforço e de
+  sangria são uma só, `paginas/vendas/MovimentosCaixa.tsx` (não há `Reforcos.tsx` nem `Sangrias.tsx`), e o comprovante
+  ganhou `GET /movimentos-caixa/:id/comprovante` (`movimentos_caixa.imprimir`, com a empresa e a loja, sem exigir
+  `empresa.ver`), para a permissão de imprimir ser conferida na API; "Somente com diferença" olha cada forma, além do
+  total. README do ERP › decisões 88 e 89.]
 
 #### F3-B10 – Núcleo de estorno e `registrarStatusPdv`, sem mudar comportamento (SYNC 10.4, 16.3)
 - **Tamanho:** M · **Rigor:** completo (estorna documento, estoque)
