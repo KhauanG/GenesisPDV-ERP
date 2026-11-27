@@ -1022,6 +1022,19 @@ corpo do PR-17.
   conferido pelos vetores de preço.
 - **Pronto:** o F8 funciona e grava `vendas.tipo_preco`.
 - **Depende de:** F3-B16.
+- [**Feito (F3-B17)** (README do PDV › decisão 104, README da API › decisão 234; PDV 11.2; SYNC 9.7): como descrito,
+  sem migração, sem coluna nova, sem evento novo e sem versão nova do PDV. Escolhas técnicas (padrão até a confirmação do
+  dono, roadmap §16, D124): o `F8` alterna Varejo ↔ Atacado na venda em andamento (com o caixa livre só avisa; com
+  pagamento lançado é recusado); no Atacado o candidato atacado entra sem a quantidade mínima e vale o menor (a faixa, o
+  mix e o fardo menores ganham dele; a embalagem é recalculada, como manda Padrões); o preço manual, o combo, o casco e
+  os adicionais ficam; sem `pdv.venda.tipo_preco_atacado` o supervisor libera e a liberação `tipo_preco` (da venda toda)
+  sai de `ACOES_LIBERACAO_FASE3` para `ACOES_LIBERACAO_VENDA`; a volta ao Varejo não pede nada; o `F8` só existe com o
+  recurso da onda R3 (a auditoria `tipo_preco_alterado` é nova); a tela marca "PREÇO ATACADO". O `Recalculavel` não
+  mudou de regra (a embalagem já era recalculada; só o comentário). Os vetores de preço, que não existiam, entraram em
+  `packages/shared/testes/precos/regra-preco.vetores.json` (31 casos, conferidos pelo `resolverPreco` do shared e pelo
+  `MotorPreco`), sem a embalagem e o parcelado (o espelho em `Dec` com eles é o F3-B54). Sem mudança no handler da API:
+  a matriz de compatibilidade não roda neste bloco (a venda com o `tipo_preco = 'atacado'` e a liberação é coberta pela
+  integração).]
 
 #### F3-B18 – Preço gelada e preço parcelado (PDV 11.3 passo 9, 11.4)
 - **Tamanho:** M · **Rigor:** completo (dinheiro); o parcelado conforme a F3-Q3

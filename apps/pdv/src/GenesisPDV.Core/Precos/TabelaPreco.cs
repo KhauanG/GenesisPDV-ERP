@@ -57,5 +57,7 @@ public sealed record TabelaPreco(
 
 /// <summary>Parâmetros da loja/venda que entram na regra de preço.</summary>
 /// <param name="UsaPrecoVolume"><c>pdv.usa_preco_volume</c> ("Usa Produto Preço Volume"): habilita as faixas do produto e do grupo.</param>
-/// <param name="TipoPreco"><c>vendas.tipo_preco</c>; <c>atacado</c> (F8, PDV-2) força o candidato atacado.</param>
-public sealed record ParametrosPreco(Guid LojaId, bool UsaPrecoVolume, string TipoPreco = "varejo");
+/// <param name="TipoPreco">
+/// <c>vendas.tipo_preco</c>; <c>atacado</c> (F8, PDV 11.2; F3-B17) põe o candidato atacado sem a quantidade mínima.
+/// </param>
+public sealed record ParametrosPreco(Guid LojaId, bool UsaPrecoVolume, string TipoPreco = Vendas.TipoPrecoVenda.Varejo);

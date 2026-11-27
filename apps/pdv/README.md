@@ -4805,3 +4805,65 @@ reimpresso continua o original, com o número do caixa.
        a permissão de acréscimo com a liberação do CARLOS nas duas auditorias, o F6 › 4 sozinho e com o desconto no
        total junto, e o cupom; sem o recurso nada aparece); na API, `venda-eventos.test.ts` aplica a venda v1 com o preço alterado, a liberação
        `alterar_preco` e o acréscimo rateado, sem alerta.
+
+104. **Tipo de preço `F8` (Varejo · Atacado)** (F3-B17; PDV 11.2, 11.3.1, 11.5; F3-Q2 = D73 (A); README da API › decisão
+     234; `Core/Vendas/{Venda,Constantes}.cs`, `Core/Precos/{MotorPreco,TabelaPreco}.cs`, `Core/Caixa/PermissoesPdv.cs`,
+     `App/Servicos/ServicoVenda.cs`, `App/ViewModels/VendaViewModel.cs`, `App/Views/VendaView.axaml`). O atacado por
+     quantidade (PDV-1) continua, e o `F8` troca a venda inteira para o atacado. Sem migração (EF ou Drizzle), sem coluna
+     nova e sem evento novo: `vendas.tipo_preco` já existia (no banco local, no `MapeadorVenda` e no `venda.finalizada`
+     v1, que a nuvem de hoje aceita com `atacado`); a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21). Escolhas
+     técnicas, **padrão até a confirmação do dono** (roadmap §16, D124):
+     - **O recálculo.** `Venda.AlterarTipoPreco(tipo, temPermissaoAtacado, liberacao)` muda o `TipoPreco` (que deixou de
+       ser só leitura e entra na foto do `Atomico`: uma falha volta o tipo) e recalcula pela regra 11.3 todas as linhas
+       que o `OrigemPreco.Recalculavel` aceita. No Atacado o `MotorPreco` põe o candidato atacado **sem a quantidade
+       mínima** (sem o "12+": a etiqueta fica "ATAC" e a economia aparece; a linha sobe com a `quantidade_referencia_preco`
+       nula, porque o preço veio do tipo da venda, não da quantidade, README da API › decisão 234) e continua valendo o menor: a faixa, o mix, o
+       promocional, o preço da loja e o **fardo** menores ganham dele (a embalagem é recalculada, como dizem os Padrões da
+       Fase 3, resolvendo a lista da 11.2 que a excluía; "não altera o mix", 11.3.1). O produto sem preço de atacado fica
+       no que já valia. O preço manual (digitado ou do `Ctrl+F6`), o combo, o casco, o orçamento e as linhas sem snapshot
+       (venda recuperada de antes da tabela) ficam como estão, e os adicionais dos complementos voltam somados (a camada
+       de acréscimos, decisão 102). A diferença varejo − atacado não é desconto (12.3). O desconto do item em % é refeito
+       e o em R$ fica dentro do teto, e o desconto no total em R$ também (decisão 27: `Recalcular` com o ajuste ao teto).
+       Um item incluído depois já entra no tipo da venda. Cada venda começa no varejo (`Venda.Iniciar`): o tipo não passa
+       para a próxima, e a venda recuperada depois de uma queda volta no tipo gravado.
+     - **Recusas.** O F8 só troca entre Varejo e Atacado (`TipoPrecoVenda.DoF8`): o parcelado vem do pagamento (11.2,
+       F3-B18), e pedir o mesmo tipo é recusado. Só sem pagamento lançado (`ExigirSemPagamentos`, como o `Ctrl+F6`): o
+       total mudaria por baixo de um pagamento (e, com o eletrônico aprovado, os itens já estão travados, 16.1). Com o
+       caixa livre o F8 avisa "Inclua o primeiro item": a venda só nasce no primeiro item, e guardar um tipo "para a
+       próxima" exigiria a liberação e a auditoria fora de uma venda.
+     - **Permissão.** O Atacado pede `pdv.venda.tipo_preco_atacado` (`PermissoesPdv.TipoPrecoAtacado`; fora do perfil do
+       operador, no do supervisor e do encarregado, F3-B3); sem ela o supervisor libera (PIN e motivo, PDV 31.3) e a
+       liberação vai em `liberacoes` da venda com a ação **`tipo_preco`** (da venda toda: item e % nulos; `AcaoLiberacao` e
+       `ACOES_LIBERACAO_VENDA` do shared, conferidas pelo `ContratosEventosTests`; o campo é texto livre, a nuvem de hoje
+       aceita). Com a permissão, a liberação informada é ignorada. A volta ao Varejo não pede nada (só sobe o preço).
+     - **A tecla e a tela.** A ação `tipo_preco` do mapa de atalhos (decisão 101; `F8` no padrão) **alterna** Varejo ↔
+       Atacado: são só dois tipos e o operador vê o resultado na hora ("Preço ATACADO: 2 itens recalculados, total de R$ X
+       para R$ Y"); um F8 a mais volta. A tela marca o tipo ativo à direita do cabeçalho, "PREÇO ATACADO (F8 volta ao
+       varejo)" com a tecla configurada, além do "Preço: ATACADO" que o cabeçalho já mostrava.
+     - **O portão é o recurso da onda** (decisão 96; Padrões da Fase 3): o F8 grava a ação nova de auditoria
+       `tipo_preco_alterado` (que só sobe com o `venda.finalizada` v2 anunciado, `CatalogosNuvem.AcoesAuditoriaFase3`),
+       então o Atacado só existe com ele, como o `Ctrl+F6` (`VendaViewModel.AcaoLigada`); sem ele fica fora da barra, a
+       tecla bipa "Ação indisponível" e o F1 o lista em "Chegam numa próxima versão". A **volta ao Varejo** fica fora do
+       portão: se o recurso some no meio de uma venda no Atacado (a API voltou de versão e o pull relê o handshake), a
+       tecla e o botão continuam enquanto a venda está no Atacado, para o operador desfazer a troca sem cancelar a venda (a
+       auditoria dela fica no caixa até o recurso voltar); de volta ao Varejo, o F8 sai da barra (a `AtualizarTela`
+       remonta a barra quando isso muda) e o comando recusa o Atacado mesmo pelo botão de antes. A auditoria leva o tipo e o total antes e
+       depois e quantas linhas mudaram; com a liberação, também a `liberacao`. A Central descreve a ação
+       (`DescritorAuditoria`).
+     - **Vetores de preço** (`packages/shared/testes/precos/regra-preco.vetores.json`): 31 casos da regra 11.3 com e sem o
+       F8 (varejo, loja, promocional, atacado por quantidade e pelo F8, faixas da loja e gerais, empates e o mix nos dois
+       modos), que o `PrecosVetoresTests` (`MotorPreco`) e o `precos.spec.ts` (`resolverPreco` do shared, o espelho do
+       "Simular" do mix no ERP) conferem: um caso diferente lá e cá é o caixa e o ERP calculando diferente. A embalagem e
+       o parcelado ficam fora do espelho até o F3-B54 (o cálculo da venda em `Dec`) e o F3-B18.
+     - **Testes.** `TipoPrecoTests` (Core: o critério 11.5 "Atacado recalcula e mantém os manuais", a liberação do
+       supervisor e a ignorada com a permissão, as recusas, o fardo com o F8 nos dois sentidos, o mix modo grupo com o F8
+       acima e abaixo da soma, os adicionais dos complementos e o combo, o desconto em % refeito e o tipo da venda
+       recuperada, o desconto do item e o do total em R$ ajustados ao teto (com o aviso, e sem subir na volta), a falha
+       no recálculo que volta o tipo e as linhas pela foto do `Atomico` (o fracionável que no atacado daria R$ 0,00), o
+       motivo longo que não muda nada e o candidato sem limiar no motor, sem a quantidade de referência), `PrecosVetoresTests`,
+       `TipoPrecoTelasTests` (App headless: o F8 da MARIA com a liberação do CARLOS, a marca na tela, as auditorias e a
+       venda finalizada com `tipo_preco = 'atacado'` e a liberação no `venda.finalizada`; com a permissão, o vai e volta
+       sem supervisor e a próxima venda no varejo, depois da finalizada e da cancelada pelo Ctrl+N › C; com pagamento
+       lançado, recusado; sem o recurso, a tecla bipa; o recurso que some com a venda no Atacado ainda deixa voltar ao
+       Varejo); na API,
+       `venda-eventos.test.ts` aplica a venda v1 com `tipo_preco = 'atacado'` e a liberação `tipo_preco`, sem alerta.

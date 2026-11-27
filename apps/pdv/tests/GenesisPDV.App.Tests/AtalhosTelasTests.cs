@@ -136,7 +136,10 @@ public class AtalhosTelasTests
         Assert.Contains(ajuda.Atalhos, l => l.StartsWith("Ctrl+K     CPF na nota", StringComparison.Ordinal));
         Assert.Contains(ajuda.Atalhos, l => l.StartsWith("F12        Gestão de vendas", StringComparison.Ordinal));
         Assert.Contains(ajuda.Atalhos, l => l.StartsWith("Ctrl+N     Nova venda", StringComparison.Ordinal));
-        Assert.Contains(ajuda.Atalhos, l => l.StartsWith("Chegam numa próxima versão: F8 Tipo de preço", StringComparison.Ordinal) && l.Contains("Alt+G Gelada", StringComparison.Ordinal));
+        // O F8 Tipo de preço (F3-B17) já é desta versão (a demonstração tem o recurso da onda).
+        Assert.Contains(ajuda.Atalhos, l => l.StartsWith("F8         Tipo de preço", StringComparison.Ordinal));
+        Assert.Contains(ajuda.Atalhos, l => l.StartsWith("Chegam numa próxima versão:", StringComparison.Ordinal) && l.Contains("Alt+G Gelada", StringComparison.Ordinal)
+            && !l.Contains("F8 Tipo de preço", StringComparison.Ordinal));
         Assert.Contains(ajuda.Atalhos, l => l.StartsWith("Desabilitadas no ERP:", StringComparison.Ordinal) && l.Contains("Ctrl+Alt+S Sincronizar", StringComparison.Ordinal));
         pdv.Captura("80-ajuda-atalhos");
         pdv.Tecla(Key.Escape);

@@ -1304,8 +1304,16 @@
       </StackPanel>
 
       <Border Grid.Row="2" Padding="14,8" Background="{DynamicResource PincelPainelAlto}">
-        <TextBlock x:Name="TextoCabecalhoVenda" Text="{Binding CabecalhoVenda}" FontSize="18" FontWeight="SemiBold"
-                   AutomationProperties.Name="Cabeçalho da venda" />
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock x:Name="TextoCabecalhoVenda" Text="{Binding CabecalhoVenda}" FontSize="18" FontWeight="SemiBold"
+                     AutomationProperties.Name="Cabeçalho da venda" />
+          <!-- O tipo de preço Atacado ativo (F8, PDV 11.2; F3-B17): a marca fica à vista até voltar ao varejo. -->
+          <Border Grid.Column="1" Padding="10,2" CornerRadius="4" BorderThickness="2" BorderBrush="{DynamicResource PincelAviso}"
+                  IsVisible="{Binding TipoPrecoAtivoTexto, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock x:Name="TextoTipoPrecoAtivo" Text="{Binding TipoPrecoAtivoTexto}" FontSize="16" FontWeight="Bold"
+                       Foreground="{DynamicResource PincelAviso}" AutomationProperties.Name="Tipo de preço ativo" />
+          </Border>
+        </Grid>
       </Border>
 
       <Grid Grid.Row="3" ColumnDefinitions="*,360" Margin="10">

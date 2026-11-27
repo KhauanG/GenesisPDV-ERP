@@ -25,7 +25,8 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     /// <summary>
     /// O recurso da onda R3 (F3-B4) e o <c>pdv.altera_preco_pdv</c> da loja, relidos com o mapa (ao abrir a venda e depois
-    /// de cada pull, <see cref="RecarregarAtalhosAsync"/>): o F6 › 3 e o <c>Ctrl+F6</c> (F3-B16) só aparecem com eles.
+    /// de cada pull, <see cref="RecarregarAtalhosAsync"/>): o F6 › 3 e o <c>Ctrl+F6</c> (F3-B16) só aparecem com eles, e o
+    /// <c>F8</c> (F3-B17) só com o recurso.
     /// </summary>
     private bool _recursoOnda;
 
@@ -63,6 +64,8 @@ public sealed partial class VendaViewModel : ViewModelBase
             [AcoesAtalho.DescontoAcrescimo] = DescontoCommand,
             // F3-B16 (PDV 10.5): só com pdv.altera_preco_pdv ligada e o recurso da onda (AcaoLigada).
             [AcoesAtalho.AlterarPreco] = AlterarPrecoCommand,
+            // F3-B17 (PDV 11.2): só com o recurso da onda (AcaoLigada), porque grava a auditoria tipo_preco_alterado.
+            [AcoesAtalho.TipoPreco] = AlternarTipoPrecoCommand,
             [AcoesAtalho.MenuFuncoes] = FuncoesCommand,
             [AcoesAtalho.BloquearTerminal] = BloquearTelaCommand,
             [AcoesAtalho.SincronizarAgora] = SincronizarAgoraCommand,
@@ -159,6 +162,13 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     [ObservableProperty]
     public partial string CabecalhoVenda { get; set; } = string.Empty;
+
+    /// <summary>
+    /// A marca do tipo de preço Atacado ativo (<c>F8</c>, PDV 11.2; F3-B17), à direita do cabeçalho, com a tecla que volta
+    /// ao varejo; nula no varejo e com o caixa livre.
+    /// </summary>
+    [ObservableProperty]
+    public partial string? TipoPrecoAtivoTexto { get; set; }
 
     [ObservableProperty]
     public partial bool CaixaLivre { get; set; } = true;
@@ -827,6 +837,60 @@ public sealed partial class VendaViewModel : ViewModelBase
         aoAplicar($"Preço do item {sequencia} alterado para R$ {NumeroBr.Preco(preco)}.");
     }
 
+    /// <summary>
+    /// <c>F8</c> Tipo de preço (PDV 11.2; F3-B17; F3-Q2): alterna a venda em andamento entre Varejo e Atacado e recalcula
+    /// os itens (o preço manual, o combo e os adicionais ficam). O Atacado sem <c>pdv.venda.tipo_preco_atacado</c> pede o
+    /// supervisor (PIN e motivo; a liberação <c>tipo_preco</c> vai com a venda); a volta ao Varejo não pede nada. O Atacado
+    /// só com o recurso da onda (fora disso a tecla bipa, <see cref="AcaoLigada"/>); a volta ao Varejo, mesmo sem ele.
+    /// </summary>
+    [RelayCommand]
+    private Task AlternarTipoPreco() => Executar(async () =>
+    {
+        if (Dialogo is not null)
+        {
+            return;
+        }
+
+        if (ServicoVenda.Atual is not { Aberta: true } venda)
+        {
+            throw new RegraNegocioException("Inclua o primeiro item: o tipo de preço vale para a venda em andamento.");
+        }
+
+        var novo = venda.TipoPreco == TipoPrecoVenda.Atacado ? TipoPrecoVenda.Varejo : TipoPrecoVenda.Atacado;
+        if (novo == TipoPrecoVenda.Atacado && !_recursoOnda)
+        {
+            // O botão da barra montada antes da volta ao Varejo sem o recurso: o Atacado continua fechado (AcaoLigada).
+            _atalhos.Bipe();
+            AtualizarTela();
+            throw new RegraNegocioException(MensagemAcaoIndisponivel);
+        }
+
+        var resultado = await ServicoVenda.AlterarTipoPrecoAsync(novo);
+        if (resultado.Situacao == SituacaoDesconto.ExigeLiberacao)
+        {
+            PedirLiberacao(
+                Core.Caixa.PermissoesPdv.TipoPrecoAtacado,
+                "Tipo de preço ATACADO na venda (sem a permissão de atacado)",
+                async concedida =>
+                {
+                    var liberacao = new Liberacao(concedida.Supervisor.Id, concedida.Supervisor.LimiteDescontoPct, concedida.Motivo,
+                        concedida.ConcedidaEm, concedida.Supervisor.Master);
+                    var liberado = await ServicoVenda.AlterarTipoPrecoAsync(novo, liberacao);
+                    FecharDialogo(mensagem: MensagemTipoPreco(liberado) + $" Liberado por {concedida.Supervisor.Nome}.");
+                });
+            return;
+        }
+
+        AtualizarTela();
+        MostrarMensagem(MensagemTipoPreco(resultado), erro: false);
+    });
+
+    /// <summary>"Preço ATACADO: 2 itens recalculados, total de R$ 38,39 para R$ 35,09."</summary>
+    private static string MensagemTipoPreco(ResultadoTipoPreco r) =>
+        $"Preço {TipoPrecoVenda.Rotulo(r.Tipo).ToUpperInvariant()}: "
+        + (r.LinhasAlteradas == 1 ? "1 item recalculado" : $"{r.LinhasAlteradas} itens recalculados")
+        + $", total de R$ {NumeroBr.Dinheiro(r.TotalAntes)} para R$ {NumeroBr.Dinheiro(r.TotalDepois)}.";
+
     [RelayCommand]
     private Task ProcessarEntrada() => Executar(async () =>
     {
@@ -1325,10 +1389,27 @@ public sealed partial class VendaViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// A ação que depende de uma regra da loja (F3-B16): o <c>Ctrl+F6</c> só com <c>pdv.altera_preco_pdv</c> ligada e o
-    /// recurso da onda (PDV 10.5: "flag desligada → a ação não aparece"); as demais, sempre.
+    /// A ação que depende de uma regra da loja ou da nuvem: o <c>Ctrl+F6</c> só com <c>pdv.altera_preco_pdv</c> ligada e o
+    /// recurso da onda (F3-B16; PDV 10.5: "flag desligada → a ação não aparece"), o <c>F8</c> só com o recurso (F3-B17); as
+    /// demais, sempre.
     /// </summary>
-    private bool AcaoLigada(string acao) => acao != AcoesAtalho.AlterarPreco || (_recursoOnda && _alterarPrecoNaLoja);
+    private bool AcaoLigada(string acao) => acao switch
+    {
+        AcoesAtalho.AlterarPreco => _recursoOnda && _alterarPrecoNaLoja,
+        // O F8 (F3-B17) grava a ação nova de auditoria tipo_preco_alterado: o Atacado só com o recurso da onda (Padrões da
+        // Fase 3). A volta ao Varejo fica fora do portão: se o recurso sumir no meio de uma venda no Atacado (a API voltou de
+        // versão), o operador ainda desfaz a troca (a auditoria dela fica no caixa até o recurso voltar, AcoesAuditoriaFase3).
+        AcoesAtalho.TipoPreco => _recursoOnda || VendaNoAtacado,
+        _ => true,
+    };
+
+    private bool VendaNoAtacado => ServicoVenda.Atual is { Aberta: true, TipoPreco: TipoPrecoVenda.Atacado };
+
+    /// <summary>
+    /// A barra foi montada com o F8 (<see cref="AplicarMapa"/>): sem o recurso da onda ele só aparece enquanto a venda está no
+    /// Atacado, e a <see cref="AtualizarTela"/> remonta a barra quando isso muda.
+    /// </summary>
+    private bool _tipoPrecoNaBarra;
 
     /// <summary>O F6 › 3 Acréscimo no total (F3-B16): só com o recurso da onda (a tela grava o <c>acrescimo_total</c>).</summary>
     public bool AcrescimoDisponivel => _recursoOnda;
@@ -1371,6 +1452,7 @@ public sealed partial class VendaViewModel : ViewModelBase
     private void AplicarMapa(MapaAtalhos mapa)
     {
         Mapa = mapa;
+        _tipoPrecoNaBarra = TemAcao(AcoesAtalho.TipoPreco);
         var barra = mapa.Barra(a => TemAcao(a.Acao) && a.Acao != AcoesAtalho.ConfiguracaoTerminal, MaximoBotoesBarra - 1)
             .Select(a => new AtalhoBarraViewModel(a.Tecla, a.Rotulo, _acoes[a.Acao], Destaque: a.Acao == AcoesAtalho.ConcluirVenda))
             .ToList();
@@ -1387,7 +1469,8 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     /// <summary>
     /// Ctrl+N Nova venda (PDV 28.3): com o caixa livre, limpa o que ficou da venda anterior (o troco e o cupom na tela, o
-    /// multiplicador e o código digitado; o vendedor e o tipo de preço da próxima venda entram aqui com os blocos deles);
+    /// multiplicador e o código digitado; o vendedor da próxima venda entra aqui com o bloco dele, e o tipo de preço volta
+    /// sozinho ao varejo, porque cada venda começa nele, F3-B17);
     /// com a venda em andamento, pergunta "Cancelar (C) / Voltar (Esc)" (o "Suspender (S)" chega com o F3-B23).
     /// </summary>
     [RelayCommand]
@@ -1489,6 +1572,12 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     public void AtualizarTela(int? selecionar = null)
     {
+        if (TemAcao(AcoesAtalho.TipoPreco) != _tipoPrecoNaBarra)
+        {
+            // Sem o recurso da onda, o F8 entra e sai da barra com o Atacado da venda (AcaoLigada).
+            AplicarMapa(Mapa);
+        }
+
         var venda = ServicoVenda.Atual;
         var selecionadoAntes = selecionar ?? ItemSelecionado?.Sequencia;
         Itens.Clear();
@@ -1499,7 +1588,7 @@ public sealed partial class VendaViewModel : ViewModelBase
             CabecalhoVenda = $"CAIXA LIVRE · {Sessao.Operador?.Nome}";
             ItensTexto = "Itens: 0";
             SubtotalTexto = DescontosTexto = AcrescimosTexto = TotalTexto = "0,00";
-            EconomiaTexto = DicaPrecoTexto = CascosDescontadosTexto = null;
+            EconomiaTexto = DicaPrecoTexto = CascosDescontadosTexto = TipoPrecoAtivoTexto = null;
             ItemSelecionado = null;
             return;
         }
@@ -1531,6 +1620,9 @@ public sealed partial class VendaViewModel : ViewModelBase
         CabecalhoVenda = $"VENDA {venda.NumeroExibicao}  ·  Balcão  ·  Preço: {venda.TipoPreco.ToUpperInvariant()}"
                          + (venda.CpfCnpjNota is { } doc ? $"  ·  {(doc.Length == 11 ? "CPF" : "CNPJ")} {doc}" : venda.ClienteId is not null ? "  ·  CLIENTE" : string.Empty)
                          + (venda.Status == StatusVenda.EmPagamento ? "  ·  EM PAGAMENTO" : string.Empty);
+        TipoPrecoAtivoTexto = venda.TipoPreco == TipoPrecoVenda.Atacado
+            ? $"PREÇO ATACADO ({Mapa.Da(AcoesAtalho.TipoPreco).Tecla} volta ao varejo)"
+            : null;
         ItensTexto = $"Itens: {venda.QtdItens} ({NumeroBr.Quantidade(venda.VolumeTotal)} vol.)";
         SubtotalTexto = NumeroBr.Dinheiro(venda.SubtotalBruto);
         var descontos = venda.DescontoItens + venda.DescontoTotal;

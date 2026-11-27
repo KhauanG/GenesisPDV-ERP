@@ -8171,6 +8171,19 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      `venda-eventos.test.ts` (a venda v1 com o preço alterado, um genérico com a descrição digitada, a liberação
      `alterar_preco` e o acréscimo no total rateado: aplica sem alerta e grava como veio).
 
+234. **`tipo_preco` entre as ações de liberação que o caixa gera** (Fase 3, F3-B17; PDV 11.2; SYNC 9.7; README do PDV ›
+     decisão 104; `packages/shared/src/sync/eventos.ts`, `testes/sync/eventos.conferencias.json`). O `F8` do caixa da R3
+     troca a venda para o tipo de preço Atacado; o operador sem `pdv.venda.tipo_preco_atacado` passa pelo supervisor, e a
+     liberação sobe com a ação `tipo_preco` (da venda toda: `item_venda_id` e `valor_pct` nulos). Ela sai de
+     `ACOES_LIBERACAO_FASE3` (decisão 222) e entra em `ACOES_LIBERACAO_VENDA`, como o `alterar_preco` (decisão 233). Nada
+     muda no handler: `vendas.tipo_preco = 'atacado'` já era aceito no `venda.finalizada` v1 e gravado como veio, as linhas
+     no atacado pelo `F8` (o candidato sem a quantidade mínima, que vale pelo tipo da venda e não pela quantidade) levam
+     `origem_preco = 'atacado'` com `quantidade_referencia_preco` nulo (o `MotorPreco` do caixa não grava a referência
+     nesse caso), e o
+     `conferirSomasVenda` confere o `valor_bruto` pelo `preco_unitario`. Teste: `venda-eventos.test.ts` (a venda v1 com
+     `tipo_preco = 'atacado'` e a liberação `tipo_preco`: aplica sem alerta, grava o tipo, a origem e a liberação na
+     auditoria `criar` e baixa o estoque).
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

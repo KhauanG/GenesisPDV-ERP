@@ -49,6 +49,12 @@ public static class PermissoesPdv
     /// </summary>
     public const string AlterarPreco = "pdv.venda.alterar_preco";
 
+    /// <summary>
+    /// <c>F8</c> Tipo de preço Atacado (11.2; Fase 3, F3-B17). Fora do perfil do operador (supervisor e encarregado): sem
+    /// ela, o supervisor libera o Atacado (a liberação <c>tipo_preco</c> da venda); a volta ao Varejo não pede nada.
+    /// </summary>
+    public const string TipoPrecoAtacado = "pdv.venda.tipo_preco_atacado";
+
     // Venda real (Fase 1C, bloco C11a; PDV 16.2, 16.7, 29.1).
 
     /// <summary>Confirmar PIX manualmente (16.7). Fora do perfil do operador: com ela e a chave do supervisor desligada, lança sozinho.</summary>

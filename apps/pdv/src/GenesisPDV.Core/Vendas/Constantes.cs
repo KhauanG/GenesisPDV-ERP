@@ -40,6 +40,47 @@ public static class AcaoLiberacao
     /// limite do operador, ou o operador não tem <c>pdv.venda.alterar_preco</c>. Com o item e o % pedido.
     /// </summary>
     public const string AlterarPreco = "alterar_preco";
+
+    /// <summary>
+    /// Tipo de preço Atacado (<c>F8</c>, PDV 11.2; Fase 3, F3-B17) liberado pelo supervisor: o operador sem
+    /// <c>pdv.venda.tipo_preco_atacado</c>. Da venda toda (item e % nulos); a volta ao varejo não pede liberação.
+    /// </summary>
+    public const string TipoPreco = "tipo_preco";
+}
+
+/// <summary>
+/// Valores de <c>vendas.tipo_preco</c> (modelo 3.11.2, <c>ck_vendas_tipo_preco</c>; <c>TIPOS_PRECO_VENDA</c> do contrato).
+/// O <c>F8</c> (PDV 11.2; F3-B17) escolhe entre <see cref="Varejo"/> e <see cref="Atacado"/>; o <see cref="Parcelado"/> vem
+/// só do pagamento parcelado (11.2, F3-B18), nunca do F8.
+/// </summary>
+public static class TipoPrecoVenda
+{
+    public const string Varejo = "varejo";
+    public const string Atacado = "atacado";
+    public const string Parcelado = "parcelado";
+
+    /// <summary>Os tipos que o <c>F8</c> escolhe, na ordem da tela.</summary>
+    public static readonly IReadOnlyList<string> DoF8 = [Varejo, Atacado];
+
+    /// <summary>O nome na tela e na auditoria ("Varejo", "Atacado", "Parcelado").</summary>
+    public static string Rotulo(string tipo) => tipo switch
+    {
+        Varejo => "Varejo",
+        Atacado => "Atacado",
+        Parcelado => "Parcelado",
+        _ => tipo,
+    };
+}
+
+/// <summary>
+/// Resultado do <c>F8</c> (PDV 11.2; F3-B17). <see cref="SituacaoDesconto.ExigeLiberacao"/> = o Atacado pedido por
+/// quem não tem <c>pdv.venda.tipo_preco_atacado</c>, sem a liberação. <paramref name="LinhasAlteradas"/> conta as linhas
+/// cujo preço unitário mudou com o recálculo (as de preço manual, combo, casco e as fixadas ficam como estavam).
+/// </summary>
+public sealed record ResultadoTipoPreco(
+    SituacaoDesconto Situacao, string Tipo, decimal TotalAntes, decimal TotalDepois, int LinhasAlteradas, bool PorLiberacao = false)
+{
+    public bool Aplicado => Situacao == SituacaoDesconto.Aplicado;
 }
 
 /// <summary>Valores de <c>pagamentos_venda.status</c>.</summary>
@@ -70,7 +111,12 @@ public static class OrigemPreco
     public static readonly IReadOnlyList<string> Todas =
         [Varejo, Loja, Promocional, Atacado, Quantidade, GrupoMix, Parcelado, Manual, Balanca, Orcamento, KitRateio, Embalagem];
 
-    /// <summary>Origens que a regra 11.3 recalcula quando a quantidade de referência muda (PDV 11.2, 11.3.1).</summary>
+    /// <summary>
+    /// Origens que a regra 11.3 recalcula quando a quantidade de referência ou o tipo de preço (<c>F8</c>, F3-B17) mudam
+    /// (PDV 11.2, 11.3.1). A embalagem é recalculada (o preço do fardo é um candidato e vale o menor, 11.3.1; Padrões da
+    /// Fase 3, que resolvem a divergência com a lista da 11.2); o preço manual, a balança tipo Valor, o orçamento, o
+    /// combo e o parcelado ficam como estão. Os adicionais dos complementos voltam somados (a camada de acréscimos).
+    /// </summary>
     public static bool Recalculavel(string origem) => origem is not (Manual or Balanca or Orcamento or KitRateio or Parcelado);
 
     /// <summary>Origens em que a quantidade (do produto ou do grupo) definiu o preço: grava <c>quantidade_referencia_preco</c>.</summary>

@@ -23,7 +23,8 @@
     "pix_manual",
     "forma_pagamento",
     "desconto_cascos",
-    "alterar_preco"
+    "alterar_preco",
+    "tipo_preco"
   ],
   "movimentos_caixa_cancelaveis": ["reforco", "sangria"],
   "payload_sha256": {

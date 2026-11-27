@@ -1626,8 +1626,24 @@ Critérios de aceite:
 ### 11.2 Tipo de preço da venda — Fase PDV-2
 
 Atalho **Tipo de preço** (`F8`): Varejo (padrão) · Atacado. Mudar o tipo recalcula todos os itens não cancelados cujo
-`origem_preco` não seja `manual`, `balanca` tipo Valor, `orcamento`, `embalagem` nem `kit_rateio`. Tipo Atacado exige
+`origem_preco` não seja `manual`, `balanca` tipo Valor, `orcamento` nem `kit_rateio`. Tipo Atacado exige
 permissão `pdv.venda.tipo_preco_atacado`; produtos sem preço atacado ficam com o varejo.
+
+Como o caixa faz (Fase 3, F3-B17; README do PDV › decisão 104; padrão até a confirmação do dono, roadmap §16, D124):
+
+- o `F8` (a ação `tipo_preco` do mapa de atalhos, 28.1) **alterna** Varejo ↔ Atacado na venda em andamento e mostra
+  "Preço ATACADO: N itens recalculados, total de R$ X para R$ Y"; a tela marca o tipo ativo ("PREÇO ATACADO (F8 volta ao
+  varejo)") ao lado do cabeçalho. Com o caixa livre, avisa "Inclua o primeiro item" (cada venda começa no varejo e o tipo
+  não passa para a próxima); com pagamento lançado, é recusado;
+- no Atacado o candidato atacado entra **sem a quantidade mínima** e continua valendo o menor candidato (11.3): a faixa, o
+  mix, o promocional, o preço da loja e o **fardo** (a embalagem é recalculada, vale o menor, 11.3.1) ganham dele quando
+  são menores; o combo, o casco, o preço manual e os adicionais dos complementos ficam como estão. A linha no atacado pelo
+  `F8` sobe com `quantidade_referencia_preco` nula (o preço veio do tipo da venda, não da quantidade);
+- sem `pdv.venda.tipo_preco_atacado`, o supervisor libera (PIN e motivo, 31.3) e a liberação sobe em `liberacoes` da venda
+  com a ação `tipo_preco` (sincronizacao.md 9.7); a volta ao Varejo não pede permissão. A auditoria é `tipo_preco_alterado`
+  (o tipo e o total antes e depois), e o `vendas.tipo_preco` sobe no `venda.finalizada`;
+- até a R3 (o recurso da onda anunciado pela nuvem, F3-B4), o `F8` não existe no caixa: a tecla bipa "Ação indisponível".
+  Se o recurso some no meio de uma venda no Atacado (a nuvem voltou de versão), o `F8` ainda volta ao Varejo.
 
 **Parcelado depende da forma de pagamento** (mesma regra do ERP): o preço parcelado não é escolhido no `F8`. Ele é
 aplicado quando a venda recebe um pagamento numa forma com **Permite Parcelar** e `parcelas > 1`: ao escolher as

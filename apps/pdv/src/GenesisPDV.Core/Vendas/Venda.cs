@@ -154,7 +154,12 @@ public sealed class Venda
     public Guid? ClienteId { get; private set; }
     public string? CpfCnpjNota { get; private set; }
     public string? NomeNota { get; private set; }
-    public string TipoPreco { get; }
+    /// <summary>
+    /// <c>vendas.tipo_preco</c>: começa no varejo em toda venda e muda pelo <c>F8</c> (<see cref="AlterarTipoPreco"/>, PDV
+    /// 11.2; F3-B17); o parcelado entra com o pagamento parcelado (F3-B18).
+    /// </summary>
+    public string TipoPreco { get; private set; }
+
     public int QtdItens { get; private set; }
     public decimal SubtotalBruto { get; private set; }
     public decimal DescontoItens { get; private set; }
@@ -254,7 +259,7 @@ public sealed class Venda
             Status: StatusVenda.EmAndamento,
             StatusFiscal: Vendas.StatusFiscal.NaoAplicavel,
             OperadorId: operadorId,
-            TipoPreco: "varejo",
+            TipoPreco: TipoPrecoVenda.Varejo,
             DescontoTotal: 0m,
             DescontoTotalPct: null,
             AcrescimoTotal: 0m,
@@ -1768,6 +1773,68 @@ public sealed class Venda
     }
 
     /// <summary>
+    /// <c>F8</c> Tipo de preço (PDV 11.2; Fase 3, F3-B17; F3-Q2): troca o <c>vendas.tipo_preco</c> da venda em andamento
+    /// entre Varejo e Atacado e recalcula pela regra 11.3 todas as linhas recalculáveis (<see cref="OrigemPreco.Recalculavel"/>,
+    /// inclusive a do fardo: no Atacado o candidato atacado entra sem a quantidade mínima e vale o menor, 11.3.1), com os
+    /// adicionais dos complementos preservados. O preço manual, o combo, o casco e as linhas sem snapshot ficam como estão;
+    /// o produto sem preço de atacado fica no varejo (ou na faixa/mix que já valia). A diferença não é desconto (12.3). O
+    /// desconto do item em % é refeito e o em R$ fica dentro do teto (11.3.1), e o desconto no total em R$ também
+    /// (decisão 27). Só sem pagamento lançado (o total muda; o parcelado volta com o F3-B18).
+    /// </summary>
+    /// <param name="temPermissaoAtacado">
+    /// O operador tem <c>pdv.venda.tipo_preco_atacado</c>: sem ela, o Atacado pede o supervisor (<paramref name="liberacao"/>,
+    /// que vira a linha <c>tipo_preco</c> de <c>liberacoes</c>, da venda toda). A volta ao Varejo não pede permissão.
+    /// </param>
+    public ResultadoTipoPreco AlterarTipoPreco(string tipo, bool temPermissaoAtacado, Liberacao? liberacao = null)
+    {
+        ArgumentNullException.ThrowIfNull(tipo);
+        ExigirStatus(StatusVenda.EmAndamento, "trocar o tipo de preço");
+        if (tipo == TipoPrecoVenda.Parcelado)
+        {
+            throw new RegraNegocioException("O preço parcelado não se escolhe no F8: ele vem do pagamento em mais de uma parcela.");
+        }
+
+        if (!TipoPrecoVenda.DoF8.Contains(tipo))
+        {
+            throw new RegraNegocioException($"Tipo de preço inválido: {tipo}.");
+        }
+
+        if (tipo == TipoPreco)
+        {
+            throw new RegraNegocioException($"A venda já está no preço {TipoPrecoVenda.Rotulo(tipo).ToUpperInvariant()}.");
+        }
+
+        ExigirSemPagamentos("trocar o tipo de preço");
+        var totalAntes = Total;
+        var porLiberacao = tipo == TipoPrecoVenda.Atacado && !temPermissaoAtacado;
+        if (porLiberacao)
+        {
+            if (liberacao is null)
+            {
+                return new ResultadoTipoPreco(SituacaoDesconto.ExigeLiberacao, tipo, totalAntes, totalAntes, 0);
+            }
+
+            if (string.IsNullOrWhiteSpace(liberacao.Motivo) || liberacao.Motivo.Trim().Length > MotivoLiberacaoMaximo)
+            {
+                throw new RegraNegocioException($"Informe o motivo da liberação (até {MotivoLiberacaoMaximo} caracteres).");
+            }
+        }
+
+        var precosAntes = ItensAtivos.ToDictionary(i => i.Sequencia, i => i.PrecoUnitario);
+        Atomico(() =>
+        {
+            TipoPreco = tipo;
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+            if (porLiberacao)
+            {
+                RegistrarLiberacao(liberacao!, AcaoLiberacao.TipoPreco, null, null);
+            }
+        });
+        var alteradas = ItensAtivos.Count(i => precosAntes.TryGetValue(i.Sequencia, out var antes) && antes != i.PrecoUnitario);
+        return new ResultadoTipoPreco(SituacaoDesconto.Aplicado, tipo, totalAntes, Total, alteradas, porLiberacao);
+    }
+
+    /// <summary>
     /// A ação toda pede o supervisor (o operador sem a permissão dela): sem a liberação, <c>ExigeLiberacao</c>; com ela, o
     /// % pedido precisa caber no limite do supervisor, e a liberação é sempre usada (vai em <c>liberacoes</c>).
     /// </summary>
@@ -2823,7 +2890,7 @@ public sealed class Venda
         new FotoCabecalho(
             Status, StatusFiscal, DiaOperacional, DescontoTotal, DescontoTotalPct, DescontoTotalOrigem, AcrescimoTotal,
             FinalizadaEm, CanceladaEm, CanceladaPorId, CancelamentoAutorizadoPorId, MotivoCancelamento, CancelamentoOrigem,
-            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador));
+            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador, TipoPreco));
 
     private void Reverter(Foto foto)
     {
@@ -2876,6 +2943,7 @@ public sealed class Venda
         ClienteId = c.ClienteId;
         CpfCnpjNota = c.CpfCnpjNota;
         NomeNota = c.NomeNota;
+        TipoPreco = c.TipoPreco;
         RecalcularTotaisSemRateio();
     }
 
@@ -2922,7 +2990,8 @@ public sealed class Venda
         Guid? ClienteId,
         string? CpfCnpjNota,
         string? NomeNota,
-        decimal DescontoTotalOperador);
+        decimal DescontoTotalOperador,
+        string TipoPreco);
 
     private static void ValidarQuantidade(decimal quantidade, bool fracionavel)
     {

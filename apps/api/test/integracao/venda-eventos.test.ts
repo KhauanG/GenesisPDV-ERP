@@ -2806,6 +2806,58 @@ describe('preço digitado, alterado e acréscimo no total do caixa (F3-B16; PDV 
   });
 });
 
+describe('tipo de preço F8 do caixa (F3-B17; PDV 11.2)', () => {
+  it('v1 com tipo_preco atacado, as linhas no atacado sem o mínimo e a liberação tipo_preco: aplica sem alerta e grava como veio', async () => {
+    const p = await novoPonto();
+    const lata = await criarProduto({ nome: 'LATA F3B17', precoVenda: '3,49' });
+    await entrada([[lata, '10', '2']]);
+    const v = venda(
+      p,
+      [
+        {
+          produto: lata,
+          quantidade: '3.000',
+          preco: '3.1900',
+          // Como o caixa da R3 manda a linha do F8: o preço veio do tipo da venda, sem a quantidade de referência.
+          extra: { preco_tabela: '3.1900', origem_preco: 'atacado', quantidade_referencia_preco: null },
+        },
+      ],
+      { extra: { tipo_preco: 'atacado' } },
+    );
+    const lib = {
+      acao: 'tipo_preco',
+      item_venda_id: null,
+      valor_pct: null,
+      autorizado_por_id: operador,
+      motivo: 'Bar do bairro',
+      ocorrido_em: agora(),
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', { ...v, liberacoes: [lib] })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+    const [cab] = await consultar<{ tipo_preco: string; total: string }>(
+      emp.nomeBanco,
+      'select tipo_preco, total::text from vendas where id = $1',
+      [v.vendas.id],
+    );
+    expect(cab).toEqual({ tipo_preco: 'atacado', total: '9.57' });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        'select origem_preco, preco_unitario::text, quantidade_referencia_preco::text from itens_venda where venda_id = $1',
+        [v.vendas.id],
+      ),
+    ).toEqual([{ origem_preco: 'atacado', preco_unitario: '3.1900', quantidade_referencia_preco: null }]);
+    const [auditoria] = await consultar<{ depois: { liberacoes: Array<{ acao: string }> } }>(
+      emp.nomeBanco,
+      "select depois from auditoria where entidade = 'vendas' and acao = 'criar' and registro_id = $1",
+      [v.vendas.id],
+    );
+    expect(auditoria!.depois.liberacoes.map((l) => l.acao)).toEqual(['tipo_preco']);
+    expect(await saldo(lata)).toBe(7);
+  });
+});
+
 describe('ordem de lançamento do razão (F2-B2)', () => {
   it('no fim da suíte, a cadeia de cada linha fecha por seq_lancamento e o replay repete o razão', async () => {
     expect(await conferirRazaoDasEmpresas(amb.bancoControle)).toBeGreaterThan(0);

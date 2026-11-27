@@ -399,8 +399,8 @@ public sealed class ServicoVenda(
 
     /// <summary>
     /// O recurso da onda R3 (<c>venda.finalizada</c> v2 anunciado no último handshake; F3-B4; na demonstração, sempre): o
-    /// portão das telas do F3-B16 (o preço digitado, o <c>Ctrl+F6</c> e o F6 › 3), que gravam ações novas de auditoria
-    /// (<c>preco_alterado</c>, <c>acrescimo_total</c>; Padrões da Fase 3).
+    /// portão das telas do F3-B16 (o preço digitado, o <c>Ctrl+F6</c> e o F6 › 3) e do <c>F8</c> (F3-B17), que gravam ações
+    /// novas de auditoria (<c>preco_alterado</c>, <c>acrescimo_total</c>, <c>tipo_preco_alterado</c>; Padrões da Fase 3).
     /// </summary>
     public Task<bool> RecursoDaOndaAsync(CancellationToken ct = default) =>
         repositorioCaixa.RecursoDisponivelAsync(Sync.Push.RecursoNuvem.OndaR3.Tipo, Sync.Push.RecursoNuvem.OndaR3.Versao, ct);
@@ -975,6 +975,51 @@ public sealed class ServicoVenda(
                     ? [alterado, new RegistroAuditoria("liberacao", Operador.Id, "itens_venda", item.Id, $"{texto} liberado pelo supervisor",
                         liberacao!.SupervisorId, "PDV › Alterar preço", liberacao.Motivo,
                         Depois: new JsonObject { ["preco_unitario"] = FormatoProtocolo.Preco(item.PrecoUnitario) }.ToJsonString())]
+                    : [alterado];
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// <c>F8</c> Tipo de preço (PDV 11.2; F3-B17): troca o tipo da venda em andamento e recalcula as linhas (o Core,
+    /// <see cref="Venda.AlterarTipoPreco"/>). O Atacado pede <c>pdv.venda.tipo_preco_atacado</c>; sem ela, a
+    /// <paramref name="liberacao"/> do supervisor (que vira a linha <c>tipo_preco</c> de <c>liberacoes</c>). Grava a
+    /// auditoria <c>tipo_preco_alterado</c> (o tipo e o total antes e depois) e, com a liberação, a <c>liberacao</c>, no
+    /// mesmo commit da venda. A tela só chega aqui com o recurso da onda R3 (a ação de auditoria é nova; Padrões da Fase 3).
+    /// </summary>
+    public Task<ResultadoTipoPreco> AlterarTipoPrecoAsync(string tipo, Liberacao? liberacao = null, CancellationToken ct = default)
+    {
+        var temPermissao = Operador.Tem(PermissoesPdv.TipoPrecoAtacado);
+        var tipoAntes = Atual?.TipoPreco;
+        return ExecutarAsync(
+            v => v.AlterarTipoPreco(tipo, temPermissao, liberacao),
+            (v, r) =>
+            {
+                if (!r.Aplicado)
+                {
+                    return [];
+                }
+
+                var texto = $"Tipo de preço da venda {v.NumeroExibicao} de {TipoPrecoVenda.Rotulo(tipoAntes ?? TipoPrecoVenda.Varejo)} para "
+                            + $"{TipoPrecoVenda.Rotulo(r.Tipo)} (total de R$ {NumeroBr.Dinheiro(r.TotalAntes)} para R$ {NumeroBr.Dinheiro(r.TotalDepois)})";
+                var antes = new JsonObject
+                {
+                    ["tipo_preco"] = tipoAntes,
+                    ["total"] = FormatoProtocolo.Dinheiro(r.TotalAntes),
+                }.ToJsonString();
+                var depois = new JsonObject
+                {
+                    ["tipo_preco"] = r.Tipo,
+                    ["total"] = FormatoProtocolo.Dinheiro(r.TotalDepois),
+                    ["itens_recalculados"] = r.LinhasAlteradas,
+                }.ToJsonString();
+                var alterado = new RegistroAuditoria("tipo_preco_alterado", Operador.Id, "vendas", v.Id,
+                    texto + (r.PorLiberacao ? " liberado pelo supervisor" : string.Empty), r.PorLiberacao ? liberacao!.SupervisorId : null,
+                    "PDV › Tipo de preço", r.PorLiberacao ? liberacao!.Motivo : null, Antes: antes, Depois: depois);
+                return r.PorLiberacao
+                    ? [alterado, new RegistroAuditoria("liberacao", Operador.Id, "vendas", v.Id, $"{texto} liberado pelo supervisor",
+                        liberacao!.SupervisorId, "PDV › Tipo de preço", liberacao.Motivo,
+                        Depois: new JsonObject { ["tipo_preco"] = r.Tipo }.ToJsonString())]
                     : [alterado];
             },
             ct);

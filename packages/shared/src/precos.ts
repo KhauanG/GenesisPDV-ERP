@@ -265,6 +265,7 @@ export interface ProdutoPrecoCalculo {
 export interface ParametrosPrecoCalculo {
   usaPrecoVolume: boolean;
   lojaId: string | null;
+  /** `vendas.tipo_preco` do `F8` (PDV 11.2): `atacado` põe o candidato atacado sem a quantidade mínima. */
   tipoPreco?: 'varejo' | 'atacado';
 }
 
@@ -297,8 +298,10 @@ export function faixaAplicavel(
 }
 
 /**
- * Preço unitário da linha pela regra do PDV 11.3 (passos 3–6, sem preço manual, orçamento nem parcelado): o menor
- * candidato vale. `qtdTotal` é a soma do produto na venda; `qtdGrupo`, a soma de todos os membros do grupo (mix).
+ * Preço unitário da linha pela regra do PDV 11.3 (passos 3–7, sem preço manual, orçamento, embalagem nem parcelado): o
+ * menor candidato vale. `qtdTotal` é a soma do produto na venda; `qtdGrupo`, a soma de todos os membros do grupo (mix).
+ * Com `tipoPreco: 'atacado'` (o `F8` do caixa, PDV 11.2; F3-B17), o atacado entra sem a quantidade mínima. O espelho do
+ * `MotorPreco` do PDV, conferido pelos dois lados em `testes/precos/regra-preco.vetores.json` (`precos.spec.ts`).
  */
 export function resolverPreco(
   p: ProdutoPrecoCalculo,

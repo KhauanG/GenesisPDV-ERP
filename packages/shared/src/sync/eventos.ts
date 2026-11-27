@@ -208,8 +208,9 @@ export const TIPOS_ALERTA_CADASTRO = [
  * (confirmação manual do PIX liberada pelo supervisor, O9b), `forma_pagamento` (forma com "exige supervisor" ou senha
  * de liberação, C8b) e, desde o C11c, `desconto_cascos` (desconto pelo valor do casco liberado: operador sem
  * `pdv.venda.desconto_total` ou crédito acima de `pdv.desconto_cascos_max_sem_supervisor`) e, desde o F3-B16 (o caixa da
- * R3), `alterar_preco` (o `Ctrl+F6` com a redução acima do limite do operador, ou sem `pdv.venda.alterar_preco`). O campo
- * é texto livre no contrato: uma ação nova num PDV mais novo não pode recusar a venda inteira (é só registro, não muda
+ * R3), `alterar_preco` (o `Ctrl+F6` com a redução acima do limite do operador, ou sem `pdv.venda.alterar_preco`) e, desde
+ * o F3-B17, `tipo_preco` (o `F8` Atacado sem `pdv.venda.tipo_preco_atacado`; da venda toda, item e % nulos). O campo é
+ * texto livre no contrato: uma ação nova num PDV mais novo não pode recusar a venda inteira (é só registro, não muda
  * estoque nem valor).
  */
 export const ACOES_LIBERACAO_VENDA = [
@@ -219,6 +220,7 @@ export const ACOES_LIBERACAO_VENDA = [
   'forma_pagamento',
   'desconto_cascos',
   'alterar_preco',
+  'tipo_preco',
 ] as const;
 
 /**
@@ -226,14 +228,13 @@ export const ACOES_LIBERACAO_VENDA = [
  * a API usarem o mesmo texto. O campo continua texto livre no contrato (acima), então nenhuma delas muda o
  * `venda.finalizada` v1 nem recusa a venda do PDV instalado. Ficam fora de `ACOES_LIBERACAO_VENDA` (as que o PDV já
  * gera, conferidas pelos dois lados) até o bloco que as gera: `limite_valor` (F3-B24), `consumo_interno` (F3-B52),
- * `tipo_preco` (F3-B17), `lote_vencido` (F3-B21), `peso_manual` (F3-B22), `comodato` (F3-B40,
+ * `lote_vencido` (F3-B21), `peso_manual` (F3-B22), `comodato` (F3-B40,
  * acima de `pdv.vasilhame_comodato_max_por_cliente`), `troca_fora_prazo`, `troca_dinheiro` e `vale_avulso`
  * (F3-B47, F3-B48; ligadas à troca ou ao vale, não à venda). README da API › decisão 222.
  */
 export const ACOES_LIBERACAO_FASE3 = [
   'limite_valor',
   'consumo_interno',
-  'tipo_preco',
   'lote_vencido',
   'peso_manual',
   'comodato',
