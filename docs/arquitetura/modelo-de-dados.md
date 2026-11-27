@@ -2192,7 +2192,8 @@ nulo o id desconhecido. O cadastro no ERP é o **F2-B51** (README da API › dec
 `com_complementos`, gravados com o produto; o grupo removido recebe `excluido_em` com as opções (que também ficam com
 `ativo = false`), e a opção removida de um grupo que fica só recebe `ativo = false`; o `produto_id` vinculado é
 Simples, Matéria-prima ou Produzido (o Produzido baixa os insumos da ficha), e o produto que é opção ativa de um grupo
-vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3.
+vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3: a baixa
+e o custo na nuvem desde o F3-B14 (3.11.3; README da API › decisão 232), o caixa no F3-B15.
 
 #### 3.6.9 Demais filhas de `produtos`
 
@@ -3535,6 +3536,11 @@ O PDV monta o grupo `IBSCBS` de cada item e o total `IBSCBSTot` a partir desses 
 `itens_venda_complementos` (D, ↑): CP, `item_venda_id uuid not null`, `complemento_id uuid null → produtos_complementos`,
 `grupo_nome varchar(40) not null`, `descricao varchar(60) not null`, `quantidade numeric(15,3) not null default 1`,
 `preco_adicional numeric(15,4) not null default 0` (já incluído em `itens_venda.preco_unitario`).
+Desde a Fase 3 (F3-B14; README da API › decisão 232), o complemento com `produtos_complementos.baixa_estoque` e o
+produto vinculado baixa estoque na nuvem com `documento_item_id` = id desta linha (`VENDA_PDV` de quantidade do item ×
+`quantidade` × `quantidade_baixa`, ou os insumos da ficha do vinculado Produzido como `BAIXA_INSUMO`, pela
+`componentes_estoque` só do payload do `venda.finalizada` v2), e o custo dele soma ao `itens_venda.custo_unitario` do
+item; o livre e o sem baixa não têm custo nem estoque.
 
 #### 3.11.4 `pagamentos_venda` e `parcelas_venda` (D, ↑)
 

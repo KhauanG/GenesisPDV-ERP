@@ -13,6 +13,11 @@
  *   `produzido` nem `servico` (o combo chega desmembrado em componentes, que são itens; o produzido não tem saldo
  *   próprio, D17). O item com `componentes_estoque` (ficha técnica, aceitando o legado `origem = 'kit'`) baixa a lista
  *   como `BAIXA_INSUMO` no lugar dele; o mesmo insumo do mesmo item vira um movimento só com a soma (T4);
+ * - complemento (F3-B14; MD 3.6.8; só no evento que nasceu na v2): com `produtos_complementos.baixa_estoque` e o produto
+ *   vinculado, **pelo cadastro atual da nuvem**, baixa o vinculado como `VENDA_PDV` (quantidade do item × quantidade do
+ *   complemento × `quantidade_baixa`), ou, com a `componentes_estoque` da linha (vinculado Produzido), os insumos como
+ *   `BAIXA_INSUMO`; `documento_item_id` = id da linha do complemento (T4). O livre, o sem `baixa_estoque`, o
+ *   desconhecido e o do item cancelado não baixam; o vinculado sem saldo próprio entra só no custo, pelo de referência;
  * - o casco cobrado (`vasilhame_item_origem_id`) sai como `VASILHAME_VENDIDO` no lugar do `VENDA_PDV`; os cascos
  *   trazidos (`vasilhames[].devolvidos`) entram como `VASILHAME_DEVOLVIDO` no tipo `vasilhame_vazio`, com o
  *   `documento_item_id` derivado da venda (T4); `emprestados` > 0 (comodato) é da Fase 3 e recusa o evento;
@@ -26,12 +31,15 @@
  * Custo (SYNC 10.2): `itens_venda.custo_unitario = Σ custo_total dos movimentos do item ÷ quantidade`, e
  * `vendas.custo_total` = Σ dos itens não cancelados. Item sem baixa (não controla estoque, serviço, produzido sem a
  * ficha no payload) fica com o custo de referência do cadastro (`preco_custo`; T22); no item com ficha, o insumo que
- * não baixa entra pelo custo de referência dele (`preco_custo × quantidade`, T22); item cancelado, sem custo.
+ * não baixa entra pelo custo de referência dele (`preco_custo × quantidade`, T22); item cancelado, sem custo. O custo
+ * dos complementos que baixam (ou que só entram pelo de referência) soma ao do item antes da divisão (F3-B14).
  *
  * Conferências que não recusam (SYNC 9.7 "Fechamento das contas" e "Itens de combo", P6; 16.2): as somas da venda
  * (pagamentos aprovados × total, troco, subtotal, valor líquido de cada item e o grupo do combo) e o produto já
  * excluído ou inativo antes da venda viram os alertas `VENDA_INCONSISTENTE` e `PRODUTO_INATIVO_VENDIDO`; a venda
- * grava como veio.
+ * grava como veio. Os ids que a nuvem não conhece (F3-B14; padrões da Fase 3): o `lote_id` (tem FK) é gravado nulo, com
+ * o texto do lote mantido e o alerta `LOTE_DESCONHECIDO`; o `promocao_id` (sem FK) fica cru, porque o
+ * `ck_itens_venda_promocao` exige o id quando há desconto da promoção, e abre `PROMOCAO_DESCONHECIDA`.
  *
  * Idempotência (SYNC 8.4): a venda que já existe com o mesmo id e o mesmo conteúdo (cabeçalho e todas as linhas) é
  * `ja_existia` sem efeito; com outro conteúdo, `AGREGADO_DIVERGENTE`. Outro id com o mesmo número no caixa é
@@ -44,12 +52,15 @@ import {
   decTexto,
   NUMERO_VENDA_MAXIMO,
   payloadVendaFinalizadaSchema,
+  payloadVendaFinalizadaV2Schema,
   type Dec,
   type PayloadVendaCanceladaEmAndamento,
   type PayloadVendaFinalizada,
+  type PayloadVendaFinalizadaV2,
 } from '@genesis/shared';
 import { eq, getTableColumns, inArray, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
+import { agruparEm } from '../../comum/colecoes.js';
 import { compensarDefinir } from '../../estoques/compensacao.js';
 import {
   itemDerivadoDocumento,
@@ -94,6 +105,16 @@ export const ALERTA_ESTOQUE_NEGATIVO = 'ESTOQUE_NEGATIVO';
 export const ALERTA_VENDA_INCONSISTENTE = 'VENDA_INCONSISTENTE';
 /** SYNC 16.2 (conflito 28): produto excluído ou inativado no ERP antes da venda offline. Um por loja e produto. */
 export const ALERTA_PRODUTO_INATIVO_VENDIDO = 'PRODUTO_INATIVO_VENDIDO';
+/**
+ * F3-B14 (padrões da Fase 3): o item traz um `lote_id` que não existe em `produtos_lotes`. A coluna tem FK: o item é
+ * gravado sem o id (o texto do lote fica) e a baixa cai na regra sem lote (FEFO). Um aberto por lote.
+ */
+export const ALERTA_LOTE_DESCONHECIDO = 'LOTE_DESCONHECIDO';
+/**
+ * F3-B14 (padrões da Fase 3): o item traz um `promocao_id` que não existe em `promocoes`. Sem FK, o id fica gravado
+ * como veio (anular quebraria o `ck_itens_venda_promocao` do item com desconto da promoção). Um aberto por promoção.
+ */
+export const ALERTA_PROMOCAO_DESCONHECIDA = 'PROMOCAO_DESCONHECIDA';
 
 /** Tipos de produto sem saldo próprio: o combo baixa os componentes (itens), o produzido a ficha, o serviço nada. */
 const TIPOS_SEM_BAIXA_PROPRIA: readonly string[] = ['kit', 'produzido', 'servico'];
@@ -106,6 +127,7 @@ const TIPOS_SEM_BAIXA_PROPRIA: readonly string[] = ['kit', 'produzido', 'servico
 export const INTERVALO_RELEVANCIA_COMPRA = '1 day';
 
 type ItemVenda = PayloadVendaFinalizada['itens_venda'][number];
+type ComplementoVenda = PayloadVendaFinalizadaV2['itens_venda_complementos'][number];
 type Linha = Record<string, unknown>;
 
 /**
@@ -249,13 +271,34 @@ export interface DocumentoConferido {
   pessoas: Map<string, string>;
   clienteId: string | null;
   /**
-   * Os `complemento_id` do documento que existem em `produtos_complementos` (minúsculas). O que a nuvem não conhece é
-   * gravado nulo (FK da 0028, F2-B45): a venda nunca é recusada por isso, e o grupo e a descrição ficam no item.
+   * Os `complemento_id` do documento que existem em `produtos_complementos` (minúsculas), com o vínculo e a baixa
+   * **atuais** da nuvem (F3-B14). O que a nuvem não conhece é gravado nulo (FK da 0028, F2-B45): a venda nunca é
+   * recusada por isso, e o grupo e a descrição ficam no item.
    */
-  complementos: Set<string>;
+  complementos: Map<string, ComplementoNuvem>;
+  /**
+   * Os `lote_id` dos itens que existem em `produtos_lotes` (minúsculas). O que a nuvem não conhece é gravado nulo (a
+   * coluna tem FK; F3-B14), com o texto do lote mantido: sem isso o 23503 do `INSERT` recusava a venda inteira.
+   */
+  lotes: Set<string>;
 }
 
-interface VendaPreparada extends DocumentoConferido {
+/** O complemento como a nuvem o tem hoje (MD 3.6.8): o produto vinculado (nulo no livre) e a baixa. */
+export interface ComplementoNuvem {
+  produtoId: string | null;
+  baixaEstoque: boolean;
+  quantidadeBaixa: string;
+}
+
+/** Os ids dos itens que a nuvem não conhece e que não recusam o documento (F3-B14): os alertas. */
+export interface IdsDesconhecidos {
+  /** `promocao_id` que a nuvem não conhece → os itens que o trazem (minúsculas). */
+  promocoesDesconhecidas: Map<string, string[]>;
+  /** `lote_id` que a nuvem não conhece → os itens que o trazem (minúsculas). */
+  lotesDesconhecidos: Map<string, string[]>;
+}
+
+interface VendaPreparada extends DocumentoConferido, IdsDesconhecidos {
   cadastros: CadastrosEstoque;
   /** Estoque da baixa (SYNC 10.2) e o do contexto que não vale (alerta), em minúsculas. */
   estoqueId: string;
@@ -432,23 +475,145 @@ export async function conferirDocumentoVenda(
     pessoas,
     clienteId: resolverPessoa({ pessoas }, v.cliente_id),
     complementos: await complementosConhecidos(tx, p),
+    lotes: await idsConhecidos(
+      tx,
+      'produtos_lotes',
+      p.itens_venda.flatMap((i) => (i.lote_id ? [i.lote_id] : [])),
+    ),
   };
 }
 
-/** Os `complemento_id` citados pelo documento que existem na nuvem (a exclusão física é bloqueada, 0028). */
-async function complementosConhecidos(tx: DbEmpresa, p: DocumentoVendaCaixa): Promise<Set<string>> {
+/**
+ * Os `complemento_id` citados pelo documento que existem na nuvem (a exclusão física é bloqueada, 0028), com o vínculo
+ * e a baixa de hoje (a baixa da venda segue o cadastro atual, como o `controla_estoque` do item; F3-B14).
+ */
+async function complementosConhecidos(
+  tx: DbEmpresa,
+  p: DocumentoVendaCaixa,
+): Promise<Map<string, ComplementoNuvem>> {
   const ids = [
     ...new Set(
       p.itens_venda_complementos.flatMap((c) => (c.complemento_id ? [minusculo(c.complemento_id)] : [])),
     ),
   ];
+  if (!ids.length) return new Map();
+  const { rows } = await tx.execute<{
+    id: string;
+    produto_id: string | null;
+    baixa_estoque: boolean;
+    quantidade_baixa: string;
+  }>(sql`
+    select id::text, produto_id::text, baixa_estoque, quantidade_baixa::text from produtos_complementos
+     where id in (${sql.join(
+       ids.map((id) => sql`${id}::uuid`),
+       sql`, `,
+     )})`);
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { produtoId: r.produto_id, baixaEstoque: r.baixa_estoque, quantidadeBaixa: r.quantidade_baixa },
+    ]),
+  );
+}
+
+/** Os ids citados (em qualquer caixa) que existem na tabela, em minúsculas. Só lê. */
+async function idsConhecidos(
+  tx: DbEmpresa,
+  tabela: 'produtos_lotes' | 'promocoes',
+  citados: readonly string[],
+): Promise<Set<string>> {
+  const ids = [...new Set(citados.map(minusculo))];
   if (!ids.length) return new Set();
   const { rows } = await tx.execute<{ id: string }>(sql`
-    select id::text from produtos_complementos where id in (${sql.join(
-      ids.map((id) => sql`${id}::uuid`),
-      sql`, `,
-    )})`);
+    select id::text from ${sql.identifier(tabela)} where id = any(${`{${ids.join(',')}}`}::uuid[])`);
   return new Set(rows.map((r) => r.id));
+}
+
+/** Os ids citados pelos itens que a nuvem não conhece → os itens que os trazem (para o alerta). */
+function desconhecidosPorItem(
+  itens: readonly ItemVenda[],
+  id: (i: ItemVenda) => string | null | undefined,
+  conhecidos: ReadonlySet<string>,
+): Map<string, string[]> {
+  const saida = new Map<string, string[]>();
+  for (const i of itens) {
+    const v = id(i);
+    if (!v || conhecidos.has(minusculo(v))) continue;
+    agruparEm(saida, minusculo(v), minusculo(i.id));
+  }
+  return saida;
+}
+
+/**
+ * Os `promocao_id` e `lote_id` dos itens que a nuvem não conhece (F3-B14), para os alertas: o `venda.finalizada` e a
+ * forma B do `venda.cancelada` usam a mesma conferência (o lote já veio do `conferirDocumentoVenda`). Só lê.
+ */
+export async function idsDesconhecidos(
+  tx: DbEmpresa,
+  p: DocumentoVendaCaixa,
+  conferido: Pick<DocumentoConferido, 'lotes'>,
+): Promise<IdsDesconhecidos> {
+  const promocoes = await idsConhecidos(
+    tx,
+    'promocoes',
+    p.itens_venda.flatMap((i) => (i.promocao_id ? [i.promocao_id] : [])),
+  );
+  return {
+    promocoesDesconhecidas: desconhecidosPorItem(p.itens_venda, (i) => i.promocao_id, promocoes),
+    lotesDesconhecidos: desconhecidosPorItem(p.itens_venda, (i) => i.lote_id, conferido.lotes),
+  };
+}
+
+/**
+ * Abre um alerta por `promocao_id` e um por `lote_id` que a nuvem não conhece (F3-B14; padrões da Fase 3: o id é
+ * anulado ou fica como veio, com o alerta), deduplicado pelo id. Na venda cancelada em andamento (forma B do
+ * `venda.cancelada`) não houve baixa nem desconto cobrado, e o texto diz isso. Devolve os tipos dos alertas novos.
+ */
+export async function alertarIdsDesconhecidos(
+  ctx: Pick<ContextoHandler, 'tx' | 'terminal'>,
+  v: Pick<DocumentoVendaCaixa['vendas'], 'id' | 'numero_exibicao'>,
+  desconhecidos: IdsDesconhecidos,
+  situacao: 'finalizada' | 'em_andamento',
+): Promise<string[]> {
+  const { tx, terminal } = ctx;
+  const caixa = String(terminal.numeroCaixa).padStart(2, '0');
+  const emAndamento = situacao === 'em_andamento';
+  const gerados: string[] = [];
+  for (const [tipo, mapa, chave] of [
+    [ALERTA_PROMOCAO_DESCONHECIDA, desconhecidos.promocoesDesconhecidas, 'promocao'],
+    [ALERTA_LOTE_DESCONHECIDO, desconhecidos.lotesDesconhecidos, 'lote'],
+  ] as const) {
+    let novos = 0;
+    for (const [id, itens] of mapa) {
+      const qual = chave === 'promocao' ? 'uma promoção' : 'um lote';
+      const novo = await gravarAlerta(tx, {
+        tipo,
+        severidade: 'aviso',
+        titulo: emAndamento
+          ? `Venda ${v.numero_exibicao} cancelada em andamento com ${qual} que a nuvem não conhece`
+          : `Venda ${v.numero_exibicao} com ${qual} que a nuvem não conhece`,
+        mensagem:
+          (emAndamento
+            ? `O caixa ${caixa} cancelou em andamento uma venda com ${qual} que não existe no ERP. A venda cancelada ` +
+              'foi registrada (sem estoque nem financeiro) '
+            : `O caixa ${caixa} vendeu com ${qual} que não existe no ERP. A venda foi aceita `) +
+          (chave === 'promocao'
+            ? 'com o desconto e o id da promoção como vieram. '
+            : emAndamento
+              ? 'sem o vínculo do lote (o texto do lote ficou no item). '
+              : 'sem o vínculo do lote (o texto do lote ficou no item), e a baixa saiu sem o lote. ') +
+          'Confira o cadastro e a sincronização do terminal.',
+        lojaId: terminal.lojaId,
+        entidade: 'vendas',
+        registroId: v.id,
+        dados: { [`${chave}_id`]: id, venda_id: minusculo(v.id), itens_venda: itens },
+        chaveDeduplicacao: `${tipo.toLowerCase()}:${id}`,
+      });
+      if (novo) novos++;
+    }
+    if (novos) gerados.push(tipo);
+  }
+  return gerados;
 }
 
 /**
@@ -525,7 +690,7 @@ export async function escolherEstoque(
 }
 
 /** Conferências que só leem: escopo das linhas, sessão, número, referências e cadastros (C6a, T21). */
-async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizada): Promise<VendaPreparada> {
+async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizadaV2): Promise<VendaPreparada> {
   const { tx } = ctx;
   const comodato = p.vasilhames.filter((x) => x.emprestados > 0);
   if (comodato.length) {
@@ -533,6 +698,17 @@ async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizada): P
     throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Cascos emprestados (comodato) ainda não são aceitos.', {
       produtos_vasilhame: comodato.map((x) => x.produto_vasilhame_id),
     });
+  }
+  if (ctx.versaoOrigem >= 2) {
+    // F3-B14: o movimento do complemento leva o id da linha dele como `documento_item_id` (T4). Com o id de um item da
+    // venda, os dois somariam no mesmo movimento e o custo do complemento entraria duas vezes no item.
+    const itens = new Set(p.itens_venda.map((i) => minusculo(i.id)));
+    const repetidos = p.itens_venda_complementos.filter((c) => itens.has(minusculo(c.id)));
+    if (repetidos.length) {
+      throw new ErroRegraEvento('PAYLOAD_INVALIDO', 'Complemento com o mesmo id de um item da venda.', {
+        itens_venda_complementos: repetidos.map((c) => minusculo(c.id)),
+      });
+    }
   }
   const conferido = await conferirDocumentoVenda(ctx, p);
   let clienteVivo = false;
@@ -546,6 +722,13 @@ async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizada): P
   const produtoIds = [
     ...p.itens_venda.flatMap((i) => [i.produto_id, ...i.componentes_estoque.map((c) => c.produto_id)]),
     ...p.vasilhames.map((x) => x.produto_vasilhame_id),
+    // F3-B14: o vinculado do complemento (da nuvem, sempre existe: FK) e os insumos da ficha dele (do payload, v2).
+    ...p.itens_venda_complementos.flatMap((c) => {
+      const vinculado = c.complemento_id
+        ? conferido.complementos.get(minusculo(c.complemento_id))?.produtoId
+        : null;
+      return [...(vinculado ? [vinculado] : []), ...c.componentes_estoque.map((x) => x.produto_id)];
+    }),
   ].map(minusculo);
   const cadastros = await lerCadastrosEstoque(tx, {
     produtoIds,
@@ -573,6 +756,7 @@ async function prepararVenda(ctx: ContextoHandler, p: PayloadVendaFinalizada): P
     ...(await escolherEstoque(ctx, cadastros)),
     clienteVivo,
     semVariacao: await produtosSemVariacao(tx, p, cadastros),
+    ...(await idsDesconhecidos(tx, p, conferido)),
   };
 }
 
@@ -604,7 +788,12 @@ export function montarLinhas(
       // T5: hora não confirmada no ERP quando o PDV finalizou sem relógio confiável (SYNC 12.4).
       relogioConfiavel: ctx.evento.relogio_confiavel ?? true,
     },
-    itens: p.itens_venda.map((i) => paraColunas(itensVenda, i)),
+    itens: p.itens_venda.map((i) => ({
+      ...paraColunas(itensVenda, i),
+      // F3-B14: `lote_id` tem FK; o que a nuvem não conhece vira nulo (o texto do lote fica). O `promocao_id`, sem FK,
+      // fica como veio (`ck_itens_venda_promocao`).
+      ...(i.lote_id ? { loteId: loteConhecido(prep, i.lote_id) } : {}),
+    })),
     complementos: p.itens_venda_complementos.map((c) => ({
       ...paraColunas(itensVendaComplementos, c),
       complementoId:
@@ -622,6 +811,10 @@ export function montarLinhas(
     pix: p.cobrancas_pix.map((x) => ({ ...paraColunas(cobrancasPix, x), vendaId })),
   };
 }
+
+/** O `lote_id` do item se a nuvem o conhece (minúsculas), senão nulo (F3-B14). */
+const loteConhecido = (prep: Pick<DocumentoConferido, 'lotes'>, id: string | null | undefined) =>
+  id && prep.lotes.has(minusculo(id)) ? minusculo(id) : null;
 
 /** Colunas que a nuvem preenche ou que mudam depois da finalização (cancelamento, fiscal, devolução): fora do reenvio. */
 const IGNORAR_VENDA_FINALIZADA = [
@@ -709,11 +902,78 @@ function baixaPropria(cad: CadastrosEstoque, item: ItemVenda): boolean {
   return p.controlaEstoque && !TIPOS_SEM_BAIXA_PROPRIA.includes(p.tipo) && !item.componentes_estoque.length;
 }
 
+/**
+ * O que um complemento escolhido faz no estoque e no custo (F3-B14; MD 3.6.8; SYNC 10.2), pelo cadastro **atual** da
+ * nuvem (`produtos_complementos` e o produto vinculado, como o `controla_estoque` do item):
+ * - `nenhuma`: livre, sem `baixa_estoque`, desconhecido (`complemento_id` nulo ou que a nuvem não tem), do item
+ *   cancelado, ou de um evento que nasceu na v1 (a v1 nunca baixou complemento: o upcast não muda o que ela faz);
+ * - `ficha`: a linha traz a `componentes_estoque` (o vinculado Produzido, calculada no caixa): os insumos que controlam
+ *   estoque baixam como `BAIXA_INSUMO`, os outros entram no custo pelo de referência (T22), como a ficha do item;
+ * - `propria`: o vinculado tem saldo próprio (controla estoque e não é `kit`, `produzido` nem `servico`): `VENDA_PDV`
+ *   de quantidade do item × quantidade do complemento × `quantidade_baixa`;
+ * - `referencia`: o vinculado não baixa (não controla estoque, ou é Produzido sem a ficha no payload): só o custo de
+ *   referência dele (`preco_custo` × a mesma quantidade, 2 casas).
+ */
+export type BaixaComplemento =
+  | { tipo: 'nenhuma' }
+  | { tipo: 'ficha' }
+  | { tipo: 'propria' | 'referencia'; produtoId: string; quantidade: string };
+
+export function baixaDoComplemento(
+  versaoOrigem: number,
+  item: Pick<ItemVenda, 'quantidade' | 'cancelado'>,
+  linha: Pick<ComplementoVenda, 'quantidade' | 'componentes_estoque'>,
+  complemento: ComplementoNuvem | undefined,
+  cad: Pick<CadastrosEstoque, 'produtos'>,
+): BaixaComplemento {
+  if (versaoOrigem < 2 || item.cancelado || !complemento?.baixaEstoque || !complemento.produtoId)
+    return { tipo: 'nenhuma' };
+  if (linha.componentes_estoque.length) return { tipo: 'ficha' };
+  const quantidade = decTexto(
+    dec(item.quantidade)
+      .times(dec(linha.quantidade ?? '1'))
+      .times(dec(complemento.quantidadeBaixa)),
+    3,
+  );
+  // A conta que arredonda a zero (item fracionado × baixa mínima) não tem o que baixar nem custo.
+  if (dec(quantidade).isZero()) return { tipo: 'nenhuma' };
+  const vinculado = cad.produtos.get(minusculo(complemento.produtoId))!;
+  const propria = vinculado.controlaEstoque && !TIPOS_SEM_BAIXA_PROPRIA.includes(vinculado.tipo);
+  return { tipo: propria ? 'propria' : 'referencia', produtoId: vinculado.id, quantidade };
+}
+
+/** Os complementos da venda com o item dono e o que cada um faz no estoque (`baixaDoComplemento`). */
+export interface ComplementoDaVenda {
+  linha: ComplementoVenda;
+  itemId: string;
+  baixa: BaixaComplemento;
+}
+
+function complementosDaVenda(
+  ctx: Pick<ContextoHandler, 'versaoOrigem'>,
+  p: PayloadVendaFinalizadaV2,
+  prep: Pick<VendaPreparada, 'complementos' | 'cadastros'>,
+): ComplementoDaVenda[] {
+  const itens = new Map(p.itens_venda.map((i) => [minusculo(i.id), i]));
+  return p.itens_venda_complementos.map((linha) => {
+    const itemId = minusculo(linha.item_venda_id);
+    const complemento = linha.complemento_id
+      ? prep.complementos.get(minusculo(linha.complemento_id))
+      : undefined;
+    return {
+      linha,
+      itemId,
+      baixa: baixaDoComplemento(ctx.versaoOrigem, itens.get(itemId)!, linha, complemento, prep.cadastros),
+    };
+  });
+}
+
 /** As linhas de movimento do documento (antes de somar as iguais e travar, `lancarDocumento`). */
 function montarMovimentos(
   ctx: ContextoHandler,
-  p: PayloadVendaFinalizada,
+  p: PayloadVendaFinalizadaV2,
   prep: VendaPreparada,
+  complementos: readonly ComplementoDaVenda[],
 ): NovoMovimento[] {
   const { cadastros: cad } = prep;
   const v = p.vendas;
@@ -769,10 +1029,47 @@ function montarMovimentos(
       custoReferencia: produto.precoCusto,
       precoVenda: item.preco_unitario,
       documentoItemId: item.id,
-      loteId: item.lote_id ?? null,
+      loteId: loteConhecido(prep, item.lote_id),
       unidadeDocumento: doProduto ? (doProduto.sigla ?? produto.sigla) : produto.sigla,
       fator: doProduto ? doProduto.fator : '1',
     });
+  }
+  // F3-B14: o complemento baixa como item próprio do documento (`documento_item_id` = a linha dele, T4), depois dos
+  // itens. A ficha do vinculado Produzido vem calculada do caixa (já multiplicada), como a do item.
+  for (const { linha, baixa } of complementos) {
+    if (baixa.tipo === 'ficha') {
+      for (const c of linha.componentes_estoque) {
+        const insumo = cad.produtos.get(minusculo(c.produto_id))!;
+        if (!insumo.controlaEstoque) continue;
+        linhas.push({
+          ...base,
+          produtoId: c.produto_id,
+          variacaoId: c.variacao_id ?? null,
+          tipoEstoqueId: precisaTipo(cad.tipoEstoquePadraoId, 'padrão'),
+          tipoMovimento: 'BAIXA_INSUMO',
+          quantidade: decTexto(dec(c.quantidade).neg(), 3),
+          custoReferencia: insumo.precoCusto,
+          precoVenda: null,
+          documentoItemId: linha.id,
+          unidadeDocumento: insumo.sigla,
+        });
+      }
+    } else if (baixa.tipo === 'propria') {
+      const vinculado = cad.produtos.get(baixa.produtoId)!;
+      linhas.push({
+        ...base,
+        produtoId: baixa.produtoId,
+        variacaoId: null,
+        tipoEstoqueId: precisaTipo(cad.tipoEstoquePadraoId, 'padrão'),
+        tipoMovimento: 'VENDA_PDV',
+        quantidade: decTexto(dec(baixa.quantidade).neg(), 3),
+        custoReferencia: vinculado.precoCusto,
+        // O preço do complemento está no item (`preco_unitario` + Σ adicionais, PDV 10.2): o movimento não o divide.
+        precoVenda: null,
+        documentoItemId: linha.id,
+        unidadeDocumento: vinculado.sigla,
+      });
+    }
   }
   for (const x of p.vasilhames) {
     const casco = cad.produtos.get(minusculo(x.produto_vasilhame_id))!;
@@ -798,38 +1095,82 @@ function montarMovimentos(
 
 // ---------------------------------------------------------------- aplicar
 
+/** Σ custo de referência (`preco_custo × quantidade`, 2 casas) dos insumos de uma ficha que não controlam estoque. */
+function referenciaDaFicha(
+  componentes: ReadonlyArray<{ produto_id: string; quantidade: string }>,
+  cad: Pick<CadastrosEstoque, 'produtos'>,
+): Dec {
+  let soma = dec(0);
+  for (const c of componentes) {
+    const insumo = cad.produtos.get(minusculo(c.produto_id))!;
+    if (!insumo.controlaEstoque) soma = soma.plus(decTexto(dec(insumo.precoCusto).times(c.quantidade), 2));
+  }
+  return soma;
+}
+
+/**
+ * Custo dos complementos por item (F3-B14; SYNC 10.2), em minúsculas: Σ `custo_total` dos movimentos de cada linha
+ * (`custoPorItem` pelo id dela) mais o de referência do que não baixa — o insumo da ficha sem controle de estoque e o
+ * vinculado sem saldo próprio (`referencia`), 2 casas como o `custo_total` do movimento. O livre e o sem baixa não têm
+ * custo.
+ */
+export function custoDosComplementos(
+  complementos: readonly ComplementoDaVenda[],
+  cad: Pick<CadastrosEstoque, 'produtos'>,
+  custoPorItem: ReadonlyMap<string, string>,
+): Map<string, Dec> {
+  const porItem = new Map<string, Dec>();
+  for (const { linha, itemId, baixa } of complementos) {
+    let custo: Dec;
+    if (baixa.tipo === 'nenhuma') continue;
+    if (baixa.tipo === 'ficha') {
+      custo = dec(custoPorItem.get(minusculo(linha.id))).plus(
+        referenciaDaFicha(linha.componentes_estoque, cad),
+      );
+    } else if (baixa.tipo === 'propria') {
+      custo = dec(custoPorItem.get(minusculo(linha.id)));
+    } else {
+      custo = dec(decTexto(dec(cad.produtos.get(baixa.produtoId)!.precoCusto).times(baixa.quantidade), 2));
+    }
+    porItem.set(itemId, (porItem.get(itemId) ?? dec(0)).plus(custo));
+  }
+  return porItem;
+}
+
 /**
  * Custo de cada item (SYNC 10.2, T22), na ordem de `itens`, e o `vendas.custo_total` (2 casas): Σ `custo_total` dos
  * movimentos do item (`custoPorItem`) ÷ quantidade (4 casas). No item com ficha (`componentes_estoque`), o insumo que
  * não controla estoque não baixa, mas entra pelo custo de referência (`preco_custo × quantidade`, 2 casas como o
  * `custo_total` do movimento): sem isso a caipirinha com cachaça controlada e limão sem controle ficava só com o custo
  * da cachaça e a margem saía inflada. O item sem nenhuma baixa e sem ficha fica com o `preco_custo` do cadastro; o
- * cancelado, sem custo (nulo) e fora do total.
+ * cancelado, sem custo (nulo) e fora do total. O custo dos complementos do item (`custoDosComplementos`, F3-B14) soma
+ * antes da divisão: a porção com 2 molhos custa a porção mais os molhos.
  */
 export function custoDosItens(
   itens: readonly ItemVenda[],
   cad: Pick<CadastrosEstoque, 'produtos'>,
   custoPorItem: ReadonlyMap<string, string>,
+  custoComplementos: ReadonlyMap<string, Dec> = new Map(),
 ): { unitarios: Array<string | null>; total: string } {
   let total = dec(0);
   const unitarios = itens.map((item) => {
     if (item.cancelado) return null;
     const movimentos = custoPorItem.get(minusculo(item.id));
+    const complementos = custoComplementos.get(minusculo(item.id));
     let soma: Dec;
     if (item.componentes_estoque.length) {
-      soma = dec(movimentos);
-      for (const c of item.componentes_estoque) {
-        const insumo = cad.produtos.get(minusculo(c.produto_id))!;
-        if (!insumo.controlaEstoque)
-          soma = soma.plus(decTexto(dec(insumo.precoCusto).times(c.quantidade), 2));
-      }
+      soma = dec(movimentos).plus(referenciaDaFicha(item.componentes_estoque, cad));
     } else if (movimentos !== undefined) {
       soma = dec(movimentos);
     } else {
       const referencia = decTexto(cad.produtos.get(minusculo(item.produto_id))!.precoCusto, 4);
-      total = total.plus(dec(referencia).times(item.quantidade));
-      return referencia;
+      if (!complementos) {
+        total = total.plus(dec(referencia).times(item.quantidade));
+        return referencia;
+      }
+      soma = dec(referencia).times(item.quantidade);
     }
+    if (complementos) soma = soma.plus(complementos);
     total = total.plus(soma);
     return decTexto(soma.div(dec(item.quantidade)), 4);
   });
@@ -1010,7 +1351,7 @@ const ROTULOS_DIFERENCA: Record<DiferencaVenda['regra'], string> = {
   kit: 'valor do combo',
 };
 
-async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinalizada, prep: VendaPreparada) {
+async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinalizadaV2, prep: VendaPreparada) {
   const { tx, terminal } = ctx;
   const renumeracao = ctx.novoNumero ? await renumerarVenda(ctx, original) : null;
   const p = renumeracao?.payload ?? original;
@@ -1023,9 +1364,15 @@ async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinaliza
   }
 
   // Estoque antes do documento (C6a): o custo de cada item já entra no INSERT, sem UPDATE na venda finalizada.
-  const doc = await lancarDocumento(tx, montarMovimentos(ctx, p, prep));
+  const complementos = complementosDaVenda(ctx, p, prep);
+  const doc = await lancarDocumento(tx, montarMovimentos(ctx, p, prep, complementos));
   const compensacoes = await compensarDefinir(tx, doc.movimentos);
-  const custos = custoDosItens(p.itens_venda, prep.cadastros, doc.custoPorItem);
+  const custos = custoDosItens(
+    p.itens_venda,
+    prep.cadastros,
+    doc.custoPorItem,
+    custoDosComplementos(complementos, prep.cadastros, doc.custoPorItem),
+  );
   const custo = custos.total;
   const itens = linhas.itens.map((linha, n) => ({ ...linha, custoUnitario: custos.unitarios[n] ?? null }));
   await gravarLinhasVenda(tx, { ...linhas, venda: { ...linhas.venda, custoTotal: custo }, itens });
@@ -1133,6 +1480,9 @@ async function aplicarVenda(ctx: ContextoHandler, original: PayloadVendaFinaliza
   }
   if (semVariacaoNovos) alertasGerados.push(ALERTA_CADASTRO_PRODUTO);
 
+  // F3-B14 (padrões da Fase 3): os ids dos itens que a nuvem não conhece não recusam a venda; o ERP é avisado.
+  alertasGerados.push(...(await alertarIdsDesconhecidos(ctx, v, prep, 'finalizada')));
+
   // SYNC 9.7 (P6): somas que não fecham não recusam; a venda grava como veio e o ERP é avisado.
   const diferencas = conferirSomasVenda(p);
   if (diferencas.length) {
@@ -1221,10 +1571,19 @@ const dependenciaPessoa = (id: string): DependenciaEvento => ({ agregado_tipo: '
 
 export const HANDLERS_VENDA: CatalogoHandlers = {
   'venda.finalizada': {
-    1: {
-      schema: payloadVendaFinalizadaSchema,
+    /**
+     * v2 (F3-B14; SYNC 17.5): a baixa e o custo do complemento. Aceita e **não anunciada** até a release R3 (F3-B30):
+     * o PDV instalado grava a v1, que chega aqui pelo upcast (identidade: a v1 não tem a `componentes_estoque` do
+     * complemento, que vira lista vazia) e, pela `versaoOrigem`, grava os complementos sem baixa, como antes.
+     */
+    2: {
+      schema: payloadVendaFinalizadaV2Schema,
+      anunciada: false,
+      versoes: {
+        1: { schema: payloadVendaFinalizadaSchema, upcast: (p: PayloadVendaFinalizada) => p },
+      },
       // SYNC 9.7, 8.5: a sessão e as pessoas que o caixa pode ter criado (cadastro rápido, 1D) ficam como dependência.
-      async dependencias(_ctx, p: PayloadVendaFinalizada) {
+      async dependencias(_ctx, p: PayloadVendaFinalizadaV2) {
         const v = p.vendas;
         const pessoas = new Set(pessoasDaVenda(p).map(minusculo));
         return [

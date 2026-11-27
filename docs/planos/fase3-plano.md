@@ -931,6 +931,17 @@ corpo do PR-17.
   idêntico; o v1 do PDV mais antigo igual a antes.
 - **Pronto:** saldo e custo certos na nuvem para uma venda com complementos.
 - **Depende de:** F3-B4.
+- [**Feito (F3-B14)** (README da API › decisão 232; SYNC 9.7, 10.2, 17.5; MD 3.6.8, 3.11.3): como descrito, sem
+  migração. Escolhas técnicas: o handler passa a ser o da v2, com a v1 pelo upcast identidade, e a baixa e o custo do
+  complemento valem só para o evento que nasceu na v2 (`versaoOrigem`): a v1 do PDV instalado, também no Reprocessar,
+  grava como antes; a baixa segue o cadastro **atual** da nuvem (`baixa_estoque`, o vinculado e a `quantidade_baixa`),
+  como o `controla_estoque` do item; o vinculado sem saldo próprio (sem controle de estoque, ou Produzido sem a ficha)
+  entra só no custo, pelo de referência (T22), e o livre e o sem baixa não têm custo; o movimento do complemento leva
+  `preco_venda` nulo; na v2, o complemento com o id de um item da venda é `PAYLOAD_INVALIDO`; o `lote_id` desconhecido
+  abre também o alerta `LOTE_DESCONHECIDO` (padrões da Fase 3: "anuladas, com o alerta"), e as regras do lote e da
+  promoção valem em toda versão e também na forma B do `venda.cancelada` (o lote anulado e a promoção crua abrem os
+  mesmos alertas na gravação nova, sem repetir no reenvio). Fica para o F3-B43 a troca parcial do
+  item com complementos (o estorno de hoje é inteiro).]
 
 #### F3-B15 – Complementos no caixa (PDV 10.2)
 - **Tamanho:** G · **Rigor:** completo (dinheiro)

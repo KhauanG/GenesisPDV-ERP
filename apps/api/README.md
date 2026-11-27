@@ -8112,6 +8112,51 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      ou sem sangria, reforço e fechamento. Uma linha que já estivesse desligada não muda na base (o ERP a mostra e
      grava ligada; o caixa a liga ao aplicar). Teste: `formas-configuracoes.test.ts` (o 422 do `Ctrl+Alt+T` e o da
      ação essencial desligada).
+232. **Complementos na nuvem: o `venda.finalizada` v2 baixa o produto vinculado e soma o custo ao item; o lote e a
+     promoção que a nuvem não conhece** (Fase 3, F3-B14; MD 3.6.8, 3.11.3; SYNC 9.7, 10.2, 17.5; D43;
+     `sync/handlers/vendas.ts`, `packages/shared/src/sync/eventos.ts`). Sem migração e sem evento novo.
+     - **v2 aceita e não anunciada.** O contrato ganha a `payloadVendaFinalizadaV2Schema`: a v1 com a
+       `componentes_estoque` (só payload, a mesma forma da do item) na linha de `itens_venda_complementos`, a ficha do
+       vinculado Produzido calculada no caixa e **já multiplicada** (item × complemento × `quantidade_baixa` × a ficha,
+       com a perda). O handler passa a ser o da v2 (`anunciada: false`), com a v1 pelo upcast identidade
+       (`versoes[1]`): `versoes_schema` continua `venda.finalizada: [1]` até o F3-B30 (R3), e o PDV instalado (0.13.0)
+       segue gravando a v1. A semântica nova vale **só para o evento que nasceu na v2** (`ctx.versaoOrigem`, decisão
+       223): a v1, inclusive no Reprocessar, grava os complementos sem baixa nem custo, como antes.
+     - **Quem baixa (`baixaDoComplemento`), pelo cadastro atual da nuvem** (como o `controla_estoque` do item):
+       complemento conhecido, com `baixa_estoque` e o produto vinculado, de item não cancelado. Com a
+       `componentes_estoque` na linha, os insumos que controlam estoque saem como `BAIXA_INSUMO`; senão o vinculado com
+       saldo próprio (controla estoque e não é `kit`, `produzido` nem `servico`) sai como `VENDA_PDV` de
+       `arred3(quantidade do item × quantidade do complemento × quantidade_baixa)` (sem a quantidade na linha, 1, o
+       padrão do banco; a conta que arredonda a zero não baixa). `documento_item_id` = id da linha do complemento (T4):
+       o reenvio é idempotente pela mesma chave, e o cancelamento (forma A ou pelo ERP, decisão 228) estorna os
+       movimentos como os do item, ao custo da saída, porque lê tudo o que é da venda. O movimento do complemento leva
+       `preco_venda` nulo: o adicional está no preço do item (PDV 10.2) e não se divide por movimento. No evento da v2,
+       um complemento com o mesmo id de um item da venda é `PAYLOAD_INVALIDO` (os dois somariam no mesmo movimento e o
+       custo do complemento entraria duas vezes). Não baixam: o livre, o sem `baixa_estoque`, o desconhecido (o
+       `complemento_id` gravado nulo, decisão 191) e o do item cancelado.
+     - **Custo (`custoDosComplementos`).** Σ `custo_total` dos movimentos da linha mais o custo de referência
+       (`arred2(preco_custo × quantidade)`, T22) do que não baixa: o insumo da ficha sem controle de estoque e o
+       vinculado sem saldo próprio (não controla estoque, ou kit, Produzido ou serviço sem a ficha no payload, mesmo
+       com controle de estoque). Soma ao item antes da divisão (`custoDosItens`): porção de 2 unidades a 8,00 com 4
+       sachês de cheddar a 0,50 e 4 de barbecue a 0,40 dá `custo_unitario` 9,8000 e `vendas.custo_total` 19,60. Item
+       sem complemento com custo: a conta de antes.
+     - **Ids que a nuvem não conhece (padrões da Fase 3).** O `lote_id` do item (tem FK para `produtos_lotes`) que não
+       existe vira nulo no `INSERT` e no motor, com o texto e a validade do lote mantidos, e abre `LOTE_DESCONHECIDO`
+       (aviso, `chave_deduplicacao = 'lote_desconhecido:<lote_id>'`); antes, o 23503 recusava a venda inteira. O
+       `promocao_id` que não existe em `promocoes` (sem FK) fica **cru**, porque o `ck_itens_venda_promocao` exige o id
+       quando há `desconto_promocao`, e abre `PROMOCAO_DESCONHECIDA` (aviso, `'promocao_desconhecida:<promocao_id>'`).
+       As duas regras valem em toda versão (não mudam o que a v1 gravava quando o id existe) e também na forma B do
+       `venda.cancelada`, que grava os mesmos itens (`montarLinhas`) e abre os mesmos dois alertas na gravação nova
+       (`idsDesconhecidos` no `preparar`, `alertarIdsDesconhecidos` no `aplicar`, as funções do `venda.finalizada`; o
+       reenvio `ja_existia` não alerta de novo), com o texto de quem cancelou em andamento, sem falar de baixa. A regra
+       do lote sem id procurado pelo código (F3-Q5) é do F3-B19.
+     - **Fora daqui:** o caixa que vende com complementos (F3-B15, que grava a v2 só com o recurso anunciado); a troca
+       parcial do item com complementos (F3-B43: o estorno de hoje é inteiro, e a linha do complemento não tem
+       `quantidade_devolvida`). Testes: `vendas.spec.ts` (`baixaDoComplemento`, `custoDosComplementos`),
+       `eventos.spec.ts` do shared (o schema da v2) e `venda-eventos.test.ts` (porção com 2 molhos, a ficha do
+       Produzido, o Produzido que controla estoque sem a ficha só pela referência, o livre e o sem controle, o
+       cancelamento que estorna, a v1 do PDV instalado igual a antes, a recusa do id repetido, o lote e a promoção
+       desconhecidos no `venda.finalizada` e na forma B; o `recalcular-saldos` idêntico no fim da suíte).
 
 ## O que ainda não foi feito (Fase 0)
 

@@ -646,6 +646,17 @@ const itemVendaComplemento = z.object({
   preco_adicional: preco.optional(),
 });
 
+/**
+ * Linha de `itens_venda_complementos` do `venda.finalizada` **v2** (F3-B14; MD 3.6.8): a da v1 mais a
+ * `componentes_estoque` (só payload) do complemento cujo produto vinculado é Produzido, com a baixa dos insumos da ficha
+ * do espelho local **já multiplicada** (quantidade do item × quantidade do complemento × `quantidade_baixa` × a ficha,
+ * com a perda), como a do item (9.7). Vazia nos demais: o vinculado Simples ou Matéria-prima é baixado pela nuvem
+ * (`produtos_complementos.baixa_estoque`, a quantidade da baixa pelo cadastro da nuvem), o livre não baixa.
+ */
+const itemVendaComplementoV2 = itemVendaComplemento.extend({
+  componentes_estoque: z.array(componenteEstoque).default([]),
+});
+
 /** Linha de `pagamentos_venda` (MD 3.11.4), com os snapshots da forma e o grupo `detPag`/`card`. */
 const pagamentoVenda = z.object({
   id: uuid,
@@ -838,8 +849,8 @@ function documentoCoerente(p: DocumentoVenda, ctx: z.RefinementCtx) {
   if (p.nfe_solicitada && p.nfe_pendente_erp) erro(['nfe_pendente_erp'], 'nunca junto com nfe_solicitada');
 }
 
-/** `venda.finalizada` v1 (SYNC 9.7): agregado `venda`, depende da sessão. */
-export const payloadVendaFinalizadaSchema = documentoVenda(z.literal('finalizada')).superRefine((p, ctx) => {
+/** O que vale para toda versão do `venda.finalizada`: o documento coerente, com a hora e com itens. */
+function vendaFinalizadaCoerente(p: DocumentoVenda, ctx: z.RefinementCtx) {
   documentoCoerente(p, ctx);
   if (!p.vendas.finalizada_em) {
     ctx.addIssue({
@@ -850,8 +861,25 @@ export const payloadVendaFinalizadaSchema = documentoVenda(z.literal('finalizada
   }
   if (!p.itens_venda.length)
     ctx.addIssue({ code: 'custom', path: ['itens_venda'], message: 'venda sem itens' });
-});
+}
+
+/** `venda.finalizada` v1 (SYNC 9.7): agregado `venda`, depende da sessão. */
+export const payloadVendaFinalizadaSchema = documentoVenda(z.literal('finalizada')).superRefine(
+  vendaFinalizadaCoerente,
+);
 export type PayloadVendaFinalizada = z.infer<typeof payloadVendaFinalizadaSchema>;
+
+/**
+ * `venda.finalizada` **v2** (onda da R3, SYNC 17.5; F3-B14): a v1 com a `componentes_estoque` na linha do complemento
+ * (`itemVendaComplementoV2`). A semântica nova é da nuvem: só o evento que **nasceu** na v2 baixa o produto vinculado do
+ * complemento e soma o custo dele ao item (a v1, convertida pelo upcast, grava os complementos como antes, sem baixa).
+ * Aceita pela API e ainda **não anunciada** em `versoes_schema` (o anúncio é o F3-B30, release R3): o PDV instalado
+ * continua gravando a v1.
+ */
+export const payloadVendaFinalizadaV2Schema = documentoVenda(z.literal('finalizada'))
+  .extend({ itens_venda_complementos: z.array(itemVendaComplementoV2).default([]) })
+  .superRefine(vendaFinalizadaCoerente);
+export type PayloadVendaFinalizadaV2 = z.infer<typeof payloadVendaFinalizadaV2Schema>;
 
 /**
  * `venda.cancelada` v1 forma B (SYNC 9.9 B): a venda em andamento cancelada, documento completo, sem estoque nem
@@ -1051,7 +1079,7 @@ export const CONTRATOS_EVENTOS = {
   },
   'venda.finalizada': {
     agregadoTipo: 'venda',
-    versoes: { 1: payloadVendaFinalizadaSchema },
+    versoes: { 1: payloadVendaFinalizadaSchema, 2: payloadVendaFinalizadaV2Schema },
     agregadoId: (p: PayloadVendaFinalizada) => p.vendas.id,
   },
   'venda.cancelada': {
