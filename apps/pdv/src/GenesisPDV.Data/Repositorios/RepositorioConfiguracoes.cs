@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GenesisPDV.Core.Atalhos;
 using GenesisPDV.Data.Entidades;
 using Microsoft.EntityFrameworkCore;
 
@@ -281,6 +282,23 @@ public sealed class RepositorioConfiguracoes(IDbContextFactory<PdvDbContext> fab
                     : new ValorConfiguracao(chave, linha.Valor, linha.Escopo == "loja" ? OrigemConfiguracao.Loja : OrigemConfiguracao.Empresa, linha.AtualizadoEm);
             }),
         ];
+    }
+
+    /// <summary>
+    /// O mapa de atalhos da loja do terminal (F3-B13; PDV 28.1; MD 3.10.2): as linhas vivas do espelho
+    /// <c>atalhos_pdv</c> da empresa e da loja, montadas pelo <see cref="MapaAtalhos"/> do Core (a da loja sobre a da
+    /// empresa, o padrão do catálogo para a ação sem linha). Uma consulta só, de poucas dezenas de linhas: a tela relê a
+    /// cada pull.
+    /// </summary>
+    public async Task<MapaAtalhos> MapaAtalhosAsync(Guid lojaId, CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        var linhas = await db.Set<AtalhoPdvRegistro>().AsNoTracking()
+            .Where(a => a.ExcluidoEm == null && (a.LojaId == null || a.LojaId == lojaId))
+            .OrderBy(a => a.Id)
+            .Select(a => new { a.LojaId, a.Acao, a.Tecla, a.Habilitado, a.Ordem })
+            .ToListAsync(ct);
+        return MapaAtalhos.Montar(linhas.Select(a => new LinhaAtalho(a.LojaId, a.Acao, a.Tecla, a.Habilitado, a.Ordem)), lojaId);
     }
 
     /// <summary>Quando as regras da loja desceram da nuvem pela última vez (o pull do fluxo <c>configuracao</c> com sucesso).</summary>

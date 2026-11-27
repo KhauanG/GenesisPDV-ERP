@@ -132,6 +132,12 @@ public sealed class CodigoOcorrencia
     /// <summary>O PIN de um usuário veio da nuvem com o argon2 fora dos limites (SYNC 4.2): não loga offline.</summary>
     public static CodigoOcorrencia PinForaDosLimites { get; } = new("PIN_FORA_DOS_LIMITES", OrigensOcorrencia.Login);
 
+    /// <summary>
+    /// Uma tecla da tabela de atalhos que desceu da nuvem não valeu no caixa (F3-B13; PDV 28.3): inválida, reservada ou
+    /// repetida com outra ação habilitada. A ação ficou na tecla padrão; o detalhe lista a ação, a tecla recebida e a aplicada.
+    /// </summary>
+    public static CodigoOcorrencia AtalhoInvalido { get; } = new("ATALHO_INVALIDO", OrigensOcorrencia.Sistema);
+
     /// <summary>Erro não tratado na tela (32.2): a venda foi preservada e recarregada do banco.</summary>
     public static CodigoOcorrencia ErroInesperado { get; } = new("ERRO_INESPERADO", OrigensOcorrencia.Sistema);
 
@@ -140,7 +146,7 @@ public sealed class CodigoOcorrencia
     [
         ImpressaoFalhou, ImpressaoFalhouSemFila, FilaImpressaoParou, ConfiguracaoAlterada, GavetaFalhou, GavetaVoltou, RegistroRecusado, RegistroResolvidoErp,
         ComandoFalhou, MensagemErp, Recuperacao, BackupFalhou, BackupCopiaFalhou, BackupManual, RestauradoOffline, PinForaDosLimites,
-        ParametroAlterado, PacoteGerado, ErroInesperado,
+        ParametroAlterado, PacoteGerado, AtalhoInvalido, ErroInesperado,
     ];
 
     public override string ToString() => Codigo;

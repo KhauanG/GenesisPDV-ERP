@@ -106,9 +106,6 @@
     <Setter Property="Padding" Value="8,2" />
     <Setter Property="Margin" Value="2" />
   </Style>
-  <Style Selector="Button.atalho.futuro">
-    <Setter Property="Opacity" Value="0.55" />
-  </Style>
   <Style Selector="Button.atalho.destaque">
     <Setter Property="Background" Value="{DynamicResource PincelTotalFundo}" />
   </Style>

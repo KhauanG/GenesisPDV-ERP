@@ -340,6 +340,21 @@ describe('Configurações (ERP 9.0, 9.1, 9.3.1, 9.9)', () => {
       .set(bearer(admin))
       .send({ itens: [{ ...itens[0], tecla: 'Shift+A' }] });
     expect(shift.status).toBe(422);
+    // F3-B13: o Ctrl+Alt+T é o tema do caixa (tecla fixa do PDV), como o Alt+F4.
+    const tema = await amb
+      .http()
+      .put('/api/atalhos-pdv')
+      .set(bearer(admin))
+      .send({ itens: [{ ...itens[0], tecla: 'Ctrl+Alt+T' }] });
+    expect(tema.status).toBe(422);
+    // F3-B13: o Concluir venda e o menu de Funções não se desligam (o caixa ficaria sem concluir ou sem fechar).
+    const essencial = await amb
+      .http()
+      .put('/api/atalhos-pdv')
+      .set(bearer(admin))
+      .send({ itens: [{ ...itens[idx('menu_funcoes')], habilitado: false }] });
+    expect(essencial.status).toBe(422);
+    expect(Object.keys(essencial.body.campos)).toEqual(['itens.0.habilitado']);
     expect((await amb.http().put('/api/atalhos-pdv').set(bearer(vendedor)).send({ itens })).status).toBe(403);
     const padrao = await amb.http().post('/api/atalhos-pdv/restaurar-padrao').set(bearer(admin));
     expect(padrao.status).toBe(200);

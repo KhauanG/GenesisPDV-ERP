@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  ACOES_ATALHO_ESSENCIAIS,
   criarFormaPagamentoSchema,
   criarLojaSchema,
   criarPessoaSchema,
@@ -40,6 +42,38 @@ describe('normalizarTeclaAtalho (PDV 28.3)', () => {
     expect(normalizarTeclaAtalho('Alt+F4')).toBeNull();
     expect(normalizarTeclaAtalho('Ctrl+Ctrl+A')).toBeNull();
     expect(normalizarTeclaAtalho('Enter')).toBeNull();
+  });
+
+  it('atalhos.teclas.vetores.json: a mesma tecla que o MapaAtalhos do PDV aceita (F3-B13)', () => {
+    const { teclas, acoesEssenciais } = JSON.parse(
+      readFileSync(new URL('../testes/sync/atalhos.teclas.vetores.json', import.meta.url), 'utf8'),
+    ) as { teclas: Array<{ entrada: string; esperado: string | null }>; acoesEssenciais: string[] };
+    expect(teclas.length).toBeGreaterThan(20);
+    for (const v of teclas)
+      expect([v.entrada, normalizarTeclaAtalho(v.entrada)]).toEqual([v.entrada, v.esperado]);
+    // As mesmas ações que o MapaAtalhos do PDV liga quando chegam desligadas.
+    expect([...ACOES_ATALHO_ESSENCIAIS]).toEqual(acoesEssenciais);
+  });
+
+  it('gravarAtalhosSchema recusa desligar o Concluir venda e o menu de Funções (F3-B13)', () => {
+    const r = gravarAtalhosSchema.safeParse({
+      itens: [
+        { acao: 'concluir_venda', tecla: 'F10', habilitado: false, ordem: 5 },
+        { acao: 'menu_funcoes', tecla: 'F11', habilitado: false, ordem: 26 },
+        { acao: 'ajuda', tecla: 'F1', habilitado: false, ordem: 19 },
+        { acao: 'remover_item', tecla: 'F4', habilitado: false, ordem: 2 },
+      ],
+    });
+    expect(r.success).toBe(false);
+    expect(r.error!.issues.map((i) => i.path.join('.'))).toEqual([
+      'itens.0.habilitado',
+      'itens.1.habilitado',
+    ]);
+    expect(
+      gravarAtalhosSchema.safeParse({
+        itens: [{ acao: 'concluir_venda', tecla: 'Ctrl+K', habilitado: true, ordem: 5 }],
+      }).success,
+    ).toBe(true);
   });
 
   it('gravarAtalhosSchema acusa a tecla repetida entre habilitados', () => {

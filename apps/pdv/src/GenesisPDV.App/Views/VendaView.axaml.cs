@@ -9,6 +9,7 @@ namespace GenesisPDV.App.Views;
 
 public partial class VendaView : UserControl
 {
+    private readonly List<KeyBinding> _teclasDoMapa = [];
     private VendaViewModel? _vm;
 
     public VendaView()
@@ -28,12 +29,42 @@ public partial class VendaView : UserControl
         if (_vm is not null)
         {
             _vm.FocoNoCodigoSolicitado -= FocarCodigo;
+            _vm.TeclasAlteradas -= AplicarTeclas;
         }
 
         _vm = DataContext as VendaViewModel;
         if (_vm is not null)
         {
             _vm.FocoNoCodigoSolicitado += FocarCodigo;
+            _vm.TeclasAlteradas += AplicarTeclas;
+        }
+
+        AplicarTeclas(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// As teclas das ações (F3-B13; PDV 28.3): uma ligação por tecla do mapa, todas no mesmo comando, que decide entre a
+    /// ação e o bipe do "Ação indisponível". O mapa novo (depois do pull) troca as ligações: a tecla antiga deixa de valer.
+    /// As do diálogo aberto continuam na frente (ficam no diálogo, mais perto do foco).
+    /// </summary>
+    private void AplicarTeclas(object? sender, EventArgs e)
+    {
+        foreach (var k in _teclasDoMapa)
+        {
+            KeyBindings.Remove(k);
+        }
+
+        _teclasDoMapa.Clear();
+        if (_vm is null)
+        {
+            return;
+        }
+
+        foreach (var (gesto, acao) in _vm.TeclasDaVenda())
+        {
+            var ligacao = new KeyBinding { Gesture = gesto, Command = _vm.TeclaAtalhoCommand, CommandParameter = acao };
+            KeyBindings.Add(ligacao);
+            _teclasDoMapa.Add(ligacao);
         }
     }
 

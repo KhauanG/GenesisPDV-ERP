@@ -1678,6 +1678,19 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
       loja, a contagem `semDetalhes`, a fase desabilitando, o aviso fora da faixa e a gravação que o apaga na empresa e
       na loja, o modal da trava e o "Nº da próxima venda" sem e com a chave,
       com a recusa no campo); os de `Configuracoes.test.tsx` e `Lojas.test.tsx` sem mudança.
+92. **Atalhos do PDV: o aviso da versão do caixa e o `Ctrl+Alt+T` recusado** (Fase 3, F3-B13; PDV 28.3; README do PDV
+    › decisão 101, README da API › decisão 231; `src/paginas/configuracoes/Configuracoes.tsx`). A validação da tabela ao
+    gravar (28.3: tecla única entre as habilitadas, formato, teclas proibidas) já existia (`validarAtalhos` e a API); o
+    bloco só acrescenta o `Ctrl+Alt+T` às proibidas (o tema do caixa, PDV 6.8, tecla fixa do PDV), pelo
+    `normalizarTeclaAtalho` do shared, e uma linha sob o título da tabela: o caixa aplica a tabela a partir do PDV
+    0.14.0 (`VERSAO_PDV_R3`), depois da sincronização, os mais antigos continuam com as teclas fixas, a Ordem é a dos
+    botões da barra, e a ação que a versão do caixa ainda não tem fica fora da barra e só bipa (para nenhuma linha parecer
+    funcionar sem funcionar, como os selos da decisão 91). **Concluir venda e Menu de funções não se desligam** (padrão
+    até a confirmação do dono; README do PDV › decisão 101): o Switch delas fica travado e ligado
+    (`ACOES_ATALHO_ESSENCIAIS` do shared; a linha antiga desligada aparece ligada e grava ligada no próximo Gravar),
+    porque desligadas o caixa não conclui a venda ou fica sem sangria e fechamento; a API recusa do mesmo jeito. O aviso
+    diz também que o ⚙ Central fica no fim da barra mesmo com a Central do PDV desabilitada. Teste:
+    `Configuracoes.test.tsx` (o aviso, o `Ctrl+Alt+T` recusado e os Switches travados com o PUT que grava ligado).
 
 ## O que ainda não foi feito (Fase 0)
 

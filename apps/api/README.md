@@ -8100,6 +8100,18 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        auditoria, a corrida do mesmo número auditada uma vez e a do menor perdendo, 403, a sequência por loja e o
        contador atrás de uma venda do caixa 0 (o último usado é a venda, e gravar o próximo exibido acerta o contador)); o
        `terminais.test.ts` da rota das variações, sem mudança.
+231. **`Ctrl+Alt+T` recusado na tabela de atalhos do PDV** (Fase 3, F3-B13; PDV 28.3, 6.8; README do PDV › decisão 101,
+     README do ERP › decisão 92; `packages/shared/src/configuracoes.ts`). O `PUT /atalhos-pdv` (o `gravarAtalhosSchema`)
+     passa a recusar o `Ctrl+Alt+T` como já recusava o `Alt+F4` e o `Ctrl+Alt+Del`: é o alternar tema do caixa, tecla fixa
+     do PDV fora da tabela, e o caixa (`MapaAtalhos`) também a recusa, caindo na tecla padrão da ação. A regra é uma só,
+     conferida dos dois lados pelos vetores `packages/shared/testes/sync/atalhos.teclas.vetores.json` (`cadastros.spec.ts`
+     e o `MapaAtalhosTests` do PDV). Nenhuma linha gravada muda (o seed não usa a tecla); uma tabela que já a tivesse
+     acusaria a linha na próxima gravação. Sem migração e sem mudança no pull (a tabela já descia). O mesmo schema
+     **recusa desligar `concluir_venda` e `menu_funcoes`** (`ACOES_ATALHO_ESSENCIAIS`; 422 em `itens.N.habilitado`;
+     padrão até a confirmação do dono, README do PDV › decisão 101): desligadas, o caixa ficaria sem concluir a venda
+     ou sem sangria, reforço e fechamento. Uma linha que já estivesse desligada não muda na base (o ERP a mostra e
+     grava ligada; o caixa a liga ao aplicar). Teste: `formas-configuracoes.test.ts` (o 422 do `Ctrl+Alt+T` e o da
+     ação essencial desligada).
 
 ## O que ainda não foi feito (Fase 0)
 

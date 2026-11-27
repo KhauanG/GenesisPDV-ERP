@@ -196,9 +196,12 @@ tudo (dados, backup, logs, impressão) sob essa pasta.
    última venda, **6** resumo diário, **S** status do sync, **V** devolução de cascos (com a venda em andamento,
    desconta os vazios a mais pelo valor do casco; F3 passa a só a entrada). **F12** gestão de vendas da
    sessão (Enter detalhes, **Ctrl+R** reimprime com a marca da 2ª via, **Ctrl+Del** cancela a venda paga: F2/F3
-   escolhem a devolução de cada pagamento, o CARLOS libera). **F5** CPF na nota ou cliente (Ctrl+Del tira). F7, F8,
-   F9, Ctrl+N e Ctrl+T mostram "próximas fases". Todas essas teclas também são **botões** na barra de baixo (o
-   mesmo comando, decisão 65), e o **duplo clique** num item abre a janela do item (quantidade, desconto, remover).
+   escolhem a devolução de cada pagamento, o CARLOS libera). **F5** CPF na nota ou cliente (Ctrl+Del tira).
+   **Ctrl+N** nova venda (com o caixa livre limpa o troco e o cupom da anterior; com itens, C cancela e Esc volta).
+   F7, F8 e Ctrl+T dão um bipe com "Ação indisponível" e ficam fora da barra (chegam com os blocos deles; o F9 vem
+   desabilitado no padrão). As teclas habilitadas que esta versão tem também são **botões** na barra de baixo, na
+   ordem da tabela de atalhos (F2, F4, F10, F12, Ctrl+N, F1, …, com o ⚙ Central no fim; o mesmo comando, decisões 65 e
+   101), e o **duplo clique** num item abre a janela do item (quantidade, desconto, remover).
 6. Pagamento (F10): as formas da loja (espelho `formas_pagamento`; a demonstração só tem Dinheiro — débito, crédito e
    PIX vêm do ERP › Formas de pagamento), **↑/↓** ou **Alt+1..9** escolhem; o valor vem preenchido com o saldo, o troco
    aparece enquanto se digita (só no dinheiro) e, quitado o total, a venda finaliza: grava venda + evento
@@ -4529,3 +4532,81 @@ reimpresso continua o original, com o número do caixa.
        passam por ele) e o Smart App Control (F3-Q35 b: ligado, os binários sem Authenticode devem ser bloqueados; o
        passo P4 do roteiro anota e para). Sem o roteiro registrado, o PR-22 não começa e a F3-Q33 volta ao dono (plano ›
        F3-B8).
+101. **Atalhos configuráveis no caixa e a Nova venda** (F3-B13; PDV 28.1–28.4; MD 3.10.2, 7.8; README do ERP › decisão
+     92, README da API › decisão 231; `GenesisPDV.Core/Atalhos/MapaAtalhos.cs`, `RepositorioConfiguracoes.MapaAtalhosAsync`,
+     `App/Servicos/ServicoAtalhos.cs`, `VendaViewModel.cs`, `VendaView.axaml(.cs)`, `Dialogos.cs`). O caixa passa a aplicar
+     a tabela `atalhos_pdv` que já descia desde a 1B. Sem migração (EF ou Drizzle), sem `Esquema.g.cs`, sem evento e sem
+     protocolo novo; a versão do PDV não sobe (vai às lojas na R3, 0.14.0, PR-21). O 0.13.0 instalado ignora a tabela como
+     antes. Escolhas técnicas, sem pergunta ao dono:
+     - **O mapa no Core** (`MapaAtalhos`, puro): o catálogo das 36 ações com a tecla, o habilitado e a ordem padrão do seed
+       da nuvem (`ATALHOS_PDV_PADRAO`, MD 7.8; o `MapaAtalhosTests` lê o `tabelas-md.ts` da API e confere ação, tecla,
+       habilitado e ordem, na ordem), mais o rótulo da barra e o texto do F1. Por ação: a linha da loja do terminal, a da
+       empresa ou o padrão; ação que o caixa não conhece (de um ERP mais novo) é ignorada. A tecla é a do
+       `normalizarTeclaAtalho` do shared, conferida pelos mesmos vetores (`packages/shared/testes/sync/atalhos.teclas.vetores.json`,
+       também no `cadastros.spec.ts`). As teclas fixas da 28.3 (Enter, Esc, Tab, setas, Del, dígitos, `+`/`-`) nem têm
+       formato de atalho, e `Alt+F4`, `Ctrl+Alt+Del` e o **`Ctrl+Alt+T` do tema** (PDV 6.8, fixo) são recusados (o
+       `Ctrl+Alt+T` passou a ser recusado também no ERP e na API). Os códigos que já descem valem sobre os nomes do plano
+       (`suspender_venda`, `recuperar_venda`, `cupom_troca_ultima`).
+     - **Tecla recusada ou repetida que chega da nuvem cai na padrão.** A recusada vai direto para a padrão da ação. Duas
+       habilitadas com a mesma tecla (só acontece com a linha da loja sobre a da empresa, ou gravada fora do ERP): cada uma
+       que está fora da padrão volta a ela, repetindo até não sobrar repetição (as padrões não se repetem entre si, então
+       sempre termina, e nenhuma ação habilitada fica sem tecla). A desabilitada não briga: a tecla dela só bipa quando
+       nenhuma habilitada a usa.
+     - **O alerta fica no caixa, não no `alerta.cadastro`.** O plano pedia o `alerta.cadastro`, mas ele é do produto
+       (`produto_id` obrigatório, `tipo_alerta` fechado na v1 da nuvem) e o caixa nunca o gerou: mandar o alerta de um
+       atalho exigiria uma versão nova do evento, contra a regra do anúncio no fim da onda. Como o ERP e o
+       `uq_atalhos_pdv_tecla` já recusam a tecla inválida ou repetida na mesma linha de loja, a única origem é a
+       sobreposição por loja (sem tela no ERP) ou uma gravação fora do ERP. O caixa grava a ocorrência
+       **`ATALHO_INVALIDO`** (nível aviso, origem sistema; a aba 5 Logs da Central mostra com a dica "Atalho do ERP não
+       aplicado" e o caminho do ERP para corrigir), uma vez por conjunto de alertas (o pull se repete a cada 30 s), com a
+       ação, a tecla recebida, a aplicada e o motivo no detalhe.
+     - **Quando relê:** ao abrir a venda (`CarregarAsync`) e a cada pull com sucesso (`UltimoPullSucessoEm` mudou na
+       situação do sync); só remonta a barra, a legenda e as teclas quando a assinatura do mapa muda. Uma falha de
+       leitura mantém o mapa que já valia. O terminal de demonstração usa o espelho dele (normalmente vazio: o padrão).
+     - **As teclas** saem do XAML: a View liga uma `KeyBinding` por tecla do mapa (o dígito também no teclado
+       numérico), todas no `TeclaAtalhoCommand`, e troca as ligações a cada mapa novo (a tecla antiga deixa de valer: o
+       `F4` depois do `Ctrl+R`). Fica no XAML só o `Ctrl+Alt+T` (fixo). A ação habilitada que esta versão tem roda o
+       mesmo comando de antes (as permissões, a liberação do supervisor e a guarda do diálogo aberto ficam nele); a
+       desabilitada no ERP e a que esta versão ainda não tem emitem o bipe (`MessageBeep` do Windows; nos testes, o
+       contador `ServicoAtalhos.Bipes`) e "Ação indisponível (F8 Tipo de preço)". A ligação só consome a tecla quando ela
+       é da venda: com um diálogo aberto, só o bloquear e o sincronizar (que já valiam por cima dele), e a tecla fica
+       para o diálogo e os campos dele (o `Ctrl+A` no campo dos cascos continua selecionando o texto); sem diálogo, as de
+       edição (`Ctrl+A/C/V/X/Z/Y`) de uma ação sem efeito continuam editando o campo de código. O `Ctrl+Alt+C` do login
+       continua fixo (o caminho do técnico para a Central não depende da tabela); na venda, a tecla de
+       `configuracao_terminal` abre a Central como o ⚙.
+     - **A barra** (decisão 65): as ações habilitadas que esta versão tem, pela `ordem` da tabela, até 15, e o ⚙ no fim
+       (16 botões, duas linhas de 8). O ⚙ mostra a tecla de Funções que vale (`F11 › 8` no padrão; `Ctrl+U › 8` com
+       Funções no `Ctrl+U`), e a dica do ⚠ da saúde também; ele **fica mesmo com `configuracao_terminal` desabilitada
+       no ERP** (padrão até a confirmação do dono): é a opção 8 do menu de funções, que não depende da tabela, e o
+       caminho do técnico (decisão 68); desabilitada, só a tecla dela (`Ctrl+Alt+C` na venda) bipa. As que esta versão
+       ainda não tem (F7, F8, F9, Ctrl+T, …) saíram da barra (antes
+       apareciam apagadas, com "disponível nas próximas fases") e entram com o bloco de cada tela. **Com o padrão da
+       nuvem, a ordem muda para o caixa:** F2, F4, F10, F12, Ctrl+N, F1, F3, Shift+F4, F5, F6, F11, Ctrl+Alt+B, Ctrl+Alt+S
+       e o ⚙ (a ordem do MD 7.8, que começa pelas do Nuvem3); a coluna Ordem do ERP rearranja. A legenda em texto (barra
+       de botões desligada) é a mesma lista, em duas linhas.
+     - **Concluir venda e Funções não se desligam** (padrão até a confirmação do dono; roadmap §16). Com a tabela
+       aplicada, desligar `concluir_venda` tiraria o F10 e o CONCLUIR (nenhuma venda termina), e desligar
+       `menu_funcoes` tiraria o F11 e o botão Funções, o único caminho da sangria, do reforço, da troca de turno e do
+       fechamento: o caixa ficaria preso até alguém religar no ERP e o caixa sincronizar. As duas
+       (`MapaAtalhos.Essenciais`, o mesmo `ACOES_ATALHO_ESSENCIAIS` do shared, conferido pelo `acoesEssenciais` dos
+       vetores) ficam sempre ligadas: o ERP trava o Switch delas (a linha antiga desligada grava ligada no próximo
+       Gravar), a API recusa gravá-las desligadas (`itens.N.habilitado`), e a linha desligada que chegar mesmo assim (a
+       da loja ou gravada fora do ERP) vale ligada no caixa, com a `ATALHO_INVALIDO` (motivo "ação essencial: não se
+       desliga"). A tecla delas continua configurável. A Ajuda (F1) pode ser desligada (o caixa não fica preso).
+     - **F1** lista as teclas fixas e cada ação habilitada desta versão com a tecla configurada (as teclas do F11 depois
+       do menu), e, em listas corridas, as que "chegam numa próxima versão" e as "desabilitadas no ERP"; rola quando não
+       cabe.
+     - **Nova venda (`Ctrl+N`)**: com o caixa livre, limpa o que ficou da venda anterior (o troco e o cupom na tela, o
+       multiplicador, o código digitado); o vendedor e o tipo de preço entram nessa limpeza com os blocos deles
+       (F3-B17 e o do vendedor). Com a venda em andamento, "Cancelar a venda [C] / Voltar [Esc]" (Enter também volta: só
+       o C cancela); o C é o cancelamento do Shift+F4 (o motivo e, sem `pdv.venda.cancelar_venda_aberta`, o supervisor).
+       O "Suspender (S)" entra com o F3-B23.
+     - **Testes.** `MapaAtalhosTests` (os vetores, o catálogo × seed, o padrão, a loja sobre a empresa e a de outra loja
+       ignorada, a tecla proibida e a inválida, a repetida e a troca em cadeia, a ação desconhecida e a barra até caber,
+       as essenciais desligadas que ficam ligadas e as mesmas do shared);
+       `AtalhosTelasTests` (os critérios 28.4: o `Ctrl+R` do pull da API falsa remove e o `F4` não faz nada, e a ação
+       desabilitada sai da barra e só bipa; a tecla repetida e a reservada com a ocorrência uma vez e o F1 com as teclas
+       configuradas; a Nova venda sem e com itens; o roteiro abrir, vender em dinheiro e débito, sangria e fechar sem
+       nenhum evento de ponteiro; o CONCLUIR e Funções desligados na nuvem que continuam valendo, com o ⚙ na tecla nova
+       de Funções e o Ctrl+Alt+C desligado que bipa); `UsabilidadeTelasTests` com a barra nova, o F7 que bipa e o clique
+       no Ctrl+Alt+S (botão sem diálogo) seguido do bipe do leitor.

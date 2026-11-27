@@ -81,32 +81,47 @@ public class UsabilidadeTelasTests
         Assert.True(venda.BarraBotoes);
         Assert.True(pdv.Controle<ItemsControl>("BarraFuncoes").IsVisible);
         Assert.False(pdv.Controle<StackPanel>("LegendaTeclas").IsVisible);
+        // F3-B13: a barra sai do mapa de atalhos (as habilitadas que o caixa tem, pela ordem do padrão da nuvem, MD 7.8); as
+        // ações que esta versão ainda não tem (F7, F8, Ctrl+T…) ficam fora dela.
         Assert.Equal(
-            ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Ctrl+N", "Ctrl+T", "Shift+F4", VendaViewModel.TeclaCentral],
+            ["F2", "F4", "F10", "F12", "Ctrl+N", "F1", "F3", "Shift+F4", "F5", "F6", "F11", "Ctrl+Alt+B", "Ctrl+Alt+S", VendaViewModel.TeclaCentral],
             venda.Atalhos.Select(a => a.Tecla));
-        // Nenhum botão fica com o foco (o leitor digita no campo focado). O 16º é a engrenagem da Central (bloco G3).
+        // Nenhum botão fica com o foco (o leitor digita no campo focado). O último é a engrenagem da Central (bloco G3).
         var botoes = pdv.Controle<ItemsControl>("BarraFuncoes").GetVisualDescendants().OfType<Button>().ToList();
-        Assert.Equal(16, botoes.Count);
+        Assert.Equal(14, botoes.Count);
         Assert.All(botoes, b => Assert.True(b.Bounds.Height >= 44, "botão grande o bastante para mouse/toque"));
         Assert.All(botoes, b => Assert.False(b.Focusable));
         await pdv.EntrarCodigoAsync("0044");
         await pdv.EntrarCodigoAsync("7891149103102");
         await pdv.EsperarAsync(() => venda.Itens.Count == 2, "2 itens");
 
-        // Função das próximas fases: a mesma mensagem da tecla; o foco fica no código e o próximo bipe entra.
-        pdv.Clicar(pdv.BotaoDaBarra("F7"));
+        // Função que esta versão ainda não tem (PDV 28.3): a tecla bipa com "Ação indisponível"; o foco fica no código e o
+        // próximo bipe entra.
+        pdv.Tecla(Key.F7);
         await AmbienteUi.Pausa();
-        Assert.Equal("F7 Vendedor: disponível nas próximas fases.", pdv.Texto("TextoMensagem"));
+        Assert.Equal("Ação indisponível (F7 Vendedor)", pdv.Texto("TextoMensagem"));
+        Assert.Equal(1, pdv.Servicos.GetRequiredService<ServicoAtalhos>().Bipes);
         await pdv.EsperarFocoAsync("CampoCodigo");
         await pdv.EntrarCodigoAsync("7896045506873");
-        await pdv.EsperarAsync(() => venda.Itens.Count == 3, "o bipe depois do clique entrou no campo de código");
+        await pdv.EsperarAsync(() => venda.Itens.Count == 3, "o bipe depois da tecla F7 entrou no campo de código");
+
+        // Clique num botão que não abre diálogo (decisão 65): o Ctrl+Alt+S só pede o ciclo e avisa, sem pedir o foco
+        // sozinho: o foco fica no código (os botões da barra não tomam o foco, e o fim do AcionarAtalho o devolve se algo
+        // o tirou) e o próximo bipe do leitor entra.
+        pdv.Clicar(pdv.BotaoDaBarra("Ctrl+Alt+S"));
+        await AmbienteUi.Pausa();
+        Assert.Null(venda.Dialogo);
+        Assert.Equal("Sincronizando agora…", pdv.Texto("TextoMensagem"));
+        await pdv.EsperarFocoAsync("CampoCodigo");
+        await pdv.EntrarCodigoAsync("0310");
+        await pdv.EsperarAsync(() => venda.Itens.Count == 4, "o bipe depois do clique entrou no campo de código");
 
         await ClicarEEsperarAsync<DialogoQuantidadeViewModel>(pdv, venda, "F3");
         await pdv.EsperarFocoAsync("CampoQuantidade");
         await FecharComEscAsync(pdv, venda);
 
         var remover = await ClicarEEsperarAsync<DialogoRemoverItemViewModel>(pdv, venda, "F4");
-        Assert.Equal("3", remover.Sequencia);
+        Assert.Equal("4", remover.Sequencia);
         await pdv.EsperarFocoAsync("CampoSequencia");
         await FecharComEscAsync(pdv, venda);
 
@@ -876,7 +891,7 @@ public class UsabilidadeTelasTests
     public async Task Barra_de_botoes_cabe_em_1366_sem_cortar_rotulos()
     {
         using var pdv = await AmbienteUi.IniciarAsync();
-        await pdv.AtivarDemonstracaoELogarAsync();
+        var venda = await pdv.AtivarDemonstracaoELogarAsync();
         foreach (var (largura, altura) in new[] { (1366d, 768d), (1920d, 1080d) })
         {
             pdv.Janela.Width = largura;
@@ -886,7 +901,8 @@ public class UsabilidadeTelasTests
             Assert.True(barra.Bounds.Width <= largura - 24 + 0.5, $"barra cabe em {largura}");
             Assert.InRange(barra.Bounds.Height, 80, 120);
             var botoes = barra.GetVisualDescendants().OfType<Button>().ToList();
-            Assert.Equal(16, botoes.Count);
+            // F3-B13: os botões saem do mapa de atalhos (14 com o padrão da nuvem; até 16 com o ⚙).
+            Assert.Equal((venda.Atalhos.Count, 14), (botoes.Count, venda.Atalhos.Count));
             foreach (var botao in botoes)
             {
                 var direita = botao.TranslatePoint(new Point(botao.Bounds.Width, 0), barra)?.X;

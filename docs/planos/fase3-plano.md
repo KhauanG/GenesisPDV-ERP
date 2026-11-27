@@ -901,6 +901,16 @@ corpo do PR-17.
   tecla proibida); TelasTests.
 - **Pronto:** os critérios 28.4 num caixa de teste.
 - **Depende de:** F3-B7.
+- [**Feito (F3-B13)** (README do PDV › decisão 101, README do ERP › decisão 92, README da API › decisão 231; PDV 28.3,
+  28.4): como descrito, sem migração, evento nem versão nova do PDV. Escolhas técnicas: os códigos de ação que já descem
+  (`suspender_venda`, `recuperar_venda`, `cupom_troca_ultima`) no lugar dos nomes desta seção; a tecla é a do shared,
+  conferida pelos vetores `atalhos.teclas.vetores.json`, com o `Ctrl+Alt+T` (tema, PDV 6.8) também recusado no ERP e na
+  API; a tecla repetida volta à padrão de quem saiu dela, até não sobrar repetição; o alerta da tecla que não valeu é a
+  ocorrência local `ATALHO_INVALIDO` (Central › Logs), não o `alerta.cadastro`, que é do produto e pediria uma versão
+  nova do evento; as ações que esta versão ainda não tem ficam fora da barra (antes apagadas) e só bipam; a barra segue a
+  `ordem` do padrão da nuvem (a do caixa muda: F2, F4, F10, F12, Ctrl+N, F1…; o ERP rearranja); com um diálogo aberto,
+  só o bloquear e o sincronizar passam por cima dele; o `Ctrl+Alt+C` do login continua fixo; a validação do ERP já
+  existia, e o ERP ganhou só o aviso da versão (0.14.0) sob a tabela.]
 
 #### F3-B14 – Complementos na nuvem: baixa e custo (MD 3.6.8, 3.11.3; D43)
 - **Tamanho:** M · **Rigor:** completo (estoque e custo)

@@ -1,6 +1,8 @@
 import {
+  ACOES_ATALHO_ESSENCIAIS,
   NUMERO_VENDA_MAXIMO,
   normalizarTeclaAtalho,
+  VERSAO_PDV_R3,
   type AtalhoPdv,
   type NumeracaoVendaErp,
 } from '@genesis/shared';
@@ -223,7 +225,13 @@ export function TabelaAtalhos({ somenteLeitura }: { somenteLeitura?: boolean }) 
   });
   // `null` = sem edição: mostra o que veio do servidor.
   const [edicao, setEdicao] = useState<Linha[] | null>(null);
-  const linhas: Linha[] = edicao ?? (dados.data ?? []).map(({ id: _id, ...l }) => l);
+  // As essenciais (Concluir venda, Funções) ficam sempre ligadas: uma linha antiga desligada sai ligada no próximo gravar.
+  const linhas: Linha[] =
+    edicao ??
+    (dados.data ?? []).map(({ id: _id, ...l }) => ({
+      ...l,
+      habilitado: l.habilitado || ACOES_ATALHO_ESSENCIAIS.includes(l.acao),
+    }));
   const setLinhas = (f: Linha[] | ((ls: Linha[]) => Linha[])) =>
     setEdicao(typeof f === 'function' ? f(linhas) : f);
 
@@ -298,6 +306,16 @@ export function TabelaAtalhos({ somenteLeitura }: { somenteLeitura?: boolean }) 
           </Group>
         )}
       </Group>
+      {/* F3-B13 (README do ERP › decisão 92): o caixa só aplica a tabela a partir da R3; a ação que a versão dele ainda
+          não tem fica fora da barra e a tecla só bipa; as essenciais (ACOES_ATALHO_ESSENCIAIS) não se desligam. */}
+      <Text size="xs" c="dimmed" mb="xs">
+        O caixa aplica esta tabela a partir do PDV {VERSAO_PDV_R3}, depois da sincronização; os caixas mais
+        antigos continuam com as teclas fixas. A ordem é a dos botões na barra do caixa. Uma ação que a versão
+        do caixa ainda não tem fica fora da barra, e a tecla dela só emite um bipe. Concluir venda e Menu de
+        funções não podem ser desabilitadas: sem elas o caixa não conclui a venda nem faz sangria ou
+        fechamento. O ⚙ Central continua no fim da barra mesmo com a Central do PDV desabilitada (é a opção 8
+        do menu de funções). Alt+F4, Ctrl+Alt+Del e Ctrl+Alt+T (tema do caixa) não podem ser usadas.
+      </Text>
       <Table striped verticalSpacing={4}>
         <Table.Thead>
           <Table.Tr>
@@ -327,7 +345,12 @@ export function TabelaAtalhos({ somenteLeitura }: { somenteLeitura?: boolean }) 
                 <Switch
                   aria-label={`Habilitar ${ROTULOS_ACOES_ATALHO[l.acao] ?? l.acao}`}
                   checked={l.habilitado}
-                  disabled={somenteLeitura}
+                  disabled={somenteLeitura || ACOES_ATALHO_ESSENCIAIS.includes(l.acao)}
+                  title={
+                    ACOES_ATALHO_ESSENCIAIS.includes(l.acao)
+                      ? 'Sempre habilitada: o caixa precisa dela'
+                      : undefined
+                  }
                   onChange={(e) => mudar(i, 'habilitado', e.currentTarget.checked)}
                 />
               </Table.Td>

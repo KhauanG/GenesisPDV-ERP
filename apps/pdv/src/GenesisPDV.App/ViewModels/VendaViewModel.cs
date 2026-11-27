@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GenesisPDV.App.Servicos;
+using GenesisPDV.Core.Atalhos;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Core.Numeros;
 using GenesisPDV.Core.Produtos;
@@ -18,6 +19,9 @@ public sealed partial class VendaViewModel : ViewModelBase
     private readonly IServicoSincronizacao _sync;
     private readonly TimeZoneInfo _fuso = DiaOperacional.ObterFuso(null);
     private readonly DispatcherTimer _relogio;
+    private readonly ServicoAtalhos _atalhos;
+    private readonly Dictionary<string, System.Windows.Input.ICommand> _acoes;
+    private DateTimeOffset? _ultimoPullVisto;
 
     public VendaViewModel(ShellViewModel shell)
     {
@@ -28,26 +32,30 @@ public sealed partial class VendaViewModel : ViewModelBase
         var preferencias = shell.Servico<ServicoHardware>().Preferencias;
         BarraBotoes = preferencias.BarraBotoes;
         PesquisaSoNumeros = preferencias.PesquisaSoNumeros;
-        Atalhos =
-        [
-            new("F1", "Ajuda", AjudaCommand),
-            new("F2", "Pesquisar", PesquisarCommand),
-            new("F3", "Quantidade", QuantidadeCommand),
-            new("F4", "Remover item", RemoverItemCommand),
-            new("F5", "Cliente / CPF", ClienteCommand),
-            new("F6", "Desconto", DescontoCommand),
-            new("F7", "Vendedor", FuturoCommand, "F7 Vendedor", Futuro: true),
-            new("F8", "Tipo de preço", FuturoCommand, "F8 Tipo de preço", Futuro: true),
-            new("F9", "Pedidos/Orç.", FuturoCommand, "F9 Pedidos/Orçamentos", Futuro: true),
-            new("F10", "CONCLUIR", ConcluirCommand, Destaque: true),
-            new("F11", "Funções", FuncoesCommand),
-            new("F12", "Gestão de vendas", GestaoVendasCommand),
-            new("Ctrl+N", "Nova venda", FuturoCommand, "Ctrl+N Nova venda", Futuro: true),
-            new("Ctrl+T", "Troca", FuturoCommand, "Ctrl+T Troca", Futuro: true),
-            new("Shift+F4", "Cancelar venda", CancelarVendaCommand),
-            // A engrenagem no fim da barra (Central do PDV, bloco G3): o mesmo do F11 › 8.
-            new(TeclaCentral, "⚙ Central", CentralCommand),
-        ];
+        _atalhos = shell.Servico<ServicoAtalhos>();
+        // As ações que esta versão do caixa já tem na tela de venda (F3-B13; PDV 28.1, 28.2), cada uma com o mesmo comando
+        // de antes (as permissões, a liberação e o "Dialogo aberto" continuam nele). As do catálogo que faltam aqui chegam
+        // com o bloco da tela delas: até lá, a tecla bipa com "Ação indisponível" e a ação fica fora da barra.
+        _acoes = new(StringComparer.Ordinal)
+        {
+            [AcoesAtalho.PesquisarProduto] = PesquisarCommand,
+            [AcoesAtalho.RemoverItem] = RemoverItemCommand,
+            [AcoesAtalho.ConcluirVenda] = ConcluirCommand,
+            [AcoesAtalho.GestaoVendas] = GestaoVendasCommand,
+            [AcoesAtalho.NovaVenda] = NovaVendaCommand,
+            [AcoesAtalho.Ajuda] = AjudaCommand,
+            [AcoesAtalho.Quantidade] = QuantidadeCommand,
+            [AcoesAtalho.CancelarVenda] = CancelarVendaCommand,
+            [AcoesAtalho.Cliente] = ClienteCommand,
+            [AcoesAtalho.DescontoAcrescimo] = DescontoCommand,
+            [AcoesAtalho.MenuFuncoes] = FuncoesCommand,
+            [AcoesAtalho.BloquearTerminal] = BloquearTelaCommand,
+            [AcoesAtalho.SincronizarAgora] = SincronizarAgoraCommand,
+            [AcoesAtalho.ConfiguracaoTerminal] = CentralCommand,
+        };
+        AplicarMapa(_atalhos.Mapa);
+        // O pull que já tinha acontecido antes da tela fica com a leitura do CarregarAsync; os seguintes relêem os atalhos.
+        _ultimoPullVisto = _sync.Situacao.UltimoPullSucessoEm;
         _sync.SituacaoAlterada += (_, s) => Dispatcher.UIThread.Post(() => AplicarSituacao(s));
         AplicarSituacao(_sync.Situacao);
         _relogio = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => AtualizarHora());
@@ -65,8 +73,14 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     public const string MensagemCaixaLivre = "Finalize ou cancele a venda atual antes: a função exige o caixa livre.";
 
-    /// <summary>A tecla do botão ⚙ da barra (Central do PDV): o F11 › 8.</summary>
+    /// <summary>
+    /// A tecla do botão ⚙ da barra (Central do PDV) com o mapa padrão: o F11 › 8. Com a tecla de Funções trocada no ERP,
+    /// o botão mostra a dela (<see cref="TeclaDaCentral"/>).
+    /// </summary>
     public const string TeclaCentral = "F11 › 8";
+
+    /// <summary>O caminho da Central pelo teclado: a tecla do menu de Funções do mapa (sempre ligado) › 8.</summary>
+    public string TeclaDaCentral => $"{Mapa.Da(AcoesAtalho.MenuFuncoes).Tecla} › 8";
 
     public SessaoTerminal Sessao { get; }
 
@@ -78,9 +92,22 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     public string Operador => $"Op.: {Sessao.Operador?.Nome ?? "-"}";
 
-    public string Legenda1 => "F1 Ajuda  F2 Pesquisar  F3 Qtd  F4 Remover  F5 Cliente  F6 Desconto  F7 Vendedor  F8 Tipo preço";
+    /// <summary>Quantos botões cabem na barra (duas linhas de 8): os do mapa até <c>MaximoBotoesBarra - 1</c>, mais o ⚙.</summary>
+    public const int MaximoBotoesBarra = 16;
 
-    public string Legenda2 => "F9 Pedidos/Orç.  F10 CONCLUIR  F11 Funções  F12 Gestão vendas  Ctrl+N Nova  Ctrl+T Troca  Shift+F4 Cancelar venda  F11›8 ⚙ Central";
+    /// <summary>A legenda em texto (barra de botões desligada): a primeira metade dos botões da barra.</summary>
+    [ObservableProperty]
+    public partial string Legenda1 { get; set; } = string.Empty;
+
+    /// <summary>A segunda metade dos botões da barra, com o ⚙ no fim.</summary>
+    [ObservableProperty]
+    public partial string Legenda2 { get; set; } = string.Empty;
+
+    /// <summary>O mapa de atalhos que a tela está usando (F3-B13): a barra, a legenda, as teclas e o F1 saem dele.</summary>
+    public MapaAtalhos Mapa { get; private set; } = MapaAtalhos.Padrao;
+
+    /// <summary>As teclas mudaram (outro mapa depois do pull): a View troca as ligações de teclado.</summary>
+    public event EventHandler? TeclasAlteradas;
 
     /// <summary>
     /// Barra de funções com botões (padrão; decisão 65): cada botão dispara o mesmo comando da tecla — as permissões e as
@@ -93,8 +120,12 @@ public sealed partial class VendaViewModel : ViewModelBase
     /// <summary>Pesquisa de produto só por números (configuração do terminal; padrão desligada).</summary>
     public bool PesquisaSoNumeros { get; }
 
-    /// <summary>Os botões da barra, na ordem da legenda (PDV 9.1, 28).</summary>
-    public IReadOnlyList<AtalhoBarraViewModel> Atalhos { get; }
+    /// <summary>
+    /// Os botões da barra (PDV 9.1, 28.3): as ações habilitadas do mapa que este caixa já tem, por <c>ordem</c>, até caber,
+    /// e o ⚙ da Central no fim.
+    /// </summary>
+    [ObservableProperty]
+    public partial IReadOnlyList<AtalhoBarraViewModel> Atalhos { get; set; } = [];
 
     [ObservableProperty]
     public partial ItemLinhaViewModel? ItemSelecionado { get; set; }
@@ -215,6 +246,7 @@ public sealed partial class VendaViewModel : ViewModelBase
     /// <param name="mensagem">Aviso de quem trouxe à venda (abertura do caixa, operar no caixa de outro).</param>
     public async Task CarregarAsync(string? mensagem = null)
     {
+        await RecarregarAtalhosAsync();
         VendaRecuperada = await ServicoVenda.RecuperarAsync();
         await _sync.AcordarAsync();
         AtualizarTela();
@@ -765,11 +797,11 @@ public sealed partial class VendaViewModel : ViewModelBase
 
         if (atalho.Comando is IAsyncRelayCommand assincrono)
         {
-            await assincrono.ExecuteAsync(atalho.Parametro);
+            await assincrono.ExecuteAsync(null);
         }
-        else if (atalho.Comando.CanExecute(atalho.Parametro))
+        else if (atalho.Comando.CanExecute(null))
         {
-            atalho.Comando.Execute(atalho.Parametro);
+            atalho.Comando.Execute(null);
         }
 
         if (Dialogo is null)
@@ -1051,8 +1083,130 @@ public sealed partial class VendaViewModel : ViewModelBase
     [RelayCommand]
     private Task Pendentes() => Dialogo is not null ? Task.CompletedTask : AbrirCentralAsync(Servicos.Diagnostico.AbasCentral.Sincronizacao.Codigo);
 
+    /// <summary>
+    /// Uma tecla do mapa na tela de venda (F3-B13; PDV 28.3): a ação habilitada que este caixa tem roda o mesmo comando do
+    /// botão; a desabilitada no ERP ou a que ainda não existe nesta versão bipa com "Ação indisponível" (não abre nada).
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(PodeTeclaAtalho))]
+    private void TeclaAtalho(string acao)
+    {
+        if (Disponivel(acao, out var alvo))
+        {
+            if (alvo.CanExecute(null))
+            {
+                alvo.Execute(null);
+            }
+
+            return;
+        }
+
+        var a = Mapa.Da(acao);
+        _atalhos.Bipe();
+        MostrarMensagem($"{MensagemAcaoIndisponivel} ({a.Tecla} {a.Rotulo})", erro: true);
+    }
+
+    /// <summary>
+    /// Se a tecla é da venda agora (a ligação de teclado só consome a tecla quando é): com um diálogo aberto, só o
+    /// bloquear e o sincronizar (que já valiam por cima dele), e as demais ficam com o diálogo e os campos dele; sem
+    /// diálogo, toda tecla do mapa, menos as de edição do campo de código (Ctrl+A/C/V/X/Z/Y) de uma ação que não faria
+    /// nada, que continuam editando o texto (PDV 28.3).
+    /// </summary>
+    private bool PodeTeclaAtalho(string acao)
+    {
+        var disponivel = Disponivel(acao, out _);
+        if (Dialogo is not null)
+        {
+            return disponivel && acao is AcoesAtalho.BloquearTerminal or AcoesAtalho.SincronizarAgora;
+        }
+
+        return disponivel || !TeclasEdicao.Contains(Mapa.Da(acao).Tecla);
+    }
+
+    /// <summary>As teclas de edição de texto que um atalho sem efeito não tira do campo (PDV 28.3).</summary>
+    private static readonly HashSet<string> TeclasEdicao = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Ctrl+A", "Ctrl+C", "Ctrl+V", "Ctrl+X", "Ctrl+Z", "Ctrl+Y",
+    };
+
+    private bool Disponivel(string acao, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out System.Windows.Input.ICommand? alvo)
+    {
+        alvo = null;
+        return Mapa.Da(acao).Habilitado && _acoes.TryGetValue(acao, out alvo);
+    }
+
+    /// <summary>A mensagem da tecla de uma ação desabilitada ou que este caixa ainda não tem (PDV 28.3).</summary>
+    public const string MensagemAcaoIndisponivel = "Ação indisponível";
+
+    /// <summary>A ação existe nesta versão do caixa (a tecla dela faz algo quando habilitada).</summary>
+    public bool TemAcao(string acao) => _acoes.ContainsKey(acao);
+
+    /// <summary>As ligações de teclado do mapa (a View as aplica): uma por gesto, com a ação de cada tecla.</summary>
+    public IEnumerable<(Avalonia.Input.KeyGesture Gesto, string Acao)> TeclasDaVenda() =>
+        Mapa.Teclas.SelectMany(a => ServicoAtalhos.Gestos(a.Tecla).Select(g => (g, a.Acao)));
+
+    /// <summary>
+    /// Relê o mapa (ao abrir a venda e depois de cada pull) e, se mudou, remonta a barra, a legenda e as teclas: a tecla
+    /// trocada no ERP vale no caixa depois do pull, sem reabrir a tela (critério 28.4).
+    /// </summary>
+    public async Task RecarregarAtalhosAsync()
+    {
+        var mapa = await _atalhos.RecarregarAsync();
+        if (mapa.Assinatura != Mapa.Assinatura)
+        {
+            AplicarMapa(mapa);
+        }
+    }
+
+    private void AplicarMapa(MapaAtalhos mapa)
+    {
+        Mapa = mapa;
+        var barra = mapa.Barra(a => _acoes.ContainsKey(a.Acao) && a.Acao != AcoesAtalho.ConfiguracaoTerminal, MaximoBotoesBarra - 1)
+            .Select(a => new AtalhoBarraViewModel(a.Tecla, a.Rotulo, _acoes[a.Acao], Destaque: a.Acao == AcoesAtalho.ConcluirVenda))
+            .ToList();
+        // A engrenagem no fim da barra (Central do PDV, bloco G3): o mesmo do Funções › 8, com a tecla de Funções do mapa.
+        // Fica mesmo com `configuracao_terminal` desligada no ERP (PDV 28.3, decisão 101): ela é a opção 8 do menu (que
+        // não depende da tabela) e o caminho do técnico (decisão 68); desligada, só a tecla dela (Ctrl+Alt+C) bipa.
+        barra.Add(new AtalhoBarraViewModel(TeclaDaCentral, "⚙ Central", CentralCommand));
+        Atalhos = barra;
+        var metade = (barra.Count + 1) / 2;
+        Legenda1 = string.Join("  ", barra.Take(metade).Select(b => b.Rotulo));
+        Legenda2 = string.Join("  ", barra.Skip(metade).Select(b => b.Rotulo));
+        TeclasAlteradas?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Ctrl+N Nova venda (PDV 28.3): com o caixa livre, limpa o que ficou da venda anterior (o troco e o cupom na tela, o
+    /// multiplicador e o código digitado; o vendedor e o tipo de preço da próxima venda entram aqui com os blocos deles);
+    /// com a venda em andamento, pergunta "Cancelar (C) / Voltar (Esc)" (o "Suspender (S)" chega com o F3-B23).
+    /// </summary>
     [RelayCommand]
-    private void Futuro(string funcao) => MostrarMensagem($"{funcao}: disponível nas próximas fases.", erro: false);
+    private void NovaVenda()
+    {
+        if (Dialogo is not null)
+        {
+            return;
+        }
+
+        if (ServicoVenda.VendaAberta)
+        {
+            AbrirDialogo(new DialogoNovaVendaViewModel(this, ServicoVenda.Atual!.NumeroExibicao, ServicoVenda.Atual.Total));
+            return;
+        }
+
+        LimparPosVenda();
+        MultiplicadorPendente = null;
+        CodigoEntrada = string.Empty;
+        VendaRecuperada = false;
+        MostrarMensagem("Pronto para a nova venda.", erro: false);
+        FocoNoCodigoSolicitado?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>"C" na Nova venda com itens: o cancelamento da venda em andamento do Shift+F4 (motivo e, sem a permissão, o supervisor).</summary>
+    public void CancelarParaNovaVenda()
+    {
+        Dialogo = null;
+        CancelarVenda();
+    }
 
     /// <summary>F11 Funções (PDV 28.2): sangria, reforço, fechamento, resumo diário, status do sync e vasilhames.</summary>
     [RelayCommand]
@@ -1248,6 +1402,13 @@ public sealed partial class VendaViewModel : ViewModelBase
         ConexaoFalha = nivel == NivelIndicador.Erro;
         ConexaoDetalhe = s.Erro;
         PendentesTexto = $"⇅ {s.Pendentes}";
+        // Pull novo com sucesso: os atalhos podem ter mudado no ERP (critério 28.4). Só a tela que está na frente relê (a
+        // que ficou atrás do bloqueio relê quando volta, pelo relógio de 1 s).
+        if (s.UltimoPullSucessoEm is { } pull && pull != _ultimoPullVisto && ReferenceEquals(_shell.PaginaAtual, this))
+        {
+            _ultimoPullVisto = pull;
+            _ = RecarregarAtalhosAsync();
+        }
     }
 
     /// <summary>Ctrl+Alt+S "Sincronizar agora" (PDV 30.2).</summary>
@@ -1282,7 +1443,7 @@ public sealed partial class VendaViewModel : ViewModelBase
         SaudeTexto = problemas.Count == 0 ? null : problemas.Count == 1 ? $"⚠ {problemas[0].Nome}" : $"⚠ {problemas.Count} problemas";
         SaudeDica = problemas.Count == 0
             ? null
-            : $"{string.Join(" · ", problemas.Select(p => $"{p.Nome}: {p.Frase}"))} Clique (ou F11 › 8) para ver o Painel de saúde e o que fazer.";
+            : $"{string.Join(" · ", problemas.Select(p => $"{p.Nome}: {p.Frase}"))} Clique (ou {TeclaDaCentral}) para ver o Painel de saúde e o que fazer.";
     }
 
     /// <summary>Faixa do limite de gaveta da última apuração do caixa (20.4).</summary>

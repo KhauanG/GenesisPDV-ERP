@@ -9,25 +9,10 @@
              x:Class="GenesisPDV.App.Views.VendaView"
              x:DataType="vm:VendaViewModel"
              Classes="tela">
+  <!-- As teclas das ações vêm do mapa de atalhos (F3-B13; PDV 28): a View as liga no code-behind e troca a cada pull. Aqui
+       só as fixas, fora da tabela atalhos_pdv. -->
   <UserControl.KeyBindings>
-    <KeyBinding Gesture="F1" Command="{Binding AjudaCommand}" />
-    <KeyBinding Gesture="F2" Command="{Binding PesquisarCommand}" />
-    <KeyBinding Gesture="F3" Command="{Binding QuantidadeCommand}" />
-    <KeyBinding Gesture="F4" Command="{Binding RemoverItemCommand}" />
-    <KeyBinding Gesture="Shift+F4" Command="{Binding CancelarVendaCommand}" />
-    <KeyBinding Gesture="F5" Command="{Binding ClienteCommand}" />
-    <KeyBinding Gesture="F6" Command="{Binding DescontoCommand}" />
-    <KeyBinding Gesture="F7" Command="{Binding FuturoCommand}" CommandParameter="F7 Vendedor" />
-    <KeyBinding Gesture="F8" Command="{Binding FuturoCommand}" CommandParameter="F8 Tipo de preço" />
-    <KeyBinding Gesture="F9" Command="{Binding FuturoCommand}" CommandParameter="F9 Pedidos/Orçamentos" />
-    <KeyBinding Gesture="F10" Command="{Binding ConcluirCommand}" />
-    <KeyBinding Gesture="F11" Command="{Binding FuncoesCommand}" />
-    <KeyBinding Gesture="F12" Command="{Binding GestaoVendasCommand}" />
-    <KeyBinding Gesture="Ctrl+N" Command="{Binding FuturoCommand}" CommandParameter="Ctrl+N Nova venda" />
-    <KeyBinding Gesture="Ctrl+T" Command="{Binding FuturoCommand}" CommandParameter="Ctrl+T Troca" />
     <KeyBinding Gesture="Ctrl+Alt+T" Command="{Binding AlternarTemaCommand}" />
-    <KeyBinding Gesture="Ctrl+Alt+B" Command="{Binding BloquearTelaCommand}" />
-    <KeyBinding Gesture="Ctrl+Alt+S" Command="{Binding SincronizarAgoraCommand}" />
   </UserControl.KeyBindings>
 
   <!-- O foco fica no campo de código (ou no campo do diálogo): clicar numa linha seleciona sem roubar o foco (decisão 65). -->
@@ -497,6 +482,26 @@
           <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
           <WrapPanel Classes="botoes" HorizontalAlignment="Right">
             <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
+    <!-- Ctrl+N com a venda em andamento (PDV 28.3; F3-B13): C cancela a atual pelo Shift+F4; Enter e Esc voltam. -->
+    <DataTemplate DataType="vm:DialogoNovaVendaViewModel">
+      <Border Classes="dialogo" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoNovaVenda">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="C" Command="{Binding CancelarAtualCommand}" />
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="12">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Mensagem}" FontSize="17" TextWrapping="Wrap" x:Name="TextoNovaVenda" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Cancelar a venda [C]" Command="{Binding CancelarAtualCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
           </WrapPanel>
         </StackPanel>
       </Border>
@@ -1056,13 +1061,15 @@
         </Border.KeyBindings>
         <StackPanel Spacing="8">
           <TextBlock Text="{Binding Titulo}" Classes="titulo" />
-          <ItemsControl ItemsSource="{Binding Atalhos}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="x:String">
-                <TextBlock Text="{Binding}" Classes="mono" FontSize="15" />
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <ScrollViewer MaxHeight="560" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Atalhos}" x:Name="ListaAjuda">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                  <TextBlock Text="{Binding}" Classes="mono" FontSize="15" TextWrapping="Wrap" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
           <WrapPanel Classes="botoes" HorizontalAlignment="Right">
             <Button Classes="acao" Content="Fechar [Esc]" Command="{Binding CancelarCommand}" />
           </WrapPanel>
@@ -1291,7 +1298,7 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate DataType="vm:AtalhoBarraViewModel">
-                <Button Classes="atalho" Classes.futuro="{Binding Futuro}" Classes.destaque="{Binding Destaque}"
+                <Button Classes="atalho" Classes.destaque="{Binding Destaque}"
                         Command="{Binding $parent[UserControl].((vm:VendaViewModel)DataContext).AcionarAtalhoCommand}" CommandParameter="{Binding}"
                         AutomationProperties.Name="{Binding Rotulo}" ToolTip.Tip="{Binding Rotulo}">
                   <StackPanel Spacing="0">

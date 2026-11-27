@@ -1006,7 +1006,8 @@ Depois do login:
 > **Barra de funções clicável e janela do item (versão 0.9.1; dono, 04/11/2026; README do PDV › decisão 65).** Para o
 > caixa que só tem teclado numérico (sem as teclas F), o rodapé vira **botões** — duas linhas de 8, com a tecla e a
 > função (`F1 Ajuda` … `F12 Gestão de vendas`, `Ctrl+N`, `Ctrl+T`, `Shift+F4 Cancelar venda`; `F10 CONCLUIR` em
-> destaque; as funções das próximas fases esmaecidas e com o mesmo aviso "disponível nas próximas fases"). Cada botão
+> destaque; as funções das próximas fases esmaecidas e com o mesmo aviso "disponível nas próximas fases"; desde o
+> F3-B13, a barra sai do mapa de atalhos, na ordem da tabela, e a ação que a versão ainda não tem fica fora dela: 28.3). Cada botão
 > dispara **o mesmo comando da tecla**, com as mesmas permissões e liberações; o botão nunca recebe o foco, e sem
 > diálogo aberto o foco volta ao campo de código (o leitor digita no campo focado). Clicar numa linha da lista
 > seleciona sem tirar o foco do campo. Os diálogos do dia a dia (pagamento — as formas são clicáveis —, maquininha,
@@ -3596,13 +3597,35 @@ e o `8` chegaram na implantação I4; o `8` abre a Central do PDV desde o bloco 
 - **Nova venda** (`Ctrl+N`): sem itens → limpa cliente/vendedor/tipo de preço; com itens → "Suspender (S) / Cancelar
   (C) / Voltar (Esc)".
 - O rodapé mostra os atalhos habilitados por `ordem` até caber; `F1` lista todos, com a tecla configurada.
+- **Como o caixa aplica (Fase 3, F3-B13; README do PDV › decisão 101), a partir do PDV 0.14.0:** a tabela é relida ao
+  abrir a venda e a cada pull; por ação, a linha da loja do terminal, a da empresa ou o padrão (MD 7.8). O `Ctrl+Alt+T`
+  (tema, 6.8) também é tecla fixa e o ERP o recusa. Tecla inválida, reservada ou repetida com outra ação habilitada que
+  chegar da nuvem cai na tecla padrão da ação, com a ocorrência `ATALHO_INVALIDO` na Central › 5 Logs (não há
+  `alerta.cadastro`: ele é do produto). A barra tem as ações habilitadas que a versão do caixa já tem, por `ordem`, até
+  15, mais o ⚙ da Central; a ação que a versão ainda não tem fica fora da barra e a tecla bipa com "Ação indisponível"
+  (o F1 lista essas em "chegam numa próxima versão", e as desabilitadas em "desabilitadas no ERP"). **Concluir venda
+  (`concluir_venda`) e Menu de funções (`menu_funcoes`) não se desligam** (padrão até a confirmação do dono): sem o
+  primeiro nenhuma venda termina, e sem o segundo o caixa fica sem sangria, reforço, troca de turno e fechamento, que só
+  abrem pelo menu. O ERP trava o Habilitado delas e a API recusa gravá-las desligadas; se chegarem desligadas (a linha da
+  loja ou uma gravação fora do ERP), o caixa as liga, com a `ATALHO_INVALIDO`. A tecla delas continua configurável. O
+  **⚙ da Central** fica no fim da barra mesmo com `configuracao_terminal` desabilitada (é a opção 8 do menu de funções,
+  que não depende da tabela, e o caminho do técnico, decisão 68 do PDV; desabilitada, só a tecla dela bipa), com o
+  rótulo da tecla de Funções que vale (`F11 › 8` no padrão; `Ctrl+U › 8` com Funções no `Ctrl+U`). Com um diálogo
+  aberto, as teclas da venda (exceto bloquear e sincronizar) ficam com o diálogo; no campo de código, `Ctrl+A/C/V/X/Z/Y`
+  de uma ação sem efeito continuam editando o texto. O `Ctrl+Alt+C` do login é fixo. **Nova venda** com o caixa livre
+  limpa o troco e o cupom na tela, o multiplicador e o código digitado (o vendedor e o tipo de preço entram com os blocos
+  deles); com itens, "Cancelar (C) / Voltar (Esc)" (o "Suspender (S)" com o F3-B23), e o C é o cancelamento do Shift+F4.
 
 ### 28.4 Critérios de aceite – atalhos
 
-- [ ] Alterar no ERP a tecla de Remover Item para `Ctrl+R` passa a valer no PDV após o pull, e `F4` deixa de fazer a ação.
-- [ ] Ação desabilitada na tabela não aparece no rodapé e a tecla só emite bipe.
-- [ ] O ERP recusa salvar duas ações habilitadas com a mesma tecla.
-- [ ] Um roteiro completo (abrir caixa, vender com 2 formas, sangria, fechar) é executado em teste de UI sem nenhum evento de mouse.
+Cobertos pelos testes do F3-B13 (`AtalhosTelasTests` do PDV; o terceiro, pelo `formas-configuracoes.test.ts` da API e
+pelo `Configuracoes.test.tsx` do ERP); no caixa de verdade, com a R3 (0.14.0).
+
+- [x] Alterar no ERP a tecla de Remover Item para `Ctrl+R` passa a valer no PDV após o pull, e `F4` deixa de fazer a ação.
+- [x] Ação desabilitada na tabela não aparece no rodapé e a tecla só emite bipe (exceto Concluir venda e Menu de
+  funções, que não se desligam, e o ⚙ da Central, fixo no fim da barra: 28.3).
+- [x] O ERP recusa salvar duas ações habilitadas com a mesma tecla.
+- [x] Um roteiro completo (abrir caixa, vender com 2 formas, sangria, fechar) é executado em teste de UI sem nenhum evento de mouse.
 
 ---
 
