@@ -50,6 +50,7 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
     public DbSet<ProdutoVendaSnapshot> ProdutosVendaSnapshot => Set<ProdutoVendaSnapshot>();
     public DbSet<LiberacaoVendaLocal> LiberacoesVenda => Set<LiberacaoVendaLocal>();
     public DbSet<CascoDescontadoVendaLocal> CascosDescontadosVenda => Set<CascoDescontadoVendaLocal>();
+    public DbSet<ItemVendaGeladoLocal> ItensVendaGelados => Set<ItemVendaGeladoLocal>();
     public DbSet<BloqueioSenhaLocal> BloqueiosSenhaLocal => Set<BloqueioSenhaLocal>();
     public DbSet<ComandoRecebido> ComandosRecebidos => Set<ComandoRecebido>();
     public DbSet<UsuarioRegistro> Usuarios => Set<UsuarioRegistro>();
@@ -158,8 +159,11 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             {
                 t.HasCheckConstraint("ck_estado_operacao_id", "id = 1");
                 t.HasCheckConstraint("ck_estado_operacao_modo", "modo is null or modo in ('balcao','comanda','delivery','pagamento','fechamento')");
+                t.HasCheckConstraint(
+                    "ck_estado_operacao_tipo_preco_antes_parcelado", "tipo_preco_antes_parcelado is null or tipo_preco_antes_parcelado in ('varejo','atacado')");
             });
             e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.TipoPrecoAntesParcelado).HasMaxLength(10);
         });
 
         modelBuilder.Entity<FilaImpressao>(e =>
@@ -324,6 +328,17 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             e.Property(x => x.Descricao).HasMaxLength(120);
             e.HasOne<VendaRegistro>().WithMany().HasForeignKey(x => x.VendaId)
                 .HasConstraintName("fk_cascos_descontados_venda_venda_id").OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ItemVendaGeladoLocal>(e =>
+        {
+            e.ToTable("itens_venda_gelados", t => t.HasCheckConstraint("ck_itens_venda_gelados_acrescimo", "acrescimo_unitario > 0"));
+            e.HasKey(x => x.ItemVendaId);
+            e.HasIndex(x => x.VendaId).HasDatabaseName("ix_itens_venda_gelados_venda_id");
+            e.HasOne<VendaRegistro>().WithMany().HasForeignKey(x => x.VendaId)
+                .HasConstraintName("fk_itens_venda_gelados_venda_id").OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ItemVendaRegistro>().WithMany().HasForeignKey(x => x.ItemVendaId)
+                .HasConstraintName("fk_itens_venda_gelados_item_venda_id").OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<BloqueioSenhaLocal>(e =>

@@ -1054,6 +1054,21 @@ corpo do PR-17.
   `conferirSomasVenda` da nuvem (integração com a fixture); venda recuperada mantém o gelado.
 - **Pronto:** os dois critérios no caixa de teste.
 - **Depende de:** F3-B15, F3-B17.
+- [**Feito (F3-B18)** (README do PDV › decisão 105, README da API › decisão 235; PDV 11.2, 11.4, 11.5; MD 4.4.7, 4.4.14):
+  como descrito, sem migração Drizzle, sem coluna nova na nuvem, sem evento novo e sem versão nova do PDV; a migração EF
+  só local `GeladoParcelado` cria a tabela `itens_venda_gelados` (a marca do gelado) e a coluna
+  `estado_operacao.tipo_preco_antes_parcelado` (o tipo do F8 a que o parcelado volta, também na venda recuperada). Escolhas
+  técnicas (padrão até a confirmação do dono, roadmap §16, D125): o `Alt+G` marca a linha inteira do item selecionado e é
+  recusado no combo, no casco, na balança por valor e no preço manual; com pagamento lançado, ligar pode e desligar não;
+  as parcelas do crédito vêm antes da maquininha e o pagamento parcelado cobra o valor informado mais a diferença; o
+  parcelado substitui o preço (mesmo menor que o varejo) só nos produtos que o têm, e os demais ficam no tipo do F8; o
+  "pagamento eletrônico" que recusa o parcelado é o cartão ou o PIX, e também o vale ou o "outros" passado na maquininha ou
+  no PIX (a correção da revisão: o fluxo, não só o tipo); o parcelado menor que o já pago é recusado; a volta acontece
+  também no "Não aprovado", no à vista (com a auditoria da saída), no Esc, na liberação da forma negada, no F10 que reabre o
+  pagamento e na venda recuperada; o `OrigemPreco.Recalculavel` passou a aceitar o `parcelado`; os dois só com o recurso da
+  onda R3 (o parcelado grava a `tipo_preco_alterado`), e nenhuma chave nova (o cadastro do "Preço parcelado" liga a
+  regra). O espelho do shared ganhou o passo 9 e 7 vetores. Sem mudança no handler da API: a matriz de compatibilidade não
+  roda neste bloco (a fixture do caixa é aplicada pela integração).]
 
 ### PR-20 – Caixa: lote, etiqueta e peso
 

@@ -19,16 +19,19 @@ interface CasoVetor {
     qtd_minima_atacado?: string;
     faixas?: FaixaVetor[];
     grupo?: { modo: 'produto' | 'grupo'; faixas: FaixaVetor[] };
+    preco_parcelado?: string;
   };
   qtd_total: string;
   qtd_grupo: string | null;
   usa_preco_volume: boolean;
   tipo_preco: 'varejo' | 'atacado';
+  /** O pagamento parcelado (F3-B18): ausente = não. */
+  parcelado?: boolean;
   promocao_vigente: boolean;
   esperado: { preco: string; origem: OrigemPreco };
 }
 
-/** O mesmo arquivo do `PrecosVetoresTests` do PDV (GenesisPDV.Core.Tests; F3-B17). */
+/** O mesmo arquivo do `PrecosVetoresTests` do PDV (GenesisPDV.Core.Tests; F3-B17, F3-B18). */
 const V = JSON.parse(
   readFileSync(new URL('../testes/precos/regra-preco.vetores.json', import.meta.url), 'utf8'),
 ) as { casos: CasoVetor[] };
@@ -45,9 +48,10 @@ const faixas = (l: FaixaVetor[] | undefined): FaixaPrecoCalculo[] =>
   }));
 
 describe('regra-preco.vetores.json: resolverPreco = MotorPreco do caixa (PDV 11.2, 11.3)', () => {
-  it('os casos têm nomes únicos e cobrem o F8', () => {
+  it('os casos têm nomes únicos e cobrem o F8 e o parcelado', () => {
     expect(new Set(V.casos.map((c) => c.nome)).size).toBe(V.casos.length);
     expect(V.casos.filter((c) => c.tipo_preco === 'atacado').length).toBeGreaterThan(5);
+    expect(V.casos.filter((c) => c.parcelado).length).toBeGreaterThan(3);
   });
 
   it.each(V.casos)('$nome', (c) => {
@@ -62,10 +66,16 @@ describe('regra-preco.vetores.json: resolverPreco = MotorPreco do caixa (PDV 11.
         qtdMinimaAtacado: num(p.qtd_minima_atacado),
         faixas: faixas(p.faixas),
         grupo: p.grupo ? { modo: p.grupo.modo, faixas: faixas(p.grupo.faixas) } : null,
+        precoParcelado: num(p.preco_parcelado),
       },
       Number(c.qtd_total),
       num(c.qtd_grupo),
-      { usaPrecoVolume: c.usa_preco_volume, lojaId: LOJA, tipoPreco: c.tipo_preco },
+      {
+        usaPrecoVolume: c.usa_preco_volume,
+        lojaId: LOJA,
+        tipoPreco: c.tipo_preco,
+        parcelado: c.parcelado ?? false,
+      },
     );
     expect({ preco: r.preco, origem: r.origem }).toEqual({
       preco: Number(c.esperado.preco),

@@ -2858,6 +2858,86 @@ describe('tipo de preço F8 do caixa (F3-B17; PDV 11.2)', () => {
   });
 });
 
+describe('preço gelada e parcelado do caixa (F3-B18; PDV 11.2, 11.4)', () => {
+  it('a fixture do caixa venda.finalizada.gelada_parcelado: o gelado dentro do preço e o parcelado passam no conferirSomasVenda e gravam como vieram', async () => {
+    const q = await novoPonto();
+    const lata = await criarProduto({ nome: 'LATA GELADA F3B18', precoVenda: '3,49' });
+    const agua = await criarProduto({ nome: 'AGUA F3B18', precoVenda: '2,50' });
+    await entrada([
+      [lata, '10', '2'],
+      [agua, '10', '1'],
+    ]);
+    const credito =
+      (
+        await consultar<{ id: string }>(
+          emp.nomeBanco,
+          "select id from formas_pagamento where tipo_forma = 'cartao_credito' and excluido_em is null order by ordem limit 1",
+        )
+      )[0]?.id ?? dinheiro;
+    const vendaId = uuidv7();
+    // Ids da fixture que o PDV gera (ContratosEventosTests) → os deste ambiente; as linhas ficam com os ids dela.
+    const ids: Record<string, string> = {
+      '01a187d3-7081-7293-84a5-1a2b3c4d5e67': vendaId,
+      '01a18752-3782-7bda-ad3c-2d6d1a3d1fa7': loja,
+      '01a18752-c8a9-7970-9641-9f828b9d2434': q.caixa,
+      '01a18751-a521-7238-b924-56de3eb13b90': q.terminal,
+      '01a18755-98a1-7472-96da-1dac72ff5d2a': q.sessao,
+      '01a18754-76cb-7b74-b2e7-06298fadc1a6': operador,
+      '01a1875f-c261-7aef-afc8-9849b3aa7efe': credito,
+      '01a187d0-1a2b-7c3d-8e4f-5a6b7c8d9e01': lata,
+      '01a187d0-2b3c-7d4e-9f50-6b7c8d9e0f12': agua,
+    };
+    const desvio = Date.now() - Date.parse('2026-10-29T17:31:02.114Z');
+    const texto = readFileSync(new URL('venda.finalizada.gelada_parcelado.payload.json', FIXTURES), 'utf8')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => ids[id] ?? id)
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, (t) =>
+        new Date(Date.parse(t) + desvio).toISOString(),
+      );
+    const payload = JSON.parse(texto) as { vendas: Payload };
+    payload.vendas.numero_caixa = q.numero;
+    const ev = evento(q, 'venda.finalizada', payload);
+    const [r] = await pushOk(q, [ev]);
+    expect(r, JSON.stringify(r)).toMatchObject({
+      status: 'aplicado',
+      resultado: { venda_id: vendaId, movimentos: 3 },
+    });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+
+    const [cab] = await consultar<{ tipo_preco: string; total: string; subtotal_bruto: string }>(
+      emp.nomeBanco,
+      'select tipo_preco, total::text, subtotal_bruto::text from vendas where id = $1',
+      [vendaId],
+    );
+    expect(cab).toEqual({ tipo_preco: 'parcelado', total: '15.57', subtotal_bruto: '15.57' });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select origem_preco, preco_tabela::text, preco_unitario::text, valor_bruto::text
+           from itens_venda where venda_id = $1 order by sequencia`,
+        [vendaId],
+      ),
+    ).toEqual([
+      // A lata gelada: o parcelado 3,69 + a gelada 1,00 dentro do preço (a nuvem não guarda a marca).
+      { origem_preco: 'parcelado', preco_tabela: '4.6900', preco_unitario: '4.6900', valor_bruto: '9.38' },
+      { origem_preco: 'parcelado', preco_tabela: '3.6900', preco_unitario: '3.6900', valor_bruto: '3.69' },
+      { origem_preco: 'varejo', preco_tabela: '2.5000', preco_unitario: '2.5000', valor_bruto: '2.50' },
+    ]);
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        'select parcelas, valor::text from pagamentos_venda where venda_id = $1',
+        [vendaId],
+      ),
+    ).toEqual([{ parcelas: 3, valor: '15.57' }]);
+    expect([await saldo(lata), await saldo(agua)]).toEqual([7, 9]);
+
+    // O caixa gerou o evento de novo (outro `evento_id`): mesmo conteúdo, `ja_existia`, sem movimento novo.
+    const [deNovo] = await pushOk(q, [evento(q, 'venda.finalizada', payload)]);
+    expect(deNovo).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
+    expect([await saldo(lata), await saldo(agua)]).toEqual([7, 9]);
+  });
+});
+
 describe('ordem de lançamento do razão (F2-B2)', () => {
   it('no fim da suíte, a cadeia de cada linha fecha por seq_lancamento e o replay repete o razão', async () => {
     expect(await conferirRazaoDasEmpresas(amb.bancoControle)).toBeGreaterThan(0);

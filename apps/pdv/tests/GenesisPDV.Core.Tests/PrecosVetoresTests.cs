@@ -8,7 +8,7 @@ namespace GenesisPDV.Core.Tests;
 
 /// <summary>
 /// Vetores da regra de preço (<c>packages/shared/testes/precos/regra-preco.vetores.json</c>; PDV 11.2, 11.3, 11.3.1;
-/// F3-B17): os mesmos que o <c>precos.spec.ts</c> passa pelo <c>resolverPreco</c> do shared (o espelho que o ERP usa no
+/// F3-B17, e o parcelado do passo 9, F3-B18): os mesmos que o <c>precos.spec.ts</c> passa pelo <c>resolverPreco</c> do shared (o espelho que o ERP usa no
 /// "Simular" do mix). Um caso que dá preço ou origem diferentes aqui e lá é o caixa e o ERP calculando diferente.
 /// </summary>
 public class PrecosVetoresTests
@@ -43,9 +43,12 @@ public class PrecosVetoresTests
             PrecoAtacado: Opcional(p, "preco_atacado"),
             QtdMinimaAtacado: Opcional(p, "qtd_minima_atacado"),
             Faixas: Faixas(p),
-            Grupo: grupo);
+            Grupo: grupo,
+            PrecoParcelado: Opcional(p, "preco_parcelado"));
         var produto = Produto("VETOR", Valor(p.GetProperty("preco_venda")), tabela);
-        var parametros = new ParametrosPreco(Loja1, caso.GetProperty("usa_preco_volume").GetBoolean(), caso.GetProperty("tipo_preco").GetString()!);
+        var parametros = new ParametrosPreco(
+            Loja1, caso.GetProperty("usa_preco_volume").GetBoolean(), caso.GetProperty("tipo_preco").GetString()!,
+            Parcelado: caso.TryGetProperty("parcelado", out var parcelado) && parcelado.GetBoolean());
 
         var r = MotorPreco.Resolver(
             produto,
@@ -61,11 +64,14 @@ public class PrecosVetoresTests
     }
 
     [Fact]
-    public void Os_vetores_cobrem_o_F8()
+    public void Os_vetores_cobrem_o_F8_e_o_parcelado()
     {
-        var tipos = Vetor.GetProperty("casos").EnumerateArray().Select(c => c.GetProperty("tipo_preco").GetString()).ToList();
+        var casos = Vetor.GetProperty("casos").EnumerateArray().ToList();
+        var tipos = casos.Select(c => c.GetProperty("tipo_preco").GetString()).ToList();
         Assert.True(tipos.Count(t => t == TipoPrecoVenda.Atacado) > 5);
+        // O tipo do vetor é sempre o do F8: o parcelado vem à parte (o tipo de antes dele segue nos produtos sem parcelado).
         Assert.All(tipos, t => Assert.Contains(t, TipoPrecoVenda.DoF8));
+        Assert.True(casos.Count(c => c.TryGetProperty("parcelado", out var p) && p.GetBoolean()) > 3);
     }
 
     private static decimal Valor(JsonElement e) => decimal.Parse(e.GetString()!, CultureInfo.InvariantCulture);

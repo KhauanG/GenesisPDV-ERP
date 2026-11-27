@@ -8183,6 +8183,19 @@ automático e "Restaurar backup" já na 1C, sem cifra).
      `conferirSomasVenda` confere o `valor_bruto` pelo `preco_unitario`. Teste: `venda-eventos.test.ts` (a venda v1 com
      `tipo_preco = 'atacado'` e a liberação `tipo_preco`: aplica sem alerta, grava o tipo, a origem e a liberação na
      auditoria `criar` e baixa o estoque).
+235. **Preço gelada e parcelado do caixa sem mudança na nuvem** (Fase 3, F3-B18; PDV 11.2, 11.4; D74; README do PDV ›
+     decisão 105; `packages/shared/src/precos.ts`, `testes/precos/regra-preco.vetores.json`,
+     `testes/sync/venda.finalizada.gelada_parcelado.payload.json`). O caixa da R3 soma o acréscimo gelada
+     (`produtos_lojas.acrescimo_gelada`) **dentro** do `preco_unitario` e do `preco_tabela` (a marca "gelado" fica só no
+     caixa: nenhuma coluna nova em `itens_venda`, Padrões da Fase 3) e, no crédito em mais de uma parcela, manda a venda com
+     `vendas.tipo_preco = 'parcelado'` e as linhas com `preco_parcelado` em `origem_preco = 'parcelado'`: os dois valores já
+     estavam no contrato v1 (`TIPOS_PRECO_VENDA`, `ORIGENS_PRECO_ITEM`) e nos CHECKs. Nada muda no handler: o
+     `conferirSomasVenda` confere o `valor_bruto` pelo `preco_unitario` (com o gelado dentro), e a linha grava como veio.
+     O `resolverPreco` do shared (o espelho do `MotorPreco`) ganhou o passo 9 (`precoParcelado` substitui os candidatos
+     com `parametros.parcelado`) e a origem `parcelado` em `ROTULOS_ORIGEM_PRECO`; o "Simular" do mix no ERP não o usa.
+     Teste: `venda-eventos.test.ts` aplica a fixture que o PDV gera (`ContratosEventosTests`: 2 latas geladas e 1 natural
+     no parcelado, a água no varejo, o crédito em 3×), sem alerta, com o tipo, as origens, os preços, as parcelas e a
+     baixa, e o reenvio `ja_existia`; `eventos.spec.ts` passa a fixture pelo zod e confere o hash JCS.
 
 ## O que ainda não foi feito (Fase 0)
 

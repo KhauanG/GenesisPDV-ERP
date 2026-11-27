@@ -82,13 +82,14 @@ public class UsabilidadeTelasTests
         Assert.True(pdv.Controle<ItemsControl>("BarraFuncoes").IsVisible);
         Assert.False(pdv.Controle<StackPanel>("LegendaTeclas").IsVisible);
         // F3-B13: a barra sai do mapa de atalhos (as habilitadas que o caixa tem, pela ordem do padrão da nuvem, MD 7.8); as
-        // ações que esta versão ainda não tem (F7, Ctrl+T…) ficam fora dela. O F8 (F3-B17) entra com o recurso da onda.
+        // ações que esta versão ainda não tem (F7, Ctrl+T…) ficam fora dela. O F8 (F3-B17) e o Alt+G (F3-B18) entram com o
+        // recurso da onda: a barra fica cheia (as duas linhas de 8).
         Assert.Equal(
-            ["F2", "F4", "F8", "F10", "F12", "Ctrl+N", "F1", "F3", "Shift+F4", "F5", "F6", "F11", "Ctrl+Alt+B", "Ctrl+Alt+S", VendaViewModel.TeclaCentral],
+            ["F2", "F4", "F8", "F10", "F12", "Ctrl+N", "F1", "F3", "Shift+F4", "F5", "F6", "F11", "Ctrl+Alt+B", "Ctrl+Alt+S", "Alt+G", VendaViewModel.TeclaCentral],
             venda.Atalhos.Select(a => a.Tecla));
         // Nenhum botão fica com o foco (o leitor digita no campo focado). O último é a engrenagem da Central (bloco G3).
         var botoes = pdv.Controle<ItemsControl>("BarraFuncoes").GetVisualDescendants().OfType<Button>().ToList();
-        Assert.Equal(15, botoes.Count);
+        Assert.Equal(16, botoes.Count);
         Assert.All(botoes, b => Assert.True(b.Bounds.Height >= 44, "botão grande o bastante para mouse/toque"));
         Assert.All(botoes, b => Assert.False(b.Focusable));
         await pdv.EntrarCodigoAsync("0044");
@@ -901,8 +902,9 @@ public class UsabilidadeTelasTests
             Assert.True(barra.Bounds.Width <= largura - 24 + 0.5, $"barra cabe em {largura}");
             Assert.InRange(barra.Bounds.Height, 80, 120);
             var botoes = barra.GetVisualDescendants().OfType<Button>().ToList();
-            // F3-B13: os botões saem do mapa de atalhos (15 com o padrão da nuvem e o F8 do F3-B17; até 16 com o ⚙).
-            Assert.Equal((venda.Atalhos.Count, 15), (botoes.Count, venda.Atalhos.Count));
+            // F3-B13: os botões saem do mapa de atalhos (16 com o padrão da nuvem, o F8 do F3-B17 e o Alt+G do F3-B18, com o ⚙:
+            // o máximo da barra).
+            Assert.Equal((venda.Atalhos.Count, VendaViewModel.MaximoBotoesBarra), (botoes.Count, venda.Atalhos.Count));
             foreach (var botao in botoes)
             {
                 var direita = botao.TranslatePoint(new Point(botao.Bounds.Width, 0), barra)?.X;

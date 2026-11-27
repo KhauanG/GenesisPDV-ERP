@@ -101,6 +101,12 @@ public static class LayoutComprovanteVenda
                 p.Linha($"   {complemento.Texto}");
             }
 
+            // Gelado (PDV 11.4; F3-B18): o acréscimo por unidade, já no unitário.
+            if (item.Gelado)
+            {
+                p.Linha($"   GELADO (+{NumeroBr.Preco(item.AcrescimoGelada)})");
+            }
+
             p.Colunado(
                 $"   {NumeroBr.Quantidade(item.Quantidade)} {item.Unidade} x {NumeroBr.Preco(item.PrecoUnitario)}",
                 item.Cancelado ? "CANCELADO" : NumeroBr.Dinheiro(item.ValorBruto));

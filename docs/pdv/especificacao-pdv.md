@@ -1652,6 +1652,32 @@ Confirmar / [Esc] Voltar", recalcula os itens com `preco_parcelado > 0` (`origem
 `vendas.tipo_preco = 'parcelado'`) e o "Falta". Remover esse pagamento (ou mudar para 1 parcela) volta os preços.
 Com pagamento eletrônico já aprovado, a troca para parcelado é recusada.
 
+Como o caixa faz o parcelado (Fase 3, F3-B18; D74; README do PDV › decisão 105; padrão até a confirmação do dono, roadmap
+§16, D125):
+
+- no crédito com **Permite Parcelar** e mais de uma parcela, a tela de pagamento pede as **parcelas antes da maquininha**
+  (sem TEF, o operador escolhe antes de passar o cartão). Em 2× ou mais, se algum item tem `preco_parcelado > 0`, mostra
+  "Preço parcelado: total passa de R$ X para R$ Y — [Enter] Confirmar / [Esc] Voltar"; confirmado, a venda vai a
+  `tipo_preco = 'parcelado'` e a maquininha pede o valor informado **mais a diferença** do parcelado (o "Falta" todo, no
+  caso comum). Sem item com o preço parcelado, nada muda (o pagamento em parcelas segue com o preço de antes);
+- o parcelado **substitui** os candidatos da regra 11.3 (passo 9) nas linhas que a regra recalcula, inclusive as do
+  atacado do `F8`; o combo, o casco, o preço manual e a balança tipo Valor ficam como estão, e os adicionais dos
+  complementos e o gelado somam por cima. As linhas sem o preço parcelado ficam no tipo do `F8` de antes (o caixa o
+  guarda no `estado_operacao`, MD 4.4.7), e é a ele que a venda volta;
+- a volta acontece ao remover o pagamento parcelado (Del), no "Não aprovado" da maquininha, ao lançar outro pagamento à
+  vista com o parcelado confirmado e sem o pagamento parcelado, ao voltar aos itens (Esc) nesse estado e na venda
+  recuperada depois de uma queda nesse estado. A tela nunca mostra o "Falta" do parcelado sem o pagamento parcelado:
+  também a liberação da forma negada e o F10 que reabre o pagamento voltam os preços antes (com a auditoria da saída).
+  Com o pagamento parcelado lançado, o Esc mantém o parcelado e o item novo já entra nele. Com pagamento eletrônico já
+  aprovado (cartão ou PIX, e também o vale ou o "outros" passado na maquininha ou no PIX), a troca é recusada; o
+  dinheiro lançado antes não impede, mas o parcelado menor que o preço atual é recusado quando derruba o total até o já
+  pago ou deixa o cartão em parcelas sem valor;
+- a auditoria é a `tipo_preco_alterado` (a entrada e a saída, com o total antes e depois e as parcelas). Até a R3 (o
+  recurso da onda, F3-B4), o caixa não pede as parcelas antes: elas ficam informativas na maquininha e o preço não muda;
+- nenhuma chave nova: o cadastro do "Preço parcelado" no produto é o que liga a regra. O PDV instalado (até o 0.13.0)
+  ignora o `preco_parcelado` e cobra o preço normal no parcelado (o dono conferiu em 26/11/2026 um caixa só em uso: sem
+  divergência entre caixas).
+
 ### 11.3 Algoritmo de resolução do preço unitário — Fase PDV-1 (com PDV-2 onde indicado)
 
 Esta é a **regra oficial de preço** do sistema (o ERP 8.2.2 a referencia): vale o **menor candidato**, não uma ordem
@@ -1774,6 +1800,17 @@ Regras:
   item selecionado, `Alt+G` "Gelada" (configurável, 28.2) soma o acréscimo ao `preco_unitario`
   (`origem_preco` mantém a origem e `preco_tabela` inclui o acréscimo). Não é acréscimo da venda (não vai a `vOutro`).
 
+  Como o caixa faz (Fase 3, F3-B18; README do PDV › decisão 105; padrão até a confirmação do dono, roadmap §16, D125):
+  o `Alt+G` (a ação `gelada` do mapa de atalhos, 28.1) **liga e desliga** o gelado no item selecionado, só com
+  `acrescimo_gelada > 0` na loja (do snapshot da primeira inclusão, 11.3); o acréscimo soma **por unidade** na camada de
+  acréscimos do item (regra 11.3 → complementos → gelada → promoções), por cima do atacado, do mix, do `F8` e do
+  parcelado, e o desconto do item em % é refeito. Item gelado e natural **não se agrupam** (o natural bipado depois vai
+  noutra linha); o cancelamento parcial leva o gelado. Fica fora do combo, do casco, da balança tipo Valor, do orçamento e
+  do preço digitado. Com pagamento lançado, ligar pode (o total sobe) e desligar não (o total cairia). A tela e o cupom
+  mostram "GELADO (+1,00)" sob o item. A marca fica **só no caixa** (tabela local `itens_venda_gelados`, MD 4.4.14) para a
+  venda recuperada manter o agrupamento e o desfazer; a nuvem recebe só o `preco_unitario`/`preco_tabela` com o acréscimo
+  (nenhuma coluna nova). Até a R3, a tecla bipa "Ação indisponível".
+
 ### 11.5 Critérios de aceite – preços
 
 - [ ] Produto com preço da loja diferente do produto usa o da loja.
@@ -1789,6 +1826,7 @@ Regras:
 - [ ] Item com atacado/mix mostra "ATAC 12+"/"MIX 12+" na tela e no comprovante; a NFC-e sai com `vUnCom` = preço aplicado e sem `vDesc` pela diferença.
 - [ ] "Leve 3 pague 2" em 6 latas gera desconto de 2 latas em `desconto_promocao` e não pede senha de supervisor.
 - [ ] Lançar crédito em 3 parcelas aplica o preço parcelado; remover o pagamento volta ao varejo.
+- [ ] `Alt+G` no item de produto com gelada de R$ 1,00 na loja soma R$ 1,00 por unidade ao `preco_unitario` e ao `preco_tabela` (também sobre o atacado e o parcelado); o mesmo produto bipado depois, natural, vai noutra linha; a venda recuperada depois de uma queda mantém o gelado e o `Alt+G` o desfaz (F3-B18).
 
 ---
 

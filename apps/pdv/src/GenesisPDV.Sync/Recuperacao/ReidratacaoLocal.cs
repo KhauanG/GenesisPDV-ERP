@@ -356,6 +356,8 @@ public sealed class ReidratacaoLocal(IClienteSync cliente, IDbContextFactory<Pdv
             await db.ParcelasVenda.Where(p => db.PagamentosVenda.Any(g => g.Id == p.PagamentoVendaId && g.VendaId == id)).ExecuteDeleteAsync(ct);
             await db.PagamentosVenda.Where(p => p.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ItensVendaComplementos.Where(c => db.ItensVenda.Any(i => i.Id == c.ItemVendaId && i.VendaId == id)).ExecuteDeleteAsync(ct);
+            // A marca local do gelado (F3-B18) não está no documento: as linhas novas dos itens voltam sem ela.
+            await db.ItensVendaGelados.Where(g => g.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ItensVenda.Where(i => i.VendaId == id).ExecuteDeleteAsync(ct);
             await db.LiberacoesVenda.Where(l => l.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ProdutosVendaSnapshot.Where(s => s.VendaId == id).ExecuteDeleteAsync(ct);

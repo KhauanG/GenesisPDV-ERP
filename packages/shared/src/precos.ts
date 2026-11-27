@@ -1,8 +1,8 @@
 /**
  * Cálculos puros de preço e cadastro de produto usados pela API e pelo ERP (ERP 8.2.1, 8.2.3, 8.2.17, 8.10; PDV 11.3,
  * 11.3.1): dígito verificador GTIN, margem × markup, resumo do combo (custo, margem com alternativas, desconto do
- * combo), combos montáveis e a regra de preço por quantidade (o "Simular" do grupo de preço — mesma regra do
- * `MotorPreco` do `GenesisPDV.Core`).
+ * combo), combos montáveis e a regra de preço por quantidade e do parcelado (o "Simular" do grupo de preço — mesma regra
+ * do `MotorPreco` do `GenesisPDV.Core`).
  */
 
 import { dec, decNumero, decTexto, type Dec, type Valor } from './decimal.js';
@@ -229,9 +229,12 @@ export function combosMontaveis(posicoes: readonly PosicaoSaldo[]): {
 // ---------------------------------------------------------------- Preço por quantidade (PDV 11.3, 11.3.1)
 
 export type OrigemPreco =
-  'embalagem' | 'promocional' | 'grupo_mix' | 'quantidade' | 'atacado' | 'loja' | 'varejo';
+  'embalagem' | 'promocional' | 'grupo_mix' | 'quantidade' | 'atacado' | 'loja' | 'varejo' | 'parcelado';
 
-/** Desempate do PDV 11.3 (passo 6): embalagem > promocional > grupo_mix > quantidade > atacado > loja > varejo. */
+/**
+ * Desempate do PDV 11.3 (passo 10): embalagem > promocional > grupo_mix > quantidade > atacado > loja > varejo. O
+ * `parcelado` (passo 9) não disputa: quando vale, substitui todos.
+ */
 const ORDEM_DESEMPATE: readonly OrigemPreco[] = [
   'embalagem',
   'promocional',
@@ -260,6 +263,8 @@ export interface ProdutoPrecoCalculo {
   faixas?: readonly FaixaPrecoCalculo[];
   /** Grupo ativo do produto (mix). */
   grupo?: { modo: 'produto' | 'grupo'; faixas: readonly FaixaPrecoCalculo[] } | null;
+  /** `produtos.preco_parcelado` (PDV 11.1, 11.2; F3-B18): vale só no pagamento parcelado (`parametros.parcelado`). */
+  precoParcelado?: number | null;
 }
 
 export interface ParametrosPrecoCalculo {
@@ -267,6 +272,11 @@ export interface ParametrosPrecoCalculo {
   lojaId: string | null;
   /** `vendas.tipo_preco` do `F8` (PDV 11.2): `atacado` põe o candidato atacado sem a quantidade mínima. */
   tipoPreco?: 'varejo' | 'atacado';
+  /**
+   * A venda no preço parcelado (o pagamento em mais de uma parcela, PDV 11.2; F3-B18): o `precoParcelado > 0` substitui os
+   * candidatos (11.3 passo 9); o `tipoPreco` é o do F8 de antes do parcelado (os produtos sem parcelado seguem nele).
+   */
+  parcelado?: boolean;
 }
 
 export interface CandidatoPreco {
@@ -298,10 +308,11 @@ export function faixaAplicavel(
 }
 
 /**
- * Preço unitário da linha pela regra do PDV 11.3 (passos 3–7, sem preço manual, orçamento, embalagem nem parcelado): o
- * menor candidato vale. `qtdTotal` é a soma do produto na venda; `qtdGrupo`, a soma de todos os membros do grupo (mix).
- * Com `tipoPreco: 'atacado'` (o `F8` do caixa, PDV 11.2; F3-B17), o atacado entra sem a quantidade mínima. O espelho do
- * `MotorPreco` do PDV, conferido pelos dois lados em `testes/precos/regra-preco.vetores.json` (`precos.spec.ts`).
+ * Preço unitário da linha pela regra do PDV 11.3 (passos 3–7 e 9, sem preço manual, orçamento nem embalagem): o menor
+ * candidato vale. `qtdTotal` é a soma do produto na venda; `qtdGrupo`, a soma de todos os membros do grupo (mix). Com
+ * `tipoPreco: 'atacado'` (o `F8` do caixa, PDV 11.2; F3-B17), o atacado entra sem a quantidade mínima; com `parcelado`
+ * (F3-B18), o `precoParcelado > 0` substitui todos os candidatos. O espelho do `MotorPreco` do PDV, conferido pelos dois
+ * lados em `testes/precos/regra-preco.vetores.json` (`precos.spec.ts`).
  */
 export function resolverPreco(
   p: ProdutoPrecoCalculo,
@@ -331,6 +342,10 @@ export function resolverPreco(
     else if (p.qtdMinimaAtacado != null && q >= p.qtdMinimaAtacado) {
       candidatos.push({ origem: 'atacado', preco: p.precoAtacado!, limiar: p.qtdMinimaAtacado });
     }
+  }
+  if (parametros.parcelado && (p.precoParcelado ?? 0) > 0) {
+    candidatos.push({ origem: 'parcelado', preco: p.precoParcelado! });
+    return { preco: p.precoParcelado!, origem: 'parcelado', candidatos };
   }
   const vencedor = [...candidatos].sort(
     (a, b) => a.preco - b.preco || ORDEM_DESEMPATE.indexOf(a.origem) - ORDEM_DESEMPATE.indexOf(b.origem),
@@ -393,4 +408,5 @@ export const ROTULOS_ORIGEM_PRECO: Record<OrigemPreco, string> = {
   atacado: 'Atacado',
   loja: 'Preço da loja',
   varejo: 'Varejo',
+  parcelado: 'Parcelado',
 };

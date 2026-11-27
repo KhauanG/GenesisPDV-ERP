@@ -64,6 +64,11 @@ const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType; 
     schema: payloadVendaFinalizadaV2Schema,
     versao: 2,
   },
+  // F3-B18: a lata gelada e a natural no preço parcelado (crédito em 3×), sem chave nova (v1).
+  'venda.finalizada.gelada_parcelado.payload.json': {
+    tipo: 'venda.finalizada',
+    schema: payloadVendaFinalizadaSchema,
+  },
   'venda.cancelada.em_andamento.payload.json': {
     tipo: 'venda.cancelada',
     schema: payloadVendaCanceladaEmAndamentoSchema,

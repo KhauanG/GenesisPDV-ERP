@@ -264,6 +264,31 @@
       </Border>
     </DataTemplate>
 
+    <!-- Parcelas do crédito antes da maquininha (PDV 11.2; F3-B18): o preço parcelado pede a confirmação do total novo. -->
+    <DataTemplate DataType="vm:DialogoParcelasViewModel">
+      <Border Classes="dialogo" Width="640">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="8">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding Instrucao}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="Parcelas" Classes="rotulo" />
+          <TextBox x:Name="CampoParcelasCredito" Text="{Binding Parcelas}" MaxLength="2" c:Foco.Inicial="True" FontSize="20"
+                   IsReadOnly="{Binding Confirmacao, Converter={x:Static ObjectConverters.IsNotNull}}" AutomationProperties.Name="Parcelas" />
+          <TextBlock x:Name="TextoConfirmacaoParcelado" Text="{Binding Confirmacao}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap"
+                     Foreground="{DynamicResource PincelAviso}" IsVisible="{Binding Confirmacao, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock x:Name="TextoErroParcelas" Text="{Binding Erro}" Classes="erro" TextWrapping="Wrap"
+                     IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Continuar [Enter]" Command="{Binding ConfirmarCommand}" x:Name="BotaoContinuarParcelas" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
     <!-- Cartão na maquininha (PDV 16.5; O9c): bandeira obrigatória, NSU e autorização opcionais. -->
     <DataTemplate DataType="vm:DialogoPosViewModel">
       <Border Classes="dialogo" Width="640">

@@ -356,4 +356,13 @@ public sealed class PagamentoVenda
     public bool ExigePessoa { get; }
 
     public bool Ativo => Status is StatusPagamento.Aprovado or StatusPagamento.Pendente;
+
+    /// <summary>
+    /// Pagamento eletrônico (cartão na maquininha ou PIX): o valor já foi cobrado do cliente fora do caixa, então o preço
+    /// parcelado não entra depois dele (PDV 11.2; F3-B18). Vale pelo fluxo em que foi lançado, não só pelo tipo: o VA/VR ou
+    /// o "outros" passado na maquininha (<see cref="FluxoPagamento.Pos"/>, que exige a bandeira) e o "outros" com PIX
+    /// (<see cref="FluxoPagamento.PixManual"/>, com a cobrança) também contam; o vale de papel (fluxo direto), não.
+    /// </summary>
+    public bool Eletronico => RegrasFormaPagamento.EhCartao(TipoForma) || TipoForma == "pix" || Detalhe.Bandeira is not null
+                              || Detalhe.PixCobrancaId is not null;
 }

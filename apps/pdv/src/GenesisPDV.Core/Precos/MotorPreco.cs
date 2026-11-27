@@ -4,7 +4,7 @@ using GenesisPDV.Core.Vendas;
 
 namespace GenesisPDV.Core.Precos;
 
-/// <summary>Um candidato da regra 11.3 (passos 4–8).</summary>
+/// <summary>Um candidato da regra 11.3 (passos 4–8, e o parcelado do passo 9).</summary>
 /// <param name="Limiar">Quantidade a partir da qual o candidato vale ("12+"); nulo para varejo/loja/promocional/embalagem.</param>
 public sealed record CandidatoPreco(string Origem, decimal Preco, decimal? Limiar = null);
 
@@ -103,6 +103,14 @@ public static class MotorPreco
         if (embalagem is { Preco: { } precoEmbalagem, Fator: > 0m })
         {
             candidatos.Add(new CandidatoPreco(OrigemPreco.Embalagem, precoEmbalagem / embalagem.Fator));
+        }
+
+        // Passo 9 (PDV 11.2, 11.3; F3-B18; D74): no pagamento parcelado, o preço parcelado do produto substitui todos os
+        // candidatos (não é o menor: é o preço do parcelamento, confirmado na tela de pagamento). Sem ele, a regra segue.
+        if (parametros.Parcelado && t.PrecoParcelado is > 0m and var parcelado)
+        {
+            candidatos.Add(new CandidatoPreco(OrigemPreco.Parcelado, parcelado));
+            return new PrecoResolvido(parcelado, OrigemPreco.Parcelado, produto.PrecoBase, null, null, null, null, candidatos);
         }
 
         var vencedor = candidatos

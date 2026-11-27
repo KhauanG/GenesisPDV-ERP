@@ -74,7 +74,8 @@ public sealed class ItemVenda
         Guid? grupoPrecoQuantidadeId = null,
         decimal? quantidadeReferenciaPreco = null,
         DadosKit? kit = null,
-        IReadOnlyList<ComplementoItem>? complementos = null)
+        IReadOnlyList<ComplementoItem>? complementos = null,
+        decimal acrescimoGelada = 0m)
     {
         Id = id;
         Sequencia = sequencia;
@@ -99,6 +100,7 @@ public sealed class ItemVenda
         VasilhameItemOrigemId = vasilhameItemOrigemId;
         Kit = kit;
         Complementos = complementos ?? [];
+        AcrescimoGelada = acrescimoGelada;
         DescontoRateado = descontoRateado;
         AcrescimoRateado = acrescimoRateado;
         FreteRateado = freteRateado;
@@ -161,10 +163,23 @@ public sealed class ItemVenda
     public bool TemComplementos => Complementos.Count > 0;
 
     /// <summary>
-    /// A "camada de acréscimos do item" (PDV 10.2, 11.3; Padrões da Fase 3): Σ adicionais dos complementos por unidade,
-    /// somada ao preço da regra 11.3 em todo recálculo (atacado, mix, e o F8 e a gelada dos blocos seguintes).
+    /// O acréscimo "gelada" por unidade (<c>produtos_lojas.acrescimo_gelada</c> da primeira inclusão, PDV 11.4; Fase 3,
+    /// F3-B18): maior que zero = o item está <b>gelado</b> (o <c>Alt+G</c>), 0 = natural. Fica dentro do <c>preco_unitario</c>
+    /// e do <c>preco_tabela</c> (a nuvem não guarda a marca: nenhuma coluna nova, Padrões da Fase 3); a marca vive só no
+    /// caixa (<c>itens_venda_gelados</c>, tabela local), para a venda recuperada manter o agrupamento e o <c>Alt+G</c> saber
+    /// desfazer.
     /// </summary>
-    public decimal AcrescimoUnitario => Produtos.RegrasComplementos.Adicional(Complementos);
+    public decimal AcrescimoGelada { get; internal set; }
+
+    /// <summary>O item está gelado (<see cref="AcrescimoGelada"/> &gt; 0): gelado e natural não se agrupam (F3-B18).</summary>
+    public bool Gelado => AcrescimoGelada > 0m;
+
+    /// <summary>
+    /// A "camada de acréscimos do item" (PDV 10.2, 11.3; Padrões da Fase 3: regra 11.3 → adicionais dos complementos →
+    /// gelada → promoções): Σ adicionais dos complementos por unidade mais o acréscimo gelada (F3-B18), somada ao preço da
+    /// regra 11.3 em todo recálculo (atacado, mix, o F8 e o parcelado).
+    /// </summary>
+    public decimal AcrescimoUnitario => Produtos.RegrasComplementos.Adicional(Complementos) + AcrescimoGelada;
 
     /// <summary>O varejo com a camada de acréscimos: a base de "varejo 3,49" e da economia no atacado do item com complementos.</summary>
     public decimal? PrecoVarejoComAcrescimos => PrecoVarejo is { } v ? v + AcrescimoUnitario : null;
@@ -238,9 +253,13 @@ public sealed class ItemVenda
     /// </summary>
     public decimal ReducaoPrecoManual => OrigemPreco == Vendas.OrigemPreco.Manual ? Math.Max(0m, ValorTabela - ValorBruto) : 0m;
 
-    /// <summary>Etiqueta da coluna de preço: "ATAC 12+" (atacado/faixa) ou "MIX 12+" (grupo), PDV 11.3.1.</summary>
+    /// <summary>
+    /// Etiqueta da coluna de preço: "ATAC 12+" (atacado/faixa) ou "MIX 12+" (grupo), PDV 11.3.1; "PARC" no preço parcelado
+    /// (11.2; F3-B18).
+    /// </summary>
     public string? EtiquetaPreco => OrigemPreco switch
     {
+        Vendas.OrigemPreco.Parcelado => "PARC",
         Vendas.OrigemPreco.GrupoMix => LimiarPreco is null ? "MIX" : $"MIX {Limiar()}+",
         Vendas.OrigemPreco.Atacado or Vendas.OrigemPreco.Quantidade => LimiarPreco is null ? "ATAC" : $"ATAC {Limiar()}+",
         _ => null,
@@ -259,7 +278,7 @@ public sealed class ItemVenda
         Quantidade, PrecoTabela, PrecoUnitario, OrigemPreco, GrupoPrecoQuantidadeId, QuantidadeReferenciaPreco,
         ValorBruto, DescontoItem, DescontoPromocao, PromocaoId, DescontoRateado, AcrescimoRateado, FreteRateado,
         ValorLiquido, Cancelado, CanceladoEm, CanceladoPorId, AutorizadoPorId, MotivoCancelamento,
-        Embalagem, PrecoVarejo, LimiarPreco, NomeGrupoPreco, DescontoItemPct, TetoDescontoPct);
+        Embalagem, PrecoVarejo, LimiarPreco, NomeGrupoPreco, DescontoItemPct, TetoDescontoPct, AcrescimoGelada);
 
     internal void Restaurar(EstadoItem e)
     {
@@ -288,6 +307,7 @@ public sealed class ItemVenda
         NomeGrupoPreco = e.NomeGrupoPreco;
         DescontoItemPct = e.DescontoItemPct;
         TetoDescontoPct = e.TetoDescontoPct;
+        AcrescimoGelada = e.AcrescimoGelada;
     }
 
     internal readonly record struct EstadoItem(
@@ -315,5 +335,6 @@ public sealed class ItemVenda
         decimal? LimiarPreco,
         string? NomeGrupoPreco,
         decimal? DescontoItemPct,
-        decimal? TetoDescontoPct);
+        decimal? TetoDescontoPct,
+        decimal AcrescimoGelada);
 }

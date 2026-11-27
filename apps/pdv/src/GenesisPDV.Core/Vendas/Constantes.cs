@@ -51,7 +51,7 @@ public static class AcaoLiberacao
 /// <summary>
 /// Valores de <c>vendas.tipo_preco</c> (modelo 3.11.2, <c>ck_vendas_tipo_preco</c>; <c>TIPOS_PRECO_VENDA</c> do contrato).
 /// O <c>F8</c> (PDV 11.2; F3-B17) escolhe entre <see cref="Varejo"/> e <see cref="Atacado"/>; o <see cref="Parcelado"/> vem
-/// só do pagamento parcelado (11.2, F3-B18), nunca do F8.
+/// só do pagamento parcelado (11.2, F3-B18; <c>Venda.AplicarPrecoParcelado</c>), nunca do F8.
 /// </summary>
 public static class TipoPrecoVenda
 {
@@ -81,6 +81,25 @@ public sealed record ResultadoTipoPreco(
     SituacaoDesconto Situacao, string Tipo, decimal TotalAntes, decimal TotalDepois, int LinhasAlteradas, bool PorLiberacao = false)
 {
     public bool Aplicado => Situacao == SituacaoDesconto.Aplicado;
+}
+
+/// <summary>
+/// Resultado do <c>Alt+G</c> (PDV 11.4; F3-B18): o item ficou <paramref name="Gelado"/> ou natural, com o acréscimo por
+/// unidade somado ou tirado e o total antes e depois.
+/// </summary>
+public sealed record ResultadoGelado(int Sequencia, bool Gelado, decimal AcrescimoUnitario, decimal TotalAntes, decimal TotalDepois);
+
+/// <summary>
+/// Prévia ou resultado do preço parcelado (PDV 11.2; F3-B18): "total passa de R$ <paramref name="TotalAntes"/> para R$
+/// <paramref name="TotalDepois"/>". <paramref name="LinhasAlteradas"/> conta as linhas que passaram a <c>origem_preco =
+/// 'parcelado'</c>; zero = nenhum item tem o preço parcelado e a venda não muda (D74).
+/// </summary>
+public sealed record ResultadoParcelado(decimal TotalAntes, decimal TotalDepois, int LinhasAlteradas)
+{
+    public bool Aplica => LinhasAlteradas > 0;
+
+    /// <summary>Quanto o parcelado soma ao total (o que o pagamento parcelado passa a cobrar a mais).</summary>
+    public decimal Diferenca => TotalDepois - TotalAntes;
 }
 
 /// <summary>Valores de <c>pagamentos_venda.status</c>.</summary>
@@ -114,10 +133,12 @@ public static class OrigemPreco
     /// <summary>
     /// Origens que a regra 11.3 recalcula quando a quantidade de referência ou o tipo de preço (<c>F8</c>, F3-B17) mudam
     /// (PDV 11.2, 11.3.1). A embalagem é recalculada (o preço do fardo é um candidato e vale o menor, 11.3.1; Padrões da
-    /// Fase 3, que resolvem a divergência com a lista da 11.2); o preço manual, a balança tipo Valor, o orçamento, o
-    /// combo e o parcelado ficam como estão. Os adicionais dos complementos voltam somados (a camada de acréscimos).
+    /// Fase 3, que resolvem a divergência com a lista da 11.2); o preço manual, a balança tipo Valor, o orçamento e o
+    /// combo ficam como estão. O parcelado (F3-B18) também é recalculado: ele vem do tipo da venda (o pagamento em parcelas)
+    /// e volta aos preços do F8 quando o pagamento parcelado sai. Os adicionais dos complementos e o gelado voltam somados
+    /// (a camada de acréscimos).
     /// </summary>
-    public static bool Recalculavel(string origem) => origem is not (Manual or Balanca or Orcamento or KitRateio or Parcelado);
+    public static bool Recalculavel(string origem) => origem is not (Manual or Balanca or Orcamento or KitRateio);
 
     /// <summary>Origens em que a quantidade (do produto ou do grupo) definiu o preço: grava <c>quantidade_referencia_preco</c>.</summary>
     public static bool PorQuantidade(string origem) => origem is Atacado or Quantidade or GrupoMix;

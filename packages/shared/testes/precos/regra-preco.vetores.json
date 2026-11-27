@@ -1,5 +1,5 @@
 {
-  "descricao": "Regra de preço do PDV 11.3/11.3.1 com o tipo de preço do F8 (11.2; F3-B17): o mesmo arquivo que o resolverPreco do shared (precos.spec.ts) e o MotorPreco do PDV (PrecosVetoresTests) conferem. Sem a embalagem (o fardo é candidato só no caixa até o F3-B54) e sem o parcelado (F3-B18). Valores em texto decimal; loja = a do terminal, outra = outra loja, nulo = todas.",
+  "descricao": "Regra de preço do PDV 11.3/11.3.1 com o tipo de preço do F8 (11.2; F3-B17) e o parcelado do passo 9 (11.2; F3-B18): o mesmo arquivo que o resolverPreco do shared (precos.spec.ts) e o MotorPreco do PDV (PrecosVetoresTests) conferem. Sem a embalagem (o fardo é candidato só no caixa até o F3-B54). Valores em texto decimal; loja = a do terminal, outra = outra loja, nulo = todas; parcelado ausente = falso.",
   "casos": [
     {
       "nome": "sem tabela: varejo",
@@ -649,6 +649,136 @@
       },
       "qtd_total": "6",
       "qtd_grupo": "11",
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "parcelado substitui o varejo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado substitui o atacado do F8",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "2",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado substitui a faixa e o promocional menores",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_promocional": "3.09",
+        "preco_parcelado": "3.69",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "2.99"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado menor que o varejo também substitui",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.29"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.29",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "produto sem preço parcelado segue o F8 no parcelado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12"
+      },
+      "qtd_total": "2",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "preço parcelado zero não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "0.00"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "preço parcelado sem o pagamento parcelado não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
       "usa_preco_volume": false,
       "tipo_preco": "varejo",
       "promocao_vigente": true,

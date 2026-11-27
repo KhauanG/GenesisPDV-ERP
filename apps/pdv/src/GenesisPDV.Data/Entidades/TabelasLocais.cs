@@ -323,6 +323,13 @@ public class EstadoOperacao
     public bool Bloqueado { get; set; }
     public DateTimeOffset? BloqueadoDesde { get; set; }
     public DateTimeOffset? AtualizadoEm { get; set; }
+
+    /// <summary>
+    /// O tipo do <c>F8</c> (<c>varejo</c> ou <c>atacado</c>) da venda atual que está no preço parcelado (<c>vendas.tipo_preco =
+    /// 'parcelado'</c>; PDV 11.2; Fase 3, F3-B18; README › decisão 105): remover o pagamento parcelado volta a ele, também
+    /// na venda recuperada depois de uma queda. Nulo fora do parcelado. Não sobe (a nuvem só vê o <c>parcelado</c>).
+    /// </summary>
+    public string? TipoPrecoAntesParcelado { get; set; }
 }
 
 /// <summary><c>fila_impressao</c> (4.4.8): toda impressão passa pela fila; nunca bloqueia a venda.</summary>
@@ -430,6 +437,21 @@ public class CascoDescontadoVendaLocal
     public string Descricao { get; set; } = string.Empty;
     public int Quantidade { get; set; }
     [Escala(Escalas.Preco)] public decimal PrecoUnitario { get; set; }
+    public DateTimeOffset RegistradoEm { get; set; }
+}
+
+/// <summary>
+/// <c>itens_venda_gelados</c> (só local, não sobe; PDV 11.4; Fase 3, F3-B18; README › decisão 105): a marca "gelado" do
+/// item (o <c>Alt+G</c>), com o acréscimo por unidade que foi somado ao <c>preco_unitario</c> e ao <c>preco_tabela</c>. A nuvem
+/// não guarda a marca (nenhuma coluna nova nas tabelas de movimento, Padrões da Fase 3): ela existe para a venda recuperada
+/// depois de uma queda manter o agrupamento (gelado e natural não se agrupam) e o <c>Alt+G</c> saber desfazer, e para a
+/// reimpressão mostrar "GELADO". Espelha os itens gelados da venda (o gelado tirado sai) e não é apagada no encerramento.
+/// </summary>
+public class ItemVendaGeladoLocal
+{
+    public Guid ItemVendaId { get; set; }
+    public Guid VendaId { get; set; }
+    [Escala(Escalas.Preco)] public decimal AcrescimoUnitario { get; set; }
     public DateTimeOffset RegistradoEm { get; set; }
 }
 

@@ -167,10 +167,21 @@ public sealed partial class DialogoPagamentoViewModel : DialogoViewModel
     protected override async Task AoConfirmarAsync()
     {
         var forma = Forma ?? throw new RegraNegocioException("Escolha a forma de pagamento (↑/↓).");
+        if (await SairDoParceladoSemPagamentoAsync())
+        {
+            // Defesa (F3-B18): o valor na tela era o do parcelado sem o pagamento parcelado; nada vai à maquininha com ele.
+            throw new RegraNegocioException("Os preços voltaram aos do F8 (o preço parcelado ficou sem o pagamento parcelado): "
+                                            + "confira o valor e confirme de novo.");
+        }
+
         var valor = LerNumero(ValorRecebido, "Informe o valor, por exemplo 50,00.");
         VendaAtual.PreverPagamento(forma, valor);
         switch (forma.Fluxo)
         {
+            case FluxoPagamento.Pos when DialogoParcelasViewModel.EscolheParcelas(forma) && Venda.PrecoParceladoDisponivel:
+                // O crédito que parcela (F3-B18): as parcelas vêm antes da maquininha, porque o preço parcelado muda o valor.
+                Venda.AbrirDialogo(new DialogoParcelasViewModel(Venda, this, forma, valor));
+                return;
             case FluxoPagamento.Pos:
                 Venda.AbrirDialogo(new DialogoPosViewModel(Venda, this, forma, valor));
                 return;
@@ -194,11 +205,29 @@ public sealed partial class DialogoPagamentoViewModel : DialogoViewModel
         ArgumentNullException.ThrowIfNull(forma);
         if (Venda.ServicoVenda.PermissaoParaLancar(forma) is { } permissao)
         {
-            Venda.PedirLiberacao(permissao, $"{forma.Descricao} de R$ {NumeroBr.Dinheiro(valor)}", concedida => EfetivarAsync(forma, valor, detalhe, pix, concedida));
+            // A liberação negada (ou o lançamento recusado depois dela) fecha a tela: o preço parcelado confirmado para este
+            // cartão não fica na venda sem o pagamento parcelado (F3-B18).
+            Venda.PedirLiberacao(permissao, $"{forma.Descricao} de R$ {NumeroBr.Dinheiro(valor)}", concedida => EfetivarAsync(forma, valor, detalhe, pix, concedida),
+                aoDesistir: () => SairDoParceladoSemPagamentoAsync());
             return;
         }
 
         await EfetivarAsync(forma, valor, detalhe, pix, null);
+    }
+
+    /// <summary>
+    /// Desfaz o preço parcelado confirmado que ficou sem o pagamento parcelado (com a auditoria <c>tipo_preco_alterado</c>) e
+    /// relê os valores da tela; devolve se voltou (F3-B18). Fora desse estado não muda nada.
+    /// </summary>
+    public async Task<bool> SairDoParceladoSemPagamentoAsync()
+    {
+        if (!await Venda.ServicoVenda.VoltarDoPrecoParceladoAsync())
+        {
+            return false;
+        }
+
+        Recarregar();
+        return true;
     }
 
     private async Task EfetivarAsync(FormaPagamentoInfo forma, decimal valor, DetalhePagamento? detalhe, ConfirmacaoPix? pix, LiberacaoConcedida? liberacao)
@@ -210,10 +239,16 @@ public sealed partial class DialogoPagamentoViewModel : DialogoViewModel
             return;
         }
 
+        Recarregar();
+        Venda.AbrirDialogo(this);
+    }
+
+    /// <summary>Relê o total, o pago e o falta e refaz o valor da forma escolhida (o preço parcelado mudou o total, F3-B18).</summary>
+    public void Recarregar()
+    {
         Atualizar();
         Selecionar(FormaSelecionada);
         Venda.AtualizarTela();
-        Venda.AbrirDialogo(this);
     }
 
     /// <summary>F5 na tela de pagamento (14.1): CPF na nota ou cliente; Esc volta aqui.</summary>
@@ -242,21 +277,104 @@ public sealed partial class DialogoPagamentoViewModel : DialogoViewModel
 }
 
 /// <summary>
-/// Cartão na maquininha (PDV 16.5; O9c do dono): "Passe o cartão na maquininha. Aprovado?" — Enter = sim, com a bandeira
-/// obrigatória (o número da lista), o NSU/CV e o código de autorização opcionais e as parcelas no crédito que parcela
-/// (informativas); Esc = não, volta ao pagamento.
+/// As parcelas do crédito que parcela, escolhidas <b>antes</b> de passar o cartão (PDV 11.2; Fase 3, F3-B18; D74; sem TEF):
+/// em mais de uma parcela, com item de preço parcelado, a tela mostra "Preço parcelado: total passa de R$ X para R$ Y —
+/// [Enter] Confirmar / [Esc] Voltar"; confirmado, a venda vai ao parcelado e a maquininha (16.5) pede o valor novo (o
+/// informado mais a diferença do parcelado). Com pagamento eletrônico já aprovado, a troca para o parcelado é recusada. Sem o
+/// recurso da onda R3 (F3-B4), o caixa não abre esta tela: as parcelas ficam informativas na maquininha, como antes.
 /// </summary>
-public sealed partial class DialogoPosViewModel(VendaViewModel venda, DialogoPagamentoViewModel pagamento, FormaPagamentoInfo forma, decimal valor)
+public sealed partial class DialogoParcelasViewModel(VendaViewModel venda, DialogoPagamentoViewModel pagamento, FormaPagamentoInfo forma, decimal valor)
     : DialogoViewModel(venda)
 {
+    /// <summary>A forma parcela no caixa: crédito com "Permite parcelar" e mais de uma parcela (16.2).</summary>
+    public static bool EscolheParcelas(FormaPagamentoInfo forma)
+    {
+        ArgumentNullException.ThrowIfNull(forma);
+        return forma.TipoForma == "cartao_credito" && forma.PermiteParcelar && forma.ParcelasMaximo > 1;
+    }
+
     public override string Titulo => $"{forma.Descricao} · R$ {NumeroBr.Dinheiro(valor)}";
+
+    public string Instrucao => $"Quantas parcelas? (1 a {forma.ParcelasMaximo}) — escolha antes de passar o cartão.";
+
+    [ObservableProperty]
+    public partial string Parcelas { get; set; } = "1";
+
+    /// <summary>A confirmação do preço parcelado; nula enquanto o operador escolhe as parcelas.</summary>
+    [ObservableProperty]
+    public partial string? Confirmacao { get; set; }
+
+    private int _parcelas;
+
+    protected override async Task AoConfirmarAsync()
+    {
+        if (Confirmacao is not null)
+        {
+            var aplicado = await Venda.ServicoVenda.AplicarPrecoParceladoAsync(_parcelas, valor);
+            pagamento.Recarregar();
+            Venda.AbrirDialogo(new DialogoPosViewModel(Venda, pagamento, forma, valor + aplicado.Diferenca, _parcelas, aplicado.Aplica));
+            return;
+        }
+
+        var parcelas = int.TryParse(Parcelas, out var p) ? p : 0;
+        if (parcelas < 1 || parcelas > forma.ParcelasMaximo)
+        {
+            throw new RegraNegocioException($"Parcelas: de 1 a {forma.ParcelasMaximo}.");
+        }
+
+        _parcelas = parcelas;
+        var atual = Venda.ServicoVenda.Atual ?? throw new InvalidOperationException("Sem venda.");
+        var previa = parcelas > 1 ? atual.PreverPrecoParcelado() : null;
+        if (previa is { Aplica: true })
+        {
+            if ((atual.MotivoParceladoRecusado ?? atual.MotivoParceladoSemValor(previa, valor)) is { } motivo)
+            {
+                throw new RegraNegocioException(motivo);
+            }
+
+            Confirmacao = $"Preço parcelado: total passa de R$ {NumeroBr.Dinheiro(previa.TotalAntes)} para R$ "
+                          + $"{NumeroBr.Dinheiro(previa.TotalDepois)} — [Enter] Confirmar / [Esc] Voltar";
+            return;
+        }
+
+        Venda.AbrirDialogo(new DialogoPosViewModel(Venda, pagamento, forma, valor, parcelas));
+    }
+
+    protected override Task AoCancelarAsync()
+    {
+        if (Confirmacao is not null)
+        {
+            Confirmacao = null;
+            return Task.CompletedTask;
+        }
+
+        Venda.AbrirDialogo(pagamento);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// Cartão na maquininha (PDV 16.5; O9c do dono): "Passe o cartão na maquininha. Aprovado?" — Enter = sim, com a bandeira
+/// obrigatória (o número da lista), o NSU/CV e o código de autorização opcionais e as parcelas no crédito que parcela
+/// (informativas); Esc = não, volta ao pagamento. Com as parcelas já escolhidas (<see cref="DialogoParcelasViewModel"/>,
+/// F3-B18), elas ficam fixas, e o "não aprovado" com o preço parcelado confirmado volta os preços do F8.
+/// </summary>
+public sealed partial class DialogoPosViewModel(
+    VendaViewModel venda, DialogoPagamentoViewModel pagamento, FormaPagamentoInfo forma, decimal valor, int? parcelasEscolhidas = null,
+    bool parceladoAplicado = false)
+    : DialogoViewModel(venda)
+{
+    public override string Titulo => $"{forma.Descricao} · R$ {NumeroBr.Dinheiro(valor)}"
+                                     + (parcelasEscolhidas is > 1 and var n ? $" em {n}×" : string.Empty)
+                                     + (parceladoAplicado ? " (preço parcelado)" : string.Empty);
 
     public string Instrucao => "Passe o cartão na maquininha. Aprovado? [Enter] Sim  [Esc] Não";
 
     public string BandeirasTexto { get; } =
         string.Join("   ", RegrasFormaPagamento.Bandeiras.Select(b => $"{b.Codigo} {b.Nome}"));
 
-    public bool Parcela => forma.TipoForma == "cartao_credito" && forma.PermiteParcelar && forma.ParcelasMaximo > 1;
+    /// <summary>O campo das parcelas (informativas) só quando elas não vieram escolhidas antes (F3-B18).</summary>
+    public bool Parcela => parcelasEscolhidas is null && DialogoParcelasViewModel.EscolheParcelas(forma);
 
     [ObservableProperty]
     public partial string Bandeira { get; set; } = string.Empty;
@@ -268,7 +386,7 @@ public sealed partial class DialogoPosViewModel(VendaViewModel venda, DialogoPag
     public partial string Autorizacao { get; set; } = string.Empty;
 
     [ObservableProperty]
-    public partial string Parcelas { get; set; } = "1";
+    public partial string Parcelas { get; set; } = (parcelasEscolhidas ?? 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     protected override Task AoConfirmarAsync()
     {
@@ -279,14 +397,16 @@ public sealed partial class DialogoPosViewModel(VendaViewModel venda, DialogoPag
         }
 
         var parcelas = int.TryParse(Parcelas, out var p) ? p : 0;
-        var detalhe = RegrasFormaPagamento.ValidarPos(forma, codigo, Nsu, Autorizacao, parcelas);
+        var detalhe = RegrasFormaPagamento.ValidarPos(forma, codigo, Nsu, Autorizacao, parcelasEscolhidas ?? parcelas);
         return pagamento.LancarAsync(forma, valor, detalhe, null);
     }
 
-    protected override Task AoCancelarAsync()
+    protected override async Task AoCancelarAsync()
     {
+        // Não aprovado: o preço parcelado sem o pagamento parcelado sai, e os preços voltam aos do F8 (F3-B18). Vale também
+        // na segunda tentativa, com a venda já no parcelado (a prévia não aplicou nada e o parcelado não veio desta tela).
+        await pagamento.SairDoParceladoSemPagamentoAsync();
         Venda.AbrirDialogo(pagamento);
-        return Task.CompletedTask;
     }
 }
 

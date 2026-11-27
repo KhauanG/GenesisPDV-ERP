@@ -420,7 +420,10 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogg
                 Embalagens: codigos
                     .Where(b => b.Fator != 1m || b.Preco != null)
                     .Select(b => new EmbalagemPreco(b.Id, b.Fator, b.Preco, b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null))
-                    .ToList());
+                    .ToList(),
+                // Gelada da loja e preço parcelado (PDV 11.1, 11.4; F3-B18): o Alt+G e o pagamento em parcelas.
+                AcrescimoGelada: pl?.AcrescimoGelada,
+                PrecoParcelado: p.PrecoParcelado);
             resultado[p.Id] = new ProdutoVenda(
                 p.Id,
                 p.Codigo,

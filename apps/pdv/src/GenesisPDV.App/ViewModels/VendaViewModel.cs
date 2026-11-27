@@ -66,6 +66,8 @@ public sealed partial class VendaViewModel : ViewModelBase
             [AcoesAtalho.AlterarPreco] = AlterarPrecoCommand,
             // F3-B17 (PDV 11.2): só com o recurso da onda (AcaoLigada), porque grava a auditoria tipo_preco_alterado.
             [AcoesAtalho.TipoPreco] = AlternarTipoPrecoCommand,
+            // F3-B18 (PDV 11.4): o Alt+G só com o recurso da onda (AcaoLigada), como as outras telas de preço da R3.
+            [AcoesAtalho.Gelada] = AlternarGeladoCommand,
             [AcoesAtalho.MenuFuncoes] = FuncoesCommand,
             [AcoesAtalho.BloquearTerminal] = BloquearTelaCommand,
             [AcoesAtalho.SincronizarAgora] = SincronizarAgoraCommand,
@@ -532,8 +534,11 @@ public sealed partial class VendaViewModel : ViewModelBase
         FocoNoCodigoSolicitado?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Abre o diálogo de liberação do supervisor (PDV 31.3); concedida, executa a ação com ela.</summary>
-    public void PedirLiberacao(string permissao, string acao, Func<LiberacaoConcedida, Task> aoLiberar)
+    /// <summary>
+    /// Abre o diálogo de liberação do supervisor (PDV 31.3); concedida, executa a ação com ela. <paramref name="aoDesistir"/>
+    /// roda depois de a tela fechar sem a ação: a liberação cancelada ou negada, ou a ação recusada pela regra.
+    /// </summary>
+    public void PedirLiberacao(string permissao, string acao, Func<LiberacaoConcedida, Task> aoLiberar, Func<Task>? aoDesistir = null)
     {
         var operador = Sessao.Operador ?? throw new InvalidOperationException("Nenhum operador logado.");
         DialogoLiberacaoViewModel? dialogo = null;
@@ -552,21 +557,39 @@ public sealed partial class VendaViewModel : ViewModelBase
                         FecharDialogo();
                     }
 
+                    await DesistirAsync();
                     MostrarMensagem(e.Message, erro: true);
                 }
             },
-            erro =>
+            async erro =>
             {
                 FecharDialogo();
+                await DesistirAsync();
                 if (erro is not null)
                 {
                     MostrarMensagem(erro, erro: true);
                 }
-
-                return Task.CompletedTask;
             });
         dialogo = new DialogoLiberacaoViewModel(this, pedido);
         AbrirDialogo(dialogo);
+
+        async Task DesistirAsync()
+        {
+            if (aoDesistir is null)
+            {
+                return;
+            }
+
+            try
+            {
+                await aoDesistir();
+                AtualizarTela();
+            }
+            catch (RegraNegocioException e)
+            {
+                MostrarMensagem(e.Message, erro: true);
+            }
+        }
     }
 
     public async Task RecarregarDoBancoAsync()
@@ -885,6 +908,44 @@ public sealed partial class VendaViewModel : ViewModelBase
         MostrarMensagem(MensagemTipoPreco(resultado), erro: false);
     });
 
+    /// <summary>
+    /// <c>Alt+G</c> Gelada (PDV 11.4; F3-B18): liga ou desliga o gelado no item selecionado, somando ao preço o acréscimo da
+    /// loja por unidade (gelado e natural ficam em linhas separadas). Só com o recurso da onda (fora disso a tecla bipa,
+    /// <see cref="AcaoLigada"/>); desfazer, mesmo sem ele.
+    /// </summary>
+    [RelayCommand]
+    private Task AlternarGelado() => Executar(async () =>
+    {
+        if (Dialogo is not null)
+        {
+            return;
+        }
+
+        if (!ServicoVenda.VendaAberta)
+        {
+            throw new RegraNegocioException("Não há venda em andamento.");
+        }
+
+        if (ItemSelecionado is not { Cancelado: false } linha)
+        {
+            throw new RegraNegocioException("Selecione um item não cancelado (setas ↑/↓) para marcar o gelado.");
+        }
+
+        if (!linha.Item.Gelado && !_recursoOnda)
+        {
+            _atalhos.Bipe();
+            AtualizarTela();
+            throw new RegraNegocioException(MensagemAcaoIndisponivel);
+        }
+
+        var r = await ServicoVenda.AlternarGeladoAsync(linha.Sequencia);
+        AtualizarTela(r.Sequencia);
+        MostrarMensagem(r.Gelado
+            ? $"Item {r.Sequencia} GELADO (+R$ {NumeroBr.Preco(r.AcrescimoUnitario)} por unidade): total de R$ {NumeroBr.Dinheiro(r.TotalAntes)} para R$ {NumeroBr.Dinheiro(r.TotalDepois)}."
+            : $"Item {r.Sequencia} natural (sem o gelado): total de R$ {NumeroBr.Dinheiro(r.TotalAntes)} para R$ {NumeroBr.Dinheiro(r.TotalDepois)}.",
+            erro: false);
+    });
+
     /// <summary>"Preço ATACADO: 2 itens recalculados, total de R$ 38,39 para R$ 35,09."</summary>
     private static string MensagemTipoPreco(ResultadoTipoPreco r) =>
         $"Preço {TipoPrecoVenda.Rotulo(r.Tipo).ToUpperInvariant()}: "
@@ -1163,6 +1224,9 @@ public sealed partial class VendaViewModel : ViewModelBase
         }
         else
         {
+            // A tela de pagamento reaberta (a liberação da forma negada a fechou) não mostra o "Falta" do preço parcelado sem
+            // o pagamento parcelado: os preços voltam aos do F8 antes, com a auditoria (F3-B18).
+            await ServicoVenda.VoltarDoPrecoParceladoAsync();
             await ServicoVenda.CarregarRegrasPagamentoAsync();
         }
 
@@ -1390,8 +1454,8 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     /// <summary>
     /// A ação que depende de uma regra da loja ou da nuvem: o <c>Ctrl+F6</c> só com <c>pdv.altera_preco_pdv</c> ligada e o
-    /// recurso da onda (F3-B16; PDV 10.5: "flag desligada → a ação não aparece"), o <c>F8</c> só com o recurso (F3-B17); as
-    /// demais, sempre.
+    /// recurso da onda (F3-B16; PDV 10.5: "flag desligada → a ação não aparece"), o <c>F8</c> e o <c>Alt+G</c> só com o recurso
+    /// (F3-B17, F3-B18); as demais, sempre.
     /// </summary>
     private bool AcaoLigada(string acao) => acao switch
     {
@@ -1400,16 +1464,29 @@ public sealed partial class VendaViewModel : ViewModelBase
         // Fase 3). A volta ao Varejo fica fora do portão: se o recurso sumir no meio de uma venda no Atacado (a API voltou de
         // versão), o operador ainda desfaz a troca (a auditoria dela fica no caixa até o recurso voltar, AcoesAuditoriaFase3).
         AcoesAtalho.TipoPreco => _recursoOnda || VendaNoAtacado,
+        // O Alt+G (F3-B18) é uma tela nova da onda R3: só com o recurso. Como o F8, desfazer o gelado fica fora do portão (o
+        // recurso que some no meio de uma venda com item gelado).
+        AcoesAtalho.Gelada => _recursoOnda || VendaComGelado,
         _ => true,
     };
 
     private bool VendaNoAtacado => ServicoVenda.Atual is { Aberta: true, TipoPreco: TipoPrecoVenda.Atacado };
 
+    private bool VendaComGelado => ServicoVenda.Atual is { Aberta: true } v && v.ItensAtivos.Any(i => i.Gelado);
+
     /// <summary>
-    /// A barra foi montada com o F8 (<see cref="AplicarMapa"/>): sem o recurso da onda ele só aparece enquanto a venda está no
-    /// Atacado, e a <see cref="AtualizarTela"/> remonta a barra quando isso muda.
+    /// A barra foi montada com o F8 e o Alt+G assim (<see cref="AplicarMapa"/>): sem o recurso da onda eles só aparecem
+    /// enquanto a venda está no Atacado ou tem item gelado, e a <see cref="AtualizarTela"/> remonta a barra quando isso muda.
     /// </summary>
-    private bool _tipoPrecoNaBarra;
+    private (bool TipoPreco, bool Gelada) _ligadasDaVendaNaBarra;
+
+    private (bool TipoPreco, bool Gelada) LigadasDaVenda => (TemAcao(AcoesAtalho.TipoPreco), TemAcao(AcoesAtalho.Gelada));
+
+    /// <summary>
+    /// O preço parcelado na tela de pagamento (PDV 11.2; F3-B18): só com o recurso da onda R3 (grava o
+    /// <c>tipo_preco_alterado</c>); sem ele, as parcelas ficam informativas na maquininha, como antes.
+    /// </summary>
+    public bool PrecoParceladoDisponivel => _recursoOnda;
 
     /// <summary>O F6 › 3 Acréscimo no total (F3-B16): só com o recurso da onda (a tela grava o <c>acrescimo_total</c>).</summary>
     public bool AcrescimoDisponivel => _recursoOnda;
@@ -1452,7 +1529,7 @@ public sealed partial class VendaViewModel : ViewModelBase
     private void AplicarMapa(MapaAtalhos mapa)
     {
         Mapa = mapa;
-        _tipoPrecoNaBarra = TemAcao(AcoesAtalho.TipoPreco);
+        _ligadasDaVendaNaBarra = LigadasDaVenda;
         var barra = mapa.Barra(a => TemAcao(a.Acao) && a.Acao != AcoesAtalho.ConfiguracaoTerminal, MaximoBotoesBarra - 1)
             .Select(a => new AtalhoBarraViewModel(a.Tecla, a.Rotulo, _acoes[a.Acao], Destaque: a.Acao == AcoesAtalho.ConcluirVenda))
             .ToList();
@@ -1572,9 +1649,9 @@ public sealed partial class VendaViewModel : ViewModelBase
 
     public void AtualizarTela(int? selecionar = null)
     {
-        if (TemAcao(AcoesAtalho.TipoPreco) != _tipoPrecoNaBarra)
+        if (LigadasDaVenda != _ligadasDaVendaNaBarra)
         {
-            // Sem o recurso da onda, o F8 entra e sai da barra com o Atacado da venda (AcaoLigada).
+            // Sem o recurso da onda, o F8 e o Alt+G entram e saem da barra com o Atacado e o gelado da venda (AcaoLigada).
             AplicarMapa(Mapa);
         }
 
@@ -1620,9 +1697,13 @@ public sealed partial class VendaViewModel : ViewModelBase
         CabecalhoVenda = $"VENDA {venda.NumeroExibicao}  ·  Balcão  ·  Preço: {venda.TipoPreco.ToUpperInvariant()}"
                          + (venda.CpfCnpjNota is { } doc ? $"  ·  {(doc.Length == 11 ? "CPF" : "CNPJ")} {doc}" : venda.ClienteId is not null ? "  ·  CLIENTE" : string.Empty)
                          + (venda.Status == StatusVenda.EmPagamento ? "  ·  EM PAGAMENTO" : string.Empty);
-        TipoPrecoAtivoTexto = venda.TipoPreco == TipoPrecoVenda.Atacado
-            ? $"PREÇO ATACADO ({Mapa.Da(AcoesAtalho.TipoPreco).Tecla} volta ao varejo)"
-            : null;
+        TipoPrecoAtivoTexto = venda.TipoPreco switch
+        {
+            TipoPrecoVenda.Atacado => $"PREÇO ATACADO ({Mapa.Da(AcoesAtalho.TipoPreco).Tecla} volta ao varejo)",
+            // F3-B18: o parcelado sai com o pagamento parcelado (Del na tela de pagamento).
+            TipoPrecoVenda.Parcelado => "PREÇO PARCELADO (remova o pagamento parcelado para voltar)",
+            _ => null,
+        };
         ItensTexto = $"Itens: {venda.QtdItens} ({NumeroBr.Quantidade(venda.VolumeTotal)} vol.)";
         SubtotalTexto = NumeroBr.Dinheiro(venda.SubtotalBruto);
         var descontos = venda.DescontoItens + venda.DescontoTotal;

@@ -4680,7 +4680,9 @@ Nunca volta (número reservado e não usado vira lacuna — NFC-e: inutilizaçã
 
 Ponto de retomada após queda de energia/travamento: `id INTEGER CHECK (id = 1)`, `operador_id TEXT`,
 `sessao_caixa_id TEXT`, `venda_atual_id TEXT` (venda em andamento na tela), `modo TEXT` (`balcao`, `comanda`,
-`delivery`, `pagamento`, `fechamento`), `bloqueado INTEGER`, `bloqueado_desde TEXT`, `atualizado_em TEXT`.
+`delivery`, `pagamento`, `fechamento`), `bloqueado INTEGER`, `bloqueado_desde TEXT`, `atualizado_em TEXT` e
+`tipo_preco_antes_parcelado TEXT` (Fase 3, F3-B18: `varejo`/`atacado`, o tipo do `F8` da venda atual que está no preço
+parcelado, para a volta ao remover o pagamento parcelado, também na venda recuperada; nulo fora do parcelado).
 Na inicialização: resolve TEF pendente → reabre a venda `venda_atual_id` (se `em_andamento`/`em_pagamento`) → pede
 login do operador.
 
@@ -4745,6 +4747,16 @@ Deduplicação e ack dos comandos do heartbeat (entrega ao menos uma vez, sincro
 (`comandos_terminal.id`), `tipo TEXT`, `recebido_em TEXT`, `status TEXT` (`recebido`, `executado`, `falhou`),
 `resultado TEXT` (JSON). Comando já presente não é executado de novo; o status vai em `comandos_resultado` de todo
 heartbeat até a nuvem parar de reenviá-lo.
+
+#### 4.4.14 `itens_venda_gelados`
+
+Marca "gelado" do item (o `Alt+G`, PDV 11.4; Fase 3, F3-B18): `item_venda_id TEXT PK` (→ `itens_venda`, cascata),
+`venda_id TEXT` (→ `vendas`, cascata), `acrescimo_unitario INTEGER` (escala de preço, `> 0`: o
+`produtos_lojas.acrescimo_gelada` da primeira inclusão, já somado ao `preco_unitario` e ao `preco_tabela`),
+`registrado_em TEXT`. Só local: a nuvem não guarda a marca (nenhuma coluna nova em `itens_venda`, Padrões da Fase 3). Serve
+para a venda recuperada manter o agrupamento (gelado e natural não se agrupam) e o desfazer do `Alt+G`, e para a
+reimpressão; espelha os itens gelados da venda e não é apagada no encerramento. Migração EF `GeladoParcelado`, sem volta
+de cursor.
 
 ### 4.5 Estimativas locais (saldo de estoque, crédito e vale)
 

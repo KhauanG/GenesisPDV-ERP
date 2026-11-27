@@ -4867,3 +4867,92 @@ reimpresso continua o original, com o número do caixa.
        lançado, recusado; sem o recurso, a tecla bipa; o recurso que some com a venda no Atacado ainda deixa voltar ao
        Varejo); na API,
        `venda-eventos.test.ts` aplica a venda v1 com `tipo_preco = 'atacado'` e a liberação `tipo_preco`, sem alerta.
+105. **Preço gelada (`Alt+G`) e preço parcelado** (F3-B18; PDV 11.2, 11.3 passo 9, 11.4, 11.5; F3-Q3 = D74 (A); README da
+     API › decisão 235; `Core/Precos/{MotorPreco,TabelaPreco}.cs`, `Core/Vendas/{Venda,ItemVenda,PagamentoVenda,Constantes}.cs`,
+     `Data/Repositorios/{CatalogoLocal,RepositorioVendas,MapeadorVenda}.cs`, `Data/Entidades/TabelasLocais.cs`,
+     `Data/Migracoes/*_GeladoParcelado.cs`, `App/Servicos/ServicoVenda.cs`, `App/ViewModels/{VendaViewModel,
+     DialogoPagamentoViewModel,ItemLinhaViewModel}.cs`, `App/Views/VendaView.axaml`, `Fiscal/LayoutComprovanteVenda.cs`,
+     `packages/shared/src/precos.ts`). Sem migração Drizzle, sem coluna nova na nuvem e sem evento novo: o gelado vai
+     **dentro** do `preco_unitario` e do `preco_tabela`, e o parcelado é o `vendas.tipo_preco = 'parcelado'` e o
+     `origem_preco = 'parcelado'` que o contrato v1 já tinha; uma migração EF **só local** (`GeladoParcelado`, sem volta de
+     cursor); a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21). Escolhas técnicas, **padrão até a confirmação do
+     dono** (roadmap §16, D125):
+     - **As fontes.** A `TabelaPreco` ganhou o `AcrescimoGelada` (`produtos_lojas.acrescimo_gelada` da loja do terminal) e o
+       `PrecoParcelado` (`produtos.preco_parcelado`), lidos pelo `CatalogoLocal` e guardados no snapshot da primeira
+       inclusão (11.3: um pull no meio da venda não muda a gelada nem o parcelado dos itens já incluídos; o snapshot antigo,
+       sem os campos, lê nulo).
+     - **Gelada.** `Venda.AlternarGelado(sequencia)` liga e desliga: `ItemVenda.AcrescimoGelada` (> 0 = gelado) entra na
+       camada de acréscimos do item (`AcrescimoUnitario` = complementos + gelada, decisão 102), somada por unidade a todo
+       preço recalculado (atacado, faixa, mix, embalagem, `F8` e parcelado: regra 11.3 → complementos → gelada →
+       promoções), ao `preco_unitario` e ao `preco_tabela`; a origem do preço não muda, e não é acréscimo da venda nem
+       desconto (a economia do atacado é contra o varejo com o gelado). Só com `acrescimo_gelada > 0` no snapshot; desligar
+       tira o valor que foi somado (não o do espelho de agora). Recusado no combo, no casco, na balança tipo Valor, no
+       orçamento, no preço digitado ou alterado (o preço manual é o final: cancelar e incluir de novo) e na linha
+       recuperada sem snapshot. Com pagamento lançado, ligar pode (o total sobe, como incluir um item) e desligar não (o
+       total cairia, decisão 8). Gelado e natural **não se agrupam** (o agrupamento da inclusão exige o natural); o
+       cancelamento parcial leva o gelado à linha que sobra. Sem auditoria: o acréscimo é um preço do cadastro.
+     - **A marca só no caixa.** Nenhuma coluna nova em `itens_venda` (Padrões da Fase 3): a marca fica na tabela local
+       `itens_venda_gelados` (PK o item, o acréscimo por unidade em escala de preço, FK cascata ao item e à venda; MD
+       4.4.14), gravada no mesmo commit da venda e espelhando os itens gelados (o tirado sai), e não é apagada no
+       encerramento (a reimpressão mostra "GELADO"). A venda recuperada depois de uma queda volta com ela (o agrupamento e
+       o desfazer); a reidratação (SYNC 22.2) recria os itens sem ela.
+     - **Parcelado** (D74: "produto sem Preço parcelado cadastrado não muda nada"). O `MotorPreco` ganhou o passo 9: com
+       `ParametrosPreco.Parcelado`, o `preco_parcelado > 0` **substitui** todos os candidatos (não é o menor; a quantidade
+       de referência sobe nula); o `TipoPreco` dos parâmetros continua o do `F8` de antes, para as linhas sem o
+       parcelado. A `Venda` guarda esse tipo em `TipoPrecoAntesParcelado`. `PreverPrecoParcelado()` dá o "total passa de R$
+       X para R$ Y" sem mudar nada (a foto do `Atomico`); `AplicarPrecoParcelado()` (na tela de pagamento) passa a venda a
+       `parcelado` e recalcula; nenhuma linha passando a `parcelado`, volta tudo e não muda o tipo. Recusado com pagamento
+       eletrônico aprovado (`PagamentoVenda.Eletronico`: cartão ou PIX, e também o VA/VR ou o "outros" passado na
+       maquininha, com a bandeira, ou no PIX, com a cobrança; o vale de papel lançado direto, não); o dinheiro antes não
+       impede (o "Falta" sobe). O parcelado menor que o preço atual (D125, decisão 3) com dinheiro lançado é recusado quando
+       derruba o total até o já pago ou deixa o cartão em parcelas com valor zero ou negativo
+       (`Venda.MotivoParceladoSemValor`, conferido na prévia e de novo no `AplicarPrecoParcelado(valor)`; decisão 8).
+       `VoltarDoPrecoParcelado()` volta ao tipo do F8 quando não há pagamento ativo em mais de uma parcela, chamado ao
+       remover o pagamento, ao lançar outro à vista, ao voltar aos itens, ao abrir o pagamento e na venda recuperada na
+       abertura do caixa (`ServicoVenda.RecuperarAsync`, com a auditoria; não no `RegistrarProdutos`, que também refaz a
+       venda depois de um erro com a maquininha ainda na tela): o parcelado confirmado nunca fica sem o pagamento parcelado.
+       A tela desfaz esse estado (`Venda.ParceladoSemPagamentoParcelado`, `ServicoVenda.VoltarDoPrecoParceladoAsync`, com
+       a auditoria) antes de mostrar valores à vista: no Esc da maquininha (também na segunda tentativa, já no parcelado),
+       na liberação da forma negada ou cancelada (o `aoDesistir` do `PedirLiberacao`), no F10 que reabre o pagamento e,
+       como defesa, no Enter do pagamento (recusa e pede para conferir o valor); o lançamento à vista que sai do parcelado
+       dentro do Core grava a saída na auditoria do mesmo commit ("(pagamento à vista)"). O `OrigemPreco.Recalculavel`
+       passou a aceitar o `parcelado` (o preço vem do tipo da venda e volta com ele); com o pagamento parcelado lançado, o
+       Esc aos itens mantém o parcelado e o item novo já entra nele. O F8 continua recusado com pagamento lançado.
+     - **O tipo do F8 de antes, só no caixa.** A coluna local `estado_operacao.tipo_preco_antes_parcelado` (MD 4.4.7), gravada
+       com a venda atual e limpa no encerramento: a venda recuperada no parcelado volta ao Atacado certo ao remover o
+       pagamento (sem ela, ao Varejo). A nuvem só vê o `parcelado`.
+     - **A tela.** No crédito com "Permite parcelar" e mais de uma parcela, o Enter da tela de pagamento abre as **parcelas
+       antes da maquininha** (`DialogoParcelasViewModel`; sem TEF, o operador escolhe antes de passar o cartão). Em 2× ou
+       mais com a prévia mudando o total, "Preço parcelado: total passa de R$ X para R$ Y — [Enter] Confirmar / [Esc]
+       Voltar"; confirmado, a maquininha (`DialogoPosViewModel`, com as parcelas fixas no título) cobra o valor informado
+       mais a diferença do parcelado (o "Falta" todo no caso comum; num pagamento parcial, a diferença vai inteira no
+       cartão parcelado, que é quem a causa). O "Não aprovado" volta os preços. A tela marca "PREÇO PARCELADO" no
+       cabeçalho e a coluna de preço "PARC". O `Alt+G` (a ação `gelada` do mapa, decisão 101) marca "GELADO (+1,00)" sob o
+       item, na tela e no cupom; com ele a barra do padrão fica com 16 botões (o máximo).
+     - **O portão é o recurso da onda** (decisão 96): o parcelado grava a auditoria `tipo_preco_alterado` (a entrada e as
+       saídas, com o total antes e depois e as parcelas), e o `Alt+G` é tela nova da R3; os dois só existem com o recurso.
+       Sem ele, as parcelas ficam informativas na maquininha e o preço não muda (como no 0.13.0), e o `Alt+G` bipa; como o
+       F8, desfazer o gelado fica fora do portão (o recurso que some no meio da venda). Nenhuma chave nova: o cadastro do
+       preço parcelado é o que liga a regra (o PDV instalado o ignora, e há um caixa só em uso).
+     - **Vetores de preço:** 7 casos novos do parcelado em `regra-preco.vetores.json` (substitui o varejo, o atacado do F8,
+       a faixa e o promocional, e o menor que o varejo; o produto sem parcelado segue no F8; zero não vale; sem o pagamento
+       parcelado não vale), conferidos pelo `MotorPreco` e pelo `resolverPreco` do shared (que ganhou o `precoParcelado` e o
+       `parcelado`).
+     - **Testes.** `GeladaParceladoTests` (Core: o `Alt+G` liga e desfaz; com o atacado por quantidade e com o F8; gelado e
+       natural sem agrupar e o cancelamento parcial; o desconto em % refeito; as recusas, com o pagamento lançado; a venda
+       recuperada com o gelado; o critério 11.5 "crédito 3× aplica o parcelado; remover volta"; sem preço parcelado nada
+       muda; o F8 no Atacado e a volta a ele; o gelado por cima do parcelado; a recusa com o eletrônico e o dinheiro que não
+       impede; o VA na maquininha que recusa e o de papel que não; o parcelado menor que o já pago; a volta pelo
+       lançamento à vista e pelo Esc; a recuperada nos três casos, e com o gelado ou o complemento no atacado mantendo o
+       "ATAC 12+"; as recusas do `Alt+G` no casco, na balança, no orçamento, sem snapshot e no acréscimo inválido; o passo
+       9 do motor),
+       `PrecosVetoresTests`, `GeladoParceladoDadosTests` e `CatalogoLocalTests` (Data: a tabela local e a coluna do estado,
+       a recuperação, o encerramento, a gelada da loja do terminal e o parcelado do produto), `GeladaParceladoTelasTests` (App
+       headless: o `Alt+G`, a linha natural, a recusa, o cupom e o payload sem chave nova; o crédito em 3× com a
+       confirmação, o "PARC" sem o varejo riscado, o "Não aprovado" que volta, a venda finalizada no parcelado; a liberação
+       negada que volta os preços e o F10 seguinte no débito à vista; o pagamento à vista e o F10 reaberto com a auditoria;
+       o Del do cartão parcelado e o Esc do pagamento; a venda recuperada entre a confirmação e a maquininha; sem o recurso,
+       as parcelas na maquininha e o `Alt+G` que bipa, e o recurso que some com o gelado ainda deixa tirá-lo), `AtalhosTelasTests` e `UsabilidadeTelasTests` atualizados (o `Alt+G` é desta versão);
+       `ContratosEventosTests` gera a fixture `venda.finalizada.gelada_parcelado.payload.json` (v1) e confere que as
+       operações do caixa dão as mesmas linhas, e o `venda-eventos.test.ts` da API a aplica (o `conferirSomasVenda` aceita o
+       gelado dentro do preço). A matriz de compatibilidade não roda neste bloco: o handler e o protocolo da API não mudaram.

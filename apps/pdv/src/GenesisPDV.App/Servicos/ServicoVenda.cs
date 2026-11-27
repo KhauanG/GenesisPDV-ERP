@@ -212,6 +212,18 @@ public sealed class ServicoVenda(
         }
 
         await RegistrarProdutosAsync(Atual, ct);
+        // O preço parcelado confirmado e não pago (a queda veio entre o "Confirmar" e a maquininha, F3-B18) não fica na venda
+        // recuperada: sem o pagamento parcelado, os preços voltam aos do F8, gravados antes de a tela abrir.
+        var totalParcelado = Atual.Total;
+        if (Atual.VoltarDoPrecoParcelado())
+        {
+            await repositorio.SalvarEmAndamentoAsync(
+                Atual,
+                AuditoriaParcelado(Atual, TipoPrecoVenda.Parcelado, totalParcelado, Atual.Total,
+                    $"Preço parcelado desfeito na venda {Atual.NumeroExibicao} (recuperada sem o pagamento parcelado)", null, null),
+                ct);
+        }
+
         var vinculada = await VincularSessaoSeAusenteAsync(ct);
         log.LogWarning("Venda {Numero} recuperada após interrupção ({Itens} itens)", Atual.NumeroExibicao, Atual.QtdItens);
         await terminal.RegistrarAuditoriaAsync("venda_recuperada", Operador.Id, "venda", Atual.Id,
@@ -1026,6 +1038,76 @@ public sealed class ServicoVenda(
     }
 
     /// <summary>
+    /// <c>Alt+G</c> Gelada (PDV 11.4; F3-B18): liga ou desliga o gelado no item (o Core, <see cref="Venda.AlternarGelado"/>). A
+    /// marca vai à tabela local <c>itens_venda_gelados</c> no mesmo commit da venda; não há ação de auditoria (o acréscimo
+    /// fica no <c>preco_unitario</c> e no <c>preco_tabela</c>, como um preço do cadastro).
+    /// </summary>
+    public Task<ResultadoGelado> AlternarGeladoAsync(int sequencia, CancellationToken ct = default) =>
+        ExecutarAsync(v => v.AlternarGelado(sequencia), ct);
+
+    /// <summary>
+    /// O preço parcelado confirmado na tela de pagamento (PDV 11.2; F3-B18; D74), antes de passar o cartão em mais de uma
+    /// parcela: a venda vai a <c>tipo_preco = 'parcelado'</c> (o Core, <see cref="Venda.AplicarPrecoParcelado"/>), com a
+    /// auditoria <c>tipo_preco_alterado</c> (o tipo e o total antes e depois, e as parcelas) no mesmo commit. Sem item com o
+    /// preço parcelado, nada muda. A tela só chega aqui com o recurso da onda R3 (Padrões da Fase 3). <paramref name="valor"/>
+    /// é o informado para o cartão em parcelas: o parcelado que não deixa valor para ele é recusado
+    /// (<see cref="Venda.MotivoParceladoSemValor"/>).
+    /// </summary>
+    public Task<ResultadoParcelado> AplicarPrecoParceladoAsync(int parcelas, decimal? valor = null, CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        return ExecutarAsync(
+            v => v.AplicarPrecoParcelado(valor),
+            (v, r) => r.Aplica
+                ? [AuditoriaParcelado(v, tipoAntes, r.TotalAntes, r.TotalDepois,
+                    $"Preço parcelado na venda {v.NumeroExibicao} (cartão em {parcelas}×)", r.LinhasAlteradas, parcelas)]
+                : [],
+            ct);
+    }
+
+    /// <summary>
+    /// Sai do preço parcelado confirmado sem o pagamento parcelado (a maquininha não aprovou, a liberação da forma foi negada,
+    /// a tela de pagamento reaberta; PDV 11.2; F3-B18): os preços e o tipo voltam aos do <c>F8</c>, com a auditoria
+    /// <c>tipo_preco_alterado</c>. Devolve se voltou; fora desse estado não grava nada.
+    /// </summary>
+    public Task<bool> VoltarDoPrecoParceladoAsync(CancellationToken ct = default)
+    {
+        if (Atual is not { ParceladoSemPagamentoParcelado: true })
+        {
+            return Task.FromResult(false);
+        }
+
+        var totalAntes = Atual.Total;
+        return ExecutarAsync(
+            v => v.VoltarDoPrecoParcelado(),
+            (v, voltou) => voltou
+                ? [AuditoriaParcelado(v, TipoPrecoVenda.Parcelado, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao}", null, null)]
+                : [],
+            ct);
+    }
+
+    /// <summary>A auditoria <c>tipo_preco_alterado</c> da entrada e da saída do preço parcelado (F3-B18), como a do F8.</summary>
+    private RegistroAuditoria AuditoriaParcelado(
+        Venda v, string? tipoAntes, decimal totalAntes, decimal totalDepois, string texto, int? linhas, int? parcelas)
+    {
+        var antes = new JsonObject { ["tipo_preco"] = tipoAntes, ["total"] = FormatoProtocolo.Dinheiro(totalAntes) }.ToJsonString();
+        var depois = new JsonObject { ["tipo_preco"] = v.TipoPreco, ["total"] = FormatoProtocolo.Dinheiro(totalDepois) };
+        if (linhas is { } n)
+        {
+            depois["itens_recalculados"] = n;
+        }
+
+        if (parcelas is { } p)
+        {
+            depois["parcelas"] = p;
+        }
+
+        return new RegistroAuditoria("tipo_preco_alterado", Operador.Id, "vendas", v.Id,
+            $"{texto}: total de R$ {NumeroBr.Dinheiro(totalAntes)} para R$ {NumeroBr.Dinheiro(totalDepois)}", null,
+            "PDV › Pagamento", null, Antes: antes, Depois: depois.ToJsonString());
+    }
+
+    /// <summary>
     /// F6 › 3 Acréscimo no total (PDV 12.2; F3-B16), com a auditoria <c>acrescimo_total</c>; sem <c>pdv.venda.acrescimo</c>,
     /// com a <paramref name="liberacao"/> do supervisor (e a auditoria <c>liberacao</c>). O acréscimo não tem limite de % do
     /// operador nem linha em <c>liberacoes</c> (a SYNC 9.7 não tem a ação): a liberação fica na auditoria. Devolve o valor.
@@ -1183,9 +1265,23 @@ public sealed class ServicoVenda(
             ? null
             : new Liberacao(liberacao.Supervisor.Id, liberacao.Supervisor.LimiteDescontoEfetivoPct, liberacao.Motivo, liberacao.ConcedidaEm,
                 liberacao.Supervisor.Master);
+        // O lançamento à vista depois do parcelado confirmado sem o pagamento parcelado volta os preços dentro do Core
+        // (F3-B18): a saída do parcelado tem a auditoria tipo_preco_alterado no mesmo commit (PDV 11.2).
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
         await ExecutarAsync(
             v => v.LancarPagamento(forma, valor, relogio.Agora, detalhe, pix, supervisor),
-            (v, p) => AuditoriaPagamento(forma, p, pix, liberacao),
+            (v, p) =>
+            {
+                var auditoria = AuditoriaPagamento(forma, p, pix, liberacao);
+                if (tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado)
+                {
+                    auditoria.Insert(0, AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total,
+                        $"Preço parcelado desfeito na venda {v.NumeroExibicao} (pagamento à vista)", null, null));
+                }
+
+                return auditoria;
+            },
             ct);
         return Atual!.Falta == 0m ? await FinalizarAsync(ct) : null;
     }
@@ -1219,9 +1315,45 @@ public sealed class ServicoVenda(
         return lista;
     }
 
-    public Task VoltarParaItensAsync(CancellationToken ct = default) => ExecutarAsync(v => v.VoltarParaItens(), ct);
+    /// <summary>
+    /// Esc na tela de pagamento. O preço parcelado confirmado sem o pagamento parcelado (a liberação da forma recusada) volta
+    /// aqui aos preços do <c>F8</c> (F3-B18), com a auditoria <c>tipo_preco_alterado</c>.
+    /// </summary>
+    public Task VoltarParaItensAsync(CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
+        return ExecutarAsync(
+            v =>
+            {
+                v.VoltarParaItens();
+                return true;
+            },
+            (v, _) => tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado
+                ? [AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao}", null, null)]
+                : [],
+            ct);
+    }
 
-    public Task RemoverPagamentoAsync(int sequencia, CancellationToken ct = default) => ExecutarAsync(v => v.RemoverPagamento(sequencia), ct);
+    /// <summary>
+    /// Del na tela de pagamento. Remover o pagamento parcelado volta os preços e o tipo do <c>F8</c> (PDV 11.2; F3-B18), com a
+    /// auditoria <c>tipo_preco_alterado</c> no mesmo commit.
+    /// </summary>
+    public Task RemoverPagamentoAsync(int sequencia, CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
+        return ExecutarAsync(
+            v =>
+            {
+                v.RemoverPagamento(sequencia);
+                return true;
+            },
+            (v, _) => tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado
+                ? [AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao} (pagamento removido)", null, null)]
+                : [],
+            ct);
+    }
 
     /// <summary>Lança dinheiro na forma Dinheiro da loja (a primeira do tipo); quitado o total, finaliza.</summary>
     public async Task<ResultadoFinalizacao?> LancarDinheiroAsync(decimal valorRecebido, CancellationToken ct = default)

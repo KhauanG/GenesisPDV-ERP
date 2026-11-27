@@ -39,7 +39,8 @@ public sealed record EstadoVenda(
     string? Observacao = null,
     string? DescontoTotalOrigem = null,
     Guid? IdadeConfirmadaPorId = null,
-    DateTimeOffset? IdadeConfirmadaEm = null);
+    DateTimeOffset? IdadeConfirmadaEm = null,
+    string? TipoPrecoAntesParcelado = null);
 
 /// <summary>
 /// Agregado da venda do PDV: itens, descontos, pagamentos, totais e troco (PDV 10–17, 34.1). Toda regra de valor
@@ -130,6 +131,7 @@ public sealed class Venda
         DescontoTotalOrigem = e.DescontoTotalOrigem;
         IdadeConfirmadaPorId = e.IdadeConfirmadaPorId;
         IdadeConfirmadaEm = e.IdadeConfirmadaEm;
+        TipoPrecoAntesParcelado = e.TipoPreco == TipoPrecoVenda.Parcelado ? e.TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo : null;
         _fuso = Comum.DiaOperacional.ObterFuso(fusoHorario);
         _horaCorte = horaCorte;
         _usaPrecoVolume = usaPrecoVolume;
@@ -156,9 +158,16 @@ public sealed class Venda
     public string? NomeNota { get; private set; }
     /// <summary>
     /// <c>vendas.tipo_preco</c>: começa no varejo em toda venda e muda pelo <c>F8</c> (<see cref="AlterarTipoPreco"/>, PDV
-    /// 11.2; F3-B17); o parcelado entra com o pagamento parcelado (F3-B18).
+    /// 11.2; F3-B17); o parcelado entra com o pagamento parcelado (<see cref="AplicarPrecoParcelado"/>, F3-B18).
     /// </summary>
     public string TipoPreco { get; private set; }
+
+    /// <summary>
+    /// No parcelado (F3-B18), o tipo do <c>F8</c> que a venda tinha antes dele (<c>varejo</c> ou <c>atacado</c>): as linhas sem
+    /// preço parcelado seguem nele, e remover o pagamento parcelado volta a ele. Nulo fora do parcelado. Não é coluna da
+    /// nuvem: fica só no caixa (<c>estado_operacao.tipo_preco_antes_parcelado</c>), para a venda recuperada voltar certo.
+    /// </summary>
+    public string? TipoPrecoAntesParcelado { get; private set; }
 
     public int QtdItens { get; private set; }
     public decimal SubtotalBruto { get; private set; }
@@ -378,7 +387,8 @@ public sealed class Venda
             if (!item.Cancelado && ContaParaPreco(item) && OrigemPreco.PorQuantidade(item.OrigemPreco))
             {
                 var r = Resolver(registrado, item, porProduto, porGrupo);
-                if (r.Origem == item.OrigemPreco && r.Preco == item.PrecoUnitario)
+                // O gravado tem a camada de acréscimos (complementos e gelado) por cima do preço da regra.
+                if (r.Origem == item.OrigemPreco && r.Preco + item.AcrescimoUnitario == item.PrecoUnitario)
                 {
                     item.LimiarPreco = r.Limiar;
                     item.NomeGrupoPreco = r.GrupoNome;
@@ -516,6 +526,7 @@ public sealed class Venda
                 && !i.EhCasco
                 && OrigemPreco.Recalculavel(i.OrigemPreco)
                 && i.DescontoItem == 0m
+                && !i.Gelado
                 && RegrasComplementos.Mesmos(i.Complementos, escolhidos));
             if (existente is not null)
             {
@@ -920,7 +931,8 @@ public sealed class Venda
                 pesoDigitado: item.PesoDigitado,
                 grupoPrecoQuantidadeId: item.GrupoPrecoQuantidadeId,
                 quantidadeReferenciaPreco: item.QuantidadeReferenciaPreco,
-                complementos: RegrasComplementos.Copiar(item.Complementos))
+                complementos: RegrasComplementos.Copiar(item.Complementos),
+                acrescimoGelada: item.AcrescimoGelada)
             {
                 Embalagem = item.Embalagem,
                 PrecoVarejo = item.PrecoVarejo,
@@ -1322,7 +1334,9 @@ public sealed class Venda
     /// <summary>Σ economia em relação ao varejo nas linhas de atacado/faixa/mix ("Economia atacado: R$ 3,60").</summary>
     public decimal EconomiaAtacado => ItensAtivos.Sum(i => i.EconomiaAtacado);
 
-    private ParametrosPreco Parametros => new(LojaId, _usaPrecoVolume, TipoPreco);
+    private ParametrosPreco Parametros => TipoPreco == TipoPrecoVenda.Parcelado
+        ? new(LojaId, _usaPrecoVolume, TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo, Parcelado: true)
+        : new(LojaId, _usaPrecoVolume, TipoPreco);
 
     /// <summary>
     /// Registra o snapshot na primeira inclusão do produto (PDV 11.3). Uma embalagem lida depois e que não estava no
@@ -1834,6 +1848,209 @@ public sealed class Venda
         return new ResultadoTipoPreco(SituacaoDesconto.Aplicado, tipo, totalAntes, Total, alteradas, porLiberacao);
     }
 
+    // ---------------------------------------------------------------- gelada e parcelado (PDV 11.2, 11.4; F3-B18)
+
+    /// <summary>
+    /// <c>Alt+G</c> Gelada (PDV 11.4; Fase 3, F3-B18): liga ou desliga o gelado no item. Ligado, soma por unidade o
+    /// <c>produtos_lojas.acrescimo_gelada</c> do snapshot da primeira inclusão ao <c>preco_unitario</c> e ao
+    /// <c>preco_tabela</c> (a camada de acréscimos do item, depois dos complementos; <c>origem_preco</c> mantém a origem): não é
+    /// acréscimo da venda (não vai ao <c>acrescimo_total</c> nem a <c>vOutro</c>) nem desconto. Só no item que a regra 11.3
+    /// recalcula (fora do combo, do casco, da balança tipo Valor, do orçamento, do preço digitado e da linha sem snapshot) e
+    /// só com o acréscimo &gt; 0 na loja; desligar usa o valor que foi somado. O desconto do item em % é refeito e o em R$
+    /// fica no teto (11.3.1). Com pagamento lançado, ligar pode (o total sobe, como incluir um item) e desligar só se o
+    /// total não cair (decisão 8).
+    /// </summary>
+    public ResultadoGelado AlternarGelado(int sequencia)
+    {
+        ExigirStatus(StatusVenda.EmAndamento, "marcar o gelado");
+        var item = ObterItemAtivo(sequencia);
+        if (item.EhKit)
+        {
+            throw new RegraNegocioException("Item de combo: o gelado não se aplica ao combo.");
+        }
+
+        if (item.EhCasco)
+        {
+            throw new RegraNegocioException("Item de casco: o gelado é do produto cheio.");
+        }
+
+        if (item.OrigemPreco is OrigemPreco.Manual or OrigemPreco.Balanca or OrigemPreco.Orcamento or OrigemPreco.KitRateio)
+        {
+            throw new RegraNegocioException(item.OrigemPreco == OrigemPreco.Manual
+                ? $"O item {sequencia} tem o preço digitado: o preço é o digitado (cancele e inclua de novo para o gelado)."
+                : $"O item {sequencia} tem o preço fechado: o gelado não se aplica.");
+        }
+
+        if (item.PrecoFixado || !_produtos.TryGetValue(item.ProdutoId, out var registrado))
+        {
+            throw new RegraNegocioException($"O item {sequencia} foi recuperado sem o cadastro da inclusão: cancele e inclua de novo para o gelado.");
+        }
+
+        var acrescimo = item.Gelado ? 0m : registrado.Produto.Precos?.AcrescimoGelada ?? 0m;
+        if (!item.Gelado && acrescimo <= 0m)
+        {
+            throw new RegraNegocioException($"{item.Descricao} não tem preço gelado nesta loja.");
+        }
+
+        if (!item.Gelado && !Arredondamento.CabeEm(acrescimo, Arredondamento.CasasPreco))
+        {
+            throw new RegraNegocioException("Acréscimo gelada inválido no cadastro — procure o gerente.");
+        }
+
+        var totalAntes = Total;
+        var antes = item.AcrescimoGelada;
+        Atomico(() =>
+        {
+            item.AcrescimoGelada = acrescimo;
+            _ = ValorBrutoValido(item.Quantidade, item.PrecoUnitario - antes + acrescimo);
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+            ExigirTotalNaoReduzidoComPagamento(totalAntes, "tirar o gelado");
+        });
+        return new ResultadoGelado(sequencia, item.Gelado, item.Gelado ? acrescimo : antes, totalAntes, Total);
+    }
+
+    /// <summary>
+    /// Quanto o preço parcelado mudaria a venda (PDV 11.2; F3-B18), sem mudar nada: a prévia da confirmação "Preço parcelado:
+    /// total passa de R$ X para R$ Y". <see cref="ResultadoParcelado.Aplica"/> falso = nenhum item tem <c>preco_parcelado</c>
+    /// (ou a venda já está no parcelado): o pagamento em parcelas segue sem mudar o preço (D74).
+    /// </summary>
+    public ResultadoParcelado PreverPrecoParcelado()
+    {
+        var totalAntes = Total;
+        if (TipoPreco == TipoPrecoVenda.Parcelado)
+        {
+            return new ResultadoParcelado(totalAntes, totalAntes, 0);
+        }
+
+        var foto = Fotografar();
+        try
+        {
+            return PassarAoParcelado(totalAntes);
+        }
+        finally
+        {
+            Reverter(foto);
+        }
+    }
+
+    /// <summary>
+    /// O preço parcelado confirmado (PDV 11.2, 11.3 passo 9; F3-B18; D74): na tela de pagamento, antes de passar o cartão
+    /// em mais de uma parcela numa forma que parcela, a venda passa a <c>tipo_preco = 'parcelado'</c> e as linhas que a regra
+    /// recalcula com <c>preco_parcelado &gt; 0</c> passam a ele (<c>origem_preco = 'parcelado'</c>, com os adicionais e o
+    /// gelado); as demais ficam no tipo do <c>F8</c> (<see cref="TipoPrecoAntesParcelado"/>). Nenhum item com o preço
+    /// parcelado: não muda nada (<see cref="ResultadoParcelado.Aplica"/> falso). Recusado com pagamento eletrônico (cartão
+    /// ou PIX) já aprovado: aquele valor foi cobrado com o preço de antes. Recusado também quando o parcelado menor que o preço
+    /// atual (D125, decisão 3) não deixa valor para o pagamento parcelado (<see cref="MotivoParceladoSemValor"/>). A volta é
+    /// <see cref="VoltarDoPrecoParcelado"/>.
+    /// </summary>
+    /// <param name="valorInformado">
+    /// O valor que o operador informou para o cartão em parcelas, antes do parcelado (a maquininha cobra ele mais a
+    /// <see cref="ResultadoParcelado.Diferenca"/>); nulo confere só o total contra o já pago.
+    /// </param>
+    public ResultadoParcelado AplicarPrecoParcelado(decimal? valorInformado = null)
+    {
+        ExigirStatus(StatusVenda.EmPagamento, "aplicar o preço parcelado");
+        if (TipoPreco == TipoPrecoVenda.Parcelado)
+        {
+            return new ResultadoParcelado(Total, Total, 0);
+        }
+
+        if (MotivoParceladoRecusado is { } motivo)
+        {
+            throw new RegraNegocioException(motivo);
+        }
+
+        var totalAntes = Total;
+        var foto = Fotografar();
+        try
+        {
+            var resultado = PassarAoParcelado(totalAntes);
+            if (!resultado.Aplica)
+            {
+                Reverter(foto);
+            }
+            else if (MotivoParceladoSemValor(resultado, valorInformado) is { } semValor)
+            {
+                throw new RegraNegocioException(semValor);
+            }
+
+            return resultado;
+        }
+        catch
+        {
+            Reverter(foto);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Por que o preço parcelado não entra agora (PDV 11.2: "com pagamento eletrônico já aprovado, a troca para parcelado é
+    /// recusada"); nulo = pode. A tela confere antes de pedir a confirmação.
+    /// </summary>
+    public string? MotivoParceladoRecusado => PagamentosAtivos.FirstOrDefault(p => p.Eletronico) is { } eletronico
+        ? $"Já há pagamento eletrônico aprovado ({eletronico.DescricaoForma}): o preço parcelado não se aplica. Lance em 1 parcela, "
+          + "ou remova o pagamento eletrônico antes."
+        : null;
+
+    /// <summary>
+    /// O parcelado menor que o preço atual (D125, decisão 3) com dinheiro já lançado (decisão 4) pode derrubar o total até o
+    /// já pago, ou deixar o cartão em parcelas com valor zero ou negativo: recusado (com pagamento lançado o total não cai
+    /// abaixo do pago, README do PDV, decisão 8). Nulo = pode. A tela confere na prévia, antes de pedir a confirmação.
+    /// </summary>
+    public string? MotivoParceladoSemValor(ResultadoParcelado previa, decimal? valorInformado = null)
+    {
+        ArgumentNullException.ThrowIfNull(previa);
+        if (!previa.Aplica || (previa.TotalDepois > Pago && (valorInformado is not { } valor || valor + previa.Diferenca > 0m)))
+        {
+            return null;
+        }
+
+        return $"O preço parcelado leva o total a R$ {NumeroBr.Dinheiro(previa.TotalDepois)} e não sobra valor para o cartão em "
+               + $"parcelas (já pago R$ {NumeroBr.Dinheiro(Pago)}): lance em 1 parcela, ou remova o pagamento lançado antes.";
+    }
+
+    /// <summary>
+    /// A venda está no preço parcelado sem nenhum pagamento ativo em mais de uma parcela (a maquininha recusou, a liberação
+    /// da forma foi negada, a queda entre o "Confirmar" e a maquininha): o estado que <see cref="VoltarDoPrecoParcelado"/>
+    /// desfaz antes de a tela mostrar valores à vista (F3-B18).
+    /// </summary>
+    public bool ParceladoSemPagamentoParcelado =>
+        Aberta && TipoPreco == TipoPrecoVenda.Parcelado && !PagamentosAtivos.Any(p => p.Parcelas > 1);
+
+    private ResultadoParcelado PassarAoParcelado(decimal totalAntes)
+    {
+        var antes = ItensAtivos.ToDictionary(i => i.Sequencia, i => (i.OrigemPreco, i.PrecoUnitario));
+        TipoPrecoAntesParcelado = TipoPreco;
+        TipoPreco = TipoPrecoVenda.Parcelado;
+        Recalcular(ajustarDescontoTotalAoTeto: true);
+        var alteradas = ItensAtivos.Count(i => i.OrigemPreco == OrigemPreco.Parcelado
+                                              && antes.TryGetValue(i.Sequencia, out var a) && a.OrigemPreco != OrigemPreco.Parcelado);
+        return new ResultadoParcelado(totalAntes, Total, alteradas);
+    }
+
+    /// <summary>
+    /// Sai do preço parcelado quando a venda não tem mais pagamento ativo em mais de uma parcela (o pagamento removido, a
+    /// maquininha recusada antes do lançamento, a volta a 1 parcela; PDV 11.2; F3-B18): o tipo volta ao do <c>F8</c> e as
+    /// linhas, aos preços dele. Devolve se voltou. Com outro pagamento parcelado ativo, fica como está. A venda recuperada
+    /// depois de uma queda passa por aqui na abertura (<c>ServicoVenda.RecuperarAsync</c>), não no <see cref="RegistrarProdutos"/>
+    /// (que também refaz a venda depois de um erro, com o parcelado confirmado ainda na tela da maquininha).
+    /// </summary>
+    public bool VoltarDoPrecoParcelado()
+    {
+        if (!ParceladoSemPagamentoParcelado)
+        {
+            return false;
+        }
+
+        Atomico(() =>
+        {
+            TipoPreco = TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo;
+            TipoPrecoAntesParcelado = null;
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+        });
+        return true;
+    }
+
     /// <summary>
     /// A ação toda pede o supervisor (o operador sem a permissão dela): sem a liberação, <c>ExigeLiberacao</c>; com ela, o
     /// % pedido precisa caber no limite do supervisor, e a liberação é sempre usada (vai em <c>liberacoes</c>).
@@ -2080,6 +2297,8 @@ public sealed class Venda
         }
 
         Status = StatusVenda.EmPagamento;
+        // O parcelado confirmado sem o pagamento parcelado não passa de uma ida ao pagamento para outra (F3-B18).
+        _ = VoltarDoPrecoParcelado();
     }
 
     /// <summary>Esc na tela de pagamento: volta aos itens mantendo os pagamentos não eletrônicos lançados.</summary>
@@ -2087,6 +2306,9 @@ public sealed class Venda
     {
         ExigirStatus(StatusVenda.EmPagamento, "voltar aos itens");
         Status = StatusVenda.EmAndamento;
+        // O parcelado fica só com o pagamento parcelado lançado (F3-B18): a confirmação sem ele (a liberação da forma
+        // recusada, por exemplo) volta aos preços do F8.
+        _ = VoltarDoPrecoParcelado();
     }
 
     /// <summary>Quanto do valor informado é aplicado à venda e quanto vira troco (PDV 16.4), sem lançar.</summary>
@@ -2189,6 +2411,13 @@ public sealed class Venda
         FormaPagamentoInfo forma, decimal valorInformado, DateTimeOffset agora, DetalhePagamento detalhe, ConfirmacaoPix? pix)
     {
         ExigirStatus(StatusVenda.EmPagamento, "lançar pagamento");
+        if (detalhe.Parcelas <= 1)
+        {
+            // O preço parcelado confirmado só vale com o pagamento em parcelas (F3-B18): o lançamento à vista que vem depois
+            // dele (a maquininha recusou e o operador trocou de forma) volta os preços antes de medir o valor.
+            _ = VoltarDoPrecoParcelado();
+        }
+
         if (PagamentosAtivos.Count() >= MaximoPagamentos)
         {
             throw new RegraNegocioException($"Máximo de {MaximoPagamentos} pagamentos por venda.");
@@ -2258,7 +2487,11 @@ public sealed class Venda
                         ?? throw new RegraNegocioException($"Pagamento {sequencia} não encontrado.");
         pagamento.Status = StatusPagamento.Cancelado;
         CancelarCobrancas(pagamento.Id);
-        Recalcular();
+        // Remover o pagamento parcelado volta os preços e o tipo do F8 (PDV 11.2; F3-B18).
+        if (!VoltarDoPrecoParcelado())
+        {
+            Recalcular();
+        }
     });
 
     /// <summary>A cobrança PIX do pagamento removido (ou da venda cancelada) fica <c>cancelada</c> no payload.</summary>
@@ -2890,7 +3123,8 @@ public sealed class Venda
         new FotoCabecalho(
             Status, StatusFiscal, DiaOperacional, DescontoTotal, DescontoTotalPct, DescontoTotalOrigem, AcrescimoTotal,
             FinalizadaEm, CanceladaEm, CanceladaPorId, CancelamentoAutorizadoPorId, MotivoCancelamento, CancelamentoOrigem,
-            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador, TipoPreco));
+            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador, TipoPreco,
+            TipoPrecoAntesParcelado));
 
     private void Reverter(Foto foto)
     {
@@ -2944,6 +3178,7 @@ public sealed class Venda
         CpfCnpjNota = c.CpfCnpjNota;
         NomeNota = c.NomeNota;
         TipoPreco = c.TipoPreco;
+        TipoPrecoAntesParcelado = c.TipoPrecoAntesParcelado;
         RecalcularTotaisSemRateio();
     }
 
@@ -2991,7 +3226,8 @@ public sealed class Venda
         string? CpfCnpjNota,
         string? NomeNota,
         decimal DescontoTotalOperador,
-        string TipoPreco);
+        string TipoPreco,
+        string? TipoPrecoAntesParcelado);
 
     private static void ValidarQuantidade(decimal quantidade, bool fracionavel)
     {
