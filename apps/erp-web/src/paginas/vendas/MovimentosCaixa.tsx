@@ -7,9 +7,9 @@ import {
   type MovimentoCaixaResumo,
   type PaginaMovimentosCaixa,
 } from '@genesis/shared';
-import { Alert, Anchor, Badge, Group, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Group, SimpleGrid, Skeleton, Stack, Text, Title } from '@mantine/core';
 import { useDocumentTitle } from '@mantine/hooks';
-import { IconArrowLeft } from '@tabler/icons-react';
+import { IconArrowLeft, IconPrinter } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Link, useParams } from 'react-router';
@@ -30,6 +30,7 @@ import {
   useOpcoesLojas,
   useOpcoesOperadores,
 } from './comum';
+import { urlComprovanteMovimento } from './MovimentosCaixaComprovante';
 
 export const ROTA_REFORCOS = '/vendas/reforcos';
 export const ROTA_SANGRIAS = '/vendas/sangrias';
@@ -165,8 +166,8 @@ export const ListaSangrias = () => <ListaMovimentos grupo="sangrias" />;
 
 /**
  * Detalhe só de leitura do movimento (15.2/15.3): tipo, operador, loja, caixa, data e hora, valor, quem retira,
- * observação, informações adicionais, cancelamento (feito no PDV) e o link para a sessão de caixa (14.9). Imprimir o
- * comprovante chega com os templates de impressão do ERP (3.7).
+ * observação, informações adicionais, cancelamento (feito no PDV) e o link para a sessão de caixa (14.9). "Imprimir
+ * comprovante" (`movimentos_caixa.imprimir`; F3-B9) abre o comprovante de 2 vias em aba nova, impresso pelo navegador.
  */
 function DetalheMovimento({ grupo }: { grupo: Grupo }) {
   const g = GRUPOS[grupo];
@@ -190,14 +191,25 @@ function DetalheMovimento({ grupo }: { grupo: Grupo }) {
           <IconArrowLeft size={14} /> {g.titulo}
         </Group>
       </Anchor>
-      <Group gap="xs">
-        <Title order={2} size="h3">
-          {rotulo} de {reais(m.valor)}
-        </Title>
-        {m.cancelado && (
-          <Badge color="red" variant="light">
-            Cancelado
-          </Badge>
+      <Group justify="space-between" wrap="wrap">
+        <Group gap="xs">
+          <Title order={2} size="h3">
+            {rotulo} de {reais(m.valor)}
+          </Title>
+          {m.cancelado && (
+            <Badge color="red" variant="light">
+              Cancelado
+            </Badge>
+          )}
+        </Group>
+        {pode('movimentos_caixa.imprimir') && (
+          <Button
+            variant="default"
+            leftSection={<IconPrinter size={16} />}
+            onClick={() => window.open(urlComprovanteMovimento(g.rota, m.id), '_blank')}
+          >
+            Imprimir comprovante
+          </Button>
         )}
       </Group>
       <SimpleGrid cols={{ base: 1, md: 2 }}>

@@ -1,7 +1,7 @@
 /**
  * Consultas só de leitura das vendas e do caixa do PDV no ERP (Fase 1C, bloco C12): Vendas (ERP 15.4, sem a venda
  * ERP, o cancelamento pelo ERP e a devolução, que são da Fase 3), Reforço e abertura (15.2), Sangria (15.3) e
- * Fechamento de caixa (14.9, sem a conferência `fechamentos_caixa.conferir`, que é da Fase 3; a quebra/sobra no
+ * Fechamento de caixa (14.9; a conferência `fechamentos_caixa.conferir` entrou na Fase 3, F3-B9; a quebra/sobra no
  * financeiro é da Fase 4). Tudo nasce no PDV e chega pelos eventos `venda.*` e `caixa.*` (SYNC 9.3–9.9); as datas
  * filtram pelo **dia operacional** (D7) gravado pelo caixa.
  *
@@ -10,8 +10,14 @@
  * mesmo que seja de treino.
  */
 import { z } from 'zod';
+import { textoOpcional } from './campos.js';
+import { dec, decTexto, type Valor } from './decimal.js';
 import { paginacaoQuerySchema } from './paginacao.js';
-import { CANAIS_VENDA } from './sync/eventos.js';
+import {
+  CANAIS_VENDA,
+  MOTIVO_CANCELAMENTO_VENDA_MAX,
+  MOTIVO_CANCELAMENTO_VENDA_MIN,
+} from './sync/eventos.js';
 
 // Data de calendário de verdade (`2026-02-31` não passa): a consulta faz `::date` no PostgreSQL, que recusaria a data
 // impossível com erro interno (500) em vez da validação (422).
@@ -268,10 +274,121 @@ export interface VendaDetalhe {
   cancelamentoAutorizadoPorNome: string | null;
   motivoCancelamento: string | null;
   cancelamentoOrigem: string | null;
+  /**
+   * Como a devolução ao cliente foi feita no cancelamento pelo ERP da venda de caixa fechado (D113; F3-B11), lida da
+   * auditoria do cancelamento: só registrada até a Fase 4. `null` sem cancelamento pelo ERP ou sem devolução.
+   */
+  formaDevolucaoCancelamento: FormaDevolucaoCancelamento | null;
   itens: ItemVendaDetalhe[];
   pagamentos: PagamentoVendaDetalhe[];
   /** `null` sem `vendas.ver_lucro` (ERP 15.4.2, aba Financeiro: custo, lucro R$ e margem %). */
   lucro: { custo: string; lucro: string; margemPct: string | null } | null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Cancelar venda pelo ERP (ERP 15.4.3; SYNC 10.4, 16.3; Fase 3, F3-B11; D112, D113)
+
+/**
+ * Forma de devolução ao cliente no cancelamento pelo ERP da venda de **caixa já fechado** (D113 = F3-Q43 (A)): o
+ * dinheiro sai do cofre (a gaveta da sessão já foi fechada), o estorno no cartão ou no PIX é feito na maquininha ou no
+ * banco, ou o cliente leva um vale. Até a Fase 4 só fica **registrada** (na auditoria do cancelamento): nenhuma conta
+ * corrente nem movimento de caixa é lançado.
+ */
+export const FORMAS_DEVOLUCAO_CANCELAMENTO = [
+  'dinheiro_cofre',
+  'estorno_cartao',
+  'estorno_pix',
+  'vale',
+] as const;
+export type FormaDevolucaoCancelamento = (typeof FORMAS_DEVOLUCAO_CANCELAMENTO)[number];
+export const ROTULOS_FORMA_DEVOLUCAO_CANCELAMENTO: Record<FormaDevolucaoCancelamento, string> = {
+  dinheiro_cofre: 'Dinheiro do cofre',
+  estorno_cartao: 'Estorno no cartão',
+  estorno_pix: 'Devolução por PIX',
+  vale: 'Vale compra',
+};
+/**
+ * As formas que já valem: o vale só vira vale de verdade quando os vales entrarem no ERP (F3-B50); até lá a opção
+ * aparece desabilitada e a API a recusa.
+ */
+export const FORMAS_DEVOLUCAO_DISPONIVEIS: readonly FormaDevolucaoCancelamento[] = [
+  'dinheiro_cofre',
+  'estorno_cartao',
+  'estorno_pix',
+];
+
+/**
+ * A versão do PDV que lê a projeção `vendas_status_pdv` na Gestão de vendas (F12; F3-B29, release R3): abaixo dela (ou
+ * sem versão conhecida), o caixa não fica sabendo do cancelamento feito no ERP e ainda mostra a venda como finalizada
+ * (só aviso: a venda de caixa fechado já não se cancela no caixa, PC-1).
+ */
+export const VERSAO_PDV_LE_STATUS_VENDA = '0.14.0';
+
+/**
+ * `POST /vendas/:id/cancelar` (`vendas.ver` e `vendas.cancelar`, porque devolve o detalhe): o motivo (15 a 255
+ * caracteres sem os espaços das pontas, a mesma regra do caixa, O6), a forma de devolução (obrigatória na venda de caixa fechado com total acima de zero, D113) e
+ * `confirmarAvisos` (o caixa de origem offline ou com eventos pendentes: um cancelamento feito lá ainda pode chegar,
+ * SYNC 10.4; sem a confirmação, 409 com os avisos).
+ */
+export const cancelarVendaSchema = z.object({
+  motivo: z
+    .string('Informe o motivo')
+    .trim()
+    .min(
+      MOTIVO_CANCELAMENTO_VENDA_MIN,
+      `Informe o motivo com ${MOTIVO_CANCELAMENTO_VENDA_MIN} a ${MOTIVO_CANCELAMENTO_VENDA_MAX} caracteres`,
+    )
+    .max(
+      MOTIVO_CANCELAMENTO_VENDA_MAX,
+      `Informe o motivo com ${MOTIVO_CANCELAMENTO_VENDA_MIN} a ${MOTIVO_CANCELAMENTO_VENDA_MAX} caracteres`,
+    ),
+  formaDevolucao: z
+    .enum(FORMAS_DEVOLUCAO_CANCELAMENTO, 'Forma de devolução inválida')
+    .nullable()
+    .default(null),
+  confirmarAvisos: z.boolean().default(false),
+});
+export type CancelarVenda = z.infer<typeof cancelarVendaSchema>;
+export type CancelarVendaEntrada = z.input<typeof cancelarVendaSchema>;
+
+/**
+ * Por que a venda não se cancela pelo ERP (o `codigo` vai também em `detalhes.codigo` do erro da API):
+ * `ja_cancelada` (409), `nao_finalizada`, `nao_pdv` (a venda ERP ganha o cancelamento com ela, F3-B57),
+ * `documento_fiscal` (fase fiscal), `sessao_aberta` (D112: "cancele no caixa"), `cancelamento_pendente_no_caixa` (o
+ * caixa já cancelou e ainda não sincronizou, SYNC 10.4) e `com_troca` ("cancele a troca primeiro", Padrões da Fase 3).
+ */
+export const BLOQUEIOS_CANCELAMENTO_VENDA = [
+  'ja_cancelada',
+  'nao_finalizada',
+  'nao_pdv',
+  'documento_fiscal',
+  'sessao_aberta',
+  'cancelamento_pendente_no_caixa',
+  'com_troca',
+] as const;
+export type BloqueioCancelamentoVenda = (typeof BLOQUEIOS_CANCELAMENTO_VENDA)[number];
+
+/**
+ * Aviso do cancelamento (não impede): `terminal_offline` e `eventos_pendentes` pedem a confirmação (um cancelamento
+ * feito no caixa ainda pode chegar e virar `CANCELAMENTO_DUPLO`, SYNC 10.4); `versao_sem_status` só informa (o caixa
+ * abaixo do `VERSAO_PDV_LE_STATUS_VENDA` continua mostrando a venda como finalizada).
+ */
+export interface AvisoCancelamentoVenda {
+  codigo: 'terminal_offline' | 'eventos_pendentes' | 'versao_sem_status';
+  mensagem: string;
+  exigeConfirmacao: boolean;
+}
+
+/** `GET /vendas/:id/cancelamento` (`vendas.cancelar`): o que o modal mostra antes de cancelar. */
+export interface PreviaCancelamentoVenda {
+  podeCancelar: boolean;
+  bloqueio: { codigo: BloqueioCancelamentoVenda; mensagem: string } | null;
+  /** A venda de caixa fechado com total acima de zero pede a forma de devolução (D113). */
+  exigeFormaDevolucao: boolean;
+  formasDevolucao: FormaDevolucaoCancelamento[];
+  /** `pdv.cancelamento_devolve_vazios` da loja (D29): os vazios trazidos na venda voltam ao cliente. */
+  devolveVazios: boolean;
+  avisos: AvisoCancelamentoVenda[];
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -353,15 +470,38 @@ export interface MovimentoCaixaDetalhe extends MovimentoCaixaResumo {
   motivoCancelamento: string | null;
 }
 
+/** Quantas vias o comprovante de reforço e de sangria imprime (ERP 15.3: 2 vias, uma fica no caixa, outra com quem leva). */
+export const VIAS_COMPROVANTE_MOVIMENTO = ['Via do caixa', 'Via de quem retira'] as const;
+
+/**
+ * `GET /movimentos-caixa/:id/comprovante` (`movimentos_caixa.imprimir`; ERP 15.2 e 15.3 "Imprimir comprovante"; Fase 3,
+ * F3-B9): o que sai no papel, num layout fixo impresso pelo navegador (não há tipo de template para ele em
+ * `TIPOS_TEMPLATE`): a empresa e a loja do movimento (sem exigir `empresa.ver`, como o romaneio), e o movimento.
+ */
+export interface ComprovanteMovimentoCaixa {
+  empresa: { razaoSocial: string; nomeFantasia: string | null; cnpj: string };
+  loja: { codigo: number; nome: string; razaoSocial: string | null; cnpj: string | null };
+  movimento: MovimentoCaixaDetalhe;
+  /** Quando o comprovante foi gerado (relógio do servidor). */
+  geradoEm: string;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Fechamento de caixa / troca de turno (14.9): `sessoes_caixa` + `fechamentos_caixa`
 
-/** "Conferida" e "Divergente" chegam com a conferência da Fase 3 (`fechamentos_caixa.conferir`). */
-export const SITUACOES_SESSAO_CAIXA = ['aberta', 'fechada'] as const;
+/**
+ * As quatro situações do filtro (ERP 14.9; MD 3.12.4): `aberta`, `fechada` (fechada e ainda sem conferência, inclusive
+ * a fechada pela nuvem cujo `caixa.fechado` não chegou), `conferida` e `divergente`. As duas últimas são **derivadas**
+ * de `conferencias_caixa` (Fase 3, F3-B9): o `ck_sessoes_caixa_status`, que desce ao caixa, não muda.
+ */
+export const SITUACOES_SESSAO_CAIXA = ['aberta', 'fechada', 'conferida', 'divergente'] as const;
+export type SituacaoSessaoCaixa = (typeof SITUACOES_SESSAO_CAIXA)[number];
 export const ROTULOS_SITUACAO_SESSAO: Record<string, string> = {
   aberta: 'Aberta',
   fechada: 'Fechada',
   fechada_forcado: 'Fechada pela nuvem',
+  conferida: 'Conferida',
+  divergente: 'Divergente',
 };
 export const ROTULOS_TIPO_FECHAMENTO: Record<string, string> = {
   fechamento: 'Fechamento',
@@ -408,9 +548,10 @@ export interface SessaoCaixaResumo {
   operadorNome: string | null;
   usuarioSubsequenteNome: string | null;
   /**
-   * `aberta`, `fechada` ou `fechada_forcado`: fechada pela nuvem na substituição/revogação do terminal e cujo
-   * `caixa.fechado` ainda não chegou. Quando o fechamento tardio do terminal antigo chega, a sessão volta a `fechada`
-   * (a marca de que a nuvem a fechou fica em `fechamentoForcadoMotivo`, no detalhe).
+   * `aberta`, `fechada`, `conferida`, `divergente` ou `fechada_forcado`: fechada pela nuvem na substituição/revogação
+   * do terminal e cujo `caixa.fechado` ainda não chegou. Quando o fechamento tardio do terminal antigo chega, a sessão
+   * volta a `fechada` (a marca de que a nuvem a fechou fica em `fechamentoForcadoMotivo`, no detalhe). `conferida` e
+   * `divergente` vêm da conferência do gerente (`conferencias_caixa`, F3-B9).
    */
   situacao: string;
   /** `null` enquanto o `caixa.fechado` não chegou (sessão aberta ou fechada à força). */
@@ -419,6 +560,10 @@ export interface SessaoCaixaResumo {
   totalCalculado: string | null;
   totalInformado: string | null;
   diferenca: string | null;
+  /** Soma do conferido pelo gerente (F3-B9); `null` sem conferência. */
+  totalConferido: string | null;
+  /** Conferido − calculado (a soma das formas); `null` sem conferência. */
+  diferencaConferida: string | null;
 }
 
 export interface PaginaSessoesCaixa {
@@ -497,4 +642,111 @@ export interface SessaoCaixaDetalhe extends SessaoCaixaResumo {
   movimentos: MovimentoSessaoDetalhe[];
   /** Vendas gravadas na sessão: as canceladas entram na quantidade delas, não no total. */
   vendas: { quantidade: number; total: string; canceladas: number; totalCanceladas: string };
+  /** A conferência do gerente (F3-B9); `null` enquanto ninguém conferiu. */
+  conferencia: ConferenciaCaixaDetalhe | null;
+  /**
+   * `pdv.tolerancia_diferenca_caixa` da loja **agora** (D114): a diferença de cada forma até este valor, para mais ou
+   * para menos, ainda é "Conferida". A tela usa para o selo ao vivo; conferir de novo usa o valor de agora.
+   */
+  toleranciaConferencia: string;
+  /**
+   * Por que a sessão ainda não se confere (`null` = pode conferir): aberta, ou fechada pela nuvem sem o fechamento do
+   * caixa (padrão da Fase 3: a conferência só existe para sessão com `fechamentos_caixa`).
+   */
+  motivoSemConferencia: string | null;
+  /** Avisos que não impedem a conferência (eventos do turno em erro ou retidos, cálculo da nuvem diferente). */
+  avisosConferencia: AvisoConferenciaCaixa[];
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Conferência do fechamento (ERP 14.9; MD 3.12.4; Fase 3, F3-B9; D114)
+
+/** Até quantos caracteres a observação da conferência guarda (`conferencias_caixa.observacao`). */
+export const OBSERVACAO_CONFERENCIA_MAX = 2000;
+
+/**
+ * Valor conferido por forma em **texto decimal** (nunca `number`: dinheiro não passa por ponto flutuante, ADR-05), com
+ * vírgula ou ponto e até 2 casas, ≥ 0 (`ck_conferencias_caixa_formas_valor`); normalizado para `'223.50'`.
+ */
+const valorConferido = z
+  .string('Informe o valor conferido')
+  .trim()
+  .regex(/^\d{1,13}([.,]\d{1,2})?$/, 'Valor inválido: use até 2 casas decimais, sem sinal')
+  .transform((v) => decTexto(v.replace(',', '.'), 2));
+
+/**
+ * `POST /sessoes-caixa/:id/conferir` (`fechamentos_caixa.conferir`): o valor conferido de **cada** forma do
+ * fechamento (o dinheiro recontado no cofre, os comprovantes de cartão) e a observação. `versao` é a da conferência que
+ * a tela leu: `null` na primeira; refazer (D114) manda a versão lida, e outra conferência gravada no meio é 409.
+ */
+export const conferirSessaoSchema = z.object({
+  versao: z.number().int().min(0).nullable().default(null),
+  formas: z
+    .array(z.object({ formaPagamentoId: z.uuid('Forma inválida'), valorConferido }))
+    .max(100)
+    .refine((fs) => new Set(fs.map((f) => f.formaPagamentoId.toLowerCase())).size === fs.length, {
+      message: 'Forma de pagamento repetida',
+    }),
+  observacao: textoOpcional(OBSERVACAO_CONFERENCIA_MAX),
+});
+export type ConferirSessao = z.infer<typeof conferirSessaoSchema>;
+export type ConferirSessaoEntrada = z.input<typeof conferirSessaoSchema>;
+
+export const SITUACOES_CONFERENCIA = ['conferida', 'divergente'] as const;
+export type SituacaoConferencia = (typeof SITUACOES_CONFERENCIA)[number];
+
+/** Diferença da forma na conferência: conferido − calculado (o calculado do caixa, `fechamentos_caixa_formas`). */
+export function diferencaConferencia(valorConferido: Valor, valorCalculado: Valor): string {
+  return decTexto(dec(valorConferido).minus(dec(valorCalculado)), 2);
+}
+
+/**
+ * Situação da conferência (D114 = F3-Q44 (A)): "Conferida" quando a diferença de **cada** forma (conferido −
+ * calculado), em valor absoluto, está dentro da tolerância (`pdv.tolerancia_diferenca_caixa` da loja, padrão R$ 0,00:
+ * aí qualquer centavo já é "Divergente"); senão "Divergente". A forma sem venda (calculado 0) conferida em 0 não
+ * diverge; conferida acima de 0, diverge como qualquer outra. Sem forma nenhuma, não há o que divergir.
+ */
+export function situacaoConferencia(
+  formas: ReadonlyArray<{ valorCalculado: Valor; valorConferido: Valor }>,
+  tolerancia: Valor,
+): SituacaoConferencia {
+  const limite = dec(tolerancia).abs();
+  const diverge = formas.some((f) =>
+    dec(f.valorConferido).minus(dec(f.valorCalculado)).abs().greaterThan(limite),
+  );
+  return diverge ? 'divergente' : 'conferida';
+}
+
+export interface FormaConferenciaDetalhe {
+  formaPagamentoId: string;
+  valorConferido: string;
+  /** Conferido − calculado do caixa. */
+  diferenca: string;
+}
+
+export interface ConferenciaCaixaDetalhe {
+  id: string;
+  /** Para refazer (`conferirSessaoSchema.versao`). */
+  versao: number;
+  situacao: SituacaoConferencia;
+  conferidoEm: string;
+  conferidoPorNome: string | null;
+  observacao: string | null;
+  totalConferido: string;
+  /** Conferido − calculado, somado. */
+  diferenca: string;
+  formas: FormaConferenciaDetalhe[];
+}
+
+/**
+ * Aviso da conferência (não impede): `eventos_pendentes` = eventos do turno em erro ou retidos na nuvem (o que o
+ * caixa calculou ainda não está todo aqui); `calculo_divergente` = o cálculo do dinheiro refeito na nuvem difere do
+ * calculado que o caixa mandou.
+ */
+export interface AvisoConferenciaCaixa {
+  codigo: 'eventos_pendentes' | 'calculo_divergente';
+  mensagem: string;
+}
+
+/** Resposta do `POST /sessoes-caixa/:id/conferir`: o detalhe atualizado da sessão. */
+export type RespostaConferirSessao = SessaoCaixaDetalhe;

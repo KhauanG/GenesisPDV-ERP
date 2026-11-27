@@ -1,12 +1,14 @@
-import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query } from '@nestjs/common';
 import {
   CANAIS_POR_TIPO_VENDA,
+  cancelarVendaSchema,
   dec,
   decTexto,
   filtroVendasSchema,
   limiteDeslocamento,
   tipoExibidoVenda,
   type PaginaVendas,
+  type PreviaCancelamentoVenda,
   type VendaDetalhe,
 } from '@genesis/shared';
 import { sql, type SQL } from 'drizzle-orm';
@@ -15,10 +17,11 @@ import type { SessaoErp } from '../auth/auth.service.js';
 import { Permissao } from '../autorizacao/decorators.js';
 import { contem, ordemDaQuery } from '../comum/cadastro.js';
 import { ErroApi } from '../comum/erros.js';
-import { Sessao } from '../comum/requisicao.js';
+import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
 import type { Servicos } from '../servicos.js';
+import { cancelarVendaPeloErp, formaDevolucaoGravada, previaCancelamento } from './cancelamento-erp.js';
 import { condicoesLoja, intervaloDia, iso, lojaVisivel, texto } from './consultas.js';
 
 const colunasOrdenacao: Record<string, SQL> = {
@@ -40,10 +43,11 @@ const lista = (valores: readonly string[]) =>
   );
 
 /**
- * Vendas (ERP 15.4), só leitura das vendas do PDV (Fase 1C, bloco C12): listagem com os filtros pelo dia operacional
- * (D7), loja (sem a loja de treino por padrão, O10), caixa, tipo, situação, devolução, operador, forma de pagamento e
- * sessão de caixa, e os totalizadores; detalhe com Dados gerais, itens, pagamentos e o lucro (`vendas.ver_lucro`). A
- * venda ERP, cancelar pela nuvem e a devolução são da Fase 3; o documento fiscal, da 1D.
+ * Vendas (ERP 15.4), as vendas do PDV (Fase 1C, bloco C12): listagem com os filtros pelo dia operacional (D7), loja
+ * (sem a loja de treino por padrão, O10), caixa, tipo, situação, devolução, operador, forma de pagamento e sessão de
+ * caixa, e os totalizadores; detalhe com Dados gerais, itens, pagamentos e o lucro (`vendas.ver_lucro`). Desde o
+ * F3-B11, o cancelamento pelo ERP (`vendas.cancelar`, `cancelamento-erp.ts`), com a prévia do modal. A venda ERP e a
+ * devolução são de blocos seguintes da Fase 3; o documento fiscal, da fase fiscal.
  */
 @Controller('vendas')
 export class VendasController {
@@ -165,7 +169,7 @@ export class VendasController {
          where v.id = ${vendaId} and v.status <> 'rascunho' ${visivel ? sql`and ${visivel}` : sql``}`);
       const v = rows[0];
       if (!v) throw ErroApi.naoEncontrado('Venda não encontrada.');
-      const [{ rows: itens }, { rows: pagamentos }] = await Promise.all([
+      const [{ rows: itens }, { rows: pagamentos }, formaDevolucao] = await Promise.all([
         db.execute<Record<string, unknown>>(sql`
           select i.id, i.sequencia, i.produto_id, pr.codigo as produto_codigo, i.descricao, i.codigo_lido, i.unidade,
                  i.quantidade::text as quantidade, i.preco_tabela::text as preco_tabela,
@@ -183,6 +187,7 @@ export class VendasController {
                  pg.bandeira_nome, pg.nsu, pg.autorizacao, ua.nome as autorizado_por_nome
             from pagamentos_venda pg left join usuarios ua on ua.id = pg.autorizado_por_id
            where pg.venda_id = ${vendaId} order by pg.sequencia`),
+        v.cancelamento_origem === 'erp' ? formaDevolucaoGravada(db, vendaId) : Promise.resolve(null),
       ]);
       const total = dec(v.total as string);
       return {
@@ -228,6 +233,7 @@ export class VendasController {
         cancelamentoAutorizadoPorNome: texto(v.cancelamento_autorizado_por_nome),
         motivoCancelamento: texto(v.motivo_cancelamento),
         cancelamentoOrigem: texto(v.cancelamento_origem),
+        formaDevolucaoCancelamento: formaDevolucao,
         itens: itens.map((i) => ({
           id: i.id as string,
           sequencia: i.sequencia as number,
@@ -288,5 +294,50 @@ export class VendasController {
             : null,
       };
     });
+  }
+
+  /** O que o modal "Cancelar venda" mostra antes de gravar (F3-B11): o bloqueio, os avisos e se pede a forma. */
+  @Permissao('vendas.cancelar')
+  @Get(':id/cancelamento')
+  async previaCancelamento(
+    @Param('id') id: string,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<PreviaCancelamentoVenda> {
+    const vendaId = validar(z.uuid(), id);
+    return this.s.tenancy.cx().consulta((db) => previaCancelamento(db, sessao, vendaId));
+  }
+
+  /**
+   * Cancela a venda do caixa pelo ERP (ERP 15.4.3; SYNC 10.4; F3-B11): a 7300001 primeiro (`travaVersao`), como toda
+   * gravação do ERP em tabela que desce, e depois a linha da venda. Devolve o detalhe atualizado, e por isso exige
+   * também `vendas.ver`: a chamada direta a `detalhar` não passa pelo guard da rota dele, e o perfil com só
+   * `vendas.cancelar` leria por aqui os itens, os pagamentos (NSU, autorização), o cliente e o operador (o ERP cancela
+   * a partir do detalhe, que já exige `vendas.ver`; README da API › decisão 229).
+   */
+  @Permissao('vendas.ver', 'vendas.cancelar')
+  @Post(':id/cancelar')
+  @HttpCode(200)
+  async cancelar(
+    @Param('id') id: string,
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<VendaDetalhe> {
+    const vendaId = validar(z.uuid(), id);
+    const dados = validar(cancelarVendaSchema, corpo ?? {});
+    await this.s.tenancy
+      .cx()
+      .transacao(
+        (tx) =>
+          cancelarVendaPeloErp(
+            tx,
+            { auditoria: this.s.auditoria, origem: origemDaRequisicao(req) },
+            sessao,
+            vendaId,
+            dados,
+          ),
+        { travaVersao: true },
+      );
+    return this.detalhar(vendaId, sessao);
   }
 }

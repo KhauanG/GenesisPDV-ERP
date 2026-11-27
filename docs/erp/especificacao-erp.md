@@ -1784,14 +1784,26 @@ Organizada em sub-blocos recolhíveis.
 | Bloqueia venda sem estoque | `pdv.bloqueia_venda_sem_estoque` | booleano | Não | S | S | Sim = PDV bloqueia item com saldo estimado < 0 após a inclusão (liberação `pdv.venda.vender_sem_estoque`). `vendas.valida_estoque` (9.10) também liga esse bloqueio no PDV (PDV 29.1) |
 | Recusa produto com variações no caixa **(Novo)** | `pdv.recusa_produto_com_variacoes` | booleano | Sim | S | S | Sim = o PDV recusa o código de uma variação e o produto "Com variações" com variação ativa ("Produto com variações: venda disponível na próxima versão") enquanto o caixa não escolhe a variação (Fase 3); Não = vende o produto pai com o preço e o saldo dele. O pai sem variação ativa e o "Com complementos" sempre vendem (PDV 10.2; F2-B34, roadmap D44, decidida pelo dono em 05/11/2026) |
 | Consulta do estoque das outras lojas no caixa (F4) **(Novo)** | `pdv.consulta_outras_lojas` | booleano | Sim | S | S | Sim = na pesquisa F2 do PDV, o `F4` mostra online a quantidade vendável do produto nas outras lojas reais e no CD (sem a loja de treino, sem custo), para qualquer operador; Não = o `F4` avisa que a consulta está desligada (PDV 10.3; F2-B35, roadmap D53, vale a recomendação sem resposta explícita do dono) |
-| Limite de valor de vendas PDV | `pdv.limite_valor_venda` | dinheiro | nulo (sem limite) | S | S | venda com total acima do valor exige liberação `pdv.venda.exceder_limite_valor` (semântica no Nuvem3 em aberto, questão 22 / roadmap D15) |
+| Limite de valor de vendas PDV | `pdv.limite_valor_venda` | dinheiro | nulo (sem limite) | S | S | venda com total acima do valor pede o supervisor ao concluir (liberação `pdv.venda.exceder_limite_valor`); D15 = F3-Q27 (A), decidida pelo dono em 25/11/2026 (sugestão para a Ice Beer: vazio) |
 | Aviso de vencimento | `pdv.aviso_vencimento` | booleano | Não | S | S | alerta lotes vencendo ao vender e no Dashboard |
 | Dias de aviso de vencimento | `pdv.aviso_vencimento_dias` | inteiro 1–365 | 30 | S | S | antecedência do aviso |
-| Limite de venda em aberto | `pdv.limite_venda_em_aberto` | inteiro | nulo (sem limite) | S | S | **máximo de vendas suspensas/em aberto por terminal** (PDV 22.3, 29.3) — semântica no Nuvem3 em aberto (questão 22 / roadmap **D15**). Não é limite de crédito: o limite padrão do cliente é `financeiro.limite_credito_padrao` (9.7) |
+| Limite de venda em aberto | `pdv.limite_venda_em_aberto` | inteiro | nulo (sem limite) | S | S | **máximo de vendas suspensas/em aberto por terminal** (PDV 22.3, 29.3); 0 = não deixa suspender (D15 = F3-Q27 (A), decidida pelo dono em 25/11/2026; sugestão para a Ice Beer: 3). Não é limite de crédito: o limite padrão do cliente é `financeiro.limite_credito_padrao` (9.7) |
 | Imprime sangria automaticamente | `pdv.imprime_sangria_automaticamente` | booleano | Sim | S | S | imprime comprovante (2 vias) ao confirmar sangria, reforço e abertura |
 | Valor limite para bloquear PDV e fazer sangria | `pdv.valor_limite_sangria` | dinheiro | nulo (desligado) | S | S | dinheiro estimado na gaveta acima do valor: PDV avisa a 80% e bloqueia novas vendas até registrar sangria (liberação `pdv.caixa.ignorar_limite_sangria`) |
 | Impressoras de cozinha **[FUT]** | — (não é chave: tabela `impressoras_destino`) | lista: `nome`, `descricao`, `loja_id` (vazio = todas), `ordem`, `ativo` | — | por `loja_id` | S | módulo opcional (comandas/pedidos); **destinos lógicos** de impressão de itens de comanda/pedido (8.2.6 "Impressora destino"). O mapeamento para a impressora física (tipo `rede`/`usb`/`compartilhada`, endereço, modelo, colunas 32/42/48, cópias) é configuração local de cada terminal (`configuracao_terminal`, chave `impressao.destino.<id>`, PDV 6) |
 | Exibe foto do produto no PDV | `pdv.exibe_foto_produto` | booleano | Não | S | S | mostra a foto do último item lançado |
+
+**Faixas, versão do PDV e trava (Fase 3, F3-B12; README da API › decisão 230, README do ERP › decisão 91).** As faixas
+de `pdv.dias_validade_cupom_troca`, `pdv.fonte_*`, `pdv.vale_compra_validade_dias` e `pdv.aviso_vencimento_dias` são as
+da tabela (o catálogo tinha faixas mais largas): o valor já gravado fora dela não é recusado nem apagado, só deixa de
+valer (o efetivo cai no nível seguinte: a loja na empresa, a empresa no padrão) e a tela avisa até alguém gravar um valor
+válido (a linha conta como alteração: gravar o valor exibido, o padrão ou o "Herdar", já apaga o inválido). Em todas as
+abas, a chave que o caixa instalado pode não ler mostra "Tem efeito a partir do PDV x.y; N caixas desatualizados: …"
+(com o nome de cada caixa para quem tem "PDVs/Terminais: Ver" ou "Configurações: Editar"; só a contagem para os outros;
+`VERSAO_PDV_DA_CHAVE` do shared e `GET /configuracoes/terminais-desatualizados?chave=`); a que nenhum caixa nem a nuvem lê ainda leva o selo "sem efeito
+ainda"; e as que mudam o preço ou o pagamento (hoje `pdv.vasilhame_comodato`; as das promoções, do vale como pagamento e
+da baixa interna entram com os blocos delas) têm **trava dura**: ligar é recusado (422, com a lista dos caixas) enquanto
+houver terminal ativo abaixo da versão numa loja em que a chave passa a valer; desligar sempre pode.
 
 #### 9.3.2 iFood Mercado [P6]
 
@@ -2079,7 +2091,7 @@ botão **Restaurar padrão**.
 | Valida Estoque | `vendas.valida_estoque` | booleano | Não | N | S | venda ERP bloqueia item sem saldo; no PDV equivale a **Bloqueia venda sem estoque** (PDV 29.1; liberação `pdv.venda.vender_sem_estoque`) |
 | Solicita Id do Orçamento | `vendas.solicita_id_orcamento` | booleano | Não | N | S | PDV pergunta o número do orçamento ao iniciar a venda, antes do primeiro item (PDV 24.1) |
 | Numeração Própria | `vendas.numeracao_propria` | booleano | Não | N | N | Sim = o número das vendas do ERP de cada loja pode ser definido em "Nº da próxima venda" (abaixo); Não = segue a sequência a partir de 1 |
-| Nº da próxima venda | — (não é chave) | inteiro, por loja | — | por loja | N | editado sobre `numeracoes` `tipo = 'venda'` do **caixa 0** da loja (dono `nuvem`): grava `ultimo_numero = valor − 1`; não pode ser ≤ último número usado; auditado |
+| Nº da próxima venda | — (não é chave) | inteiro, por loja | — | por loja | N | editado sobre `numeracoes` `tipo = 'venda'` do **caixa 0** da loja (dono `nuvem`): grava `ultimo_numero = valor − 1`; só com Numeração Própria = Sim; não pode ser ≤ último número usado (o contador ou a maior venda do caixa 0); a linha do contador fica travada (`for update`) na gravação; auditado. `GET`/`PUT /lojas/:id/numeracao-venda-erp` (`configuracoes.ver`/`configuracoes.editar` e a loja permitida; F3-B12) |
 | Permite produtos iguais | `vendas.permite_produtos_iguais` | booleano | Sim | N | N | só documentos do ERP (`<GradeItens>`, 3.3): Não = o mesmo produto não pode aparecer em duas linhas; no PDV vale **Agrupa produtos** (9.9) |
 | Bloqueia PF fora do estado | `vendas.bloqueia_pf_fora_estado` | booleano | Não | N | N | impede NF-e para pessoa física de outra UF |
 | Valida volumes NFe | `vendas.valida_volumes_nfe` | booleano | Não | N | N | NF-e não é emitida sem volumes/peso |
@@ -2088,6 +2100,10 @@ botão **Restaurar padrão**.
 | Frase de bloqueio do vale compra | `vendas.vale_frase_bloqueio` | texto(500) | — | N | S | impressa no vale ("Não é válido como dinheiro") |
 | Rodapé do vale compra | `vendas.vale_rodape` | texto(500) | — | N | S | |
 | Título do recibo | `vendas.titulo_recibo` | texto(60) | `COMPROVANTE DE VENDA` | S | S | título do comprovante não fiscal (PDV 19.2) |
+
+Na tela (Fase 3, F3-B12): Usa Remessa, Bloqueia PF fora do estado e Valida volumes NFe aparecem desabilitadas, com o selo
+"Fase 6" (NF-e); as que só valem para a venda do ERP (que ainda não existe) ou que o caixa ainda não lê levam "sem efeito
+ainda". Os dois templates entram com a tela de templates.
 
 ---
 
@@ -2356,8 +2372,10 @@ Chaves de `configuracoes` com escopo loja (modelo 3.1.2): `integracoes.ifood.ati
 
 #### 10.3.9 Parâmetros [P3]
 
-Lista as chaves de Configurações marcadas **Loja = S** (9.1, 9.3, 9.4, 9.9, 9.10), cada uma com três estados: **Herdar da
-empresa** (mostra o valor herdado), **Personalizar** (campo editável). Ex.: a Loja 3 pode ter "Valor limite para
+Lista as chaves de Configurações marcadas **Loja = S** (9.1, 9.3, 9.4, 9.7, 9.9, 9.10), cada uma com três estados: **Herdar da
+empresa** (mostra o valor herdado), **Personalizar** (campo editável). Desde a Fase 3 (F3-B12) estão todas as do
+catálogo; as das fases fiscal (9.4), financeira (9.7) e de alertas (9.3.7) aparecem desabilitadas, com a fase, e o aviso
+da versão do PDV conta só os caixas da loja. Ex.: a Loja 3 pode ter "Valor limite para
 bloquear PDV e fazer sangria" = R$ 800,00 enquanto a empresa usa R$ 1.500,00. As taxas de entrega por bairro do
 delivery não são chaves: ficam na aba própria **Taxas de entrega** (10.3.11).
 
@@ -3968,10 +3986,22 @@ nuvem com o que já chegou da sessão (pagamentos aprovados ou estornados de ven
 cancelados; o esperado é antes da `sangria_fechamento`) e aparece ao lado do calculado que o PDV mandou: diferente =
 evento da sessão ainda pendente ou retido (fila de decisão, 12.5). "Vendas" leva à listagem filtrada pela sessão
 (sem datas: a sessão esquecida aberta tem vendas de mais de um dia); enquanto esse filtro vale, a listagem de Vendas
-mostra um aviso com "Remover" (o filtro não tem campo no formulário). Fica para a Fase 3 a conferência (Conferida /
-Divergente, `fechamentos_caixa.conferir`, `POST /api/sessoes-caixa/:id/conferir`) e para a Fase 4 a quebra/sobra no
+mostra um aviso com "Remover" (o filtro não tem campo no formulário). Fica para a Fase 4 a quebra/sobra no
 financeiro; o alerta de sessão aberta há mais de 24 h está no Dashboard desde o C14 ("Caixas abertos há muito
 tempo", ERP 6, calculado com `pdv.horas_alerta_sessao`).
+
+**Fase 3 (F3-B9), a conferência** (D114 = F3-Q44 (A); README da API › decisão 227; README do ERP › decisão 88):
+`POST /api/sessoes-caixa/:id/conferir` (`fechamentos_caixa.conferir`) grava o valor conferido de **cada** forma do
+fechamento (texto decimal, até 2 casas, ≥ 0) e a observação (até 2.000). Diferença = conferido − calculado do caixa.
+"Conferida" quando a diferença de **cada** forma, em valor absoluto, está dentro de `pdv.tolerancia_diferenca_caixa` da
+loja (padrão R$ 0,00: qualquer centavo diverge), senão "Divergente"; as formas não se compensam. Só sessão com o
+fechamento do caixa (a aberta e a fechada pela nuvem sem o `caixa.fechado` mostram o motivo e o POST é 422). Refazer,
+com a mesma permissão, manda a versão lida (outra conferência gravada no meio = 409) e registra na auditoria o antes e o
+depois por forma. Avisos que não impedem: eventos do turno em erro ou retidos na nuvem e o cálculo do dinheiro da nuvem
+diferente do calculado do caixa. A listagem filtra as quatro situações (Fechada = ainda sem conferência), mostra a
+coluna Conferido e "Somente com diferença" olha o conferido quando há conferência (qualquer forma com diferença, além do
+total). A situação "Conferida/Divergente" é derivada de `conferencias_caixa`; nada do que veio do caixa muda e
+`conta_financeira_id` fica nulo até a Fase 4.
 
 **Entidades** (modelo 3.12): `sessoes_caixa`, `movimentos_caixa`, `fechamentos_caixa` e `fechamentos_caixa_formas`
 (calculado e digitado por forma, vindos do PDV), `conferencias_caixa` e `conferencias_caixa_formas` (conferido por
@@ -4130,8 +4160,14 @@ A **data filtrada é o dia operacional da sessão** (D7), como no 14.9, e não a
 da 1h da manhã fica no dia de quem abriu o caixa. Filtros: datas (padrão hoje), loja, caixa, operador, tipo, situação
 (ativos/cancelados/todos), sessão e loja de treino (O10, fora por padrão). O totalizador soma só os não cancelados; o
 cancelado aparece com a marca e os dados do cancelamento (feito no PDV, `caixa.movimento_cancelado`). O detalhe liga à
-sessão (14.9) quando o usuário tem `fechamentos_caixa.ver`. **Imprimir comprovante** espera os templates de impressão
-do ERP (3.7) e `movimento_conta_corrente_id` fica oculto até a Fase 4.
+sessão (14.9) quando o usuário tem `fechamentos_caixa.ver`. `movimento_conta_corrente_id` fica oculto até a Fase 4.
+
+**Fase 3 (F3-B9), Imprimir comprovante** (README da API › decisão 227; README do ERP › decisão 89): com
+`movimentos_caixa.imprimir`, o detalhe abre em aba nova o comprovante de layout fixo impresso pelo navegador (não há tipo
+de template para ele): 2 vias na mesma folha (a do caixa e a de quem retira), cada uma com a empresa e a loja, o
+movimento e as assinaturas do operador e de quem retira (no reforço, de quem entregou o dinheiro); o cancelado sai
+marcado. Os dados vêm de `GET /api/movimentos-caixa/:id/comprovante` (só abertura, reforço, sangria e sangria de
+fechamento).
 
 ### 15.4 Vendas
 
@@ -4260,8 +4296,9 @@ stateDiagram-v2
 |---|---|
 | Finalizar (ERP) | Numa transação: confirma o número reservado no rascunho (caixa 0 da loja, `numeracoes` `venda`, dono `nuvem`), grava `finalizada_em`/`dia_operacional`, gera `VENDA_ERP` (e `BAIXA_INSUMO`/componentes de kit) no estoque vinculado da loja com custo gravado, gera contas a receber (14.10) e grava a comissão prevista por item em `itens_venda.comissao_pct` e `itens_venda.valor_comissao` (não há tabela de comissões). Depois de finalizada, itens, valores, cliente e pagamentos ficam somente leitura (Complementos e observações continuam editáveis enquanto não houver NF-e autorizada) |
 | Vendas do PDV | Chegam pelo evento `venda.finalizada` (sync 9.7: itens, complementos, pagamentos, parcelas, TEF, PIX, operador, vendedor, sessão); o **documento fiscal** chega em eventos próprios `nfce.*` (`nfce.autorizada`, `nfce.contingencia`, `nfce.rejeitada`, `nfce.cancelada`, sync 9.10–9.14), que atualizam `documentos_fiscais` e `vendas.status_fiscal`. São **somente leitura** no ERP. Se a venda referir cliente criado no caixa (`pessoa.criada_no_caixa`), aplica 7.2 (mescla por CPF/CNPJ via `pessoas_aliases`) |
-| Cancelar venda | Exige motivo (15–255 caracteres) e `vendas.cancelar`. **Prevenção (venda de PDV, sync 10.4)**: antes de cancelar, o ERP consulta o terminal de origem em `terminais` — se o último heartbeat informou a venda em `terminais.vendas_cancelamento_pendente`, **bloqueia** ("o caixa já cancelou esta venda; aguarde a sincronização"); se o terminal está offline (`ultimo_contato_em` antigo) ou com `eventos_pendentes > 0`, **avisa** ("o caixa está offline com N eventos pendentes; um cancelamento feito lá ainda pode chegar") e exige confirmação. Venda com **NFC-e/NF-e autorizada**: só dentro do prazo legal de cancelamento (10.3.3; NF-e 24 h), e a nuvem envia o evento de cancelamento à SEFAZ [P6] (`documentos_fiscais_eventos`, `origem = 'erp'`) — sem autorização do evento, a venda não é cancelada. Fora do prazo: bloqueado, com orientação para devolução. Efeitos: `CANC_VENDA_*` no estoque, cancelamento/estorno das contas a receber (14.10), estorno de comissão, `cancelamento_origem = 'erp'`. **`vendas` não desce ao PDV** (modelo 6.2): o cancelamento chega ao terminal de origem pela **projeção de status das vendas** do fluxo `operacao` (sync 16.3, ajuste M13), que impede troca/reimpressão da venda cancelada |
+| Cancelar venda | Exige motivo (15–255 caracteres), `vendas.cancelar` e `vendas.ver` (a gravação devolve o detalhe). **Prevenção (venda de PDV, sync 10.4)**: antes de cancelar, o ERP consulta o terminal de origem em `terminais` — se o último heartbeat informou a venda em `terminais.vendas_cancelamento_pendente` (o PDV ainda não envia o campo), **bloqueia** ("o caixa já cancelou esta venda; aguarde a sincronização"), e bloqueia também quando o `venda.cancelada` do caixa já chegou e parou na fila (`eventos_recebidos` em `recebido`, `erro` ou `retido`: "resolva-o na aba Eventos com erro do terminal"); se o terminal está offline (`ultimo_contato_em` antigo) ou com `eventos_pendentes > 0`, **avisa** ("o caixa está offline com N eventos pendentes; um cancelamento feito lá ainda pode chegar") e exige confirmação. Venda com **NFC-e/NF-e autorizada**: só dentro do prazo legal de cancelamento (10.3.3; NF-e 24 h), e a nuvem envia o evento de cancelamento à SEFAZ [P6] (`documentos_fiscais_eventos`, `origem = 'erp'`) — sem autorização do evento, a venda não é cancelada. Fora do prazo: bloqueado, com orientação para devolução. Efeitos: `CANC_VENDA_*` no estoque, cancelamento/estorno das contas a receber (14.10), estorno de comissão, `cancelamento_origem = 'erp'`. **`vendas` não desce ao PDV** (modelo 6.2): o cancelamento chega ao terminal de origem pela **projeção de status das vendas** do fluxo `operacao` (sync 16.3, ajuste M13), que impede troca/reimpressão da venda cancelada |
 | Cancelamento de venda de sessão fechada | Pede a **forma de devolução ao cliente** (dinheiro do cofre → saída na conta corrente escolhida; estorno no cartão → informativo; vale compra → gera vale) |
+| Cancelar venda do PDV na Fase 3 (F3-B11; D112, D113) | `GET /vendas/:id/cancelamento` (a prévia do modal) e `POST /vendas/:id/cancelar` (`vendas.cancelar`, motivo de 15 a 255). **Sessão ainda aberta: bloqueado** com "cancele no caixa" (D112: o dinheiro está na gaveta e o fechamento ficaria errado). **Sessão fechada** com valor: escolher a forma de devolução — dinheiro do cofre, estorno no cartão ou devolução por PIX (o vale aparece desabilitado até os vales, F3-B50) —, **só registrada** até a Fase 4 (na auditoria do cancelamento e no detalhe da venda; nenhum movimento de caixa nem conta corrente) (D113). Bloqueados também: venda com troca ("cancele a troca primeiro"), venda com documento fiscal (fase fiscal) e a venda que o caixa já cancelou e ainda não sincronizou. O caixa de origem offline ou com eventos pendentes pede o "Estou ciente"; o caixa abaixo do PDV 0.14.0 é só avisado de que não verá o cancelamento até atualizar. Efeitos: o estoque volta ao custo da venda (`CANC_VENDA_PDV`, os vazios conforme `pdv.cancelamento_devolve_vazios`), os pagamentos ficam `estornado`, `cancelamento_origem = 'erp'` e a projeção `vendas_status_pdv` desce ao caixa (sync 16.3). README da API › decisão 229 |
 | Devolução (Novo) | Seleciona itens/quantidades devolvidos de uma venda finalizada e grava uma **troca** com `trocas.origem = 'erp'` (abaixo); NF-e de devolução de venda com NF-e em P6 |
 | Emitir NF-e [P6] | Para vendas finalizadas tipo `venda`, ou tipo `pdv` **sem** documento fiscal (cliente pediu nota depois). Venda com NFC-e autorizada não pode receber NF-e (duplicidade). Validações: cliente com CPF/CNPJ e endereço completo, indicador de IE, "Bloqueia PF fora do estado", itens com NCM/CFOP/CST/origem, volumes se "Valida volumes NFe"; CFOP dentro/fora do estado escolhido pela UF do destinatário; transmissão pela API com o certificado A1 da loja; contingência SVC-AN/SVC-RS quando a SEFAZ autorizadora estiver fora. Situações: Processando → Autorizada / Rejeitada (mostra motivo; corrigir e reenviar com o mesmo número) / Denegada. Ações: DANFE, XML, e-mail ao cliente (e-mails com "recebe documentos"), **Carta de correção** (até 20 por nota, 15–1.000 caracteres), **Cancelar NF-e** |
 | Comissão | Base = valor líquido do item (após rateio de descontos); % do produto prevalece sobre o % do vendedor (snapshot em `itens_venda.comissao_pct`, valor em `itens_venda.valor_comissao`); cancelamentos e devoluções estornam |

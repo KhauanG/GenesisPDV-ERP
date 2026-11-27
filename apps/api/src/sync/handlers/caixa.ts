@@ -492,14 +492,14 @@ async function conferirMovimentosGravados(
  * SYNC 9.6: sequências dos eventos do turno que o fechamento cita e que a nuvem ainda não aplicou. A ordem estrita
  * por terminal (8.2) garante que tudo até a sequência citada já chegou; o que pode faltar é aplicar: evento em `erro`
  * ou `retido` (`eventoPendente`) entre a abertura da sessão e a sequência citada. O próprio fechamento não conta
- * (reprocessado, ele está em `erro`).
+ * (reprocessado, ele está em `erro`). A conferência do ERP (F3-B9) usa a mesma conta para o aviso, sem `eventoId`.
  */
-async function eventosPendentesDoTurno(
+export async function eventosPendentesDoTurno(
   tx: DbEmpresa,
   terminalId: string,
   sessaoId: string,
   citada: number,
-  eventoId: string,
+  eventoId?: string,
 ): Promise<number[]> {
   const [abertura] = await tx
     .select({ sequencia: sql<number>`min(${eventosRecebidos.sequenciaTerminal})::int` })
@@ -518,7 +518,7 @@ async function eventosPendentesDoTurno(
     .where(
       and(
         eq(eventosRecebidos.terminalId, terminalId),
-        ne(eventosRecebidos.eventoId, eventoId),
+        eventoId ? ne(eventosRecebidos.eventoId, eventoId) : undefined,
         sql`${eventosRecebidos.sequenciaTerminal} between ${desde} and ${citada}`,
         eventoPendente(),
       ),

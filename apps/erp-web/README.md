@@ -1588,6 +1588,97 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     aparece nos alertas do terminal, leva ao detalhe na listagem e tem o "Ciente" (com `terminais.gerenciar`), como o do
     relógio suspeito: o texto de exemplo do "O que foi verificado" fala da API atualizada. Sem tela nova.
 
+88. **Conferência do fechamento na tela do Fechamento de caixa** (Fase 3, F3-B9; ERP 14.9; D114; README da API ›
+    decisão 227; `src/paginas/vendas/FechamentosCaixa.tsx`). O bloco "Conferência" do detalhe traz, por forma, o
+    calculado, o informado e o **conferido** num campo pré-preenchido com o informado pelo operador (ou, ao refazer,
+    com a conferência anterior), a diferença (conferido − calculado) ao vivo e a previsão "Com estes valores:
+    Conferida/Divergente", pela mesma função da API (`situacaoConferencia`) e com a tolerância de agora da loja; o selo
+    gravado fica separado da previsão, para ninguém achar que já conferiu. O valor inválido trava o botão. "Conferir"
+    vira "Refazer conferência" (manda a `versao` lida; o 409 aparece no bloco). Sem `fechamentos_caixa.conferir`, o bloco
+    só mostra a conferência gravada. Os avisos da API não impedem: o de evento do turno pendente aparece no bloco; o de
+    cálculo diferente (`calculo_divergente`) sai uma vez só, no bloco "Cálculo do dinheiro" (o alerta da 1C passou a
+    ler o aviso da API, com a comparação decimal, em vez de comparar o texto na tela). Sessão aberta ou fechada pela
+    nuvem sem o fechamento: o bloco mostra o motivo. O bloco é remontado a cada sessão (`key`): o formulário guarda os
+    valores pelo id da forma, igual em todas as sessões, e a troca de sessão com o detalhe já no cache não passa pelo
+    Skeleton. Gravar atualiza também o Histórico da página, com a ação "Conferência". A listagem ganhou as situações
+    Conferida (verde) e Divergente (vermelha) no filtro e no selo e a coluna Conferido (com a diferença da
+    conferência). Testes: `src/paginas/vendas/ConferenciaCaixa.test.tsx` (o detalhe, a troca de sessão, o Histórico e a
+    listagem com uma sessão divergente).
+
+89. **Comprovante de reforço e sangria pela impressão do navegador** (Fase 3, F3-B9; ERP 15.2 e 15.3; README da API ›
+    decisão 227; `src/paginas/vendas/MovimentosCaixaComprovante.tsx`, `MovimentosCaixa.tsx`, `src/rotas.tsx`). Layout
+    fixo, como o romaneio (decisão 64): não há tipo de template para ele. O botão "Imprimir comprovante" do detalhe (só
+    com `movimentos_caixa.imprimir`) abre `/vendas/reforcos/:id/comprovante?imprimir=1` (ou `sangrias`) em aba nova, que
+    chama a impressão quando os dados chegam. Saem **2 vias na mesma folha** (`VIAS_COMPROVANTE_MOVIMENTO`: a do caixa
+    e a de quem retira), separadas por "corte aqui", cada uma com a empresa e a loja, o movimento (data, dia
+    operacional, caixa, operador, quem retira na sangria, observação, inf. adicionais) e as assinaturas do operador e de
+    quem retira (no reforço, de quem entregou o dinheiro); o cancelado sai marcado com o motivo, e o da loja de treino
+    (O10, D39: mesma empresa, mesmo cabeçalho e CNPJ) com "TREINO – SEM VALOR" em cada via, para o papel não servir de
+    prova de dinheiro que não saiu do caixa (recusar o comprovante de treino na API seria outra saída, que pediria uma
+    decisão do dono). Testes: `src/paginas/vendas/ConferenciaCaixa.test.tsx` (as vias, a impressão automática com
+    `imprimir=1` e a marca de treino).
+
+90. **Cancelar venda pelo ERP: o botão e o modal** (Fase 3, F3-B11; ERP 15.4.3; D112, D113; README da API › decisão 229;
+    `src/paginas/vendas/CancelarVenda.tsx`, `Vendas.tsx`). O botão "Cancelar venda" aparece no cabeçalho do detalhe só
+    na venda do caixa finalizada e com `vendas.cancelar`; o modal lê a prévia da API (`GET /vendas/:id/cancelamento`)
+    a cada abertura e não repete as regras: com bloqueio (sessão ainda aberta, "cancele no caixa"; o caixa já cancelou
+    e não sincronizou; venda com troca ou com documento fiscal; já cancelada) mostra só a mensagem; senão, o motivo (15
+    a 255, com o contador; o botão só libera dentro da faixa), a forma de devolução em botões de opção na venda de caixa
+    fechado (o vale aparece desabilitado, "disponível quando os vales entrarem", e a descrição diz que até a Fase 4 a
+    forma só fica registrada), os avisos do caixa de origem (offline ou com eventos pendentes em laranja, com o "Estou
+    ciente" obrigatório que vai como `confirmarAvisos`; a versão que não lê a projeção em amarelo, só informativa) e,
+    com a chave ligada, que os cascos vazios voltam ao cliente. O 409/422 sem campo (a situação mudou entre a prévia e a
+    gravação: novo aviso, o cancelamento do caixa chegou, outro usuário já cancelou) relê a prévia, desmarca o "Estou
+    ciente" e invalida o detalhe e a listagem atrás do modal (sem isso a página seguia com a venda "Finalizada" e o
+    botão até recarregar). Gravado, o detalhe é trocado pela resposta, a
+    listagem e o Histórico são invalidados, e a venda cancelada no ERP mostra "Devolução ao cliente: …
+    (registrada; o lançamento no financeiro chega com a Fase 4)". Testes: `src/paginas/vendas/Vendas.test.tsx` (sem a
+    permissão sem o botão; a venda já cancelada, com a permissão, também sem ele; a forma e o motivo travando o botão, o vale desabilitado, o corpo enviado e a forma no
+    detalhe depois; o "Estou ciente" com o aviso de offline; o 409 `CONFIRMAR_AVISOS` relendo a prévia e desmarcando o "Estou
+    ciente"; o 409 `ja_cancelada` mostrando o bloqueio e atualizando o detalhe atrás do modal; o bloqueio da sessão
+    aberta sem o formulário).
+
+91. **Parâmetros-PDV: aba Vendas, Lojas › Parâmetros completo, o aviso da versão do PDV e a trava** (Fase 3, F3-B12;
+    ERP 9.3.1, 9.10, 10.3.9; D15; README da API › decisão 230; `src/paginas/configuracoes/{rotulos.ts,
+    CamposConfiguracoes.tsx,Configuracoes.tsx}`, `src/paginas/lojas/Lojas.tsx`). Escolhas, sem pergunta ao dono:
+    - **Aba Vendas** (`ABA_VENDAS`, todas as `vendas.*` do catálogo) e, abaixo dela, o "Nº da próxima venda" por loja
+      (`ProximaVendaErp`: o seletor das lojas permitidas, o número só editável com "Numeração própria" gravada; a
+      recusa da API aparece no campo, sem prender o campo ao mínimo; a consulta fica sob a chave `configuracoes` e é
+      relida quando o bloco de cima grava). As de NF-e (remessa, PF fora do estado, volumes) desabilitadas com "Fase 6".
+    - **Lojas › Parâmetros** (`PARAMETROS_LOJA`): toda chave Loja = S do catálogo, uma vez só (o vitest confere contra o
+      catálogo): as das abas, os blocos de módulos futuros da 9.3 (PDV Mobile, pesquisa de satisfação; "ERP – alertas"
+      com "Fase 5") e, desabilitadas com a fase, as de loja da 9.4 (fiscal) e da 9.7 (financeiro), que ainda não têm aba
+      nas Configurações. Entraram também na aba PDV as do F3-B3 (`pdv.vasilhame_comodato_max_por_cliente`,
+      `pdv.vale_exige_conferencia`), e o comodato deixou de ser "módulo futuro" (está pronto e desligado, D84, com a trava).
+    - **Selos** (`RotuloConfiguracao`): `fase` (o selo com a fase e o campo desabilitado, também o "Herdar/Personalizar")
+      e `semEfeito` (o selo amarelo "sem efeito ainda", com a explicação na dica e o campo editável, para a loja poder
+      deixar pronto): a chave que nenhuma versão do PDV nem a nuvem lê ainda (conferido nas tags do PDV: fontes,
+      agrupar produtos, troco máximo, CPF na finalização, confirmação de idade, recibo, entre outras), a do crediário e
+      do PIX dinâmico (Fase 4) e as que só valem para a venda do ERP. Nenhuma chave de `VERSAO_PDV_DA_CHAVE` tem selo (o
+      vitest confere).
+    - **Aviso da versão**: cada bloco consulta uma vez `GET /configuracoes/terminais-desatualizados` com as chaves
+      visíveis que têm versão (na loja, com a loja) e mostra, sob a chave, "Tem efeito a partir do PDV x.y; N caixa(s)
+      desatualizado(s): Loja – caixa 01: versão 0.13.0; …" só quando há caixa antigo; a chave com trava diz sempre "Só
+      liga com todos os caixas ativos no PDV x.y ou mais novo" (em laranja). A consulta que falha não mostra nada (a API
+      continua barrando a trava). Quem só tem "Configurações: Ver" (sem "PDVs/Terminais: Ver" nem "Configurações:
+      Editar") recebe os caixas das suas lojas só na contagem (`semDetalhes`): "N das suas lojas (os detalhes pedem
+      "PDVs/Terminais: Ver")".
+    - **Trava**: o 422 `TERMINAIS_DESATUALIZADOS` abre o modal "Caixas com o PDV antigo" com os caixas por chave (os de
+      outras lojas só na contagem), sem "Gravar mesmo assim", e a mensagem fica no campo.
+    - **Faixa**: o campo inteiro usa o mínimo e o máximo do catálogo (`faixaConfiguracao`); o valor gravado fora da
+      faixa vem em `foraDaFaixa` e a linha avisa "O valor gravado X está fora da faixa a–b e não vale: vale o padrão (na
+      loja, o da empresa). Gravar apaga o valor inválido (com o valor exibido ou outro válido)." A chave com
+      `foraDaFaixa` no escopo da tela conta como alteração mesmo sem mexer: o exibido já é o que vale (o padrão na
+      empresa, o "Herdar" na loja), e gravá-lo manda o padrão (a API apaga a linha igual ao padrão) ou o `null` na loja.
+    - **D15** (F3-Q27 = A) na ajuda das duas chaves: o limite de valor pede o supervisor ao concluir (vazio = sem
+      limite); o "em aberto" é o máximo de vendas suspensas por caixa (vazio = sem limite, 0 = não deixa suspender;
+      sugestão 3). Os padrões do catálogo não mudam (nulos): a sugestão é do dono configurar.
+    - Testes: `src/paginas/configuracoes/ParametrosPdv.test.tsx` (as chaves Loja = S, a aba Vendas e as da Fase 6, os
+      selos fora das chaves com versão, a ajuda da D15, o texto do aviso, a consulta só das chaves com versão e com a
+      loja, a contagem `semDetalhes`, a fase desabilitando, o aviso fora da faixa e a gravação que o apaga na empresa e
+      na loja, o modal da trava e o "Nº da próxima venda" sem e com a chave,
+      com a recusa no campo); os de `Configuracoes.test.tsx` e `Lojas.test.tsx` sem mudança.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

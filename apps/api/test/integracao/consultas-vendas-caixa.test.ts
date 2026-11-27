@@ -710,6 +710,354 @@ describe('turno aplicado pelas fixtures do C4', () => {
       expect((await get('/api/sessoes-caixa', {}, tokenVendedor)).status).toBe(403);
       expect((await get(`/api/sessoes-caixa/${p1.sessao}`, {}, tokenVendedor)).status).toBe(403);
     });
+
+    it('"Somente com diferença" sem conferência olha forma por forma: −5 no dinheiro e +5 no PIX (total 0) entram', async () => {
+      // O fechamento do turno muda só neste teste (as diferenças são colunas geradas) e volta ao fim.
+      const restaurar = await consultar<{ id: string; valor_digitado: string }>(
+        emp.nomeBanco,
+        `select ff.id, ff.valor_digitado::text from fechamentos_caixa_formas ff
+           join fechamentos_caixa f on f.id = ff.fechamento_id where f.sessao_caixa_id = $1`,
+        [p1.sessao],
+      );
+      const ajustar = async (totalDigitado: string, dinheiroDigitado: string, pixDigitado: string) => {
+        await consultar(
+          emp.nomeBanco,
+          `update fechamentos_caixa set total_digitado = $2 where sessao_caixa_id = $1`,
+          [p1.sessao, totalDigitado],
+        );
+        await consultar(
+          emp.nomeBanco,
+          `update fechamentos_caixa_formas ff
+              set valor_digitado = case ff.forma_pagamento_id when $2 then $3::numeric else $4::numeric end
+             from fechamentos_caixa f
+            where f.id = ff.fechamento_id and f.sessao_caixa_id = $1 and ff.forma_pagamento_id in ($2, $5)`,
+          [p1.sessao, dinheiro, dinheiroDigitado, pixDigitado, pix],
+        );
+      };
+      try {
+        await ajustar('260.00', '220.00', '40.00');
+        const r = await getOk('/api/sessoes-caixa', {
+          dataInicial: DIA,
+          dataFinal: DIA,
+          somenteComDiferenca: 'true',
+        });
+        expect(r.itens.map((s: { id: string; diferenca: string }) => [s.id, s.diferenca])).toEqual([
+          [p1.sessao, '0.00'],
+        ]);
+        // Sem nenhuma forma com diferença, a sessão sai do filtro.
+        await ajustar('260.00', '225.00', '35.00');
+        expect(
+          (
+            await getOk('/api/sessoes-caixa', {
+              dataInicial: DIA,
+              dataFinal: DIA,
+              somenteComDiferenca: 'true',
+            })
+          ).itens,
+        ).toEqual([]);
+      } finally {
+        await consultar(
+          emp.nomeBanco,
+          `update fechamentos_caixa set total_digitado = '258.50' where sessao_caixa_id = $1`,
+          [p1.sessao],
+        );
+        for (const f of restaurar)
+          await consultar(
+            emp.nomeBanco,
+            `update fechamentos_caixa_formas set valor_digitado = $2 where id = $1`,
+            [f.id, f.valor_digitado],
+          );
+      }
+      expect((await getOk('/api/sessoes-caixa', { somenteComDiferenca: 'true' })).itens).toHaveLength(1);
+    });
+  });
+
+  describe('Conferência do fechamento (14.9; MD 3.12.4; F3-B9; D114)', () => {
+    const post = (url: string, corpo: Payload, token = tokenAdmin) =>
+      amb.http().post(url).set('Authorization', `Bearer ${token}`).send(corpo);
+    const conferir = (corpo: Payload, token = tokenAdmin, sessaoId = p1.sessao) =>
+      post(`/api/sessoes-caixa/${sessaoId}/conferir`, corpo, token);
+    /** Dinheiro calculado 225,00, PIX 35,00 e Crédito 0,00 (o fechamento do turno). */
+    const formas = (valores: { dinheiro: string; pix?: string; credito?: string }) => [
+      { formaPagamentoId: dinheiro, valorConferido: valores.dinheiro },
+      { formaPagamentoId: pix, valorConferido: valores.pix ?? '35,00' },
+      { formaPagamentoId: credito, valorConferido: valores.credito ?? '0' },
+    ];
+    const situacaoNaLista = async (q: Payload = {}) =>
+      (
+        (await getOk('/api/sessoes-caixa', { dataInicial: DIA, dataFinal: DIA, ...q })).itens as Array<{
+          id: string;
+          situacao: string;
+        }>
+      ).map((s) => [s.id, s.situacao]);
+    const fechamentoDoBanco = () =>
+      consultar(
+        emp.nomeBanco,
+        `select f.total_calculado::text, f.total_digitado::text, f.diferenca::text, f.versao::text,
+                (select json_agg(json_build_object('c', ff.valor_calculado, 'd', ff.valor_digitado, 'v', ff.versao)
+                                 order by ff.id) from fechamentos_caixa_formas ff where ff.fechamento_id = f.id) as formas,
+                s.status, s.versao::text as versao_sessao
+           from fechamentos_caixa f join sessoes_caixa s on s.id = f.sessao_caixa_id where s.id = $1`,
+        [p1.sessao],
+      );
+    let tokenGerenteTreino: string;
+    let tokenFinanceiro: string;
+    let antesDoCaixa: unknown;
+
+    beforeAll(async () => {
+      await criarUsuario(emp.nomeBanco, { login: 'gerentetreino', perfil: 'gerente', lojas: [lojaTreino] });
+      await criarUsuario(emp.nomeBanco, { login: 'financeiro1', perfil: 'financeiro', lojas: [loja] });
+      tokenGerenteTreino = await amb.entrar(emp.codigo, 'gerentetreino', SENHA_TESTE);
+      tokenFinanceiro = await amb.entrar(emp.codigo, 'financeiro1', SENHA_TESTE);
+      antesDoCaixa = await fechamentoDoBanco();
+    });
+
+    it('antes de conferir: a sessão é "Fechada", sem conferência, com a tolerância padrão e sem avisos', async () => {
+      const d = await getOk(`/api/sessoes-caixa/${p1.sessao}`);
+      expect(d).toMatchObject({
+        situacao: 'fechada',
+        conferencia: null,
+        toleranciaConferencia: '0.00',
+        motivoSemConferencia: null,
+        avisosConferencia: [],
+        totalConferido: null,
+        diferencaConferida: null,
+      });
+    });
+
+    it('sem fechamentos_caixa.conferir é 403; loja fora das permitidas é 403; sessão aberta é 422', async () => {
+      expect((await conferir({ formas: formas({ dinheiro: '225' }) }, tokenVendedor)).status).toBe(403);
+      // O perfil financeiro tem `fechamentos_caixa.*`, inclusive conferir: entra; o restrito à loja de treino, não.
+      const fora = await conferir({ formas: formas({ dinheiro: '225' }) }, tokenGerenteTreino);
+      expect(fora.status, JSON.stringify(fora.body)).toBe(403);
+      expect((await get(`/api/sessoes-caixa/${p1.sessao}`, {}, tokenGerenteTreino)).status).toBe(404);
+      const aberta = await conferir({ formas: [] }, tokenGerenteTreino, pTreino.sessao);
+      expect(aberta.status, JSON.stringify(aberta.body)).toBe(422);
+      expect(aberta.body.mensagem).toContain('aberta');
+      const dAberta = await getOk(`/api/sessoes-caixa/${pTreino.sessao}`);
+      expect(dAberta.motivoSemConferencia).toContain('aberta');
+      expect((await conferir({ formas: [] }, tokenAdmin, uuidv7())).status).toBe(404);
+      expect((await conferir({ formas: [] }, tokenAdmin, 'nao-e-uuid' as string)).status).toBe(422);
+    });
+
+    it('recusa forma faltando, forma de fora do fechamento, valor negativo ou com 3 casas', async () => {
+      const falta = await conferir({ formas: formas({ dinheiro: '225' }).slice(0, 2) });
+      expect(falta.status, JSON.stringify(falta.body)).toBe(422);
+      expect(JSON.stringify(falta.body.campos.formas)).toContain('Falta');
+      const sobra = await conferir({
+        formas: [...formas({ dinheiro: '225' }), { formaPagamentoId: uuidv7(), valorConferido: '1' }],
+      });
+      expect(sobra.status, JSON.stringify(sobra.body)).toBe(422);
+      for (const valor of ['-1', '1.005', 10])
+        expect((await conferir({ formas: formas({ dinheiro: valor as string }) })).status).toBe(422);
+      expect((await getOk(`/api/sessoes-caixa/${p1.sessao}`)).conferencia).toBeNull();
+    });
+
+    it('conferir: com a tolerância R$ 0,00, R$ 1,50 a menos no dinheiro é "Divergente"; nada do caixa muda', async () => {
+      const r = await conferir({
+        formas: formas({ dinheiro: '223,50' }),
+        observacao: 'Envelope recontado no cofre',
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body).toMatchObject({
+        id: p1.sessao,
+        situacao: 'divergente',
+        totalConferido: '258.50',
+        diferencaConferida: '-1.50',
+        conferencia: {
+          situacao: 'divergente',
+          conferidoPorNome: expect.any(String),
+          observacao: 'Envelope recontado no cofre',
+          totalConferido: '258.50',
+          diferenca: '-1.50',
+          versao: expect.any(Number),
+        },
+      });
+      expect(
+        r.body.conferencia.formas
+          .map((f: { formaPagamentoId: string; valorConferido: string; diferenca: string }) => [
+            f.formaPagamentoId,
+            f.valorConferido,
+            f.diferenca,
+          ])
+          .sort(),
+      ).toEqual(
+        [
+          [dinheiro, '223.50', '-1.50'],
+          [pix, '35.00', '0.00'],
+          [credito, '0.00', '0.00'],
+        ].sort(),
+      );
+      const [cc] = (await consultar<{ conta_financeira_id: string | null; criado_por_id: string }>(
+        emp.nomeBanco,
+        `select cc.conta_financeira_id, cc.criado_por_id from conferencias_caixa cc
+           join fechamentos_caixa f on f.id = cc.fechamento_id where f.sessao_caixa_id = $1`,
+        [p1.sessao],
+      )) as [{ conta_financeira_id: string | null; criado_por_id: string }];
+      expect(cc).toEqual({ conta_financeira_id: null, criado_por_id: operador });
+      expect(await fechamentoDoBanco()).toEqual(antesDoCaixa);
+      expect(await situacaoNaLista()).toEqual([[p1.sessao, 'divergente']]);
+      expect(await situacaoNaLista({ situacao: 'divergente' })).toEqual([[p1.sessao, 'divergente']]);
+      expect(await situacaoNaLista({ situacao: 'fechada' })).toEqual([]);
+      expect(await situacaoNaLista({ situacao: 'conferida' })).toEqual([]);
+      expect(await situacaoNaLista({ somenteComDiferenca: 'true' })).toEqual([[p1.sessao, 'divergente']]);
+      const [a] = (await consultar<{
+        acao: string;
+        descricao: string;
+        antes: unknown;
+        depois: { situacao: string };
+      }>(
+        emp.nomeBanco,
+        `select acao, descricao, antes, depois from auditoria
+          where entidade = 'sessoes_caixa' and registro_id = $1 order by ocorrido_em desc limit 1`,
+        [p1.sessao],
+      )) as [{ acao: string; descricao: string; antes: unknown; depois: { situacao: string } }];
+      expect(a).toMatchObject({ acao: 'conferir', antes: null, depois: { situacao: 'divergente' } });
+      expect(a.descricao).toContain('conferido: Divergente (tolerância R$ 0,00 por forma)');
+      expect(a.descricao).toContain('calculado R$ 225,00, conferido R$ 223,50, diferença R$ -1,50');
+      expect(a.descricao).toContain('Observação: Envelope recontado no cofre');
+    });
+
+    it('refazer: sem a versão lida é 409; a tolerância da loja em R$ 2,00 deixa "Conferida", com antes e depois na auditoria', async () => {
+      const atual = (await getOk(`/api/sessoes-caixa/${p1.sessao}`)).conferencia;
+      const semVersao = await conferir({ formas: formas({ dinheiro: '223.50' }) });
+      expect(semVersao.status, JSON.stringify(semVersao.body)).toBe(409);
+      expect(semVersao.body.codigo).toBe('CONFLITO_VERSAO');
+      const velha = await conferir({ versao: atual.versao - 1, formas: formas({ dinheiro: '223.50' }) });
+      expect(velha.status).toBe(409);
+      await consultar(
+        emp.nomeBanco,
+        `insert into configuracoes (chave, escopo, loja_id, valor) values ('pdv.tolerancia_diferenca_caixa', 'loja', $1, '"2.00"')`,
+        [loja],
+      );
+      expect((await getOk(`/api/sessoes-caixa/${p1.sessao}`)).toleranciaConferencia).toBe('2.00');
+      const r = await conferir({ versao: atual.versao, formas: formas({ dinheiro: '224' }) });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body).toMatchObject({
+        situacao: 'conferida',
+        diferencaConferida: '-1.00',
+        conferencia: { id: atual.id, situacao: 'conferida', observacao: null },
+      });
+      expect(r.body.conferencia.versao).not.toBe(atual.versao);
+      // Conferida, mas com diferença: o filtro "Somente com diferença" é sobre o conferido.
+      expect(await situacaoNaLista({ situacao: 'conferida', somenteComDiferenca: 'true' })).toEqual([
+        [p1.sessao, 'conferida'],
+      ]);
+      const [a] = (await consultar<{
+        descricao: string;
+        antes: { situacao: string };
+        depois: { tolerancia: string };
+      }>(
+        emp.nomeBanco,
+        `select descricao, antes, depois from auditoria
+          where entidade = 'sessoes_caixa' and registro_id = $1 and acao = 'conferir'
+          order by ocorrido_em desc limit 1`,
+        [p1.sessao],
+      )) as [{ descricao: string; antes: { situacao: string }; depois: { tolerancia: string } }];
+      expect(a.descricao).toContain('teve a conferência refeita: Divergente → Conferida');
+      expect(a.descricao).toContain('conferido R$ 223,50 → R$ 224,00');
+      expect(a.antes).toMatchObject({ situacao: 'divergente', observacao: 'Envelope recontado no cofre' });
+      expect(a.depois).toMatchObject({ situacao: 'conferida', tolerancia: '2.00' });
+      // Fora da tolerância em qualquer forma volta a divergir; conferido = calculado sai do filtro de diferença.
+      const pixFora = await conferir({
+        versao: r.body.conferencia.versao,
+        formas: formas({ dinheiro: '225', pix: '32.99' }),
+      });
+      expect(pixFora.body).toMatchObject({ situacao: 'divergente' });
+      const exata = await conferir({
+        versao: pixFora.body.conferencia.versao,
+        formas: formas({ dinheiro: '225' }),
+      });
+      expect(exata.body).toMatchObject({ situacao: 'conferida', diferencaConferida: '0.00' });
+      expect(await situacaoNaLista({ somenteComDiferenca: 'true' })).toEqual([]);
+      expect(await fechamentoDoBanco()).toEqual(antesDoCaixa);
+      // Uma linha de forma por forma do fechamento (o refazer altera, não acumula).
+      const [{ n }] = (await consultar<{ n: number }>(
+        emp.nomeBanco,
+        `select count(*)::int as n from conferencias_caixa_formas where conferencia_id = $1`,
+        [atual.id],
+      )) as [{ n: number }];
+      expect(n).toBe(3);
+      // Diferenças que se compensam (−5 no dinheiro, +5 no PIX: total 0,00) continuam erradas: "Divergente" e no
+      // filtro "Somente com diferença", que olha cada forma do conferido (decisão 227).
+      const trocada = await conferir({
+        versao: exata.body.conferencia.versao,
+        formas: formas({ dinheiro: '220', pix: '40' }),
+      });
+      expect(trocada.status, JSON.stringify(trocada.body)).toBe(200);
+      expect(trocada.body).toMatchObject({
+        situacao: 'divergente',
+        totalConferido: '260.00',
+        diferencaConferida: '0.00',
+      });
+      expect(await situacaoNaLista({ somenteComDiferenca: 'true' })).toEqual([[p1.sessao, 'divergente']]);
+    });
+
+    it('duas conferências ao mesmo tempo com a mesma versão: uma grava, a outra é 409', async () => {
+      const versao = (await getOk(`/api/sessoes-caixa/${p1.sessao}`)).conferencia.versao as number;
+      const [a, b] = await Promise.all([
+        conferir({ versao, formas: formas({ dinheiro: '225' }), observacao: 'primeira' }),
+        conferir({ versao, formas: formas({ dinheiro: '225' }), observacao: 'segunda' }),
+      ]);
+      expect([a.status, b.status].sort()).toEqual([200, 409]);
+      const ganhou = a.status === 200 ? 'primeira' : 'segunda';
+      expect((await getOk(`/api/sessoes-caixa/${p1.sessao}`)).conferencia.observacao).toBe(ganhou);
+    });
+
+    it('aviso: evento do turno retido na nuvem aparece no detalhe (sem impedir a conferência)', async () => {
+      const [ev] = (await consultar<{ id: string; status: string }>(
+        emp.nomeBanco,
+        `select id, status from eventos_recebidos where terminal_id = $1 and tipo = 'caixa.reforco'`,
+        [p1.terminal],
+      )) as [{ id: string; status: string }];
+      await consultar(emp.nomeBanco, `update eventos_recebidos set status = 'retido' where id = $1`, [ev.id]);
+      try {
+        const d = await getOk(`/api/sessoes-caixa/${p1.sessao}`);
+        expect(d.avisosConferencia).toEqual([
+          expect.objectContaining({
+            codigo: 'eventos_pendentes',
+            mensagem: expect.stringContaining('retido'),
+          }),
+        ]);
+        const r = await conferir({ versao: d.conferencia.versao, formas: formas({ dinheiro: '225' }) });
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        expect(r.body.avisosConferencia).toHaveLength(1);
+      } finally {
+        await consultar(emp.nomeBanco, `update eventos_recebidos set status = $2 where id = $1`, [
+          ev.id,
+          ev.status,
+        ]);
+      }
+    });
+
+    it('comprovante de reforço e sangria: só com movimentos_caixa.imprimir, dos tipos das duas telas', async () => {
+      const reforcos = await getOk('/api/movimentos-caixa/reforcos', {
+        sessaoCaixaId: p1.sessao,
+        tipo: 'reforco',
+      });
+      const id = reforcos.itens[0].id as string;
+      const c = await getOk(`/api/movimentos-caixa/${id}/comprovante`);
+      expect(c).toMatchObject({
+        empresa: { razaoSocial: expect.any(String), cnpj: expect.any(String) },
+        loja: { codigo: 1, nome: 'Loja 1 - Centro' },
+        movimento: { id, tipo: 'reforco', valor: '50.00', sessaoCaixaId: p1.sessao },
+        geradoEm: expect.any(String),
+      });
+      const sangria = (await getOk('/api/movimentos-caixa/sangrias', { sessaoCaixaId: p1.sessao })).itens[0];
+      expect((await getOk(`/api/movimentos-caixa/${sangria.id}/comprovante`)).movimento.quemRetira).toEqual(
+        expect.any(String),
+      );
+      // O financeiro vê os movimentos, mas não imprime; o restrito à loja de treino não acha o da Loja 1.
+      expect((await get(`/api/movimentos-caixa/${id}`, {}, tokenFinanceiro)).status).toBe(200);
+      expect((await get(`/api/movimentos-caixa/${id}/comprovante`, {}, tokenFinanceiro)).status).toBe(403);
+      expect((await get(`/api/movimentos-caixa/${id}/comprovante`, {}, tokenGerenteTreino)).status).toBe(404);
+      const [estorno] = (await consultar<{ id: string }>(
+        emp.nomeBanco,
+        `select id from movimentos_caixa where sessao_caixa_id = $1 and tipo = 'estorno_venda'`,
+        [p1.sessao],
+      )) as [{ id: string }];
+      expect((await get(`/api/movimentos-caixa/${estorno.id}/comprovante`)).status).toBe(404);
+    });
   });
 
   describe('Dashboard (ERP 6) pelo dia operacional', () => {
@@ -825,7 +1173,17 @@ describe('sessão fechada pela nuvem e o caixa.fechado tardio (MD 3.12.1; 14.9)'
       fechamento: null,
       formas: [],
       fechamentoForcadoMotivo: 'substituicao_terminal',
+      conferencia: null,
     });
+    // Sem o fechamento do caixa não há contagem para conferir (padrão da Fase 3, F3-B9): o detalhe diz o motivo.
+    expect(forcada.motivoSemConferencia).toContain('fechada pela nuvem');
+    const semFechamento = await amb
+      .http()
+      .post(`/api/sessoes-caixa/${p.sessao}/conferir`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ formas: [] });
+    expect(semFechamento.status, JSON.stringify(semFechamento.body)).toBe(422);
+    expect(semFechamento.body.mensagem).toContain('fechada pela nuvem');
 
     // O PC antigo reconecta e sobe o fechamento: o handler grava fechamento e formas mantendo `fechamento_forcado`.
     const fechado = daFixture<PayloadFechado>(p, 'caixa.fechado.payload.json');
@@ -845,8 +1203,16 @@ describe('sessão fechada pela nuvem e o caixa.fechado tardio (MD 3.12.1; 14.9)'
       situacao: 'fechada',
       fechamento: expect.objectContaining({ tipo: 'fechamento' }),
       fechamentoForcadoMotivo: 'substituicao_terminal',
+      motivoSemConferencia: null,
     });
     expect(d.formas).toHaveLength(3);
+    // O caixa mandou o calculado da fixture (R$ 1.736,00 em dinheiro) e a nuvem só tem a abertura (R$ 150,00).
+    expect(d.avisosConferencia).toEqual([
+      expect.objectContaining({
+        codigo: 'calculo_divergente',
+        mensagem: expect.stringContaining('R$ 150,00'),
+      }),
+    ]);
   });
 });
 

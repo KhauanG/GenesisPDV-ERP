@@ -164,6 +164,8 @@ const SESSOES: PaginaSessoesCaixa = {
       totalCalculado: '260.00',
       totalInformado: '258.50',
       diferenca: '-1.50',
+      totalConferido: null,
+      diferencaConferida: null,
     },
   ],
   total: 1,

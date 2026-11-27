@@ -114,6 +114,7 @@ const ROTULOS_ACAO: Record<string, string> = {
   login_negado: 'Login negado',
   logout: 'Saída',
   bloqueio: 'Bloqueio',
+  conferir: 'Conferência',
 };
 
 /** Formulário padrão (ERP 3.2): cabeçalho, abas ou acordeão, Salvar (Ctrl+S), Voltar (Esc), Excluir, Histórico. */

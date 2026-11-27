@@ -23,6 +23,8 @@ import {
   MODOS_LOTE_BAIXA_SEM_INFORMAR,
 } from './estoque.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
+import { CHAVES_TIPO_PRODUTO, VERSAO_PDV_GUARDA_VARIACOES } from './produtos.js';
+import { NUMERO_VENDA_MAXIMO } from './sync/contratos.js';
 import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 export interface DefinicaoConfiguracao {
@@ -115,22 +117,25 @@ const LINHAS: Linha[] = [
   // PDV
   ['pdv.exibe_cardapio_interno', bool, false, LP],
   ['pdv.exibe_estoque_busca', bool, true, LP],
-  ['pdv.dias_validade_cupom_troca', inteiro(0, 3650), 30, LP],
-  ['pdv.fonte_lista', inteiro(8, 72), 14, LP],
-  ['pdv.fonte_total', inteiro(8, 120), 36, LP],
-  ['pdv.fonte_codigo', inteiro(8, 72), 20, LP],
+  // F3-B12: as faixas destas seis passam a ser as da ERP 9.3.1 (eram mais largas). O valor já gravado fora da faixa
+  // não é recusado nem apagado, mas não vale: o efetivo cai no nível seguinte (a loja na empresa, a empresa no
+  // padrão; `valorGravadoValido`) e o ERP avisa.
+  ['pdv.dias_validade_cupom_troca', inteiro(0, 365), 30, LP],
+  ['pdv.fonte_lista', inteiro(10, 32), 14, LP],
+  ['pdv.fonte_total', inteiro(20, 72), 36, LP],
+  ['pdv.fonte_codigo', inteiro(10, 40), 20, LP],
   ['pdv.usa_pinpad_virtual', bool, false, LP],
   ['pdv.desmembra_produto_kit', bool, false, LP],
   ['pdv.solicita_abertura_caixa', bool, true, LP],
   ['pdv.resumo_diario_modo', umDe(['intervalo_dias', 'horario']), 'intervalo_dias', LP],
   ['pdv.comandas_numeracao_automatica', bool, false, LP],
   ['pdv.usa_preco_volume', bool, false, LP],
-  ['pdv.vale_compra_validade_dias', inteiro(1, 3650), 90, SO_PDV],
+  ['pdv.vale_compra_validade_dias', inteiro(1, 730), 90, SO_PDV],
   ['pdv.imprime_cupom_troca', bool, false, LP],
   ['pdv.bloqueia_venda_sem_estoque', bool, false, LP],
   ['pdv.limite_valor_venda', dinheiro, null, LP],
   ['pdv.aviso_vencimento', bool, false, LP],
-  ['pdv.aviso_vencimento_dias', inteiro(1, 3650), 30, LP],
+  ['pdv.aviso_vencimento_dias', inteiro(1, 365), 30, LP],
   ['pdv.limite_venda_em_aberto', inteiro(0, 1000), null, LP],
   ['pdv.imprime_sangria_automaticamente', bool, true, LP],
   ['pdv.valor_limite_sangria', dinheiro, null, LP],
@@ -310,7 +315,7 @@ export const REGEX_CHAVE_CONFIGURACAO = /^[a-z0-9]+(_[a-z0-9]+)*(\.[a-z0-9_]+)+$
 // ---------------------------------------------------------------------------------------------------------------
 // API de Configurações (ERP 9.0): leitura do valor efetivo e gravação só do que difere do padrão.
 
-/** Grupos editáveis pelo ERP nesta fase (as abas Fiscal/Tributação/Financeiro/Vendas entram com as fases delas). */
+/** Grupos que a API de Configurações lê e grava (as abas Fiscal, Tributação e Financeiro do ERP entram com as fases delas). */
 export const GRUPOS_CONFIGURACAO = [
   'geral',
   'produtos',
@@ -346,6 +351,11 @@ export interface ValorConfiguracao {
   segredo: boolean;
   /** Lojas que sobrepõem esta chave (ícone 🏬 na tela de Configurações, ERP 9.0). */
   lojasSobrepondo: number;
+  /**
+   * F3-B12: valor gravado que não passa mais no tipo do catálogo (a faixa ficou mais estreita). Ele não vale: o efetivo
+   * cai no nível seguinte (a loja na empresa, a empresa no padrão), e o ERP avisa até alguém gravar um valor válido.
+   */
+  foraDaFaixa?: { empresa?: unknown; loja?: unknown };
 }
 
 /**
@@ -367,6 +377,174 @@ export function validarValorConfiguracao(chave: string, valor: unknown): string 
   if (valor === null) return null;
   const r = def.tipo.safeParse(valor);
   return r.success ? null : (r.error.issues[0]?.message ?? 'Valor inválido');
+}
+
+/**
+ * O valor gravado ainda vale? (F3-B12) A faixa de algumas chaves ficou mais estreita que a gravada antes (ERP 9.3.1):
+ * a linha não é apagada nem recusa a leitura, só deixa de valer, e o efetivo cai no nível seguinte (loja → empresa →
+ * padrão). Quem lê o valor efetivo (`lerConfiguracoes` da API, a listagem do ERP) usa esta regra; o PDV que passar a
+ * ler uma destas chaves aplica a mesma faixa.
+ */
+export function valorGravadoValido(chave: string, valor: unknown): boolean {
+  const def = CONFIGURACOES_POR_CHAVE.get(chave);
+  return !!def && (valor === null || def.tipo.safeParse(valor).success);
+}
+
+/** Mínimo e máximo de uma chave inteira (`null` nos outros tipos), para o campo da tela e a mensagem. */
+export function faixaConfiguracao(chave: string): { min: number; max: number } | null {
+  const tipo = CONFIGURACOES_POR_CHAVE.get(chave)?.tipo;
+  if (!(tipo instanceof z.ZodNumber)) return null;
+  const { minValue, maxValue } = tipo;
+  return minValue === null || maxValue === null ? null : { min: minValue, max: maxValue };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Versão do PDV que dá efeito à chave (Fase 3, F3-B12; plano › Padrões, "Chaves que mudam o preço ou o pagamento").
+
+/** Releases do PDV da Fase 3 (plano da Fase 3 › PRs): R3, R4 e R5. */
+export const VERSAO_PDV_R3 = '0.14.0';
+export const VERSAO_PDV_R4 = '0.15.0';
+export const VERSAO_PDV_R5 = '0.16.0';
+
+export interface VersaoPdvDaChave {
+  /** Primeira versão do PDV que lê a chave; o caixa abaixo dela (ou sem versão conhecida) a ignora. */
+  versao: string;
+  /**
+   * Trava dura (Padrões da Fase 3): a chave muda o preço ou o pagamento, e o caixa antigo cobraria diferente do novo.
+   * Ligar a chave (`chaveLigada`) é recusado (422) enquanto houver terminal ativo abaixo da versão nas lojas em que ela
+   * passa a valer; desligar sempre pode. Só chaves booleanas (o `configuracoes.spec.ts` confere).
+   */
+  trava: boolean;
+}
+
+const aviso = (versao: string): VersaoPdvDaChave => ({ versao, trava: false });
+
+/**
+ * As chaves que o PDV instalado pode não ler ainda, com a versão que as entende. As demais chaves que descem ao caixa
+ * já valem desde antes do PDV mais antigo em uso (0.13.0, conferido pelo dono em 26/11/2026), ou são lidas pela
+ * nuvem, ou não têm efeito em versão nenhuma ainda (o ERP as marca, README do ERP › decisão 91). Conferido contra as
+ * tags `pdv-v0.10.0`..`pdv-v0.13.0` (chaves lidas pelo `ChavesConfiguracao` e pelos serviços do caixa) e contra os
+ * blocos do plano que as passam a ler. Os blocos seguintes acrescentam as suas (a das promoções, F3-B34, com trava).
+ */
+export const VERSAO_PDV_DA_CHAVE: Readonly<Record<string, VersaoPdvDaChave>> = {
+  // Fase 2 (F2-B34, F2-B35): a guarda das variações, o F4 "Outras lojas" e o saldo na busca chegaram no 0.11.0.
+  [CHAVES_TIPO_PRODUTO.com_variacoes!]: aviso(VERSAO_PDV_GUARDA_VARIACOES),
+  'pdv.recusa_produto_com_variacoes': aviso(VERSAO_PDV_GUARDA_VARIACOES),
+  'pdv.consulta_outras_lojas': aviso('0.11.0'),
+  'pdv.exibe_estoque_busca': aviso('0.11.0'),
+  // R3 (PR-19 a PR-21): preço digitado e alterado (F3-B16, B17), lote vencendo (F3-B20), etiqueta de balança (F3-B21),
+  // vendas em aberto (F3-B23), limite de valor (F3-B24; D15), foto (F3-B25) e vendedor (F3-B28; D81).
+  'pdv.altera_preco_pdv': aviso(VERSAO_PDV_R3),
+  'pdv.limite_preco_digitado': aviso(VERSAO_PDV_R3),
+  'pdv.aviso_vencimento': aviso(VERSAO_PDV_R3),
+  'pdv.aviso_vencimento_dias': aviso(VERSAO_PDV_R3),
+  'geral.tipo_balanca': aviso(VERSAO_PDV_R3),
+  'geral.balanca_prefixo': aviso(VERSAO_PDV_R3),
+  'geral.balanca_tamanho_codigo': aviso(VERSAO_PDV_R3),
+  'geral.balanca_tamanho_valor': aviso(VERSAO_PDV_R3),
+  'pdv.limite_venda_em_aberto': aviso(VERSAO_PDV_R3),
+  'pdv.limite_valor_venda': aviso(VERSAO_PDV_R3),
+  'pdv.exibe_foto_produto': aviso(VERSAO_PDV_R3),
+  'pdv.forca_escolha_vendedor': aviso(VERSAO_PDV_R3),
+  'pdv.solicita_vendedor_finalizacao': aviso(VERSAO_PDV_R3),
+  'pdv.atendente_ao_inves_vendedor': aviso(VERSAO_PDV_R3),
+  // R4 (PR-23 a PR-27): comodato (F3-B40, com a trava: o empréstimo muda o que o cliente leva e paga), cliente criado no
+  // caixa (F3-B38), trocas e vales (F3-B45 a B49).
+  'pdv.vasilhame_comodato': { versao: VERSAO_PDV_R4, trava: true },
+  'pdv.vasilhame_comodato_max_por_cliente': aviso(VERSAO_PDV_R4),
+  'pdv.limite_padrao_cliente_pdv': aviso(VERSAO_PDV_R4),
+  'pdv.dias_validade_cupom_troca': aviso(VERSAO_PDV_R4),
+  'pdv.vale_compra_validade_dias': aviso(VERSAO_PDV_R4),
+  'pdv.imprime_cupom_troca': aviso(VERSAO_PDV_R4),
+  'pdv.vale_exige_online': aviso(VERSAO_PDV_R4),
+  'pdv.vale_exige_cliente_acima': aviso(VERSAO_PDV_R4),
+  'pdv.vale_exige_conferencia': aviso(VERSAO_PDV_R4),
+  'pdv.troca_kit_parcial': aviso(VERSAO_PDV_R4),
+  'vendas.vale_frase_bloqueio': aviso(VERSAO_PDV_R4),
+  'vendas.vale_rodape': aviso(VERSAO_PDV_R4),
+  // R5 (PR-29): orçamentos no caixa (F3-B63).
+  'pdv.orcamento_pdv': aviso(VERSAO_PDV_R5),
+  'vendas.solicita_id_orcamento': aviso(VERSAO_PDV_R5),
+};
+
+/**
+ * A chave tem versão mínima do PDV? Com `Object.hasOwn`, não com `in`: o `in` também enxerga o protótipo do objeto
+ * (`toString`, `constructor`, `__proto__`), e `?chave=toString` passaria na validação e quebraria a comparação de
+ * versões com 500.
+ */
+export function temVersaoPdv(chave: string): boolean {
+  return Object.hasOwn(VERSAO_PDV_DA_CHAVE, chave);
+}
+
+/** A chave com trava está "ligada" com este valor (só booleanas têm trava: Sim liga). */
+export function chaveLigada(valor: unknown): boolean {
+  return valor === true;
+}
+
+/** Terminal ativo abaixo da versão que dá efeito à chave (`GET /configuracoes/terminais-desatualizados`). */
+export interface TerminalDesatualizado {
+  id: string;
+  lojaNome: string | null;
+  numeroCaixa: number;
+  descricao: string | null;
+  /** `null` = o terminal ainda não informou a versão (nunca mandou o handshake): conta como desatualizado. */
+  versaoApp: string | null;
+}
+
+export interface ChaveComTerminaisDesatualizados {
+  chave: string;
+  versaoMinima: string;
+  trava: boolean;
+  /** Só os das lojas permitidas ao usuário (ERP 2.1). */
+  terminais: TerminalDesatualizado[];
+  /** Quantos ficam nas lojas fora do acesso do usuário (só a contagem). */
+  outrasLojas: number;
+  /**
+   * Quantos das lojas permitidas vão só na contagem porque o usuário não tem "PDVs/Terminais: Ver" nem
+   * "Configurações: Editar" (a consulta pede só `configuracoes.ver`); ausente = 0 (`terminais` traz todos).
+   */
+  semDetalhes?: number;
+}
+
+/** Resposta de `GET /configuracoes/terminais-desatualizados?chave=a,b[&lojaId=]`, na ordem pedida. */
+export interface RespostaTerminaisDesatualizados {
+  chaves: ChaveComTerminaisDesatualizados[];
+}
+
+export const consultaTerminaisDesatualizadosSchema = z.object({
+  chave: z
+    .string()
+    .transform((v) => [...new Set(v.split(',').filter(Boolean))])
+    .pipe(
+      z
+        .array(z.string().refine(temVersaoPdv, 'Chave sem versão do PDV (VERSAO_PDV_DA_CHAVE)'))
+        .min(1)
+        .max(100),
+    ),
+  lojaId: z.uuid().optional(),
+});
+
+/** Código de `detalhes.codigo` do 422 da trava (`detalhes.chaves` = `ChaveComTerminaisDesatualizados[]`). */
+export const CODIGO_TERMINAIS_DESATUALIZADOS = 'TERMINAIS_DESATUALIZADOS';
+
+// ---------------------------------------------------------------------------------------------------------------
+// "Nº da próxima venda" do ERP (ERP 9.10; MD 3.1.4): `numeracoes` `tipo = 'venda'` do caixa 0 da loja (dono `nuvem`).
+
+export const CHAVE_NUMERACAO_PROPRIA = 'vendas.numeracao_propria';
+
+/** `PUT /lojas/:id/numeracao-venda-erp`: grava `ultimo_numero = proximoNumero − 1`. */
+export const alterarNumeracaoVendaErpSchema = z.object({
+  proximoNumero: z.number().int().min(1).max(NUMERO_VENDA_MAXIMO),
+});
+export type AlterarNumeracaoVendaErp = z.output<typeof alterarNumeracaoVendaErpSchema>;
+
+export interface NumeracaoVendaErp {
+  lojaId: string;
+  /** O maior entre `numeracoes.ultimo_numero` do caixa 0 e o maior número de venda do caixa 0 gravado. */
+  ultimoNumero: number;
+  proximoNumero: number;
+  /** `vendas.numeracao_propria`: sem ela, o número não se edita (segue a sequência). */
+  numeracaoPropria: boolean;
 }
 
 // Atalhos do PDV (ERP 9.9; PDV 28.3; MD 3.10.2)

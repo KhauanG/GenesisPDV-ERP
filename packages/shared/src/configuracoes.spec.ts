@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alterarNumeracaoVendaErpSchema,
+  CHAVE_NUMERACAO_PROPRIA,
   CHAVES_CONFIGURACAO_PDV,
+  chaveLigada,
   CONFIGURACOES,
   CONFIGURACOES_POR_CHAVE,
+  consultaTerminaisDesatualizadosSchema,
+  faixaConfiguracao,
   GRUPOS_CONFIGURACAO,
   grupoDaChave,
   REGEX_CHAVE_CONFIGURACAO,
+  temVersaoPdv,
+  valorGravadoValido,
+  VERSAO_PDV_DA_CHAVE,
+  VERSAO_PDV_R3,
+  VERSAO_PDV_R4,
+  VERSAO_PDV_R5,
 } from './configuracoes.js';
 import {
   CHAVE_COMPRA_ATUALIZA_PRECO_CUSTO,
@@ -15,8 +26,8 @@ import {
 } from './estoque.js';
 import { CHAVE_ASSINATURA_INVALIDA, MODOS_ASSINATURA_INVALIDA } from './notas-entrada.js';
 import { BASES_CUSTO_MARGEM, CHAVE_CUSTO_BASE_MARGEM } from './precos.js';
-import { CHAVE_RECUSA_PRODUTO_COM_VARIACOES } from './produtos.js';
-import { CHAVE_CONSULTA_OUTRAS_LOJAS } from './sync/contratos.js';
+import { CHAVE_RECUSA_PRODUTO_COM_VARIACOES, VERSAO_PDV_GUARDA_VARIACOES } from './produtos.js';
+import { CHAVE_CONSULTA_OUTRAS_LOJAS, NUMERO_VENDA_MAXIMO } from './sync/contratos.js';
 import { CHAVE_TRANSFERENCIA_ALERTA_DIAS, TRANSFERENCIA_ALERTA_DIAS_PADRAO } from './transferencias.js';
 
 describe('catálogo de configurações (MD 3.1.2)', () => {
@@ -134,5 +145,79 @@ describe('catálogo de configurações (MD 3.1.2)', () => {
     expect([conferencia.loja, conferencia.pdv]).toEqual([true, true]);
     // O limite padrão do cliente no caixa já existia desde a Fase 1: o F3-B3 não a recria.
     expect(CONFIGURACOES_POR_CHAVE.get('pdv.limite_padrao_cliente_pdv')).toBeDefined();
+  });
+
+  it('F3-B12: as faixas das seis chaves da ERP 9.3.1', () => {
+    expect(faixaConfiguracao('pdv.dias_validade_cupom_troca')).toEqual({ min: 0, max: 365 });
+    expect(faixaConfiguracao('pdv.fonte_lista')).toEqual({ min: 10, max: 32 });
+    expect(faixaConfiguracao('pdv.fonte_total')).toEqual({ min: 20, max: 72 });
+    expect(faixaConfiguracao('pdv.fonte_codigo')).toEqual({ min: 10, max: 40 });
+    expect(faixaConfiguracao('pdv.vale_compra_validade_dias')).toEqual({ min: 1, max: 730 });
+    expect(faixaConfiguracao('pdv.aviso_vencimento_dias')).toEqual({ min: 1, max: 365 });
+    expect(faixaConfiguracao('pdv.troco_maximo')).toBeNull();
+    expect(faixaConfiguracao('nao.existe')).toBeNull();
+  });
+
+  it('F3-B12: o valor gravado fora da faixa deixa de valer, sem recusar a leitura', () => {
+    expect(valorGravadoValido('pdv.fonte_total', 120)).toBe(false);
+    expect(valorGravadoValido('pdv.fonte_total', 72)).toBe(true);
+    expect(valorGravadoValido('pdv.dias_validade_cupom_troca', 3650)).toBe(false);
+    expect(valorGravadoValido('pdv.dias_validade_cupom_troca', 0)).toBe(true);
+    expect(valorGravadoValido('pdv.limite_valor_venda', null)).toBe(true);
+    expect(valorGravadoValido('pdv.troco_maximo', 500)).toBe(false);
+    expect(valorGravadoValido('nao.existe', true)).toBe(false);
+  });
+
+  it('F3-B12: VERSAO_PDV_DA_CHAVE só com chaves do catálogo, versões válidas e trava só em booleanas', () => {
+    const versoes = new Set(['0.11.0', VERSAO_PDV_R3, VERSAO_PDV_R4, VERSAO_PDV_R5]);
+    for (const [chave, v] of Object.entries(VERSAO_PDV_DA_CHAVE)) {
+      const def = CONFIGURACOES_POR_CHAVE.get(chave);
+      expect(def, chave).toBeDefined();
+      expect(versoes.has(v.versao), chave).toBe(true);
+      // A chave do cadastro de produtos não desce, mas decide o que o caixa recebe (variações, F2-B34).
+      if (chave !== 'produtos.variacoes_habilitadas') expect(def!.pdv, chave).toBe(true);
+      if (v.trava) {
+        expect(def!.tipo.safeParse(true).success, chave).toBe(true);
+        expect(def!.tipo.safeParse(1).success, chave).toBe(false);
+        // Nasce desligada: o padrão nunca liga a trava sozinho.
+        expect(chaveLigada(def!.padrao), chave).toBe(false);
+      }
+    }
+    expect(VERSAO_PDV_DA_CHAVE['produtos.variacoes_habilitadas']).toEqual({
+      versao: VERSAO_PDV_GUARDA_VARIACOES,
+      trava: false,
+    });
+    // Padrões da Fase 3: o comodato muda o que o cliente leva e paga, e só liga com todos os caixas na R4.
+    expect(VERSAO_PDV_DA_CHAVE['pdv.vasilhame_comodato']).toEqual({ versao: VERSAO_PDV_R4, trava: true });
+    expect(Object.values(VERSAO_PDV_DA_CHAVE).filter((v) => v.trava)).toHaveLength(1);
+  });
+
+  it('F3-B12: a consulta de terminais desatualizados aceita só chaves com versão', () => {
+    const ok = consultaTerminaisDesatualizadosSchema.safeParse({
+      chave: 'pdv.vasilhame_comodato,pdv.orcamento_pdv,pdv.vasilhame_comodato',
+    });
+    expect(ok.success && ok.data.chave).toEqual(['pdv.vasilhame_comodato', 'pdv.orcamento_pdv']);
+    expect(consultaTerminaisDesatualizadosSchema.safeParse({ chave: 'pdv.troco_maximo' }).success).toBe(
+      false,
+    );
+    expect(consultaTerminaisDesatualizadosSchema.safeParse({ chave: '' }).success).toBe(false);
+    // O que vem do protótipo do objeto não é chave com versão (o `in` deixaria passar e a comparação daria 500).
+    for (const c of ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      expect(temVersaoPdv(c), c).toBe(false);
+      expect(consultaTerminaisDesatualizadosSchema.safeParse({ chave: c }).success, c).toBe(false);
+      expect(
+        consultaTerminaisDesatualizadosSchema.safeParse({ chave: `pdv.vasilhame_comodato,${c}` }).success,
+        c,
+      ).toBe(false);
+    }
+    expect(temVersaoPdv('pdv.vasilhame_comodato')).toBe(true);
+  });
+
+  it('F3-B12: Nº da próxima venda do ERP de 1 ao maior número de venda', () => {
+    expect(CONFIGURACOES_POR_CHAVE.get(CHAVE_NUMERACAO_PROPRIA)!.padrao).toBe(false);
+    for (const v of [1, NUMERO_VENDA_MAXIMO])
+      expect(alterarNumeracaoVendaErpSchema.safeParse({ proximoNumero: v }).success).toBe(true);
+    for (const v of [0, NUMERO_VENDA_MAXIMO + 1, 2.5, '10'])
+      expect(alterarNumeracaoVendaErpSchema.safeParse({ proximoNumero: v }).success, String(v)).toBe(false);
   });
 });

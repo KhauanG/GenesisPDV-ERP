@@ -7854,6 +7854,253 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        `pessoas` e do `operacao` além das linhas novas. Local e fora do CI (precisa das tags no clone). O PDV desta árvore,
        no mesmo e2e (`PontaAPontaTests`), confere que a promoção, o vale e o orçamento com item chegaram ao SQLite.
 
+227. **Conferência do fechamento pelo gerente e o comprovante de reforço e sangria** (F3-B9; plano
+     `docs/planos/fase3-plano.md`; ERP 14.9, 15.2, 15.3; MD 3.12.4; D114 = F3-Q44 (A); `vendas/sessoes-caixa.controller.ts`,
+     `vendas/movimentos-caixa.controller.ts`, `packages/shared/src/vendas.ts`). Sem migração (as tabelas são da 0030,
+     decisão 221) e sem PDV: nada do que veio do caixa muda. Escolhas técnicas, sem pergunta ao dono:
+     - **`POST /sessoes-caixa/:id/conferir`** (`fechamentos_caixa.conferir`; corpo `conferirSessaoSchema`): o valor
+       conferido de **cada** forma do fechamento, e só delas (faltou ou sobrou forma = 422 no campo `formas`), em texto
+       decimal com vírgula ou ponto e até 2 casas, nunca `number` (ADR-05), e a observação até 2.000. A diferença é
+       conferido − calculado do caixa (`fechamentos_caixa_formas.valor_calculado`), em `Dec`, gravada em
+       `conferencias_caixa_formas.diferenca`. A situação é `situacaoConferencia()` do shared, a mesma conta que a tela
+       faz ao vivo: "Conferida" se **toda** forma fica dentro de `pdv.tolerancia_diferenca_caixa` **da loja** (valor
+       absoluto, padrão R$ 0,00), senão "Divergente"; as formas não se compensam (−5 no dinheiro e +5 no PIX divergem).
+       A tolerância usada vai na auditoria (a conferência não tem coluna para ela; refazer usa a de agora).
+     - **Só sessão com fechamento** (padrão da Fase 3 aplicado sem pergunta, "padrão até a confirmação do dono"). A
+       sessão aberta e a fechada pela nuvem sem o `caixa.fechado` são 422, com o motivo também no detalhe
+       (`motivoSemConferencia`); loja fora das permitidas é 403 (o detalhe é 404, como antes).
+     - **Concorrência e refazer (D114).** A transação trava o `fechamentos_caixa` (`for update`; uma conferência por
+       fechamento, `uq_conferencias_caixa_fechamento`) e confere a `versao` que a tela leu (`null` na primeira): duas
+       conferências ao mesmo tempo gravam em fila e a segunda é 409 `CONFLITO_VERSAO`. Refazer altera a mesma linha e
+       faz upsert das formas (`uq_conferencias_caixa_formas`), sem acumular. A trava 7300001 não é pega: as tabelas da
+       conferência são `fn_versao_local` (não descem); o handler `caixa.aberto` que grava o `usuario_subsequente_id` do
+       fechamento só espera a linha.
+     - **Auditoria legível**: ação `conferir`, entidade `sessoes_caixa` (o Histórico do detalhe), com a descrição "Caixa
+       01 do dia 29/10/2026 conferido: Divergente (tolerância R$ 0,00 por forma). Dinheiro: calculado …, conferido …,
+       diferença …" e, ao refazer, "teve a conferência refeita: Divergente → Conferida", com o conferido "antes → depois"
+       por forma; `antes`/`depois` em JSON (situação, observação e o conferido de cada forma).
+     - **Avisos que não impedem** (`avisosConferencia` no detalhe e na resposta): `eventos_pendentes` são os eventos do
+       turno em erro ou retidos na nuvem, pela mesma conta do alerta `FECHAMENTO_EVENTOS_PENDENTES`
+       (`eventosPendentesDoTurno`, agora exportada, da abertura à `resumo.ultima_sequencia_evento`); `calculo_divergente`
+       é o dinheiro calculado pelo caixa diferente do cálculo refeito na nuvem (a condição do alerta que a 1C já
+       mostrava no "Cálculo do dinheiro"; o ERP passou a ler esse alerta deste aviso, com a comparação decimal, e não o
+       repete no bloco da conferência).
+     - **Listagem com as quatro situações** (`aberta`, `fechada` = fechada sem conferência, `conferida`, `divergente`),
+       derivadas de `conferencias_caixa`, sem mudar o `ck_sessoes_caixa_status` (que desce ao caixa); `fechada_forcado`
+       continua só exibida. Colunas novas `totalConferido` e `diferencaConferida` (soma das formas). "Somente com
+       diferença" é **sobre o conferido** quando há conferência (alguma forma com conferido ≠ calculado) e, sem ela, sobre o
+       informado — agora por forma também, além do total (antes, só `f.diferenca <> 0`: a forma trocada com total zero
+       ficava de fora).
+     - **Comprovante de reforço e sangria**: `GET /movimentos-caixa/:id/comprovante` (`movimentos_caixa.imprimir`) devolve
+       o movimento (o mesmo detalhe, com a loja permitida; outra loja = 404), a empresa e a loja (razão social, fantasia,
+       CNPJ; sem exigir `empresa.ver`, como o romaneio, decisão 175) e a hora do servidor; só os tipos das telas 15.2 e
+       15.3 (`abertura`, `reforco`, `sangria`, `sangria_fechamento`), os demais 404. O layout é fixo no ERP, pela
+       impressão do navegador (não há tipo em `TIPOS_TEMPLATE`; padrão da Fase 3, "padrão até a confirmação do dono").
+     - **Fase 4**: `conta_financeira_id` fica nulo (a quebra/sobra no financeiro); `financeiro.lanca_quebra_automatica`
+       não é lida aqui.
+     - **Testes.** `packages/shared/src/vendas.spec.ts` (situação dentro e fora da tolerância, as formas que não se
+       compensam, a forma sem venda, a diferença em decimal, o corpo); `test/integracao/consultas-vendas-caixa.test.ts`
+       (conferir Divergente com o fechamento e a sessão intocados e `conta_financeira_id` nulo, a auditoria, os filtros;
+       "Somente com diferença" com −5 no dinheiro e +5 no PIX, total 0, com e sem conferência; refazer com 409 sem a
+       versão, a tolerância da loja em R$ 2,00, o antes → depois e o upsert das formas; duas conferências ao mesmo
+       tempo; 403 sem a permissão e com a loja não permitida; 422 da aberta, da fechada pela nuvem, de forma faltando ou
+       sobrando e de valor inválido; o aviso do evento retido e o do cálculo divergente; o comprovante com e sem
+       `movimentos_caixa.imprimir`, de outra loja e do estorno).
+
+228. **Núcleo de estorno da venda e a projeção `vendas_status_pdv`, sem mudar o comportamento do caixa** (F3-B10; plano
+     `docs/planos/fase3-plano.md`; SYNC 10.4, 16.3; MD 3.11.9; `vendas/estorno-venda.ts`, `sync/status-pdv.ts`,
+     `sync/handlers/cancelamento.ts`). Sem migração (a projeção é da 0030, decisão 221) e sem PDV. Escolhas técnicas,
+     sem pergunta ao dono:
+     - **O núcleo do estorno de estoque sai do handler** para `vendas/estorno-venda.ts`, para o cancelamento pelo ERP
+       (F3-B11) e o cancelamento de venda com troca (F3-B44) usarem a mesma regra: `ESTORNO_DO_MOVIMENTO` e
+       `tiposEstornados` (os vazios trazidos só com `pdv.cancelamento_devolve_vazios`, `lerDevolveVazios`, D29),
+       `movimentosParaEstornar` (os movimentos ainda sem estorno; imutáveis, lidos antes da 7300001),
+       `linhasDeEstorno` (o `estorno_de_id`, o sinal oposto, o custo da saída original, T20, o mesmo estoque, tipo,
+       lote e item, a data do cancelamento; a origem — terminal e evento, nulos no ERP — vem de quem chama) e
+       `estornarEstoqueDaVenda` (o motor e o `compensarDefinir`, 15.3). O handler `venda.cancelada` (forma A) passou a
+       usá-lo e continua exportando `ESTORNO_DO_MOVIMENTO`, `tiposEstornados`, `CHAVE_CANCELAMENTO_DEVOLVE_VAZIOS`,
+       `MovimentoDaVenda` e `estornosDaVenda` para quem já os importava. O `cancelamento.spec.ts`, a integração do
+       cancelamento, o `movimentos.spec` e o `recalcular-saldos` passam sem mudança.
+     - **Vendido menos o devolvido** (Padrões da Fase 3, "troca × cancelamento"): `quantidadesDevolvidas` lê os itens
+       com `quantidade_devolvida > 0`, **com a linha da venda travada** (a troca do F3-B43 muda o devolvido com a mesma
+       trava), e `quantidadesAEstornar` estorna, **por grupo** de movimentos do item (item, tipo, produto, variação e
+       sinal), `soma do grupo × (vendido − devolvido) ÷ vendido`, arredondado **uma** vez a 3 casas: o `VENDA_PDV` do
+       item dá exatamente o que sobrou dele, o `BAIXA_INSUMO` a parte dos insumos do que não voltou (o produzido
+       devolvido não devolve os insumos, Padrões), e o item devolvido por inteiro não estorna nada (o movimento fica de
+       fora; a troca já deu a entrada). O grupo existe porque o motor divide a saída sem lote em FEFO (um movimento por
+       lote e a sobra sem lote, com o mesmo `documento_item_id`): arredondar cada lote somaria estoque que não existe
+       (3 lotes de 1 com 1 devolvida dariam 3 × 0,667 = 2,001). O devolvido do grupo (`partesDevolvidas`) ocupa os
+       movimentos na **ordem do id**, cada um até a quantidade dele, e o cancelamento estorna o resto: é o critério que
+       a troca do F3-B43 deve usar para o lote da entrada ("o lote dos movimentos da venda de origem", Padrões) — com
+       o devolvido acumulado do item, a entrada vai para o lote que `partesDevolvidas` dá a mais —, para o
+       cancelamento estornar os lotes que a troca não devolveu. O bloco de vasilhames (o `documento_item_id` derivado,
+       T4) não é item: os vazios voltam inteiros. Hoje nenhuma venda tem devolução (sem o `troca.registrada`), e a conta dá
+       a linha de antes; a integração simula a troca pondo o devolvido à mão (a única coluna livre do item finalizado,
+       `tg_itens_venda_imutavel`).
+     - **`registrarStatusPdv(tx, vendaId, origem)`** (`sync/status-pdv.ts`; `origem` = `'nuvem'` ou `{ terminalId }`)
+       grava a projeção com o estado **atual** da venda, lido na transação: a mudança da nuvem (ERP, tarefa fiscal) ou
+       de outro terminal faz o upsert pelo `id` da venda (`caixa_id` e `terminal_id` só no `INSERT`, imutáveis); a
+       venda sem terminal (do ERP, no caixa 0) não tem caixa que a leia e não grava. **Desvio pequeno do plano** (que
+       diz "grava só quando a origem não é o terminal da venda"): a mudança do próprio terminal não **cria** a linha,
+       mas **atualiza** a que já existe — senão a linha antiga, que prevalece no caixa (SYNC 16.3), contradiria o que
+       ele acabou de fazer (o ERP resolveu o fiscal e, depois, o caixa cancelou; o caixa ofereceria cancelar de novo).
+       A forma A chama no fim do `aplicar`; hoje nenhuma linha existe antes do F3-B11, então nada muda. A escrita passa
+       pelo `fn_versao` (a 7300001): quem chama faz isso depois das outras escritas, com a venda travada; o mesmo estado
+       de novo não gera versão.
+     - **Testes.** `vendas/estorno-venda.spec.ts` (sem devolução, a linha de antes; troca parcial, o insumo na
+       proporção, o id em maiúsculas; o devolvido por inteiro; os vazios inteiros; a origem do ERP sem terminal),
+       `sync/status-pdv.spec.ts` (a decisão: nuvem, outro terminal, o próprio, sem terminal),
+       `test/integracao/cancelamento-vasilhame-eventos.test.ts` (o cancelamento do caixa com um item de troca parcial,
+       um devolvido por inteiro e um sem troca: estorna 7 de 12, nada e 3, sem a projeção) e
+       `test/integracao/sync-fluxos-fase3.test.ts` (o `registrarStatusPdv` do próprio terminal sem linha não grava; o da
+       nuvem grava o estado atual e o repetido não gera versão; o de outro terminal grava e o do próprio, depois,
+       atualiza; o caixa puxa as duas linhas pelo fluxo `operacao`).
+
+229. **Cancelar pelo ERP a venda do caixa, inclusive a de caixa fechado** (F3-B11; plano `docs/planos/fase3-plano.md`;
+     ERP 15.4.3; SYNC 10.4, 16.3; D112 = F3-Q42 (A), D113 = F3-Q43 (A); PC-1/D23; `vendas/cancelamento-erp.ts`,
+     `vendas/vendas.controller.ts`, `packages/shared/src/vendas.ts`). Sem migração e sem PDV (o caixa novo lê a projeção
+     no F3-B29). Escolhas técnicas, sem pergunta ao dono:
+     - **Duas rotas**: `GET /vendas/:id/cancelamento` (`vendas.cancelar`; a prévia do modal: o bloqueio, os avisos, se
+       pede a forma de devolução, as formas disponíveis e o `pdv.cancelamento_devolve_vazios` da loja) e
+       `POST /vendas/:id/cancelar` (`cancelarVendaSchema`: `motivo` de 15 a 255 sem os espaços das pontas, a mesma regra
+       do caixa, O6; `formaDevolucao`; `confirmarAvisos`), que devolve o detalhe da venda e por isso exige
+       **`vendas.ver` e `vendas.cancelar`**: o controlador chama `detalhar` direto, sem o guard da rota dele, e o perfil
+       personalizado com só `vendas.cancelar` leria por aqui os itens, os pagamentos (NSU, autorização), o cliente e o
+       operador (o ERP cancela a partir do detalhe, que já exige `vendas.ver`; o mesmo padrão do
+       `POST /sessoes-caixa/:id/conferir`, decisão 227, fica para revisão própria). A prévia roda as mesmas
+       funções sem travar; a gravação confere tudo de novo. Loja fora das permitidas é 403 (como a conferência,
+       decisão 227); venda inexistente ou rascunho, 404.
+     - **Travas.** A transação começa pela 7300001 (`travaVersao`, a regra de toda gravação do ERP em tabela que desce:
+       o push pega a do terminal, a 7300001 e só então as linhas, então o ERP não pode travar a venda antes dela) e
+       trava a linha da venda (`for update`). É ela que põe em fila este cancelamento, o `venda.cancelada` do caixa e a
+       troca (F3-B43); dois cancelamentos ao mesmo tempo: um grava, o outro é 409.
+     - **Bloqueios, nesta ordem** (`bloqueioCancelamento`, o código também em `detalhes.codigo`): já cancelada → 409
+       `CONFLITO` (`ja_cancelada`); não finalizada; sem terminal (`nao_pdv`: a venda ERP ganha o cancelamento com ela,
+       F3-B57); `status_fiscal` diferente de `nao_aplicavel` (`documento_fiscal`: o cancelamento da venda com nota é da
+       fase fiscal, que cancela também a nota; nada fiscal antes dela); o cancelamento do caixa que **já chegou à nuvem e
+       não foi aplicado** (`cancelamentoNaFila`: um `venda.cancelada` do terminal de origem para a venda em
+       `eventos_recebidos` com `recebido`, `erro` de qualquer código ou `retido`; o `ix_eventos_recebidos_agregado`
+       atende) → `CANCELAMENTO_PENDENTE_NO_CAIXA` ("parou na sincronização: resolva-o na aba 'Eventos com erro' do
+       terminal"; o `recebido`, "aguarde a sincronização"). Sem ele, o caixa que cancelou na sessão aberta e devolveu o
+       dinheiro, com o evento recusado na nuvem (`PAYLOAD_INVALIDO`, dependência), deixava a venda finalizada, a sessão
+       fechada (o `caixa.fechado` aplica com o turno em erro, só o alerta) e o terminal online com `eventos_pendentes = 0`
+       (o caixa tira o recusado dos não confirmados e o conta só em `eventos_rejeitados`): sem bloqueio nem aviso, e o
+       cliente recebia a devolução de novo. Descartado pelo suporte, o evento deixa de contar. Depois, o terminal de
+       origem com a venda em `vendas_cancelamento_pendente` no último heartbeat, o mesmo código ("o caixa já cancelou
+       esta venda; aguarde a sincronização", SYNC 10.4; só o terminal de origem conta: outro não cancela a venda dele).
+       **O PDV ainda não envia esse campo** (`MontarHeartbeatTravadoAsync` o deixa `[]`): a API fica pronta para quando
+       o caixa passar a enviá-lo, e até lá a prevenção pelo que ainda não saiu do caixa são só os avisos de offline e
+       de eventos pendentes; a sessão da venda ainda não `fechada` na nuvem (`sessao_aberta`, D112: "cancele no caixa"; o texto diz também
+       para esperar o fechamento chegar, quando o caixa já fechou offline); item com `quantidade_devolvida > 0`
+       (`com_troca`: "cancele a troca primeiro", Padrões da Fase 3). Os demais bloqueios são 422 `REGRA_NEGOCIO`.
+     - **Avisos** (`avisosCancelamento`). O terminal de origem, enquanto não revogado (o revogado não envia mais nada),
+       **offline** pelo limiar do ERP 12.1 (último contato há 2 min ou mais, ou nenhum: `statusConexao` do shared) ou
+       **online com eventos pendentes** no último heartbeat pede a confirmação (`confirmarAvisos`; sem ela, 409
+       `CONFLITO` com `detalhes.codigo = 'CONFIRMAR_AVISOS'` e a lista, e nada é gravado). O terminal de origem e o ativo
+       do mesmo caixa (o que substituiu o de origem e recebe a projeção pelo caixa) abaixo de
+       `VERSAO_PDV_LE_STATUS_VENDA` (0.14.0, a R3 do F3-B29) ou sem versão conhecida dão o aviso `versao_sem_status`,
+       **só informativo**: a venda de caixa fechado já não se cancela no caixa (PC-1), e o caixa antigo só continua
+       mostrando a venda como finalizada na Gestão de vendas. Os avisos confirmados vão na auditoria.
+     - **Forma de devolução (D113)**: obrigatória na venda de sessão fechada com total acima de zero (422 no campo
+       `formaDevolucao`); **uma** forma para a venda inteira (`dinheiro_cofre`, `estorno_cartao`, `estorno_pix`; o
+       `vale` está no contrato e na tela, desabilitado, e a API o recusa até o F3-B50). Só **registrada** até a Fase 4:
+       nenhum `movimentos_caixa` (a sessão fechou e a conferência do F3-B9 continua valendo pelo que o caixa mandou),
+       nenhuma conta corrente. Fica na auditoria (`depois.forma_devolucao` e `pendente_fase_4`: a forma, o valor e os
+       pagamentos estornados com forma e valor) e aparece no detalhe (`formaDevolucaoCancelamento`, lida da auditoria
+       `cancelar` de origem `erp`).
+     - **Efeitos.** O estoque pelo núcleo do F3-B10 (decisão 228): `movimentosParaEstornar` com os vazios pela chave da
+       **loja da venda**, `linhasDeEstorno` com a data do cancelamento, o usuário do ERP e sem terminal nem evento
+       (`CANC_VENDA_PDV`/`ESTORNO_BAIXA_INSUMO`/`ESTORNO_VASILHAME_DEVOLVIDO` ao custo da saída, T20; o `CANC_VENDA_ERP`
+       é da venda ERP, F3-B57) e `estornarEstoqueDaVenda` com a compensação do "Definir" efetivado com contagem
+       posterior (a contagem informada até 5 min no futuro, a folga do `dataContagemSchema`). A venda: `cancelada`,
+       `cancelada_em`, `cancelada_por_id` = quem cancelou, `cancelamento_autorizado_por_id` nulo (não há liberação no
+       ERP), `cancelamento_origem = 'erp'`; os pagamentos `aprovado` → `estornado` (o ERP mostra o pagamento estornado,
+       como no caixa; o `pendente` fica). Depois de tudo, `registrarStatusPdv(tx, venda, 'nuvem')`: a linha da projeção
+       desce ao caixa da venda no fluxo `operacao`. A auditoria `cancelar` (origem `erp`) não conta como o
+       cancelamento do caixa no `CANCELAMENTO_DUPLO` (o handler só olha a de origem `pdv` presa ao evento).
+     - **A corrida com o caixa** continua no handler (`aplicarCancelamentoDuplo`): o `venda.cancelada` que chega depois
+       aplica só o físico (a gaveta, o TEF) e abre `CANCELAMENTO_DUPLO`, sem estornar o estoque de novo.
+     - **Testes.** `vendas/cancelamento-erp.spec.ts` (a ordem dos bloqueios, cada caso com as condições de todos os
+       seguintes também verdadeiras, para a troca de dois deles derrubar o teste; o cancelamento na fila em `erro`,
+       `retido` e `recebido`; a pendência só do terminal de origem, a forma exigida, os avisos offline, pendentes, de
+       outro terminal e de versão); `packages/shared/src/vendas.spec.ts` (o corpo e o vale fora das disponíveis);
+       `test/integracao/cancelamento-erp.test.ts` (a venda de sessão fechada com o custo médio já mudado: o estorno ao
+       custo original, a média refeita, o pagamento estornado, sem movimento de caixa, a auditoria com a forma e o
+       `pendente_fase_4`, a projeção gravada e puxada pelo terminal de origem no `operacao`, a prévia, a forma faltando,
+       o vale e o motivo curto 422, a já cancelada 409; a sessão aberta 422; o pendente no caixa pelo heartbeat e o
+       `venda.cancelada` do caixa em `erro` na nuvem com o terminal em dia, que deixa de bloquear depois de descartado;
+       o offline com eventos pendentes e a versão 0.13.0 — 409 sem a confirmação, 200 com ela e o `venda.cancelada` do
+       caixa depois como `CANCELAMENTO_DUPLO` com a gaveta e sem estoque; o "Definir" posterior com a compensação; a
+       troca e o documento fiscal bloqueados sem projeção; dois cancelamentos ao mesmo tempo; 403 sem a permissão e com
+       a loja não permitida, 404; a gravação 403 com só `vendas.cancelar`, a prévia 200; o razão e o `recalcular-saldos`
+       idênticos no fim).
+
+230. **Parâmetros-PDV: a versão do PDV de cada chave, a trava dura, as faixas da 9.3.1 e o "Nº da próxima venda"**
+     (F3-B12; plano `docs/planos/fase3-plano.md`; ERP 9.3.1, 9.10, 10.3.9; D15 = F3-Q27 (A); `packages/shared/src/
+     configuracoes.ts`, `configuracoes/{versao-pdv,valores,configuracoes.controller}.ts`,
+     `lojas/{numeracao-venda-erp,lojas.controller}.ts`). Sem migração e sem PDV. Escolhas técnicas, sem pergunta ao
+     dono:
+     - **`VERSAO_PDV_DA_CHAVE`** (shared): a chave que o PDV instalado pode não ler, com a primeira versão que a lê e
+       se tem trava. Conferida contra as tags `pdv-v0.10.0`..`pdv-v0.13.0` (as chaves que cada versão lê: 0.13.0 lê as
+       mesmas que a `main`; a guarda das variações, o F4 "Outras lojas" e o saldo na busca vêm do 0.11.0) e contra os
+       blocos do plano que passam a ler cada chave: R3 (0.14.0) preço digitado e alterado, lote vencendo, etiqueta de
+       balança, vendas em aberto, limite de valor (D15), foto e vendedor; R4 (0.15.0) comodato, cliente criado no
+       caixa, trocas e vales; R5 (0.16.0) orçamentos. `produtos.variacoes_habilitadas` entra com a
+       `VERSAO_PDV_GUARDA_VARIACOES` (a constante continua; o `GET /configuracoes/terminais-sem-guarda-variacoes` e o
+       modal "Gravar mesmo assim" ficam, agora pela mesma consulta, `terminaisAtivos`). Cada bloco seguinte acrescenta
+       a sua chave (a das promoções, F3-B34, com trava); se a release sair com outro número, troca-se a constante.
+     - **`GET /configuracoes/terminais-desatualizados?chave=a,b[&lojaId=]`** (`configuracoes.ver`: é o que a tela
+       mostra junto da chave): por chave pedida (só as do mapa, conferidas com `temVersaoPdv`, que usa `Object.hasOwn`:
+       com o `in`, `toString` ou `__proto__` passariam e a comparação de versões daria 500; outra é 422), os terminais `ativo`/`desativando` abaixo da versão ou sem versão conhecida (o revogado e o que provisiona
+       não contam). Sem `lojaId`, todas as lojas (a chave da empresa vale em todas); com `lojaId`, só ela, que tem de
+       ser permitida (403). Detalhes só das lojas permitidas, as outras na contagem `outrasLojas` (decisão 181). Os
+       detalhes de cada terminal (id, caixa, descrição, versão) são os da listagem de terminais (`terminais.ver`): vão
+       só a quem tem `terminais.ver` ou `configuracoes.editar` (quem grava a chave já recebe a lista na trava e na
+       guarda das variações; `veDetalhesTerminais`); só com `configuracoes.ver`, os das lojas permitidas vão na
+       contagem `semDetalhes`, como a prontidão faz sem `terminais.ver`.
+     - **Trava dura** (`conferirTravaVersao`, dentro da transação do `PUT /configuracoes`, que já tem a 7300001): a
+       gravação que faz o valor efetivo de uma chave com `trava` **passar** de desligado a ligado numa loja com terminal
+       ativo abaixo da versão é recusada com 422 `REGRA_NEGOCIO`, `detalhes.codigo = 'TERMINAIS_DESATUALIZADOS'`, a
+       lista por chave (com a mesma regra de visibilidade) e a mensagem no campo; nada é gravado. Na empresa, contam as
+       lojas sem valor próprio válido; na loja, só ela, inclusive o "Herdar" que traz a empresa ligada. Desligar, e
+       regravar o que já estava ligado, sempre passa. Só chaves booleanas têm trava (o `configuracoes.spec.ts`
+       confere) e hoje é só `pdv.vasilhame_comodato` (R4): a chave das promoções nasce com o F3-B34, e o vale como
+       pagamento e a baixa interna são formas de pagamento (os blocos delas decidem a trava). Fica de fora, de
+       propósito: o terminal ativado **depois** com um PDV antigo (a versão mínima do canal é quem segura a ativação),
+       e por isso o ERP mostra o aviso também com a chave ligada.
+     - **Faixas da ERP 9.3.1** (`pdv.dias_validade_cupom_troca` 0–365, `pdv.fonte_lista` 10–32, `pdv.fonte_total`
+       20–72, `pdv.fonte_codigo` 10–40, `pdv.vale_compra_validade_dias` 1–730, `pdv.aviso_vencimento_dias` 1–365). O
+       valor já gravado fora da faixa não é recusado nem apagado: `valorGravadoValido` (shared) o tira do valor efetivo
+       em `lerConfiguracoes` e na listagem, que cai no nível seguinte (a loja na empresa, a empresa no padrão), e a
+       listagem o devolve em `foraDaFaixa` para o aviso do ERP; a gravação nova já usa a faixa. A chave fora do
+       catálogo continua valendo como gravada em `lerConfiguracoes` (como antes). O pull continua mandando a linha
+       como está: nenhum PDV lê estas seis chaves ainda, e o bloco que passar a lê-las aplica a mesma faixa no caixa.
+     - **"Nº da próxima venda" do ERP** (`GET`/`PUT /lojas/:id/numeracao-venda-erp`, `configuracoes.ver` e
+       `configuracoes.editar`: o campo fica na aba Vendas das Configurações; loja permitida, 403): a numeração `venda` do
+       caixa 0 (dono `nuvem`). O "último usado" é o maior entre o contador e a maior venda do caixa 0 gravada
+       (`uq_vendas_numero`), para um contador atrasado não repetir número. Só com `vendas.numeracao_propria` (422
+       `REGRA_NEGOCIO`); o número ≤ último usado é 422 no campo `proximoNumero`; até `NUMERO_VENDA_MAXIMO`. A linha do
+       contador é lida com `for update` (a mesma que a venda do ERP do F3-B54 vai travar para tirar o número): duas
+       gravações ao mesmo tempo ficam em fila, e repetir o próximo atual não grava nem audita (só regrava se o contador
+       ficou atrás da maior venda). Sem a 7300001: `numeracoes` não desce e o trigger dela é o `fn_versao_local`. A
+       loja sem a linha (de antes do assistente, MD 7.13) a ganha pelo `garantirNumeracoesLoja`. Auditoria `editar` em
+       `numeracoes` com o próximo e o último, antes e depois.
+     - **Compatibilidade.** Nenhum evento, fluxo, `versoes_schema` nem tabela espelhada muda; o PDV 0.13.0 instalado
+       segue igual (a trava só age no ERP, e a chave com trava nasce desligada).
+     - **Testes.** `packages/shared/src/configuracoes.spec.ts` (as faixas, o valor fora da faixa, o mapa só com chaves
+       do catálogo e trava só em booleana desligada no padrão, a consulta e o número); `test/integracao/
+       parametros-pdv.test.ts` (a consulta por chave na ordem pedida com o revogado fora e o sem versão dentro, por loja,
+       o Gerente só com a contagem da outra loja, 403 da loja e sem permissão, 422 da chave sem versão e das do
+       protótipo (`toString`, `__proto__`), o perfil só com `configuracoes.ver` com a contagem `semDetalhes`; a trava na
+       empresa com a lista e sem gravar, o Gerente barrado pela loja que não vê, desligar passa, a loja com valor próprio
+       desligado fora da conta, o "Herdar" e o "Personalizar" da loja conferidos, regravar ligado passa, o terminal
+       revogado não conta e o `desativando` (em substituição) conta, na trava e no aviso, a loja fora do acesso 403, a
+       chave sem trava grava; o valor fora da faixa na empresa e na loja, igual na listagem e no `lerConfiguracao`, e a
+       gravação com a faixa nova; a numeração sem a chave, a primeira gravação criando a linha, ≤ último, repetir sem
+       auditoria, a corrida do mesmo número auditada uma vez e a do menor perdendo, 403, a sequência por loja e o
+       contador atrás de uma venda do caixa 0 (o último usado é a venda, e gravar o próximo exibido acerta o contador)); o
+       `terminais.test.ts` da rota das variações, sem mudança.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

@@ -775,6 +775,11 @@ corpo do PR-17.
   duas conferências ao mesmo tempo, loja não permitida); vitest das telas e do comprovante.
 - **Pronto:** sessão fechada aparece Conferida ou Divergente; nada do que veio do caixa muda; `conta_financeira_id` nulo até a Fase 4.
 - **Depende de:** F3-B2.
+- **[Feito (F3-B9):** como descrito, com dois ajustes registrados no README da API › decisão 227: as telas de reforço e de
+  sangria são uma só, `paginas/vendas/MovimentosCaixa.tsx` (não há `Reforcos.tsx` nem `Sangrias.tsx`), e o comprovante
+  ganhou `GET /movimentos-caixa/:id/comprovante` (`movimentos_caixa.imprimir`, com a empresa e a loja, sem exigir
+  `empresa.ver`), para a permissão de imprimir ser conferida na API; "Somente com diferença" olha cada forma, além do
+  total. README do ERP › decisões 88 e 89.]
 
 #### F3-B10 – Núcleo de estorno e `registrarStatusPdv`, sem mudar comportamento (SYNC 10.4, 16.3)
 - **Tamanho:** M · **Rigor:** completo (estorna documento, estoque)
@@ -790,6 +795,16 @@ corpo do PR-17.
   `registrarStatusPdv`.
 - **Pronto:** extração sem diferença de comportamento.
 - **Depende de:** F3-B7.
+- [**Feito (F3-B10)** (README da API › decisão 228; SYNC 16.3): o núcleo em `vendas/estorno-venda.ts`
+  (`movimentosParaEstornar`, `quantidadesDevolvidas` lido com a venda travada,
+  `partesDevolvidas`/`quantidadesAEstornar`/`linhasDeEstorno` na proporção do vendido menos o devolvido, por grupo de
+  movimentos do item (a saída dividida em FEFO soma exatamente o que sobrou; o devolvido ocupa os lotes na ordem do id,
+  o critério do lote da troca no F3-B43) — o `VENDA_PDV` exato, o `BAIXA_INSUMO` na mesma proporção, o item devolvido
+  por inteiro de fora, os vazios inteiros — e `estornarEstoqueDaVenda`, o motor com o `compensarDefinir`), usado pelo
+  handler, que continua exportando os nomes antigos. `registrarStatusPdv(tx, vendaId, 'nuvem' | { terminalId })`, com um
+  ajuste: a mudança do próprio terminal não cria a linha, mas atualiza a que já existe (senão a linha antiga, que
+  prevalece no caixa, contradiria o cancelamento dele); a forma A o chama no fim (hoje sem efeito: nada cria a linha
+  antes do F3-B11). Além dos testes previstos, a integração simula a troca pondo o `quantidade_devolvida` à mão.]
 
 #### F3-B11 – Cancelar venda pelo ERP (ERP 15.4.3; SYNC 10.4)
 - **Tamanho:** M · **Rigor:** completo (estorna documento, estoque)
@@ -810,6 +825,19 @@ corpo do PR-17.
   `recalcular-saldos` idêntico; vitest do modal.
 - **Pronto:** as vendas de caixa fechado "registradas com erro" desde a 1C podem ser canceladas.
 - **Depende de:** F3-B10.
+- [**Feito (F3-B11)** (README da API › decisão 229, README do ERP › decisão 90; ERP 15.4.3; SYNC 10.4): como descrito,
+  com a prévia `GET /vendas/:id/cancelamento` para o modal (o bloqueio, os avisos e se pede a forma, pelas mesmas funções
+  da gravação, sem travar). Escolhas técnicas: a 7300001 primeiro (`travaVersao`) e só então a venda com `for update`, a
+  ordem do push; uma forma de devolução para a venda inteira, pedida só na sessão fechada com total acima de zero e
+  guardada na auditoria (`pendente_fase_4`); a venda com documento fiscal (`status_fiscal` ≠ `nao_aplicavel`) bloqueada
+  até a fase fiscal; os pagamentos aprovados passam a `estornado`; o aviso da versão que não lê a projeção (abaixo do
+  0.14.0) só informa, e o de offline ou eventos pendentes, só do terminal de origem, pede o "Estou ciente"
+  (`confirmarAvisos`, 409 `CONFIRMAR_AVISOS` sem ele). O "Definir posterior" testado é o efetivado com a contagem logo
+  depois do cancelamento (a folga de 5 min do relógio). Da revisão: o `CANCELAMENTO_PENDENTE_NO_CAIXA` vale também para o
+  `venda.cancelada` do caixa que chegou à nuvem e parou em `erro`/`retido` (ou ainda `recebido`), lido de
+  `eventos_recebidos`, porque o **PDV ainda não envia** `vendas_cancelamento_pendente` no heartbeat (o campo fica `[]`;
+  a API já o lê, e fazê-lo enviar é trabalho do PDV, sem bloco no plano ainda); o `POST` exige também `vendas.ver`,
+  porque devolve o detalhe.]
 
 #### F3-B12 – Parâmetros-PDV completo, aba Vendas (9.10), Lojas › Parâmetros (10.3.9) e trava por versão
 - **Tamanho:** M · **Rigor:** enxuto (tela de configuração), com a numeração do caixa 0 e a trava revisadas com atenção
@@ -833,6 +861,19 @@ corpo do PR-17.
   conta; loja não permitida); vitest das abas.
 - **Pronto:** toda chave Loja = S aparece em Lojas › Parâmetros; a aba Vendas grava; o aviso e a trava aparecem.
 - **Depende de:** F3-B3.
+- [**Feito (F3-B12)** (README da API › decisão 230, README do ERP › decisão 91; ERP 9.3.1, 9.10, 10.3.9; MD 3.1.2):
+  como descrito. Escolhas técnicas: `VERSAO_PDV_DA_CHAVE` conferido nas tags `pdv-v0.10.0`..`pdv-v0.13.0` (o 0.13.0 lê as
+  mesmas chaves que a `main`) e nos blocos que passam a ler cada chave (R3 0.14.0, R4 0.15.0, R5 0.16.0), com a trava só
+  em `pdv.vasilhame_comodato` por ora (as promoções entram no F3-B34; o vale como pagamento e a baixa interna são formas
+  de pagamento, e os blocos delas decidem); a consulta aceita várias chaves (`?chave=a,b`, uma ida por bloco da tela) e
+  `lojaId`; a trava recusa só quando o valor efetivo **passa** de desligado a ligado numa loja com terminal ativo abaixo
+  (na empresa, as lojas sem valor próprio; na loja, inclusive o "Herdar"), e o terminal ativado depois com PDV antigo
+  fica com o aviso; a rota das variações e o modal "Gravar mesmo assim" ficam, pela mesma consulta; o valor fora da faixa
+  cai no nível seguinte (a loja na empresa), e o pull o manda como está (nenhum PDV lê as seis chaves ainda); o "último
+  usado" do caixa 0 conta também a maior venda gravada; `configuracoes.ver/editar` nas rotas da numeração (o campo é da
+  aba Vendas). Além do pedido, para "nenhuma chave sem efeito parecer funcionar": o selo "sem efeito ainda" nas chaves
+  que nenhuma versão do PDV nem a nuvem lê, e as chaves de loja da 9.4/9.7 e da 9.3.7 em Lojas › Parâmetros,
+  desabilitadas com a fase.]
 
 ### PR-19 – Caixa: atalhos, complementos e preços
 
@@ -1340,7 +1381,8 @@ corpo do PR-17.
 - **Entregas:** contrato v1 e fixtures das 3 resoluções; handler `trocas.ts`: `trocas`/`itens_troca`; o vale da troca **dentro** do
   evento (vale-troca e troca imediata; nunca `vale.emitido`); `devolucao_troca` em `movimentos_caixa`; `TROCA_PDV` pelo
   `lancarDocumento` no tipo vendável ou no `avaria` (F3-Q22, sem entrada seguida de saída), ao custo do item de origem e no lote da
-  origem (Padrões); `quantidade_devolvida` limitada com `TROCA_ACIMA_DO_VENDIDO`; `vendas.devolucao`; `registrarStatusPdv` quando a venda
+  origem (Padrões; com a saída dividida em FEFO, o lote que `partesDevolvidas` do F3-B10 dá a mais com o devolvido
+  acumulado, para o cancelamento estornar os lotes que a troca não devolveu); `quantidade_devolvida` limitada com `TROCA_ACIMA_DO_VENDIDO`; `vendas.devolucao`; `registrarStatusPdv` quando a venda
   é de outro terminal; `trocas.venda_nova_id` preenchida pelo handler da venda que paga com o vale da troca; dependências (sessão;
   venda de origem do mesmo terminal); regra do restante na devolução parcial.
 - **Migrações:** nenhuma.

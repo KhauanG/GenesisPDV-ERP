@@ -14,6 +14,9 @@
  *   venda (`ESTORNO_VASILHAME_DEVOLVIDO`, saída do `vasilhame_vazio` ao custo médio da linha) quando a loja tem
  *   `pdv.cancelamento_devolve_vazios` (ligada por padrão, decisão do dono D29; desligada, os vazios ficam na
  *   loja, a T24 original). O estorno anterior à contagem de um "Definir" ganha a compensação (15.3), como a venda.
+ *   Essa parte do estoque é o núcleo comum de `vendas/estorno-venda.ts` (F3-B10, decisão 228), que o cancelamento
+ *   pelo ERP reusa: no item com troca estorna só o vendido menos o devolvido (hoje o devolvido é sempre 0). A
+ *   projeção `vendas_status_pdv` que já existir é mantida em dia (`registrarStatusPdv`, SYNC 16.3).
  *
  * Regras da forma A (SYNC 9.9, 10.4; dono, O6 e O22):
  * - a venda tem de existir na nuvem e ser deste terminal (nunca recebida → `TRANSICAO_INVALIDA`; o `venda.finalizada`
@@ -36,8 +39,6 @@
  *   `AGREGADO_DIVERGENTE`, senão a gaveta sairia em dobro).
  */
 import {
-  dec,
-  decTexto,
   formaVendaCancelada,
   payloadVendaCanceladaSchema,
   type EstornoPagamento,
@@ -46,9 +47,7 @@ import {
   type PayloadVendaCanceladaFinalizada,
 } from '@genesis/shared';
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
-import { lerConfiguracao } from '../../configuracoes/valores.js';
-import { compensarDefinir } from '../../estoques/compensacao.js';
-import { lancarDocumento, type NovoMovimento } from '../../estoques/movimentos.js';
+import type { NovoMovimento } from '../../estoques/movimentos.js';
 import {
   cobrancasPix,
   movimentosCaixa,
@@ -57,7 +56,17 @@ import {
   vendas,
 } from '../../database/empresa/schema/index.js';
 import type { DbEmpresa } from '../../tenancy/tenancy.js';
+import {
+  estornarEstoqueDaVenda,
+  lerDevolveVazios,
+  linhasDeEstorno,
+  movimentosParaEstornar,
+  quantidadesDevolvidas,
+  type MovimentoDaVenda,
+  type QuantidadesItem,
+} from '../../vendas/estorno-venda.js';
 import { ErroRegraEvento } from '../erros.js';
+import { registrarStatusPdv } from '../status-pdv.js';
 import { COLUNAS_CANCELAMENTO, gravarMovimentos, valoresMovimento } from './caixa.js';
 import {
   agregadoDivergente,
@@ -88,30 +97,14 @@ export const ALERTA_CANCELAMENTO_DUPLO = 'CANCELAMENTO_DUPLO';
 /** SYNC 10.4: o caixa cancelou a venda, mas o estorno no TEF ou a devolução do PIX ficou pendente. Um por venda. */
 export const ALERTA_ESTORNO_PENDENTE = 'ESTORNO_PENDENTE';
 
-/**
- * Movimentos da venda que o cancelamento estorna e o tipo do estorno (SYNC 10.4; MD 7.3). O casco cobrado é item
- * vendido (`VASILHAME_VENDIDO` no lugar do `VENDA_PDV`, 10.2): volta como cancelamento de venda. O
- * `VASILHAME_DEVOLVIDO` dos vazios trazidos é a única entrada: só volta com `pdv.cancelamento_devolve_vazios`
- * (`tiposEstornados`).
- */
-export const ESTORNO_DO_MOVIMENTO: Readonly<Record<string, string>> = {
-  VENDA_PDV: 'CANC_VENDA_PDV',
-  VASILHAME_VENDIDO: 'CANC_VENDA_PDV',
-  BAIXA_INSUMO: 'ESTORNO_BAIXA_INSUMO',
-  VASILHAME_DEVOLVIDO: 'ESTORNO_VASILHAME_DEVOLVIDO',
-};
-
-/**
- * Chave da loja que decide o destino dos vazios trazidos na venda cancelada: ligada (padrão, decisão do dono,
- * D29), o caixa devolve os cascos ao cliente e a entrada dos vazios é estornada; desligada, os vazios ficam na loja.
- * A nuvem lê o valor da loja do terminal na aplicação do evento; o caixa lê a mesma chave na tela (C11b).
- */
-export const CHAVE_CANCELAMENTO_DEVOLVE_VAZIOS = 'pdv.cancelamento_devolve_vazios';
-
-/** Os tipos de movimento da venda que o cancelamento estorna (`ESTORNO_DO_MOVIMENTO`, os vazios conforme a chave). */
-export function tiposEstornados(devolveVazios: boolean): string[] {
-  return Object.keys(ESTORNO_DO_MOVIMENTO).filter((t) => devolveVazios || t !== 'VASILHAME_DEVOLVIDO');
-}
+// O núcleo do estorno de estoque (o que o cancelamento pelo ERP, F3-B11, reusa) está em `vendas/estorno-venda.ts`
+// (F3-B10, README › decisão 228); os nomes continuam exportados daqui para quem já os importava.
+export {
+  CHAVE_CANCELAMENTO_DEVOLVE_VAZIOS,
+  ESTORNO_DO_MOVIMENTO,
+  tiposEstornados,
+  type MovimentoDaVenda,
+} from '../../vendas/estorno-venda.js';
 
 /** Estornos que só valem para a forma dinheiro, e o que nunca vale nela (SYNC 9.9; O22 do dono). */
 const SO_DINHEIRO: readonly EstornoPagamento[] = ['dinheiro_devolvido'];
@@ -219,25 +212,6 @@ interface PagamentoGravado {
   pixCobrancaId: string | null;
 }
 
-/** Movimento da venda que o cancelamento estorna (ainda sem estorno): as saídas e, conforme a chave, os vazios. */
-export type MovimentoDaVenda = {
-  id: string;
-  estoque_id: string;
-  loja_id: string | null;
-  tipo_estoque_id: string;
-  produto_id: string;
-  variacao_id: string | null;
-  lote_id: string | null;
-  tipo_movimento: string;
-  quantidade: string;
-  custo_unitario: string;
-  preco_venda: string | null;
-  unidade_documento: string | null;
-  fator: string;
-  pessoa_id: string | null;
-  documento_item_id: string | null;
-};
-
 interface CancelamentoPreparado {
   forma: 'finalizada';
   pagamentos: Map<string, PagamentoGravado>;
@@ -325,58 +299,35 @@ async function prepararFinalizada(
       pagamentos: invalidos,
     });
   }
-  const devolveVazios =
-    (await lerConfiguracao<boolean>(tx, CHAVE_CANCELAMENTO_DEVOLVE_VAZIOS, terminal.lojaId)) === true;
-  const { rows: movimentos } = await tx.execute<MovimentoDaVenda>(sql`
-    select m.id, m.estoque_id, m.loja_id, m.tipo_estoque_id, m.produto_id, m.variacao_id, m.lote_id, m.tipo_movimento,
-           m.quantidade::text, m.custo_unitario::text, m.preco_venda::text, m.unidade_documento, m.fator::text,
-           m.pessoa_id, m.documento_item_id
-      from movimentos_estoque m
-     where m.documento_tipo = 'venda' and m.documento_id = ${vendaId}
-       and m.tipo_movimento = any(${`{${tiposEstornados(devolveVazios).join(',')}}`}::text[])
-       and m.estorno_de_id is null
-       and not exists (select 1 from movimentos_estoque e where e.estorno_de_id = m.id)
-     order by m.id`);
+  const devolveVazios = await lerDevolveVazios(tx, terminal.lojaId);
+  const movimentos = await movimentosParaEstornar(tx, vendaId, devolveVazios);
   return { forma: 'finalizada', pagamentos, movimentos, devolveVazios };
 }
 
 // ---------------------------------------------------------------- forma A: aplicar
 
 /**
- * Os estornos do estoque (SYNC 10.4): cada saída volta ao custo dela, na data do cancelamento; a entrada dos vazios
- * trazidos sai ao custo médio da linha (o motor ignora o custo informado na saída).
+ * Os estornos do estoque do cancelamento do caixa (SYNC 10.4), pelo núcleo (`linhasDeEstorno`): na data do
+ * cancelamento, por quem cancelou, com o terminal e o evento; `devolvidos` = os itens com troca (vendido − devolvido).
  */
 export function estornosDaVenda(
   ctx: Pick<ContextoHandler, 'terminal' | 'evento'>,
   p: PayloadVendaCanceladaFinalizada,
   movimentos: readonly MovimentoDaVenda[],
+  devolvidos?: ReadonlyMap<string, QuantidadesItem>,
 ): NovoMovimento[] {
   const c = p.vendas;
-  return movimentos.map((m) => ({
-    estoqueId: m.estoque_id,
-    produtoId: m.produto_id,
-    variacaoId: m.variacao_id,
-    tipoEstoqueId: m.tipo_estoque_id,
-    tipoMovimento: ESTORNO_DO_MOVIMENTO[m.tipo_movimento]!,
-    quantidade: decTexto(dec(m.quantidade).neg(), 3),
-    // T20: ao custo da saída original (com saldo positivo recalcula a média; com zero ou negativo a mantém).
-    custoUnitario: m.custo_unitario,
-    custoReferencia: m.custo_unitario,
-    precoVenda: m.preco_venda,
-    dataMovimento: new Date(c.cancelada_em),
-    lojaId: m.loja_id,
-    usuarioId: c.cancelada_por_id,
-    documentoTipo: 'venda',
-    documentoId: c.id,
-    documentoItemId: m.documento_item_id,
-    unidadeDocumento: m.unidade_documento,
-    fator: m.fator,
-    loteId: m.lote_id,
-    pessoaId: m.pessoa_id,
-    terminalId: ctx.terminal.terminalId,
-    eventoId: ctx.evento.evento_id,
-    estornoDeId: m.id,
-  }));
+  return linhasDeEstorno(
+    movimentos,
+    {
+      documentoId: c.id,
+      dataMovimento: new Date(c.cancelada_em),
+      usuarioId: c.cancelada_por_id,
+      terminalId: ctx.terminal.terminalId,
+      eventoId: ctx.evento.evento_id,
+    },
+    devolvidos,
+  );
 }
 
 /** As colunas de cancelamento como o handler grava (motivo já aparado pelo contrato, ids em minúsculas). */
@@ -522,8 +473,10 @@ async function aplicarFinalizada(
     });
   }
 
-  const doc = await lancarDocumento(tx, estornosDaVenda(ctx, p, prep.movimentos));
-  const compensacoes = await compensarDefinir(tx, doc.movimentos, 'cancelamento de venda');
+  // O devolvido lido com a venda travada (a troca do F3-B43 muda com a mesma trava); hoje é sempre 0.
+  const devolvidos = await quantidadesDevolvidas(tx, vendaId);
+  const doc = await estornarEstoqueDaVenda(tx, estornosDaVenda(ctx, p, prep.movimentos, devolvidos));
+  const compensacoes = doc.compensacoes;
   await tx
     .update(vendas)
     .set({
@@ -607,6 +560,9 @@ async function aplicarFinalizada(
       compensacoes: compensacoes.length,
     },
   });
+  // O próprio terminal cancelou: a projeção só é regravada se a nuvem já tinha mudado a venda (SYNC 16.3; senão a
+  // linha antiga, que prevalece no caixa, mostraria a venda finalizada). Hoje nada a cria antes do F3-B11.
+  await registrarStatusPdv(tx, vendaId, { terminalId: terminal.terminalId });
   return {
     venda_id: vendaId,
     movimentos: doc.movimentos.length,

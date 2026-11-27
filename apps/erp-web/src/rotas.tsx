@@ -55,6 +55,7 @@ import {
   ListaReforcos,
   ListaSangrias,
 } from './paginas/vendas/MovimentosCaixa';
+import { ComprovanteMovimentoImpressao } from './paginas/vendas/MovimentosCaixaComprovante';
 import { DetalheVenda, ListaVendas } from './paginas/vendas/Vendas';
 import { ListaUsuarios } from './paginas/usuarios/ListaUsuarios';
 import { DetalheEmpresa } from './plataforma/DetalheEmpresa';
@@ -442,6 +443,15 @@ export const rotas: RouteObject[] = [
               ...consulta('/vendas', 'vendas.ver', <ListaVendas />, <DetalheVenda />, ':id/:aba?'),
               ...consulta('/vendas/reforcos', 'movimentos_caixa.ver', <ListaReforcos />, <DetalheReforco />),
               ...consulta('/vendas/sangrias', 'movimentos_caixa.ver', <ListaSangrias />, <DetalheSangria />),
+              // Comprovante de reforço e sangria (F3-B9) impresso pelo navegador: o segmento fixo `comprovante`.
+              ...['/vendas/reforcos', '/vendas/sangrias'].map((rota) => ({
+                path: `${rota}/:id/comprovante`,
+                element: (
+                  <ExigePermissao permissao="movimentos_caixa.imprimir">
+                    {comId(<ComprovanteMovimentoImpressao />, rota)}
+                  </ExigePermissao>
+                ),
+              })),
               ...consulta(
                 '/financeiro/fechamentos-caixa',
                 'fechamentos_caixa.ver',
