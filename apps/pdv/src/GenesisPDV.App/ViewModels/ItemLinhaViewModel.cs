@@ -86,7 +86,7 @@ public sealed class ItemLinhaViewModel
     public bool TemEtiqueta => Etiqueta is not null;
 
     /// <summary>Varejo riscado ao lado do preço de atacado/mix.</summary>
-    public string? VarejoRiscado => TemEtiqueta && Item.PrecoVarejo is { } v && v != Item.PrecoUnitario ? NumeroBr.Preco(v) : null;
+    public string? VarejoRiscado => TemEtiqueta && Item.PrecoVarejoComAcrescimos is { } v && v != Item.PrecoUnitario ? NumeroBr.Preco(v) : null;
 
     public bool TemVarejoRiscado => VarejoRiscado is not null;
 
@@ -107,6 +107,12 @@ public sealed class ItemLinhaViewModel
             }
 
             var partes = new List<string>();
+            // Complementos (PDV 10.2; F3-B15): "+ MOLHO BARBECUE, + CHEDDAR CREMOSO (+4,50)", antes do resto.
+            if (Tipo == TipoLinha.Item && Item.TemComplementos)
+            {
+                partes.Add(string.Join(", ", Item.Complementos.Select(c => c.Texto)));
+            }
+
             if (Item.Embalagem is { } e)
             {
                 partes.Add($"{e.Sigla ?? "EMB"} {e.Fator:0.###}" + (e.Preco is { } pe ? $" × {NumeroBr.Preco(pe)}" : string.Empty));

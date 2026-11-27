@@ -25,6 +25,7 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
     public DbSet<LogAuditoriaLocal> LogAuditoriaLocal => Set<LogAuditoriaLocal>();
     public DbSet<VendaRegistro> Vendas => Set<VendaRegistro>();
     public DbSet<ItemVendaRegistro> ItensVenda => Set<ItemVendaRegistro>();
+    public DbSet<ItemVendaComplementoRegistro> ItensVendaComplementos => Set<ItemVendaComplementoRegistro>();
     public DbSet<PagamentoVendaRegistro> PagamentosVenda => Set<PagamentoVendaRegistro>();
     public DbSet<ParcelaVendaRegistro> ParcelasVenda => Set<ParcelaVendaRegistro>();
     public DbSet<CobrancaPixRegistro> CobrancasPix => Set<CobrancaPixRegistro>();
@@ -246,6 +247,15 @@ public class PdvDbContext(DbContextOptions<PdvDbContext> options) : DbContext(op
             e.HasIndex(x => new { x.VendaId, x.Sequencia }).IsUnique().HasDatabaseName("uq_itens_venda_sequencia");
             e.HasIndex(x => x.ProdutoId).HasDatabaseName("ix_itens_venda_produto_id");
             e.HasIndex(x => x.KitGrupoId).HasDatabaseName("ix_itens_venda_kit_grupo_id");
+            e.HasMany(x => x.Complementos).WithOne().HasForeignKey(c => c.ItemVendaId)
+                .HasConstraintName("fk_itens_venda_complementos_item_venda_id");
+        });
+
+        // Complementos do item (F3-B15): a nuvem não tem CHECK nesta tabela (os tamanhos são do contrato).
+        modelBuilder.Entity<ItemVendaComplementoRegistro>(e =>
+        {
+            e.ToTable("itens_venda_complementos");
+            e.HasIndex(x => x.ItemVendaId).HasDatabaseName("ix_itens_venda_complementos_item_venda_id");
         });
 
         modelBuilder.Entity<PagamentoVendaRegistro>(e =>

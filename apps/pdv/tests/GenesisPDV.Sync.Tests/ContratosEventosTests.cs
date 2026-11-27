@@ -39,6 +39,7 @@ public class ContratosEventosTests
         "venda.finalizada.payload.json",
         "venda.finalizada.formas.payload.json",
         "venda.finalizada.cascos.payload.json",
+        "venda.finalizada.v2.complementos.payload.json",
     ];
 
     private static readonly Guid Loja = Guid.Parse("01a18752-3782-7bda-ad3c-2d6d1a3d1fa7");
@@ -162,6 +163,31 @@ public class ContratosEventosTests
         var payload = JsonNode.Parse(evento.Payload)!;
         Assert.Equal(("7.50", "cliente"), (payload["vendas"]!["desconto_total"]!.GetValue<string>(), payload["vendas"]!["desconto_total_origem"]!.GetValue<string>()));
         Assert.Equal(5, Assert.Single(payload["vasilhames"]!.AsArray())!["devolvidos"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void Venda_com_complementos_gera_a_fixture_da_v2_e_a_v1_sem_a_baixa_calculada()
+    {
+        // F3-B15 (PDV 10.2): "PORÇÃO DE FRITAS" com 2 molhos (o barbecue vinculado com baixa, que a nuvem baixa pelo
+        // cadastro dela, e o rosé livre) e o cheddar produzido (os insumos da ficha calculados no caixa); uma segunda
+        // porção cancelada leva o complemento dela no documento. A v2 tem a `componentes_estoque` em cada linha.
+        var venda = VendaComComplementos();
+
+        var evento = FabricaEventos.VendaFinalizada(venda, venda.EventoFinalizacaoId!.Value, FabricaEventos.VersaoVendaFinalizadaComplementos);
+
+        Assert.Equal(("venda.finalizada", 2), (evento.Tipo, evento.VersaoSchema));
+        AssertMesmoPayload("venda.finalizada.v2.complementos.payload.json", evento);
+        var linhas = JsonNode.Parse(evento.Payload)!["itens_venda_complementos"]!.AsArray();
+        Assert.Equal(4, linhas.Count);
+        Assert.Equal(["0.168"], linhas.SelectMany(l => l!["componentes_estoque"]!.AsArray()).Select(c => c!["quantidade"]!.GetValue<string>()));
+
+        // A v1 (a v2 não anunciada no último handshake) leva as mesmas linhas, sem a chave só da v2.
+        var v1 = FabricaEventos.VendaFinalizada(venda, venda.EventoFinalizacaoId!.Value);
+        var semBaixa = JsonNode.Parse(v1.Payload)!["itens_venda_complementos"]!.AsArray();
+        Assert.Equal(1, v1.VersaoSchema);
+        Assert.Equal(4, semBaixa.Count);
+        Assert.All(semBaixa, l => Assert.Null(l!.AsObject()["componentes_estoque"]));
+        Assert.Throws<ArgumentOutOfRangeException>(() => FabricaEventos.VendaFinalizada(venda, Guid.CreateVersion7(), 3));
     }
 
     [Fact]
@@ -561,6 +587,73 @@ public class ContratosEventosTests
         var cascos = new[] { new CascoDescontado(garrafa.Id, garrafa.Descricao, 3, 2.50m, Inicio.AddSeconds(40)) };
         var venda = Venda.Restaurar(estado, itens, pagamentos, cascosDescontados: cascos);
         venda.RegistrarProdutos([new ProdutoRegistrado(brahma600, false)], null, Inicio);
+        return venda;
+    }
+
+    /// <summary>
+    /// A venda da fixture <c>venda.finalizada.v2.complementos.payload.json</c> (F3-B15): 2 PORÇÃO DE FRITAS a 25,00 com MOLHO
+    /// BARBECUE (vinculado à matéria-prima, baixa de 0,050 por porção), Rosé (livre) e CHEDDAR CREMOSO (+4,50, produzido:
+    /// 0,080 de queijo com 5% de perda), e 1 porção só com o Rosé, cancelada; R$ 59,00 em dinheiro.
+    /// </summary>
+    private static Venda VendaComComplementos()
+    {
+        var molhos = Guid.Parse("01a187c0-1a2b-7c3d-8e4f-5a6b7c8d9e01");
+        var adicionais = Guid.Parse("01a187c0-2b3c-7d4e-9f50-6b7c8d9e0f12");
+        var barbecue = Guid.Parse("01a187c1-3c4d-7e5f-8061-7c8d9e0f1a23");
+        var rose = Guid.Parse("01a187c1-4d5e-7f60-9172-8d9e0f1a2b34");
+        var cheddar = Guid.Parse("01a187c1-5e6f-7071-8283-9e0f1a2b3c45");
+        var porcao = new ProdutoVenda(Guid.Parse("01a187c2-6f70-7182-9394-0f1a2b3c4d56"), 300, "0300", "PORÇÃO DE FRITAS", "UN", 25m)
+        {
+            Tipo = TipoProduto.ComComplementos,
+            GruposComplementos =
+            [
+                new GrupoComplementos(molhos, "Molhos", 1, 2, true, 1,
+                [
+                    new OpcaoComplemento(barbecue, "MOLHO BARBECUE", 0m, Guid.Parse("01a187c3-7081-7293-84a5-1a2b3c4d5e67"), true, 0.05m, 1)
+                    {
+                        VinculadoComSaldo = true,
+                    },
+                    new OpcaoComplemento(rose, "Rosé", 0m, Ordem: 2),
+                ]),
+                new GrupoComplementos(adicionais, "Adicionais", 0, 2, false, 2,
+                [
+                    new OpcaoComplemento(cheddar, "CHEDDAR CREMOSO", 4.5m, Guid.Parse("01a187c3-8192-73a4-95b6-2b3c4d5e6f78"), true, 1m, 1)
+                    {
+                        FichaVinculado = [new ComponenteFicha(Guid.Parse("01a187c4-92a3-74b5-86c7-3c4d5e6f7089"), null, 0.08m, 5m)],
+                    },
+                ]),
+            ],
+        };
+        ComplementoItem Complemento(string id, Guid opcao, string grupo, string descricao, decimal adicional) =>
+            new(Guid.Parse(id), opcao, grupo, descricao, 1m, adicional);
+        var itens = new List<ItemVenda>
+        {
+            new(Guid.Parse("01a187c5-a3b4-75c6-97d8-4d5e6f708192"), 1, porcao.Id, "0300", null, porcao.Descricao, "UN", false, 2m, 29.50m, 29.50m,
+                OrigemPreco.Varejo, 59m, 0m, Inicio, origemEntrada: "teclado",
+                complementos:
+                [
+                    Complemento("01a187c6-b4c5-76d7-a8e9-5e6f708192a3", barbecue, "Molhos", "MOLHO BARBECUE", 0m),
+                    Complemento("01a187c6-c5d6-77e8-b9fa-6f708192a3b4", rose, "Molhos", "Rosé", 0m),
+                    Complemento("01a187c6-d6e7-78f9-8a0b-708192a3b4c5", cheddar, "Adicionais", "CHEDDAR CREMOSO", 4.5m),
+                ]),
+            new(Guid.Parse("01a187c5-e7f8-790a-9b1c-8192a3b4c5d6"), 2, porcao.Id, "0300", null, porcao.Descricao, "UN", false, 1m, 25m, 25m,
+                OrigemPreco.Varejo, 25m, 0m, Inicio.AddSeconds(30), cancelado: true, canceladoEm: Inicio.AddSeconds(45), canceladoPorId: Maria,
+                motivoCancelamento: "Cliente desistiu", origemEntrada: "teclado",
+                complementos: [Complemento("01a187c6-f809-7a1b-ac2d-92a3b4c5d6e7", rose, "Molhos", "Rosé", 0m)]),
+        };
+        var finalizadaEm = Inicio.AddMinutes(2);
+        var pagamentos = new List<PagamentoVenda>
+        {
+            new(Guid.Parse("01a187c7-091a-7b2c-bd3e-a3b4c5d6e7f8"), 1, Dinheiro, "Dinheiro", "01", "dinheiro", 59m, 60m, 1m, StatusPagamento.Aprovado, true, 0m),
+        };
+        var estado = new EstadoVenda(
+            Id: Guid.Parse("01a187c8-1a2b-7c3d-8e4f-b4c5d6e7f809"), Numero: 126, NumeroExibicao: "L01-C02-000126", LojaId: Loja, CaixaId: Caixa,
+            NumeroCaixa: 2, TerminalId: Terminal, SessaoCaixaId: Sessao, Modo: "balcao", Status: StatusVenda.Finalizada,
+            StatusFiscal: StatusFiscal.NaoAplicavel, OperadorId: Maria, TipoPreco: "varejo", DescontoTotal: 0m, DescontoTotalPct: null,
+            AcrescimoTotal: 0m, IniciadaEm: Inicio, FinalizadaEm: finalizadaEm, DiaOperacional: new DateOnly(2026, 10, 29),
+            EventoFinalizacaoId: Guid.Parse("01a187c9-2b3c-7d4e-9f50-c5d6e7f8091a"));
+        var venda = Venda.Restaurar(estado, itens, pagamentos);
+        venda.RegistrarProdutos([new ProdutoRegistrado(porcao, false)], null, Inicio);
         return venda;
     }
 

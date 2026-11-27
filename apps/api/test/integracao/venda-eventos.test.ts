@@ -11,7 +11,8 @@
  * parcela; as conferências de soma (`VENDA_INCONSISTENTE`) e o produto inativo (`PRODUTO_INATIVO_VENDIDO`); o estorno
  * do "Definir" que já compensou vendas tardias; e a venda de 1200 itens gravada em blocos. F3-B14: a baixa e o custo
  * dos complementos na v2 (o vinculado, a ficha do Produzido, o livre e o sem controle), o cancelamento que os estorna,
- * a v1 do PDV instalado igual a antes e o `lote_id`/`promocao_id` que a nuvem não conhece. Cada teste usa um caixa e um terminal só seus (`novoPonto`) e produtos próprios: roda sozinho (`-t`) e em qualquer
+ * a v1 do PDV instalado igual a antes e o `lote_id`/`promocao_id` que a nuvem não conhece. F3-B15: a fixture da venda
+ * com complementos que o caixa gera (v2) aplicada com os ids do ambiente. Cada teste usa um caixa e um terminal só seus (`novoPonto`) e produtos próprios: roda sozinho (`-t`) e em qualquer
  * ordem.
  */
 import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -2445,6 +2446,94 @@ describe('complementos na nuvem: baixa e custo (F3-B14; MD 3.6.8, 3.11.3; D43)',
       documento_item_id: linhas[3]!.id,
     });
     expect(await saldo(maionese)).toBe(10);
+  });
+
+  it('a fixture do caixa (F3-B15) venda.finalizada.v2.complementos: o barbecue baixa pelo cadastro, o cheddar pelos insumos que o caixa calculou, o livre e o item cancelado não', async () => {
+    const q = await novoPonto();
+    const porcao = await criarProduto({ nome: 'PORCAO FRITAS FIXTURE B15', tipo: 'com_complementos' });
+    const barbecue = await criarProduto({
+      nome: 'MOLHO BARBECUE FIXTURE B15',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '18',
+    });
+    const queijo = await criarProduto({
+      nome: 'QUEIJO CHEDDAR FIXTURE B15',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '40',
+    });
+    const cheddar = await criarProduto({
+      nome: 'CHEDDAR CREMOSO FIXTURE B15',
+      tipo: 'produzido',
+      usaFichaTecnica: true,
+      precoVenda: '4,50',
+      componentes: [{ tipo: 'ficha_tecnica', componenteId: queijo, quantidade: '0,08' }],
+    });
+    await entrada([
+      [porcao, '10', '8'],
+      [barbecue, '5', '18'],
+      [queijo, '2', '40'],
+    ]);
+    const [opBarbecue, opRose, opCheddar] = await grupoComplementos(porcao, 'Molhos', [
+      { produtoId: barbecue, baixa: true, quantidadeBaixa: '0.050' },
+      { descricao: 'Rosé' },
+      { produtoId: cheddar, baixa: true },
+    ]);
+    const vendaId = uuidv7();
+    // Ids da fixture que o PDV gera (ContratosEventosTests) → os deste ambiente; as linhas ficam com os ids dela.
+    const ids: Record<string, string> = {
+      '01a187c8-1a2b-7c3d-8e4f-b4c5d6e7f809': vendaId,
+      '01a18752-3782-7bda-ad3c-2d6d1a3d1fa7': loja,
+      '01a18752-c8a9-7970-9641-9f828b9d2434': q.caixa,
+      '01a18751-a521-7238-b924-56de3eb13b90': q.terminal,
+      '01a18755-98a1-7472-96da-1dac72ff5d2a': q.sessao,
+      '01a18754-76cb-7b74-b2e7-06298fadc1a6': operador,
+      '01a1875e-a2ca-7299-9d65-a441d58842de': dinheiro,
+      '01a187c2-6f70-7182-9394-0f1a2b3c4d56': porcao,
+      '01a187c1-3c4d-7e5f-8061-7c8d9e0f1a23': opBarbecue!,
+      '01a187c1-4d5e-7f60-9172-8d9e0f1a2b34': opRose!,
+      '01a187c1-5e6f-7071-8283-9e0f1a2b3c45': opCheddar!,
+      '01a187c4-92a3-74b5-86c7-3c4d5e6f7089': queijo,
+    };
+    const desvio = Date.now() - Date.parse('2026-10-29T17:31:02.114Z');
+    const texto = readFileSync(new URL('venda.finalizada.v2.complementos.payload.json', FIXTURES), 'utf8')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => ids[id] ?? id)
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, (t) =>
+        new Date(Date.parse(t) + desvio).toISOString(),
+      );
+    const payload = JSON.parse(texto) as { vendas: Payload; itens_venda_complementos: Payload[] };
+    payload.vendas.numero_caixa = q.numero;
+    const [r] = await pushOk(q, [evento(q, 'venda.finalizada', payload, { versao_schema: 2 })]);
+    expect(r, JSON.stringify(r)).toMatchObject({
+      status: 'aplicado',
+      resultado: { venda_id: vendaId, movimentos: 3 },
+    });
+
+    const linha = (opcao: string) =>
+      payload.itens_venda_complementos.find((c) => c.complemento_id === opcao)!.id;
+    const movimentos = (await movimentosDaVenda(vendaId)).map((m) => [
+      m.produto_id,
+      m.tipo_movimento,
+      m.quantidade,
+      m.documento_item_id,
+    ]);
+    expect(movimentos.sort()).toEqual(
+      [
+        [porcao, 'VENDA_PDV', '-2.000', '01a187c5-a3b4-75c6-97d8-4d5e6f708192'],
+        [barbecue, 'VENDA_PDV', '-0.100', linha(opBarbecue!)],
+        [queijo, 'BAIXA_INSUMO', '-0.168', linha(opCheddar!)],
+      ].sort(),
+    );
+    expect([await saldo(porcao), await saldo(barbecue), await saldo(queijo), await saldo(cheddar)]).toEqual([
+      8, 4.9, 1.832, 0,
+    ]);
+    const [contagem] = await consultar<{ n: number }>(
+      emp.nomeBanco,
+      `select count(*)::int as n from itens_venda_complementos c join itens_venda i on i.id = c.item_venda_id where i.venda_id = $1`,
+      [vendaId],
+    );
+    expect(contagem).toEqual({ n: 4 });
   });
 
   it('o PDV instalado (v1): os complementos gravam como antes, sem baixa nem custo; a v2 não é anunciada', async () => {

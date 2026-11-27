@@ -387,14 +387,21 @@ public sealed class Venda
         }
     }
 
+    /// <param name="complementos">
+    /// As opções escolhidas no diálogo dos complementos (PDV 10.2; F3-B15), conferidas pelas
+    /// <see cref="RegrasComplementos"/> contra o produto lido; nulo = sem complementos, como antes (o produto
+    /// <c>com_complementos</c> sem o recurso da onda, F3-B4, vende assim). Lista vazia é a escolha de nenhum (todos os
+    /// grupos opcionais).
+    /// </param>
     public ItemVenda AdicionarItem(
         ProdutoResolvido resolvido,
         decimal multiplicador,
         string? codigoLido,
         DateTimeOffset agora,
         bool agrupar = false,
-        string? origemEntrada = null) =>
-        Atomico(() => AdicionarItemInterno(resolvido, multiplicador, codigoLido, agora, agrupar, origemEntrada));
+        string? origemEntrada = null,
+        IReadOnlyCollection<Guid>? complementos = null) =>
+        Atomico(() => AdicionarItemInterno(resolvido, multiplicador, codigoLido, agora, agrupar, origemEntrada, complementos));
 
     private ItemVenda AdicionarItemInterno(
         ProdutoResolvido resolvido,
@@ -402,7 +409,8 @@ public sealed class Venda
         string? codigoLido,
         DateTimeOffset agora,
         bool agrupar,
-        string? origemEntrada)
+        string? origemEntrada,
+        IReadOnlyCollection<Guid>? complementos)
     {
         ArgumentNullException.ThrowIfNull(resolvido);
         ExigirStatus(StatusVenda.EmAndamento, "incluir itens");
@@ -423,9 +431,18 @@ public sealed class Venda
             throw new RegraNegocioException("Preço da embalagem inválido — procure o gerente.");
         }
 
+        // A escolha é conferida contra o produto lido agora (o mesmo que o diálogo mostrou), e cada unidade do item leva
+        // as mesmas opções (F3-Q4): o adicional soma por unidade ao preço (a camada de acréscimos do item). O preço e a
+        // baixa de cada opção saem do snapshot quando ele já a tem (a opção da primeira inclusão, como o preço do item):
+        // uma opção alterada por um pull no meio da venda não mistura o preço novo com a baixa antiga na mesma linha.
+        var snapshot = _produtos.TryGetValue(produto.Id, out var anterior) ? anterior.Produto.GruposComplementos : null;
+        var escolhidos = complementos is null
+            ? []
+            : RegrasComplementos.Linhas(RegrasComplementos.DoSnapshot(RegrasComplementos.Conferir(produto, complementos), snapshot));
+        var acrescimo = RegrasComplementos.Adicional(escolhidos);
         var quantidade = resolvido.Fator * multiplicador;
         ValidarQuantidade(quantidade, produto.Fracionavel);
-        _ = ValorBrutoValido(quantidade, produto.PrecoBase);
+        _ = ValorBrutoValido(quantidade, produto.PrecoBase + acrescimo);
         var totalAntes = Total;
         var registrado = Registrar(produto, agora, resolvido.Embalagem);
 
@@ -443,7 +460,8 @@ public sealed class Venda
                 && !i.EhKit
                 && !i.EhCasco
                 && OrigemPreco.Recalculavel(i.OrigemPreco)
-                && i.DescontoItem == 0m);
+                && i.DescontoItem == 0m
+                && RegrasComplementos.Mesmos(i.Complementos, escolhidos));
             if (existente is not null)
             {
                 var novaQuantidade = existente.Quantidade + quantidade;
@@ -469,13 +487,14 @@ public sealed class Venda
             unidade: produto.Unidade,
             fracionavel: produto.Fracionavel,
             quantidade: quantidade,
-            precoTabela: registrado.Produto.PrecoBase,
-            precoUnitario: registrado.Produto.PrecoBase,
+            precoTabela: registrado.Produto.PrecoBase + acrescimo,
+            precoUnitario: registrado.Produto.PrecoBase + acrescimo,
             origemPreco: registrado.Produto.Precos?.PrecoVendaLoja is not null ? OrigemPreco.Loja : OrigemPreco.Varejo,
-            valorBruto: ValorBrutoValido(quantidade, registrado.Produto.PrecoBase),
+            valorBruto: ValorBrutoValido(quantidade, registrado.Produto.PrecoBase + acrescimo),
             descontoItem: 0m,
             incluidoEm: agora,
-            origemEntrada: origemEntrada)
+            origemEntrada: origemEntrada,
+            complementos: escolhidos)
         {
             Embalagem = embalagem,
             PrecoVarejo = registrado.Produto.PrecoBase,
@@ -794,7 +813,8 @@ public sealed class Venda
                 origemEntrada: item.OrigemEntrada,
                 pesoDigitado: item.PesoDigitado,
                 grupoPrecoQuantidadeId: item.GrupoPrecoQuantidadeId,
-                quantidadeReferenciaPreco: item.QuantidadeReferenciaPreco)
+                quantidadeReferenciaPreco: item.QuantidadeReferenciaPreco,
+                complementos: RegrasComplementos.Copiar(item.Complementos))
             {
                 Embalagem = item.Embalagem,
                 PrecoVarejo = item.PrecoVarejo,
@@ -1210,6 +1230,17 @@ public sealed class Venda
             _produtos[produto.Id] = registrado;
         }
 
+        // Uma opção cadastrada no meio da venda entra no snapshot (sem mudar as que já estavam: o preço e a baixa delas
+        // seguem os da primeira inclusão, como o preço do item), para a recuperação achar o vinculado e a ficha de toda
+        // linha gravada.
+        if (!ReferenceEquals(registrado.Produto.GruposComplementos, produto.GruposComplementos)
+            && RegrasComplementos.Juntar(registrado.Produto.GruposComplementos, produto.GruposComplementos) is { } grupos
+            && !ReferenceEquals(grupos, registrado.Produto.GruposComplementos))
+        {
+            registrado = registrado with { Produto = registrado.Produto with { GruposComplementos = grupos } };
+            _produtos[produto.Id] = registrado;
+        }
+
         var tabela = registrado.Produto.Precos ?? new TabelaPreco();
         if (embalagem is not null && tabela.Embalagens?.Any(e => e.CodigoBarrasId == embalagem.CodigoBarrasId) != true)
         {
@@ -1281,15 +1312,18 @@ public sealed class Venda
     {
         decimal preco;
         decimal bruto;
+        // A camada de acréscimos do item (F3-B15; Padrões da Fase 3: regra 11.3 → adicionais dos complementos → gelada →
+        // promoções): o adicional por unidade volta somado a todo preço recalculado.
+        var acrescimo = item.AcrescimoUnitario;
         if (r.Origem == OrigemPreco.Embalagem && item.Embalagem is { Preco: { } precoEmbalagem } embalagem)
         {
             // Preço da embalagem é autoritativo (10.2): valor = arred2(preço × multiplicador); unitário com 4 casas.
-            bruto = Arredondamento.Arred2(precoEmbalagem * (item.Quantidade / embalagem.Fator));
+            bruto = Arredondamento.Arred2((precoEmbalagem * (item.Quantidade / embalagem.Fator)) + (acrescimo * item.Quantidade));
             preco = Arredondamento.Arred4(bruto / item.Quantidade);
         }
         else
         {
-            preco = r.Preco;
+            preco = r.Preco + acrescimo;
             bruto = ValorBrutoValido(item.Quantidade, preco);
         }
 
@@ -2196,26 +2230,76 @@ public sealed class Venda
     }
 
     /// <summary>
+    /// <c>itens_venda_complementos[].componentes_estoque</c> do <c>venda.finalizada</c> v2 (SYNC 9.7; F3-B14, F3-B15): o
+    /// complemento com <c>baixa_estoque</c> cujo vinculado é <c>produzido</c> baixa os insumos da ficha do vinculado, do
+    /// snapshot do produto do item, já multiplicados (quantidade do item × a do complemento × <c>quantidade_baixa</c>) e
+    /// com a perda, em 3 casas, como a ficha do item (D17). Vazio nos demais: o vinculado simples ou matéria-prima a
+    /// nuvem baixa pelo cadastro dela, o livre não baixa, e a opção que o snapshot não tem (venda gravada antes dele)
+    /// fica sem a lista (a nuvem entra com o custo de referência).
+    /// </summary>
+    public IReadOnlyList<ComponenteBaixa> ComponentesEstoque(ItemVenda item, ComplementoItem complemento)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(complemento);
+        if (OpcaoDoComplemento(item, complemento) is not { BaixaEstoque: true, FichaVinculado: { Count: > 0 } ficha } opcao)
+        {
+            return [];
+        }
+
+        var vezes = item.Quantidade * complemento.Quantidade * opcao.QuantidadeBaixa;
+        return ficha
+            .Select(c => new ComponenteBaixa(c.ProdutoId, c.VariacaoId, Arredondamento.Arred3(vezes * c.Quantidade * (1m + (c.PerdaPct / 100m)))))
+            .Where(c => c.Quantidade > 0m)
+            .ToList();
+    }
+
+    /// <summary>A opção do cadastro (no snapshot do produto do item) de uma linha de complemento; nula se o snapshot não a tem.</summary>
+    public OpcaoComplemento? OpcaoDoComplemento(ItemVenda item, ComplementoItem complemento)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(complemento);
+        return complemento.ComplementoId is { } id && _produtos.TryGetValue(item.ProdutoId, out var registrado)
+            ? registrado.Produto.GruposComplementos?.SelectMany(g => g.Opcoes).FirstOrDefault(o => o.Id == id)
+            : null;
+    }
+
+    /// <summary>
     /// Quanto a venda tira do saldo de cada produto (SYNC 15.2, "quantidades da venda em andamento"): itens não
-    /// cancelados na unidade base (o fardo já vem multiplicado), os insumos da ficha no lugar do produzido.
+    /// cancelados na unidade base (o fardo já vem multiplicado), os insumos da ficha no lugar do produzido e, desde o
+    /// F3-B15, o vinculado com baixa de cada complemento (ou os insumos da ficha dele).
     /// </summary>
     public IReadOnlyDictionary<Guid, decimal> BaixasEstimadas()
     {
         var baixas = new Dictionary<Guid, decimal>();
+        void Somar(Guid produto, decimal quantidade) => baixas[produto] = baixas.GetValueOrDefault(produto) + quantidade;
         foreach (var item in ItensAtivos)
         {
+            foreach (var complemento in item.Complementos)
+            {
+                var insumos = ComponentesEstoque(item, complemento);
+                foreach (var c in insumos)
+                {
+                    Somar(c.ProdutoId, c.Quantidade);
+                }
+
+                if (insumos.Count == 0 && OpcaoDoComplemento(item, complemento) is { BaixaEstoque: true, VinculadoComSaldo: true, ProdutoId: { } vinculado } opcao)
+                {
+                    Somar(vinculado, Arredondamento.Arred3(item.Quantidade * complemento.Quantidade * opcao.QuantidadeBaixa));
+                }
+            }
+
             var componentes = ComponentesEstoque(item);
             if (componentes.Count > 0)
             {
                 foreach (var c in componentes)
                 {
-                    baixas[c.ProdutoId] = baixas.GetValueOrDefault(c.ProdutoId) + c.Quantidade;
+                    Somar(c.ProdutoId, c.Quantidade);
                 }
 
                 continue;
             }
 
-            baixas[item.ProdutoId] = baixas.GetValueOrDefault(item.ProdutoId) + item.Quantidade;
+            Somar(item.ProdutoId, item.Quantidade);
         }
 
         return baixas;

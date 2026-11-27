@@ -300,7 +300,7 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
 
     private static Task<VendaRegistro?> CarregarAsync(PdvDbContext db, Guid id, bool rastrear, CancellationToken ct)
     {
-        var consulta = db.Vendas.Include(v => v.Itens).Include(v => v.Pagamentos).AsSplitQuery();
+        var consulta = db.Vendas.Include(v => v.Itens).ThenInclude(i => i.Complementos).Include(v => v.Pagamentos).AsSplitQuery();
         return (rastrear ? consulta : consulta.AsNoTracking()).FirstOrDefaultAsync(v => v.Id == id, ct);
     }
 

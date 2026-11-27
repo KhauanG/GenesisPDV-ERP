@@ -47,6 +47,13 @@ public sealed record ProdutoVenda(
     public IReadOnlyList<ComponenteFicha>? FichaTecnica { get; init; }
 
     /// <summary>
+    /// Grupos de complementos do <c>com_complementos</c> com as opções ativas (MD 3.6.8; PDV 10.2; Fase 3, F3-B15), na
+    /// ordem do cadastro. Entra no snapshot da venda: a recuperação acha por ele o vinculado e a ficha da baixa. Nula nos
+    /// demais tipos.
+    /// </summary>
+    public IReadOnlyList<GrupoComplementos>? GruposComplementos { get; init; }
+
+    /// <summary>
     /// <c>produtos.idade_minima</c> (bebida alcoólica, 18): a forma com <c>restringe_idade_minima</c> (VA/VR) não paga o
     /// item (MD 3.10.1). A confirmação de maioridade no caixa fica desligada (O20 do dono).
     /// </summary>
@@ -99,7 +106,7 @@ public sealed record ProdutoResolvido(
 {
     /// <summary>
     /// Vender exige escolher a variação, o que o PDV-1 não faz: o código é o de uma variação, ou o produto é o pai com
-    /// variação ativa (F2-B34). <c>com_complementos</c> não entra: vende sem os complementos (PDV 10.2).
+    /// variação ativa (F2-B34). <c>com_complementos</c> não entra: o diálogo dos complementos é outro (F3-B15, PDV 10.2).
     /// </summary>
     public bool ExigeVariacao => VariacaoId is not null || (Produto.Tipo == TipoProduto.ComVariacoes && Produto.TemVariacoesAtivas);
 

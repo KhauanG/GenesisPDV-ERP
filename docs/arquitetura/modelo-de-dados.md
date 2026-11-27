@@ -2193,7 +2193,7 @@ nulo o id desconhecido. O cadastro no ERP é o **F2-B51** (README da API › dec
 `ativo = false`), e a opção removida de um grupo que fica só recebe `ativo = false`; o `produto_id` vinculado é
 Simples, Matéria-prima ou Produzido (o Produzido baixa os insumos da ficha), e o produto que é opção ativa de um grupo
 vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3: a baixa
-e o custo na nuvem desde o F3-B14 (3.11.3; README da API › decisão 232), o caixa no F3-B15.
+e o custo na nuvem desde o F3-B14 (3.11.3; README da API › decisão 232), o caixa desde o F3-B15 (PDV 10.2; README do PDV › decisão 102).
 
 #### 3.6.9 Demais filhas de `produtos`
 
@@ -3540,7 +3540,9 @@ Desde a Fase 3 (F3-B14; README da API › decisão 232), o complemento com `prod
 produto vinculado baixa estoque na nuvem com `documento_item_id` = id desta linha (`VENDA_PDV` de quantidade do item ×
 `quantidade` × `quantidade_baixa`, ou os insumos da ficha do vinculado Produzido como `BAIXA_INSUMO`, pela
 `componentes_estoque` só do payload do `venda.finalizada` v2), e o custo dele soma ao `itens_venda.custo_unitario` do
-item; o livre e o sem baixa não têm custo nem estoque.
+item; o livre e o sem baixa não têm custo nem estoque. No caixa (F3-B15; README do PDV › decisão 102), a tabela local de
+mesmo nome guarda as linhas com o item (migração EF `ComplementosVenda`), `quantidade` = 1 por unidade do item (D75) e o
+`preco_adicional` somado ao `preco_unitario` e ao `preco_tabela`.
 
 #### 3.11.4 `pagamentos_venda` e `parcelas_venda` (D, ↑)
 

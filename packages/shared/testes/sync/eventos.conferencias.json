@@ -38,6 +38,7 @@
     "venda.cancelada.em_andamento.payload.json": "e47aff8efe4580b989cafe9d6d65845b85ea7f16316758749970748d15c8ed31",
     "venda.cancelada.finalizada.payload.json": "6a3cb294d80b523800eb3748ebdc58b5d3a90987a6b8854324a4b9815900589c",
     "venda.finalizada.cascos.payload.json": "a3ecd7f7269a88f0cb50938dc978f84e3499aefde50391e75aefbbbbfafca1be",
+    "venda.finalizada.v2.complementos.payload.json": "fe3382727fb090e4adb716c17f3108937ea1bd2af1bcd5f21a867caeac69076b",
     "venda.finalizada.payload.json": "8b5a2204d0ab74b7c9e491ba38111701b4b1f825f6842fe41ef070cc45b60633",
     "venda.finalizada.formas.payload.json": "6606af45c56ad1ec50c9936d4ddf35e76f16a8080be87d9da6f1d556d91bbd1d"
   }

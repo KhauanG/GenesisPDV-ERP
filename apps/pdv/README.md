@@ -3706,9 +3706,9 @@ cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura 
 da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
 sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
-resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a venda com complementos e a
-escolha do lote no caixa (Fase 3: o espelho dos complementos chegou na R2, decisão 85, e a nuvem baixa o lote por FEFO,
-D48), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a
+escolha do lote no caixa (Fase 3: a nuvem baixa o lote por FEFO, D48; a venda com complementos chegou no F3-B15,
+decisão 102), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -4610,3 +4610,91 @@ reimpresso continua o original, com o número do caixa.
        nenhum evento de ponteiro; o CONCLUIR e Funções desligados na nuvem que continuam valendo, com o ⚙ na tecla nova
        de Funções e o Ctrl+Alt+C desligado que bipa); `UsabilidadeTelasTests` com a barra nova, o F7 que bipa e o clique
        no Ctrl+Alt+S (botão sem diálogo) seguido do bipe do leitor.
+102. **Complementos no caixa: o diálogo, a camada de acréscimos do item e a v2 do `venda.finalizada`** (F3-B15; PDV
+     10.2; MD 3.6.8, 3.11.3; SYNC 9.7, 17.5; D43, D75 = F3-Q4 (A); README da API › decisão 232; `Core/Produtos/Complementos.cs`,
+     `Core/Vendas/{ItemVenda,Venda}.cs`, `Data/Repositorios/{CatalogoLocal,MapeadorVenda}.cs`, `Sync/Eventos/FabricaEventos.cs`,
+     `App/ViewModels/DialogosComplementos.cs`, `Fiscal/LayoutComprovanteVenda.cs`). O produto "Com complementos" deixa de
+     vender sem eles: o caixa abre o diálogo dos grupos e a venda sobe na v2, com a baixa do vinculado Produzido calculada
+     aqui. A `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21) e o 0.13.0 instalado não muda. Escolhas técnicas,
+     sem pergunta ao dono:
+     - **O portão é o recurso da onda** (decisão 96): o diálogo só abre com o `venda.finalizada` v2 anunciado no último
+       handshake (`ServicoVenda.ComplementosDisponiveisAsync`; na demonstração, sempre). Sem ele (a nuvem de hoje, que só
+       anuncia a v2 no F3-B30, ou o caixa recém-atualizado que abriu sem internet), o produto vende como antes, sem
+       diálogo nem complemento. A finalização grava a maior versão comum anunciada (`VersoesVendaFinalizada` = 1 e 2); a
+       venda montada com os complementos que fecha depois de um handshake sem a v2 vai na v1 com as mesmas linhas de
+       `itens_venda_complementos` sem a `componentes_estoque` (a nuvem grava os complementos sem baixa nem custo, como
+       antes): o fato consumado nunca trava. O `venda.cancelada` forma B continua v1 e leva os complementos sem a chave.
+     - **O cadastro no caixa** (`CatalogoLocal`): os grupos vivos (`excluido_em` nulo) do `com_complementos` com as opções
+       ativas, na `ordem`; o grupo sem opção ativa não aparece e o produto sem grupo vende sem diálogo. A opção vinculada
+       sem descrição própria leva o nome do vinculado; a de um vinculado que o espelho não tem, sem descrição, some. A
+       opção carrega a baixa (`baixa_estoque`, `quantidade_baixa`), se o vinculado tem saldo próprio e a ficha do
+       vinculado Produzido. Os grupos entram no snapshot da venda (`produtos_venda_snapshot`), e uma opção cadastrada no
+       meio da venda é acrescentada a ele sem mudar as que estavam (`RegrasComplementos.Juntar`): a recuperação acha por
+       ele o vinculado e a ficha de toda linha gravada. **Uma fonte por linha:** a escolha é conferida contra o cadastro
+       lido agora (o que o diálogo mostrou: grupos, mínimo, máximo e opções ativas), mas o adicional e a baixa de cada
+       opção saem da opção do snapshot quando ele já a tem (`RegrasComplementos.DoSnapshot`), como o preço e a ficha do
+       item (11.3, D17): a opção alterada por um pull no meio da venda (outro adicional, outra `quantidade_baixa`, outra
+       ficha) segue a da primeira inclusão nas linhas novas, e elas agrupam com as de antes; a opção nova vale como veio.
+     - **A escolha** (`RegrasComplementos.Conferir`, a mesma no diálogo e na venda): cada opção uma vez por unidade do item
+       (D75; `quantidade` sempre 1), só opções dos grupos do produto, e por grupo entre o mínimo (o obrigatório pede ao
+       menos 1) e o máximo, que conta opções diferentes; o grupo obrigatório com menos opções ativas que o mínimo pede o
+       gerente. `null` na inclusão é "sem complementos" (o caminho sem o recurso); a lista vazia é a escolha de nenhum.
+       `grupo_nome` e `descricao` vão cortados em 40 e 60 caracteres (os do contrato).
+     - **A camada de acréscimos do item** (Padrões da Fase 3: regra 11.3 → adicionais → gelada → promoções): o
+       `ItemVenda.AcrescimoUnitario` (Σ adicionais por unidade, derivado das linhas de complemento, sem coluna nova) soma
+       ao preço da regra 11.3 no `preco_unitario` e no `preco_tabela` em todo recálculo (`AplicarPreco`): o atacado por
+       quantidade e o mix trocam só a parte do produto, e a embalagem com preço próprio soma o adicional por unidade base
+       antes do arredondamento do valor. O F8 (F3-B17) e a gelada (F3-B18) reusam a camada. O "varejo 3,49" do cupom, o
+       varejo riscado da tela e a economia no atacado usam o varejo com os adicionais (`PrecoVarejoComAcrescimos`).
+     - **Agrupamento e cancelamento.** Linhas com complementos diferentes não se agrupam; as com a mesma lista (opção,
+       textos, quantidade e adicional comparados como número, sem a ordem) sim, quando o agrupamento estiver ligado (o
+       caixa ainda não liga o `pdv.agrupa_produtos`, Lacunas). Os complementos são fixos desde a inclusão (trocar é
+       cancelar o item e incluir de novo); cancelar o item cancela os complementos (a nuvem não baixa os do item
+       cancelado), e o restante do cancelamento parcial leva a mesma escolha com ids novos. Os ids das linhas saem em
+       ordem crescente na ordem da escolha (`RegrasComplementos.IdsEmOrdem`, também na cópia): o UUIDv7 do mesmo
+       milissegundo desempata pela parte aleatória e as linhas do item gravam o mesmo `criado_em`, então é o id que
+       devolve a ordem do cadastro na venda relida depois de uma queda e na reidratada (tela, cupom e evento).
+     - **A baixa calculada no caixa** (como a ficha do item, D17): o complemento com baixa cujo vinculado é Produzido
+       manda os insumos da ficha já multiplicados (item × complemento × `quantidade_baixa`, com a perda, 3 casas) na
+       `componentes_estoque` da linha (v2); o vinculado com saldo próprio a nuvem baixa pelo cadastro dela, o livre não
+       baixa. O saldo estimado do caixa (SYNC 15.2) passa a contar os dois: na venda em andamento pelo
+       `Venda.BaixasEstimadas`, e nas finalizadas ainda não refletidas (e na devolução da cancelada forma A) pelo
+       `ConsultasVendaLocal.SaldosEstimadosAsync`, que lê também as `itens_venda_complementos` do payload. Só na v2 e
+       só do item não cancelado, a regra do `baixaDoComplemento` da nuvem: os insumos da `componentes_estoque` da linha
+       ou, sem ela, o vinculado da opção no espelho `produtos_complementos` (pelo id, como a nuvem lê o cadastro dela)
+       com `baixa_estoque` e saldo próprio (`controla_estoque`, nem kit, nem produzido, nem serviço), na quantidade item
+       × complemento × `quantidade_baixa` em 3 casas; na v1 a nuvem não baixa os complementos, e o estimado também não.
+       O aviso e o bloqueio da 29.1 na inclusão continuam olhando só o item (o vinculado vendido avulso já vê o
+       consumo dos complementos no estimado).
+     - **Persistência local**: a tabela de movimento `itens_venda_complementos` (as colunas da nuvem, conferidas pelo
+       `EsquemaNuvemTests`; FK para o item com `cascade`), gravada no mesmo commit do item e relida com ele (a venda em
+       andamento volta com os complementos depois de uma queda, PDV 32.3). Pede uma migração EF só local,
+       `Migracoes/<data>_ComplementosVenda.cs`, que só cria a tabela (o plano dizia "sem migração" contando com uma
+       tabela local que não existia; nenhum cursor volta, nenhuma versão local muda, e o 0.10.0 e o 0.13.0 que passam
+       direto para a versão nova a aplicam depois da `FaseTres`). A reidratação (SYNC 22.2) recria as linhas do
+       documento da venda e apaga as do backup antes dos itens.
+     - **O diálogo** (`DialogoComplementosViewModel`, só pelo teclado, como o Montar combo): um grupo por vez com a regra
+       ("Escolha de 1 a 2", "Opcional, até 2") e "N de no máximo M"; ↑/↓ andam entre as opções, Espaço ou 1–9 (também no
+       teclado numérico) marcam e desmarcam (no grupo de no máximo 1, marcar outra troca a escolha; nos demais, passar do
+       máximo mostra a mensagem); Enter confere o grupo e passa ao próximo, e no último inclui o item; Tab/Shift+Tab
+       andam sem conferir (o Enter final confere todos e volta ao que falta); Esc volta ao grupo anterior e, no primeiro,
+       fecha sem incluir nada (nenhum número de venda é gasto). Com `3*<código>`, as 3 unidades levam os mesmos
+       complementos. A tela mostra os complementos sob o item ("└ + MOLHO BARBECUE, + CHEDDAR CREMOSO (+4,50)") e o
+       cupom, um por linha sob a descrição, com o adicional por unidade.
+     - **Testes.** `ComplementosTests` (Core: preço e ordem das linhas; mínimo, máximo, obrigatório, repetida e de fora;
+       o grupo sem opções suficientes; sem a escolha vende como antes; agrupamento; atacado que preserva o adicional e
+       volta ao varejo; cancelamento total e parcial; a baixa estimada e a `componentes_estoque`; a venda recuperada que
+       reprecifica com o adicional e acha a ficha pelo snapshot; a opção e o grupo novos no meio da venda que entram no
+       snapshot e baixam pelo cadastro deles; a opção alterada que segue o preço e a baixa da primeira inclusão; os ids na
+       ordem da escolha), `ComplementosDadosTests` (Data: o catálogo com os grupos vivos e as opções ativas, o nome do
+       vinculado e a ficha; a venda gravada e relida com os complementos na ordem do cadastro, o snapshot com eles e a
+       migração; o saldo estimado que desconta o vinculado e os insumos das finalizadas não refletidas, só na v2 e não do
+       item cancelado, e devolve na cancelada forma A), `RecuperacaoTests` (a venda v2 reidratada com as 4 linhas de
+       complemento da fixture, sem duplicar), `ContratosEventosTests` (a fixture `venda.finalizada.v2.complementos.payload.json`, que o
+       Vitest passa pelo `payloadVendaFinalizadaV2Schema` e o `contratos-eventos.spec.ts` da API pelo upcast da v2, e a
+       mesma venda na v1 sem a chave), `LayoutComprovanteTests` (impressão simulada com os complementos e o atacado),
+       `ComplementosTelasTests` (App headless: "2*" porção com 2 molhos e o cheddar pelo teclado, com as mensagens do
+       mínimo e do máximo, a tela, o cupom e o evento v2 com os insumos; o Tab/Shift+Tab que pulam o obrigatório e o
+       Enter do último grupo que volta a ele sem incluir; o Esc que não inclui e o terminal real sem a v2 que vende sem
+       diálogo); na API, `venda-eventos.test.ts` aplica a fixture do caixa com os ids do ambiente (o
+       barbecue baixa pelo cadastro, o cheddar pelos insumos do caixa, o livre e o item cancelado não).

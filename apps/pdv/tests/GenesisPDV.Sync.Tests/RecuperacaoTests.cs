@@ -34,7 +34,8 @@ public class RecuperacaoTests
     }
 
     /// <summary>Um evento que a "nuvem" recebeu, com o envelope completo e o payload da fixture (hash pelo JCS).</summary>
-    private static Guid NaNuvem(AmbienteSync amb, long sequencia, string tipo, string agregadoTipo, Guid agregadoId, JsonObject payload, string status = "aplicado")
+    private static Guid NaNuvem(
+        AmbienteSync amb, long sequencia, string tipo, string agregadoTipo, Guid agregadoId, JsonObject payload, string status = "aplicado", int versao = 1)
     {
         var id = Guid.CreateVersion7();
         var jcs = Jcs.Serializar(payload);
@@ -43,7 +44,7 @@ public class RecuperacaoTests
             ["evento_id"] = id.ToString("D"),
             ["sequencia"] = sequencia,
             ["tipo"] = tipo,
-            ["versao_schema"] = 1,
+            ["versao_schema"] = versao,
             ["agregado_tipo"] = agregadoTipo,
             ["agregado_id"] = agregadoId.ToString("D"),
             ["dependencias"] = new JsonArray(),
@@ -139,6 +140,43 @@ public class RecuperacaoTests
         Assert.Equal(3, (await EventosAsync(amb)).Count);
         Assert.Equal(1L, amb.Escalar("select count(*) from vendas"));
         Assert.Equal(1126L + SaltoNumeracao.Margem, Sequencia(amb, SequenciaLocal.Venda));
+    }
+
+    [Fact]
+    public async Task Venda_v2_reidratada_recria_os_complementos_sem_duplicar()
+    {
+        using var amb = await AtivadoAsync();
+        var venda = Payload("venda.finalizada.v2.complementos.payload.json");
+        var vendaId = Guid.Parse(venda["vendas"]!["id"]!.GetValue<string>());
+        NaNuvem(amb, 1, "caixa.aberto", "sessao_caixa", Sessao, Payload("caixa.aberto.payload.json"));
+        var v = NaNuvem(amb, 2, "venda.finalizada", "venda", vendaId, venda, versao: 2);
+        using var ciclo = amb.CriarCiclo();
+
+        var h = await ciclo.HandshakeAsync(Ct);
+
+        Assert.True(h.Desfecho == DesfechoHandshake.Liberado, string.Join("\n", amb.Log.Linhas.Where(l => l.StartsWith("Error", StringComparison.Ordinal))));
+        Assert.Equal(2, (await EventosAsync(amb)).Single(e => e.Id == v).VersaoSchema);
+        // As 4 linhas da fixture voltam com os valores dela; a `componentes_estoque` da linha (v2) não é coluna local.
+        var esperadas = venda["itens_venda_complementos"]!.AsArray().OfType<JsonObject>().ToList();
+        await using (var db = amb.Fabrica.CreateDbContext())
+        {
+            var gravadas = await db.ItensVendaComplementos.AsNoTracking().ToListAsync(Ct);
+            Assert.Equal(esperadas.Count, gravadas.Count);
+            foreach (var l in esperadas)
+            {
+                var g = gravadas.Single(x => x.Id == Guid.Parse(l["id"]!.GetValue<string>()));
+                Assert.Equal(
+                    (Guid.Parse(l["item_venda_id"]!.GetValue<string>()), Guid.Parse(l["complemento_id"]!.GetValue<string>()), l["grupo_nome"]!.GetValue<string>(),
+                        l["descricao"]!.GetValue<string>(), decimal.Parse(l["quantidade"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture),
+                        decimal.Parse(l["preco_adicional"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture)),
+                    (g.ItemVendaId, g.ComplementoId!.Value, g.GrupoNome, g.Descricao, g.Quantidade, g.PrecoAdicional));
+            }
+        }
+
+        // Reidratar de novo não duplica as linhas.
+        var de_novo = await Reidratacao(amb).ExecutarAsync(0, Ct);
+        Assert.Equal((0, 2), (de_novo.Recriados, de_novo.JaExistiam));
+        Assert.Equal((long)esperadas.Count, amb.Escalar("select count(*) from itens_venda_complementos"));
     }
 
     [Fact]

@@ -1096,7 +1096,7 @@ escolher a variação (PDV-2), com `pdv.recusa_produto_com_variacoes = true` (pa
 pela pesquisa F2 recusa, com "Produto com variações: venda disponível na próxima versão" (sem abrir a venda nem gastar
 número): o código que resolve para uma variação (`produtos_codigos_barras.variacao_id` não nulo) e o produto pai
 `com_variacoes` com variação ativa no espelho (`produtos_variacoes` ativa e não excluída). O pai sem variação ativa (o
-legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos (até a PDV-2, na Fase 3, D43). Com a chave desligada, o código
+legado sem grade) vende como simples, e o `com_complementos` abre a seleção de complementos (Fase 3, F3-B15; abaixo). Com a chave desligada, o código
 da variação vende o pai, com o preço e o saldo dele (o comportamento do piloto); a nuvem aceita a venda e abre o alerta
 de cadastro (SYNC 15.1). Na pesquisa só por números, o código de uma variação dá a linha dele (como o da embalagem).
 
@@ -1140,7 +1140,7 @@ Validações do produto encontrado:
 | Produto com `idade_minima` | Seção 10.11 |
 | Produto com vasilhame retornável | Seção 10.12 (PDV-1) |
 | Tipo **Com variações** lido pelo código do produto pai | Abre seleção de variação (PDV-2) |
-| Tipo **Com complementos** | Abre seleção de complementos (PDV-2, Fase 3, decisão D43; na PDV-1 vende sem complementos) |
+| Tipo **Com complementos** | Abre seleção de complementos (PDV-2, Fase 3, decisão D43; F3-B15, abaixo). Na PDV-1, e no caixa da Fase 3 enquanto a nuvem não anuncia o `venda.finalizada` v2 (a release R3), vende sem complementos |
 | Tipo **Kit** (combo) | Seção 10.9.1 (PDV-1): diálogo Montar combo quando há posições com alternativas; uma linha por componente |
 | Tipo **Produzido** (ficha técnica) | Seção 10.9.2 (PDV-1) |
 | Produto membro de **grupo de preço por quantidade** (`grupo_preco_quantidade_id`) | Preço pela soma do grupo (11.3.1, PDV-1) |
@@ -1152,6 +1152,22 @@ Validações do produto encontrado:
 
 Produto encontrado e válido → linha incluída e **persistida** (transação local) antes de atualizar a tela. Bipe curto
 de confirmação (opcional).
+
+**Seleção de complementos** — Fase 3 (F3-B15; MD 3.6.8; D43; F3-Q4 = D75; README do PDV › decisão 102). Só com o
+`venda.finalizada` v2 anunciado no último handshake (SYNC 17.5); sem ele, o produto vende sem complementos, como na
+PDV-1.
+
+| Regra | Detalhe |
+|---|---|
+| O que aparece | Os grupos vivos do produto com as opções ativas, na ordem do cadastro; grupo sem opção ativa não aparece; produto sem grupo vende sem o diálogo. A opção vinculada sem descrição mostra o nome do produto vinculado |
+| Escolha | Um grupo por vez, só pelo teclado: ↑/↓ andam entre as opções, Espaço ou 1–9 marcam e desmarcam, Enter confere o grupo e passa ao próximo (no último, inclui o item), Tab/Shift+Tab andam sem conferir, Esc volta ao grupo anterior e, no primeiro, desiste sem incluir nada |
+| Mínimo, máximo, obrigatório | Por grupo: entre o mínimo (o obrigatório pede ao menos 1) e o máximo. Cada opção vale 0 ou 1 vez por unidade do item e o máximo conta opções diferentes (D75: "2 molhos" são dois molhos diferentes). Grupo de no máximo 1: marcar outra troca a escolha. Grupo obrigatório com menos opções ativas que o mínimo: "procure o gerente" |
+| Quantidade | `3*<código>`: as 3 unidades levam os mesmos complementos; `itens_venda_complementos.quantidade` = 1 (por unidade do item) |
+| Preço | `preco_unitario` e `preco_tabela` = preço da 11.3 + Σ `preco_adicional` das opções; o recálculo de atacado e mix (e o F8 e a gelada, 11.2 e 11.4) troca só a parte do produto e preserva os adicionais ("camada de acréscimos do item") |
+| Agrupa produtos | Linhas com complementos diferentes não se agrupam |
+| Cancelamento | Os complementos são fixos desde a inclusão: trocar é cancelar o item e incluir de novo. Cancelar o item cancela os complementos; o restante do cancelamento parcial leva a mesma escolha |
+| Tela e cupom | Sob o item: "+ MOLHO BARBECUE, + CHEDDAR CREMOSO (+4,50)" na tela e uma linha por complemento no cupom, com o adicional por unidade |
+| Estoque | O vinculado com `baixa_estoque` baixa na nuvem (o simples ou matéria-prima pelo cadastro dela; o produzido pelos insumos da ficha que o caixa calcula e manda na `componentes_estoque` da linha, SYNC 9.7); o livre não baixa. O saldo estimado do caixa (29.1) conta os vinculados, na venda em andamento e nas finalizadas ainda não refletidas (só na v2, como a nuvem) |
 
 ### 10.3 Pesquisa de produto (F2) — Fase PDV-1
 

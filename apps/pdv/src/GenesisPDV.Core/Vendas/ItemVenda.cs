@@ -18,6 +18,24 @@ public sealed record DadosKit(
     decimal Acrescimo);
 
 /// <summary>
+/// Linha de <c>itens_venda_complementos</c> (MD 3.11.3; PDV 10.2; Fase 3, F3-B15): um complemento escolhido para o item,
+/// por unidade dele (F3-Q4 = D75: <paramref name="Quantidade"/> 1). O <paramref name="PrecoAdicional"/> já está no
+/// <c>preco_unitario</c> e no <c>preco_tabela</c> do item; o vinculado e a baixa vêm do snapshot do produto pelo
+/// <paramref name="ComplementoId"/> (<see cref="Venda.ComponentesEstoque(ItemVenda, ComplementoItem)"/>).
+/// </summary>
+public sealed record ComplementoItem(
+    Guid Id,
+    Guid? ComplementoId,
+    string GrupoNome,
+    string Descricao,
+    decimal Quantidade,
+    decimal PrecoAdicional)
+{
+    /// <summary>"+ CHEDDAR CREMOSO (+4,50)" ou "+ Rosé": na tela e no cupom, com o adicional por unidade quando há.</summary>
+    public string Texto => PrecoAdicional > 0m ? $"+ {Descricao} (+{Numeros.NumeroBr.Dinheiro(PrecoAdicional)})" : $"+ {Descricao}";
+}
+
+/// <summary>
 /// Linha de <c>itens_venda</c>. Só a <see cref="Venda"/> altera o item; o construtor público existe para reconstituir
 /// a venda gravada no banco local (recuperação após queda, PDV 32.3).
 /// </summary>
@@ -55,7 +73,8 @@ public sealed class ItemVenda
         Guid? vasilhameItemOrigemId = null,
         Guid? grupoPrecoQuantidadeId = null,
         decimal? quantidadeReferenciaPreco = null,
-        DadosKit? kit = null)
+        DadosKit? kit = null,
+        IReadOnlyList<ComplementoItem>? complementos = null)
     {
         Id = id;
         Sequencia = sequencia;
@@ -79,6 +98,7 @@ public sealed class ItemVenda
         PesoDigitado = pesoDigitado;
         VasilhameItemOrigemId = vasilhameItemOrigemId;
         Kit = kit;
+        Complementos = complementos ?? [];
         DescontoRateado = descontoRateado;
         AcrescimoRateado = acrescimoRateado;
         FreteRateado = freteRateado;
@@ -131,6 +151,23 @@ public sealed class ItemVenda
 
     /// <summary>Linha de um combo (kit); nulo para item avulso.</summary>
     public DadosKit? Kit { get; }
+
+    /// <summary>
+    /// Complementos escolhidos (PDV 10.2; F3-B15), fixos desde a inclusão: mudar a escolha é cancelar o item e incluir
+    /// de novo. Cancelar o item cancela os complementos (a nuvem não baixa os do item cancelado).
+    /// </summary>
+    public IReadOnlyList<ComplementoItem> Complementos { get; }
+
+    public bool TemComplementos => Complementos.Count > 0;
+
+    /// <summary>
+    /// A "camada de acréscimos do item" (PDV 10.2, 11.3; Padrões da Fase 3): Σ adicionais dos complementos por unidade,
+    /// somada ao preço da regra 11.3 em todo recálculo (atacado, mix, e o F8 e a gelada dos blocos seguintes).
+    /// </summary>
+    public decimal AcrescimoUnitario => Produtos.RegrasComplementos.Adicional(Complementos);
+
+    /// <summary>O varejo com a camada de acréscimos: a base de "varejo 3,49" e da economia no atacado do item com complementos.</summary>
+    public decimal? PrecoVarejoComAcrescimos => PrecoVarejo is { } v ? v + AcrescimoUnitario : null;
 
     public decimal DescontoRateado { get; internal set; }
     public decimal AcrescimoRateado { get; internal set; }
@@ -199,7 +236,7 @@ public sealed class ItemVenda
 
     /// <summary>Economia em relação ao varejo nas linhas de atacado/faixa/mix ("Economia atacado").</summary>
     public decimal EconomiaAtacado =>
-        !Cancelado && Vendas.OrigemPreco.PorQuantidade(OrigemPreco) && PrecoVarejo is { } varejo
+        !Cancelado && Vendas.OrigemPreco.PorQuantidade(OrigemPreco) && PrecoVarejoComAcrescimos is { } varejo
             ? Math.Max(0m, Numeros.Arredondamento.Arred2(Quantidade * varejo) - ValorBruto)
             : 0m;
 

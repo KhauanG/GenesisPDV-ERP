@@ -602,6 +602,12 @@ public sealed partial class VendaViewModel : ViewModelBase
             return;
         }
 
+        if (resultado.Tipo == TipoResultadoEntrada.EscolherComplementos)
+        {
+            AbrirDialogo(new DialogoComplementosViewModel(this, resultado.Resolvido!, resultado.Multiplicador ?? 1m, codigo, "busca"));
+            return;
+        }
+
         FecharDialogo(resultado.Item?.Sequencia);
         AbrirCascosSeNecessario(resultado.Item);
     }
@@ -613,6 +619,17 @@ public sealed partial class VendaViewModel : ViewModelBase
         MultiplicadorPendente = null;
         LimparPosVenda();
         FecharDialogo(linhas[0].Sequencia, $"{combo.Kit.Descricao} incluído.");
+    }
+
+    /// <summary>Enter no último grupo do diálogo dos complementos: inclui o item com as opções escolhidas (PDV 10.2; F3-B15).</summary>
+    public async Task IncluirComComplementosAsync(
+        ProdutoResolvido produto, decimal quantidade, string? codigo, string? origemEntrada, IReadOnlyCollection<Guid> complementos)
+    {
+        var item = await ServicoVenda.IncluirAsync(produto, quantidade, codigo, origemEntrada, complementos: complementos);
+        MultiplicadorPendente = null;
+        LimparPosVenda();
+        FecharDialogo(item.Sequencia, $"{item.Descricao} incluído com {complementos.Count} complemento(s).");
+        AbrirCascosSeNecessario(item);
     }
 
     /// <summary>Produto cheio retornável incluído ou alterado: pergunta os cascos trazidos (10.12). Devolve se abriu.</summary>
@@ -668,6 +685,10 @@ public sealed partial class VendaViewModel : ViewModelBase
             case TipoResultadoEntrada.MontarCombo:
                 MultiplicadorPendente = null;
                 AbrirDialogo(new DialogoMontarComboViewModel(this, resultado.Combo!, resultado.Multiplicador ?? 1m, resultado.Codigo, null));
+                break;
+            case TipoResultadoEntrada.EscolherComplementos:
+                MultiplicadorPendente = null;
+                AbrirDialogo(new DialogoComplementosViewModel(this, resultado.Resolvido!, resultado.Multiplicador ?? 1m, resultado.Codigo, null));
                 break;
             case TipoResultadoEntrada.ItemIncluido:
                 MultiplicadorPendente = null;

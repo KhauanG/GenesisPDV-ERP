@@ -466,6 +466,76 @@
       </Border>
     </DataTemplate>
 
+    <!-- Complementos (PDV 10.2; F3-B15): um grupo por vez, só pelo teclado. -->
+    <DataTemplate DataType="vm:DialogoComplementosViewModel">
+      <Border Classes="dialogo" Width="760" Focusable="True" c:Foco.Inicial="True" x:Name="DialogoComplementos">
+        <Border.KeyBindings>
+          <KeyBinding Gesture="Enter" Command="{Binding ConfirmarCommand}" />
+          <KeyBinding Gesture="Escape" Command="{Binding CancelarCommand}" />
+          <KeyBinding Gesture="Up" Command="{Binding MoverOpcaoCommand}" CommandParameter="acima" />
+          <KeyBinding Gesture="Down" Command="{Binding MoverOpcaoCommand}" CommandParameter="abaixo" />
+          <KeyBinding Gesture="Space" Command="{Binding AlternarCommand}" />
+          <KeyBinding Gesture="Tab" Command="{Binding ProximoCommand}" />
+          <KeyBinding Gesture="Shift+Tab" Command="{Binding AnteriorCommand}" />
+          <KeyBinding Gesture="D1" Command="{Binding AlternarCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="D2" Command="{Binding AlternarCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="D3" Command="{Binding AlternarCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="D4" Command="{Binding AlternarCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="D5" Command="{Binding AlternarCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="D6" Command="{Binding AlternarCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="D7" Command="{Binding AlternarCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="D8" Command="{Binding AlternarCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="D9" Command="{Binding AlternarCommand}" CommandParameter="9" />
+          <KeyBinding Gesture="NumPad1" Command="{Binding AlternarCommand}" CommandParameter="1" />
+          <KeyBinding Gesture="NumPad2" Command="{Binding AlternarCommand}" CommandParameter="2" />
+          <KeyBinding Gesture="NumPad3" Command="{Binding AlternarCommand}" CommandParameter="3" />
+          <KeyBinding Gesture="NumPad4" Command="{Binding AlternarCommand}" CommandParameter="4" />
+          <KeyBinding Gesture="NumPad5" Command="{Binding AlternarCommand}" CommandParameter="5" />
+          <KeyBinding Gesture="NumPad6" Command="{Binding AlternarCommand}" CommandParameter="6" />
+          <KeyBinding Gesture="NumPad7" Command="{Binding AlternarCommand}" CommandParameter="7" />
+          <KeyBinding Gesture="NumPad8" Command="{Binding AlternarCommand}" CommandParameter="8" />
+          <KeyBinding Gesture="NumPad9" Command="{Binding AlternarCommand}" CommandParameter="9" />
+        </Border.KeyBindings>
+        <StackPanel Spacing="10">
+          <TextBlock Text="{Binding Titulo}" Classes="titulo" />
+          <TextBlock Text="{Binding QuantidadeTexto}" Classes="rotulo" IsVisible="{Binding QuantidadeTexto, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <ItemsControl ItemsSource="{Binding Grupos}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:GrupoComplementosViewModel">
+                <Grid ColumnDefinitions="20,190,*" Margin="0,4">
+                  <TextBlock Text="{Binding Marcador}" FontWeight="Bold" Foreground="{DynamicResource PincelDestaque}" />
+                  <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="{Binding Nome}" FontWeight="SemiBold" FontSize="16" />
+                    <TextBlock Text="{Binding Regra}" Classes="secundario" />
+                    <TextBlock Text="{Binding Situacao}" Classes="secundario" />
+                  </StackPanel>
+                  <ItemsControl Grid.Column="2" ItemsSource="{Binding Opcoes}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate DataType="vm:OpcaoComplementoViewModel">
+                        <Grid ColumnDefinitions="*,150">
+                          <TextBlock Text="{Binding Texto}" Classes="mono" FontSize="15" FontWeight="{Binding Marcada, Converter={x:Static c:Conversores.NegritoSeVerdadeiro}}" />
+                          <TextBlock Grid.Column="1" Text="{Binding Info}" Classes="secundario" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="TextoAdicionalComplementos" Text="{Binding AdicionalTexto}" HorizontalAlignment="Right" FontSize="18" FontWeight="Bold" />
+          <TextBlock Text="{Binding Erro}" Classes="erro" IsVisible="{Binding Erro, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <TextBlock Text="[↑↓] Opção   [Espaço/1-9] Marcar   [Enter] Confirmar o grupo   [Tab] Próximo   [Esc] Voltar" Classes="tecla" />
+          <WrapPanel Classes="botoes" HorizontalAlignment="Right">
+            <Button Classes="acao" Content="Anterior [Shift+Tab]" Command="{Binding AnteriorCommand}" />
+            <Button Classes="acao" Content="Próximo [Tab]" Command="{Binding ProximoCommand}" />
+            <Button Classes="acao" Content="Confirmar [Enter]" Command="{Binding ConfirmarCommand}" />
+            <Button Classes="acao" Content="Voltar [Esc]" Command="{Binding CancelarCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+
     <DataTemplate DataType="vm:DialogoCascosViewModel">
       <Border Classes="dialogo">
         <Border.KeyBindings>

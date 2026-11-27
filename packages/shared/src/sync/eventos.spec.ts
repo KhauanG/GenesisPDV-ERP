@@ -43,7 +43,7 @@ const ler = (nome: string) => lerFixtureSync<Record<string, unknown>>(nome);
 const DA_FASE_0 = 'auditoria.registros.payload.json';
 
 /** Fixture → tipo do evento e schema da forma (o `venda.cancelada` tem duas). */
-const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType }> = {
+const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType; versao?: number }> = {
   'caixa.aberto.payload.json': { tipo: 'caixa.aberto', schema: payloadCaixaAbertoSchema },
   'caixa.reforco.payload.json': { tipo: 'caixa.reforco', schema: payloadCaixaReforcoSchema },
   'caixa.sangria.payload.json': { tipo: 'caixa.sangria', schema: payloadCaixaSangriaSchema },
@@ -58,6 +58,12 @@ const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType }
   'venda.finalizada.formas.payload.json': { tipo: 'venda.finalizada', schema: payloadVendaFinalizadaSchema },
   // C11c: cascos descontados na venda (desconto_total de origem cliente e devolvidos além dos devidos).
   'venda.finalizada.cascos.payload.json': { tipo: 'venda.finalizada', schema: payloadVendaFinalizadaSchema },
+  // F3-B15: a venda com complementos do caixa novo, na v2 (a `componentes_estoque` na linha do complemento).
+  'venda.finalizada.v2.complementos.payload.json': {
+    tipo: 'venda.finalizada',
+    schema: payloadVendaFinalizadaV2Schema,
+    versao: 2,
+  },
   'venda.cancelada.em_andamento.payload.json': {
     tipo: 'venda.cancelada',
     schema: payloadVendaCanceladaEmAndamentoSchema,
@@ -153,12 +159,16 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
     expect(chavesAusentes(schema, ler(nome))).toEqual([]);
   });
 
-  it.each(DE_EVENTO)('%s passa pelo catálogo do tipo e dá o agregado do envelope', (nome, { tipo }) => {
-    const contrato = CONTRATOS_EVENTOS[tipo as TipoEventoContratado];
-    const p = contrato.versoes[1].parse(ler(nome));
-    const id = (contrato.agregadoId as (p: unknown) => string)(p);
-    expect(id).toMatch(/^[0-9a-f-]{36}$/);
-  });
+  it.each(DE_EVENTO)(
+    '%s passa pelo catálogo do tipo e dá o agregado do envelope',
+    (nome, { tipo, versao }) => {
+      const contrato = CONTRATOS_EVENTOS[tipo as TipoEventoContratado];
+      const versoes = contrato.versoes as Record<number, z.ZodType>;
+      const p = versoes[versao ?? 1]!.parse(ler(nome));
+      const id = (contrato.agregadoId as (p: unknown) => string)(p);
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    },
+  );
 
   it('venda.cancelada: a forma vem da chave e cada forma é validada só pelo seu schema', () => {
     const b = ler('venda.cancelada.em_andamento.payload.json');

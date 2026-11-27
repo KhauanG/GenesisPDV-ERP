@@ -26,17 +26,22 @@ public enum TipoResultadoEntrada
 
     /// <summary>Combo com alternativas: a tela abre o diálogo Montar combo (PDV 10.9.1).</summary>
     MontarCombo,
+
+    /// <summary>Produto com complementos, com o recurso da onda: a tela abre o diálogo dos complementos (PDV 10.2; F3-B15).</summary>
+    EscolherComplementos,
 }
 
 /// <param name="Combo">Combo a montar (<see cref="TipoResultadoEntrada.MontarCombo"/>), com a quantidade em <paramref name="Multiplicador"/>.</param>
-/// <param name="Codigo">Código lido que originou o combo.</param>
+/// <param name="Codigo">Código lido que originou o combo ou o produto com complementos.</param>
+/// <param name="Resolvido">Produto com complementos a escolher (<see cref="TipoResultadoEntrada.EscolherComplementos"/>).</param>
 public sealed record ResultadoEntrada(
     TipoResultadoEntrada Tipo,
     ItemVenda? Item = null,
     decimal? Multiplicador = null,
     string? TextoPesquisa = null,
     ComboResolvido? Combo = null,
-    string? Codigo = null);
+    string? Codigo = null,
+    ProdutoResolvido? Resolvido = null);
 
 public sealed record ResultadoFinalizacao(Venda Venda, long SequenciaEvento, string? TextoCupom, IReadOnlyList<string> Avisos);
 
@@ -346,9 +351,23 @@ public sealed class ServicoVenda(
             return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, linhas[0]);
         }
 
+        // PDV 10.2 (F3-B15): o diálogo dos complementos só com o recurso da onda (o venda.finalizada v2 anunciado no último
+        // handshake, F3-B4); sem ele, o produto "com complementos" vende como antes, sem diálogo (D43 até a R3).
+        if (RegrasComplementos.TemComplementos(resolvido.Produto) && await ComplementosDisponiveisAsync(ct))
+        {
+            return new ResultadoEntrada(TipoResultadoEntrada.EscolherComplementos, Multiplicador: quantidade, Codigo: codigo, Resolvido: resolvido);
+        }
+
         var item = await IncluirAsync(resolvido, quantidade, codigo, origemEntrada, ct);
         return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, item);
     }
+
+    /// <summary>
+    /// O caixa escolhe complementos (PDV 10.2; F3-B15): a nuvem anunciou o <c>venda.finalizada</c> v2 no último handshake
+    /// (<c>RecursoDisponivel</c>, F3-B4; na demonstração, sempre). Sem handshake depois da atualização, não.
+    /// </summary>
+    public Task<bool> ComplementosDisponiveisAsync(CancellationToken ct = default) =>
+        repositorioCaixa.RecursoDisponivelAsync("venda.finalizada", FabricaEventos.VersaoVendaFinalizadaComplementos, ct);
 
     /// <summary><c>pdv.consulta_outras_lojas</c> da loja do terminal (F2-B35; padrão do catálogo: ligada).</summary>
     public async Task<bool> ConsultaOutrasLojasLigadaAsync(CancellationToken ct = default) =>
@@ -472,17 +491,20 @@ public sealed class ServicoVenda(
         return new ResultadoCascosDescontados(descontado, null);
     }
 
+    /// <param name="complementos">As opções do diálogo dos complementos (F3-B15); nulo = sem complementos, como antes.</param>
     public async Task<ItemVenda> IncluirAsync(
         ProdutoResolvido produto,
         decimal quantidade,
         string? codigoLido,
         string? origemEntrada = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? complementos = null)
     {
         var agora = relogio.Agora;
-        await AbrirVendaSeNecessarioAsync(v => Afetados(v, v.AdicionarItem(produto, quantidade, codigoLido, agora)), ct);
+        await AbrirVendaSeNecessarioAsync(v => Afetados(v, v.AdicionarItem(produto, quantidade, codigoLido, agora, complementos: complementos)), ct);
         return await ExecutarAsync(
-            v => v.AdicionarItem(produto, quantidade, codigoLido, agora, origemEntrada: origemEntrada), null, ct, (v, item) => Afetados(v, item));
+            v => v.AdicionarItem(produto, quantidade, codigoLido, agora, origemEntrada: origemEntrada, complementos: complementos),
+            null, ct, (v, item) => Afetados(v, item));
     }
 
     /// <summary>
@@ -1054,11 +1076,15 @@ public sealed class ServicoVenda(
         var venda = Atual ?? throw new RegraNegocioException("Não há venda em andamento.");
         await ExigirSessaoDaVendaAsync(ct);
         var eventoId = IdGerador.Novo();
+        // SYNC 17.5 (F3-B4, F3-B15): a maior versão comum anunciada; sem handshake, a v1 (a venda com complementos vai na v1
+        // sem a baixa calculada no caixa, e a nuvem grava os complementos como antes).
+        var versao = await repositorioCaixa.VersaoParaGravarAsync("venda.finalizada", FabricaEventos.VersoesVendaFinalizada, ct)
+                     ?? FabricaEventos.VersaoSchemaVenda;
         long sequencia;
         try
         {
             venda.Finalizar(relogio.Agora, eventoId);
-            sequencia = await repositorio.EncerrarAsync(venda, FabricaEventos.VendaFinalizada(venda, eventoId), ct: ct);
+            sequencia = await repositorio.EncerrarAsync(venda, FabricaEventos.VendaFinalizada(venda, eventoId, versao), ct: ct);
         }
         catch
         {

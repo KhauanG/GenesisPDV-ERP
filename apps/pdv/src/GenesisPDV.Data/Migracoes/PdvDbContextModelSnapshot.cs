@@ -2498,6 +2498,69 @@ namespace GenesisPDV.Data.Migracoes
                         });
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaComplementoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("ComplementoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("complemento_id");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<string>("Descricao")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("descricao");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("GrupoNome")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("grupo_nome");
+
+                    b.Property<string>("ItemVendaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("item_venda_id");
+
+                    b.Property<long>("PrecoAdicional")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("preco_adicional");
+
+                    b.Property<long>("Quantidade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantidade");
+
+                    b.Property<long>("Versao")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_itens_venda_complementos");
+
+                    b.HasIndex("ItemVendaId")
+                        .HasDatabaseName("ix_itens_venda_complementos_item_venda_id");
+
+                    b.ToTable("itens_venda_complementos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_itens_venda_complementos_id_uuid", "length(id) = 36");
+                        });
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
                 {
                     b.Property<string>("Id")
@@ -8897,6 +8960,16 @@ namespace GenesisPDV.Data.Migracoes
                         .HasConstraintName("fk_fechamentos_caixa_sessao_caixa_id");
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaComplementoRegistro", b =>
+                {
+                    b.HasOne("GenesisPDV.Data.Entidades.ItemVendaRegistro", null)
+                        .WithMany("Complementos")
+                        .HasForeignKey("ItemVendaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_itens_venda_complementos_item_venda_id");
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
                 {
                     b.HasOne("GenesisPDV.Data.Entidades.VendaRegistro", null)
@@ -8965,6 +9038,11 @@ namespace GenesisPDV.Data.Migracoes
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_produtos_venda_snapshot_venda_id");
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
+                {
+                    b.Navigation("Complementos");
                 });
 
             modelBuilder.Entity("GenesisPDV.Data.Entidades.PagamentoVendaRegistro", b =>

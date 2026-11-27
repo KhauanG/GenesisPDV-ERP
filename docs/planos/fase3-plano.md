@@ -961,6 +961,20 @@ corpo do PR-17.
   (fixture compartilhada); impressão simulada.
 - **Pronto:** "Porção + 2 molhos" vende, imprime e sobe; a nuvem baixa os molhos.
 - **Depende de:** F3-B13, F3-B14.
+- [**Feito (F3-B15)** (README do PDV › decisão 102; PDV 10.2; SYNC 9.7; MD 3.6.8, 3.11.3): como descrito. Escolhas
+  técnicas: o portão é o recurso da onda (o diálogo só abre com o `venda.finalizada` v2 anunciado; até a R3 o produto
+  vende como antes), e a venda com complementos que fecha sem a v2 anunciada vai na v1 com as linhas, sem a
+  `componentes_estoque`; a camada de acréscimos é o `ItemVenda.AcrescimoUnitario`, derivado das linhas, sem coluna;
+  os grupos e as opções (com a baixa e a ficha do vinculado) entram no snapshot da venda; a baixa calculada no caixa
+  é só a do vinculado Produzido (o vinculado com saldo a nuvem baixa pelo cadastro dela, como no F3-B14); o saldo
+  estimado conta os vinculados, na venda em andamento e nas finalizadas ainda não refletidas (só na v2, a regra da
+  nuvem), e o aviso e o bloqueio da 29.1 continuam no item; o adicional e a baixa da opção que o snapshot já tem
+  seguem os da primeira inclusão (uma fonte por linha), e os ids das linhas seguem a ordem do cadastro. **Migração:** o plano dizia
+  "nenhuma", mas o caixa não tinha a tabela local `itens_venda_complementos`: entrou a migração EF só local
+  `ComplementosVenda`, que só cria a tabela (sem volta de cursor, sem coluna nova nas tabelas de movimento da nuvem).
+  O agrupamento continua desligado no caixa (`pdv.agrupa_produtos` é lacuna): o Core já recusa juntar linhas com
+  complementos diferentes. Prova da nuvem: a fixture que o PDV gera (`venda.finalizada.v2.complementos.payload.json`)
+  aplicada na integração da API baixa os molhos.]
 
 #### F3-B16 – Preço digitado, alteração de preço e acréscimo no total (PDV 10.4, 10.5, 12.2)
 - **Tamanho:** M · **Rigor:** completo (dinheiro, permissões)

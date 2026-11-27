@@ -4,7 +4,8 @@ using GenesisPDV.Data.Entidades;
 namespace GenesisPDV.Data.Repositorios;
 
 /// <summary>
-/// Converte o agregado <see cref="Venda"/> nas linhas de <c>vendas</c>, <c>itens_venda</c>, <c>pagamentos_venda</c> e da
+/// Converte o agregado <see cref="Venda"/> nas linhas de <c>vendas</c>, <c>itens_venda</c> (com os
+/// <c>itens_venda_complementos</c>, F3-B15), <c>pagamentos_venda</c> e da
 /// tabela local <c>liberacoes_venda</c>, mais as <c>cobrancas_pix</c> do PIX estático/manual (C11a) e a tabela local
 /// <c>cascos_descontados_venda</c> (C11c).
 /// </summary>
@@ -72,6 +73,23 @@ internal static class MapeadorVenda
             }
 
             CopiarItem(item, linha, agora);
+
+            // Os complementos (F3-B15) nascem com o item e não mudam: só a linha nova os grava.
+            foreach (var c in item.Complementos.Where(c => linha.Complementos.All(g => g.Id != c.Id)))
+            {
+                linha.Complementos.Add(new ItemVendaComplementoRegistro
+                {
+                    Id = c.Id,
+                    ItemVendaId = item.Id,
+                    CriadoEm = agora,
+                    AtualizadoEm = agora,
+                    ComplementoId = c.ComplementoId,
+                    GrupoNome = c.GrupoNome,
+                    Descricao = c.Descricao,
+                    Quantidade = c.Quantidade,
+                    PrecoAdicional = c.PrecoAdicional,
+                });
+            }
         }
 
         foreach (var pagamento in v.Pagamentos)
@@ -289,7 +307,11 @@ internal static class MapeadorVenda
                     i.KitComponenteId!.Value,
                     i.KitAlternativaId,
                     i.KitAcrescimo)
-                : null));
+                : null,
+            complementos: i.Complementos
+                .OrderBy(c => c.CriadoEm).ThenBy(c => c.Id)
+                .Select(c => new ComplementoItem(c.Id, c.ComplementoId, c.GrupoNome, c.Descricao, c.Quantidade, c.PrecoAdicional))
+                .ToList()));
 
         var pagamentos = r.Pagamentos.Select(p => new PagamentoVenda(
             id: p.Id,
