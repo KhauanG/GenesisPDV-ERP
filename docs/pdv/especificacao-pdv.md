@@ -1248,6 +1248,19 @@ PDV-1.
   'documento_separado'` (recibo próprio e NFS-e pela nuvem, FUT). O NCM `00` de produto de serviço nunca é usado em
   NFC-e.
 - Limites do preço digitado: > 0 e ≤ `pdv.limite_preco_digitado` (nuvem, padrão R$ 9.999,99); acima pede confirmação.
+- **Fase 3 (F3-B16; README do PDV › decisão 103):** o genérico e o "Solicita preço PDV" chegaram (lacuna da Fase 1). O
+  preço é digitado em R$ com até 2 casas; acima do limite, o primeiro Enter avisa e o segundo, com o mesmo preço,
+  confirma. O preço do cadastro, quando > 0, vem pré-preenchido também no genérico (o ERP exige preço > 0 em todo
+  vendável, e o genérico leva um preço de referência). A linha grava o preço digitado (mais os adicionais dos
+  complementos, 10.2) no `preco_unitario` **e** no `preco_tabela`, com `origem_preco = manual`: não é recalculada (11.3.1)
+  nem agrupa, e não conta como redução no limite de desconto (12.3). O produto com complementos que pede preço abre
+  os complementos e depois o preço. O produto de preço zero sem as marcas (de uma importação) segue a tabela da 10.1:
+  com `pdv.venda.alterar_preco` no operador abre o mesmo diálogo, vazio, como o "Solicita preço PDV"; sem ela,
+  "Produto sem preço — procure o supervisor". O preço digitado tem o teto de R$ 999.999,99 por unidade (o contrato da
+  venda aceita o preço com 11 dígitos inteiros; acima disso a nuvem recusaria a venda inteira). Auditoria
+  `preco_alterado` (origem `generico`/`solicita_preco`/`sem_preco`). As telas da 10.4 abrem só com o recurso da onda R3
+  (o `venda.finalizada` v2 anunciado); sem ele, o caixa vende pelo cadastro e o produto de preço zero continua recusado.
+  O serviço avulso fica no backlog (D77 = F3-Q6 B).
 
 ### 10.5 Alteração de preço no PDV — Fase PDV-2
 
@@ -1257,6 +1270,19 @@ PDV-1.
   cálculo do limite de desconto (seção 12.3), para que a alteração de preço não burle o limite. Para a NFC-e,
   o item vai com o preço alterado (sem vDesc).
 - Flag desligada → a ação não aparece.
+- **Fase 3 (F3-B16; README do PDV › decisão 103):** `pdv.altera_preco_pdv` é por loja (padrão desligada) e a ação
+  também espera o recurso da onda R3; fora disso o `Ctrl+F6` fica fora da barra e bipa "Ação indisponível", e o F1 diz a
+  causa: com o recurso e a chave desligada, "Desligadas na loja"; sem o recurso, "Chegam numa próxima versão". O preço novo
+  é digitado por unidade, em R$ com até 2 casas, com a confirmação acima de `pdv.limite_preco_digitado` (10.4). Não vale
+  no combo, no item com desconto (remover antes) nem com pagamento lançado. Acima do limite do operador, a liberação do
+  supervisor vai em `liberacoes` com a ação `alterar_preco` (SYNC 9.7). A alteração que não aumenta a redução (subir o
+  preço) não passa pelo limite. Na linha de atacado, faixa, mix ou embalagem, o `preco_tabela` passa a ser o varejo/loja
+  (com os adicionais dos complementos): esses preços dependem da quantidade e a linha manual não é mais recalculada, então
+  a redução é medida contra o varejo (o preço entre o atacado e o varejo conta como redução, e diminuir a quantidade
+  depois não a tira do limite). Sem `pdv.venda.alterar_preco` (fora do perfil do operador), toda alteração é liberada
+  pelo supervisor, como o desconto sem a permissão (12.2) — padrão até a confirmação do dono (roadmap §16, D123): o texto
+  acima ("flag ligada + permissão") deixaria a ação fora para quem não tem a permissão. Auditoria `preco_alterado` com o antes e o depois; a tela
+  mostra "└ preço alterado (tabela X)".
 
 ### 10.6 Código de barras de balança (EAN-13 prefixo 2) — Fase PDV-2
 
@@ -1775,6 +1801,13 @@ Regras:
 
 Incluir ou cancelar itens depois de um desconto no total em **%** recalcula o valor; desconto no total em **R$** é
 mantido fixo e, se ficar ≥ subtotal, é zerado com aviso.
+
+**Acréscimo no total (Fase 3, F3-B16; README do PDV › decisão 103):** em R$ ou em % (os mesmos botões do desconto); o %
+vira valor na hora sobre Σ(valor_bruto − desconto_item − desconto_promocao) e fica fixo em R$ (não há coluna do % do
+acréscimo); maior que zero e menor que essa base; substitui o anterior. Sem `pdv.venda.acrescimo`, o supervisor libera
+(só na auditoria: a SYNC 9.7 não tem a ação em `liberacoes`). Auditoria `acrescimo_total`; o cupom traz "Acréscimos".
+`F6` › `4` tira o desconto do operador e o acréscimo no total, o que houver. Só com o recurso da onda R3 (sem ele, o
+`F6` não mostra o `3`).
 
 ### 12.3 Limite de desconto e senha de liberação — Fase PDV-1
 

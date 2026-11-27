@@ -129,12 +129,19 @@ public sealed partial class DialogoRemoverItemViewModel(VendaViewModel venda, in
 }
 
 /// <summary>
-/// F6 Desconto: 1 = no item selecionado, 2 = no total, 4 = remover desconto do total (PDV 12.2), 5 = remover o desconto
-/// do item selecionado.
+/// F6 Desconto: 1 = no item selecionado, 2 = no total, 3 = acréscimo no total (F3-B16, só com o recurso da onda),
+/// 4 = remover o desconto e o acréscimo do total (PDV 12.2), 5 = remover o desconto do item selecionado.
 /// </summary>
-public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, ItemLinhaViewModel? item) : DialogoViewModel(venda)
+public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, ItemLinhaViewModel? item, bool acrescimo = false) : DialogoViewModel(venda)
 {
-    public override string Titulo => "Desconto";
+    public override string Titulo => acrescimo ? "Desconto / acréscimo" : "Desconto";
+
+    /// <summary>O "3 Acréscimo no total" (F3-B16): só com o recurso da onda (a tela grava o <c>acrescimo_total</c>).</summary>
+    public bool TemAcrescimo => acrescimo;
+
+    public string OpcaoRemoverTotal => acrescimo ? "4  Remover o desconto/acréscimo do total" : "4  Remover o desconto do total";
+
+    public string Teclas => acrescimo ? "[1] [2] [3] [4] [5] ou clique para escolher" : "[1] [2] [4] [5] ou clique para escolher";
 
     public bool TemItem => item is { Cancelado: false };
 
@@ -159,6 +166,9 @@ public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, I
                 break;
             case "2":
                 Venda.AbrirDialogo(new DialogoValorDescontoViewModel(Venda, null));
+                break;
+            case "3" when acrescimo:
+                Venda.AbrirAcrescimo();
                 break;
             case "4":
                 await Venda.RemoverDescontoTotalAsync();
@@ -471,10 +481,18 @@ public sealed class DialogoAjudaViewModel : DialogoViewModel
         linhas.Add("Ctrl+Alt+T Alternar tema escuro/claro (tecla fixa)");
         linhas.Add("⚠ na barra  Problema no Painel de saúde: o clique abre a Central e diz o que fazer");
         linhas.Add("Mouse      Botões da barra de baixo = as mesmas teclas; duplo clique no item abre a janela do item");
-        var futuras = mapa.Atalhos.Where(a => a.Habilitado && !venda.TemAcao(a.Acao)).ToList();
+        var futuras = mapa.Atalhos.Where(a => a.Habilitado && !venda.TemAcao(a.Acao) && !venda.DesligadaNaLoja(a.Acao)).ToList();
         if (futuras.Count > 0)
         {
             linhas.Add($"Chegam numa próxima versão: {string.Join("  ·  ", futuras.Select(a => $"{a.Tecla} {a.Rotulo}"))}");
+        }
+
+        // F3-B16: o Ctrl+F6 existe nesta versão e a nuvem anunciou o recurso da onda, mas a loja não o ligou (ERP ›
+        // Configurações › PDV › Altera preço no PDV). Sem o recurso, ele fica nas de uma próxima versão, acima.
+        var desligadas = mapa.Atalhos.Where(a => a.Habilitado && venda.DesligadaNaLoja(a.Acao)).ToList();
+        if (desligadas.Count > 0)
+        {
+            linhas.Add($"Desligadas na loja: {string.Join("  ·  ", desligadas.Select(a => $"{a.Tecla} {a.Rotulo}"))} (ERP › Configurações › PDV)");
         }
 
         var desabilitadas = mapa.Atalhos.Where(a => !a.Habilitado).ToList();

@@ -113,6 +113,12 @@ public sealed class ItemLinhaViewModel
                 partes.Add(string.Join(", ", Item.Complementos.Select(c => c.Texto)));
             }
 
+            // Preço alterado no Ctrl+F6 (PDV 10.5; F3-B16): o de tabela ao lado, para o operador ver de onde partiu.
+            if (Tipo == TipoLinha.Item && Item.OrigemPreco == Core.Vendas.OrigemPreco.Manual && Item.PrecoTabela != Item.PrecoUnitario)
+            {
+                partes.Add($"preço alterado (tabela {NumeroBr.Preco(Item.PrecoTabela)})");
+            }
+
             if (Item.Embalagem is { } e)
             {
                 partes.Add($"{e.Sigla ?? "EMB"} {e.Fator:0.###}" + (e.Preco is { } pe ? $" × {NumeroBr.Preco(pe)}" : string.Empty));

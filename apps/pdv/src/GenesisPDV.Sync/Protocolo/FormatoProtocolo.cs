@@ -1,4 +1,5 @@
 using System.Globalization;
+using GenesisPDV.Core.Numeros;
 using GenesisPDV.Data.Convencoes;
 
 namespace GenesisPDV.Sync.Protocolo;
@@ -7,7 +8,7 @@ namespace GenesisPDV.Sync.Protocolo;
 public static class FormatoProtocolo
 {
     public static string Decimal(decimal valor, int casas) =>
-        decimal.Round(valor, casas).ToString("F" + casas.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        Arredondamento.Arred(valor, casas).ToString("F" + casas.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
 
     public static string Dinheiro(decimal valor) => Decimal(valor, Escalas.Dinheiro);
 

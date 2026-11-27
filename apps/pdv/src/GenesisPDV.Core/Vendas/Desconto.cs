@@ -19,7 +19,15 @@ public sealed record Desconto(TipoDesconto Tipo, decimal Valor)
     /// item e do F6, para o caixa só com teclado numérico, que não tem a tecla %; decisão 65), o número vale nesse tipo:
     /// "10" com <see cref="TipoDesconto.Percentual"/> é 10%; o "%" digitado com o botão do R$ é recusado (não adivinha).
     /// </summary>
-    public static Desconto Ler(string texto, TipoDesconto? tipo = null)
+    public static Desconto Ler(string texto, TipoDesconto? tipo = null) => Ler(texto, tipo, "desconto", "Desconto");
+
+    /// <summary>
+    /// O acréscimo no total (F6 › 3; Fase 3, F3-B16): o mesmo formato e as mesmas bordas do desconto (o % menor que 100 e
+    /// com até 4 casas, o R$ com até 2), com as mensagens do acréscimo.
+    /// </summary>
+    public static Desconto LerAcrescimo(string texto, TipoDesconto? tipo = null) => Ler(texto, tipo, "acréscimo", "Acréscimo");
+
+    private static Desconto Ler(string texto, TipoDesconto? tipo, string nome, string rotulo)
     {
         var t = (texto ?? string.Empty).Trim();
         var digitouPercentual = t.EndsWith('%');
@@ -30,20 +38,20 @@ public sealed record Desconto(TipoDesconto Tipo, decimal Valor)
 
         if (digitouPercentual && tipo == TipoDesconto.Valor)
         {
-            throw new RegraNegocioException("Desconto em R$: digite só o valor (2,50) ou use o botão do %.");
+            throw new RegraNegocioException($"{rotulo} em R$: digite só o valor (2,50) ou use o botão do %.");
         }
 
         var percentual = tipo is { } forcado ? forcado == TipoDesconto.Percentual : digitouPercentual;
         if (!NumeroBr.TentarLer(t, out var valor) || valor <= 0m)
         {
-            throw new RegraNegocioException("Informe um valor de desconto válido, por exemplo 10% ou 2,50.");
+            throw new RegraNegocioException($"Informe um valor de {nome} válido, por exemplo 10% ou 2,50.");
         }
 
         if (percentual)
         {
             if (valor >= 100m || !Arredondamento.CabeEm(valor, Arredondamento.CasasPercentual))
             {
-                throw new RegraNegocioException("Percentual de desconto deve ser menor que 100% e ter até 4 casas.");
+                throw new RegraNegocioException($"Percentual de {nome} deve ser menor que 100% e ter até 4 casas.");
             }
 
             return EmPercentual(valor);
@@ -51,7 +59,7 @@ public sealed record Desconto(TipoDesconto Tipo, decimal Valor)
 
         if (!Arredondamento.CabeEm(valor, Arredondamento.CasasDinheiro))
         {
-            throw new RegraNegocioException("Valor de desconto deve ter no máximo 2 casas decimais.");
+            throw new RegraNegocioException($"Valor de {nome} deve ter no máximo 2 casas decimais.");
         }
 
         return EmReais(valor);

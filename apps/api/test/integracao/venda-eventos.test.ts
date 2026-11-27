@@ -2714,6 +2714,98 @@ describe('complementos na nuvem: baixa e custo (F3-B14; MD 3.6.8, 3.11.3; D43)',
   });
 });
 
+describe('preço digitado, alterado e acréscimo no total do caixa (F3-B16; PDV 10.4, 10.5, 12.2)', () => {
+  it('v1 com o preço alterado (manual, tabela mantida), a liberação alterar_preco e o acréscimo rateado: aplica sem alerta e grava como veio', async () => {
+    const p = await novoPonto();
+    const gelo = await criarProduto({ nome: 'GELO F3B16', precoVenda: '12,90' });
+    const generico = await criarProduto({
+      nome: 'DIVERSOS F3B16',
+      precoVenda: '1',
+      generico: true,
+      controlaEstoque: false,
+    });
+    await entrada([[gelo, '10', '5']]);
+    const v = venda(
+      p,
+      [
+        {
+          produto: gelo,
+          quantidade: '1.000',
+          preco: '10.0000',
+          extra: {
+            preco_tabela: '12.9000',
+            origem_preco: 'manual',
+            acrescimo_rateado: '0.67',
+            valor_liquido: '10.67',
+            autorizado_por_id: operador,
+          },
+        },
+        {
+          produto: generico,
+          quantidade: '1.000',
+          preco: '5.0000',
+          extra: {
+            descricao: 'BOIA INFLÁVEL',
+            origem_preco: 'manual',
+            acrescimo_rateado: '0.33',
+            valor_liquido: '5.33',
+          },
+        },
+      ],
+      { extra: { acrescimo_total: '1.00' } },
+    );
+    const lib = {
+      acao: 'alterar_preco',
+      item_venda_id: idItem(v, 0),
+      valor_pct: '22.4806',
+      autorizado_por_id: operador,
+      motivo: 'Embalagem amassada',
+      ocorrido_em: agora(),
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', { ...v, liberacoes: [lib] })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select descricao, origem_preco, preco_tabela::text, preco_unitario::text, acrescimo_rateado::text, valor_liquido::text
+           from itens_venda where venda_id = $1 order by sequencia`,
+        [v.vendas.id],
+      ),
+    ).toEqual([
+      {
+        descricao: 'ITEM DE TESTE',
+        origem_preco: 'manual',
+        preco_tabela: '12.9000',
+        preco_unitario: '10.0000',
+        acrescimo_rateado: '0.67',
+        valor_liquido: '10.67',
+      },
+      {
+        descricao: 'BOIA INFLÁVEL',
+        origem_preco: 'manual',
+        preco_tabela: '5.0000',
+        preco_unitario: '5.0000',
+        acrescimo_rateado: '0.33',
+        valor_liquido: '5.33',
+      },
+    ]);
+    const [cab] = await consultar<{ acrescimo_total: string; total: string }>(
+      emp.nomeBanco,
+      'select acrescimo_total::text, total::text from vendas where id = $1',
+      [v.vendas.id],
+    );
+    expect(cab).toEqual({ acrescimo_total: '1.00', total: '16.00' });
+    const [auditoria] = await consultar<{ depois: { liberacoes: Array<{ acao: string }> } }>(
+      emp.nomeBanco,
+      "select depois from auditoria where entidade = 'vendas' and acao = 'criar' and registro_id = $1",
+      [v.vendas.id],
+    );
+    expect(auditoria!.depois.liberacoes.map((l) => l.acao)).toEqual(['alterar_preco']);
+    expect(await saldo(gelo)).toBe(9);
+  });
+});
+
 describe('ordem de lançamento do razão (F2-B2)', () => {
   it('no fim da suíte, a cadeia de cada linha fecha por seq_lancamento e o replay repete o razão', async () => {
     expect(await conferirRazaoDasEmpresas(amb.bancoControle)).toBeGreaterThan(0);

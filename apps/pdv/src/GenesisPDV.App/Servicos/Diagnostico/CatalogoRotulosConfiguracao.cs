@@ -76,6 +76,8 @@ public static class CatalogoRotulosConfiguracao
         new(ChavesConfiguracao.CancelarItemExigeSupervisor, "Cancelar item sempre pede supervisor", TipoRegraLoja.Booleano, "false", AbaPdv),
         new(ChavesConfiguracao.CancelamentoDevolveVazios, "Cancelar venda devolve os vazios trazidos", TipoRegraLoja.Booleano, "true", AbaPdv),
         new(ChavesConfiguracao.DescontoCascosMaxSemSupervisor, "Desconto pelos cascos sem supervisor até (R$ por venda)", TipoRegraLoja.Dinheiro, "\"50.00\"", AbaPdv, "sem teto"),
+        new(ChavesConfiguracao.AlteraPrecoPdv, "Altera preço no PDV (Ctrl+F6)", TipoRegraLoja.Booleano, "false", AbaPdv),
+        new(ChavesConfiguracao.LimitePrecoDigitado, "Limite de preço digitado (acima pede confirmação)", TipoRegraLoja.Dinheiro, "\"9999.99\"", AbaPdv, "sem limite"),
         new(ChavesConfiguracao.PixManualExigeSupervisor, "PIX manual exige supervisor", TipoRegraLoja.Booleano, "true", AbaPdv),
         new(ChavesConfiguracao.DiasMaxOffline, "Dias máximos offline", TipoRegraLoja.Inteiro, "null", AbaPdv, "sem limite"),
     ];

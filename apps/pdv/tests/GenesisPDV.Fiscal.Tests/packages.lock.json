@@ -232,13 +232,14 @@
       "genesispdv.fiscal": {
         "type": "Project",
         "dependencies": {
-          "GenesisPDV.Core": "[0.9.0, )",
-          "GenesisPDV.Hardware": "[0.9.0, )"
+          "GenesisPDV.Core": "[0.13.0, )",
+          "GenesisPDV.Hardware": "[0.13.0, )"
         }
       },
       "genesispdv.hardware": {
         "type": "Project",
         "dependencies": {
+          "GenesisPDV.Core": "[0.13.0, )",
           "QRCoder": "[1.6.0, )",
           "System.IO.Ports": "[10.0.14, )"
         }

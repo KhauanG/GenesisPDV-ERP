@@ -3708,7 +3708,8 @@ horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoe
 sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
 resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a
 escolha do lote no caixa (Fase 3: a nuvem baixa o lote por FEFO, D48; a venda com complementos chegou no F3-B15,
-decisão 102), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+decisão 102; o preço digitado do "Produto genérico" e do "Solicita preço PDV", lacuna da Fase 1 que faltava nesta lista,
+o `Ctrl+F6` e o acréscimo no total, no F3-B16, decisão 103; o serviço avulso `Ctrl+S` fica no backlog, D77), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -4698,3 +4699,109 @@ reimpresso continua o original, com o número do caixa.
        Enter do último grupo que volta a ele sem incluir; o Esc que não inclui e o terminal real sem a v2 que vende sem
        diálogo); na API, `venda-eventos.test.ts` aplica a fixture do caixa com os ids do ambiente (o
        barbecue baixa pelo cadastro, o cheddar pelos insumos do caixa, o livre e o item cancelado não).
+
+103. **Preço digitado, alteração de preço (`Ctrl+F6`) e acréscimo no total (F6 › 3)** (F3-B16; PDV 10.4, 10.5, 12.2,
+     12.3, 12.5; D77 = F3-Q6 (B); README da API › decisão 233; `Core/Vendas/{PrecoManual,Venda,Desconto,Constantes}.cs`,
+     `Core/Produtos/ProdutoVenda.cs`, `Core/Numeros/Arredondamento.cs`, `Core/Caixa/PermissoesPdv.cs`,
+     `Data/Repositorios/{CatalogoLocal,RepositorioConfiguracoes}.cs`, `App/Servicos/ServicoVenda.cs`,
+     `App/ViewModels/{VendaViewModel,Dialogos,DialogosPreco,ItemLinhaViewModel}.cs`). Fecha a lacuna da Fase 1 do
+     "Produto genérico" e do "Solicita preço PDV" (o produto de preço zero era recusado e as marcas do cadastro não valiam:
+     a lacuna não estava na lista abaixo) e entrega o `Ctrl+F6` e o acréscimo, previstos para a PDV-2. Sem migração (EF ou
+     Drizzle), sem coluna nova e sem evento novo; a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21) e o 0.13.0
+     instalado não muda. O serviço avulso (`Ctrl+S`, `geral.utiliza_servico_avulso`) fica no backlog (D77). Escolhas
+     técnicas, **padrão até a confirmação do dono** (roadmap §16, D123):
+     - **O portão é o recurso da onda** (decisão 96; Padrões da Fase 3): as três telas gravam ações novas de auditoria
+       (`preco_alterado`, `acrescimo_total`, que só sobem com o `venda.finalizada` v2 anunciado,
+       `CatalogosNuvem.AcoesAuditoriaFase3`), então só abrem com ele (`ServicoVenda.RecursoDaOndaAsync`; na
+       demonstração, sempre). Sem ele o caixa vende como antes: o produto que pede preço sai pelo preço do cadastro, e o
+       de preço zero continua "Produto sem preço" (com ou sem `pdv.venda.alterar_preco`); o F6 não mostra o 3 e o
+       `Ctrl+F6` bipa. A tela de venda guarda o recurso e o `pdv.altera_preco_pdv` com o mapa de atalhos, **em campos
+       separados** (relidos ao abrir a venda e depois de cada pull, decisão 101), para o F6 e a tecla responderem na hora
+       e o F1 dizer a causa certa; o diálogo do preço consulta o recurso em cada inclusão.
+     - **Preço digitado (10.4).** `ProdutoVenda.SolicitaPreco`/`Generico` (as colunas `solicita_preco_pdv` e `generico` do
+       espelho, também no snapshot da venda); `PedePreco` vale fora do combo. A inclusão (`TipoResultadoEntrada.InformarPreco`)
+       abre o `DialogoPrecoDigitadoViewModel`: no genérico, a descrição (o nome do produto pré-preenchido, de 1 a 120
+       caracteres aparados) e o preço; no "Solicita preço", só o preço; nos dois, o preço do cadastro pré-preenchido
+       quando é maior que zero (o ERP exige preço > 0 em todo vendável, `regrasProduto`, e esta fase não muda isso: o
+       genérico do ERP vem com um preço de referência, e o de preço zero de uma importação também abre o diálogo vazio).
+       **O produto de preço zero sem as marcas** (não é genérico nem "Solicita preço", de uma importação) segue a tabela da
+       PDV 10.1: com `pdv.venda.alterar_preco` no operador logado, o caixa o trata como "Solicita preço PDV" e abre o
+       mesmo diálogo, vazio (`ServicoVenda.PedePrecoNoCaixa`; o Core aceita o digitado só com `liberaSemPreco`, que o
+       serviço tira da permissão do logado, sem confiar na tela: `Venda.PedePreco`); sem a permissão, "Produto sem preço —
+       procure o supervisor", como antes. A auditoria leva a origem `sem_preco`.
+       O produto com complementos que pede preço abre o diálogo dos complementos primeiro e o do preço depois. A linha
+       entra com `origem_preco = 'manual'` e o preço digitado (mais os adicionais dos complementos) **também no
+       `preco_tabela`**: o preço digitado é a natureza do produto e não conta no limite de desconto (12.3), e o manual
+       nunca é recalculado (atacado, mix, F8) nem agrupa; conta, sim, na quantidade de referência das outras linhas do
+       mesmo produto. A auditoria `preco_alterado` leva a origem (`generico`/`solicita_preco`/`sem_preco`), o preço e a
+       descrição no `depois`.
+     - **Bordas do preço** (`RegrasPrecoManual`, as mesmas no digitado e no alterado): maior que zero, em R$ com até 2
+       casas (o operador digita reais; o `preco_unitario` continua com 4 casas no banco), até o teto de **R$ 999.999,99**
+       por unidade (`RegrasPrecoManual.PrecoMaximo`: o contrato do `venda.finalizada` aceita o preço com 11 dígitos
+       inteiros e o `valor_bruto` com 13; acima disso a nuvem recusaria a venda inteira, e com a quantidade máxima o bruto
+       deste teto ainda cabe com folga), e acima de `pdv.limite_preco_digitado` (padrão R$ 9.999,99; vazio = sem limite;
+       `ChavesConfiguracao.LimitePrecoDigitado`) o primeiro Enter avisa e o segundo, com o mesmo preço, confirma (a
+       especificação diz "pede confirmação", não recusa; o teto recusa). Toda linha também passa a recusar o
+       `valor_bruto` acima do máximo do contrato (`Venda.ValorBrutoMaximo`, 9.999.999.999.999,99), o que só um preço de
+       cadastro absurdo alcança.
+     - **`Ctrl+F6` (10.5).** A ação `alterar_preco` do mapa (decisão 101) só existe com `pdv.altera_preco_pdv` ligada na
+       loja (padrão desligada; `ChavesConfiguracao.AlteraPrecoPdv`) e o recurso: fora disso fica fora da barra e a tecla
+       bipa "Ação indisponível". O F1 separa as causas: com o recurso e a chave desligada, lista a ação em "Desligadas na
+       loja … (ERP › Configurações › PDV)"; sem o recurso (a API ainda sem a R3, uma volta de versão ou um handshake
+       perdido), em "Chegam numa próxima versão", como as ações que esta versão não tem. Com o item selecionado, o
+       `DialogoAlterarPrecoViewModel` mostra o de tabela e o atual e pede o preço novo por unidade; o
+       `Venda.AlterarPrecoItem` grava `origem_preco = 'manual'`, mantém o `preco_tabela` e recusa o combo (o preço é o do
+       combo), o item com desconto (remova antes: o desconto em R$ sobre um preço novo seria outro %), o mesmo preço e a
+       venda com pagamento lançado. **Na linha de atacado, faixa, mix ou embalagem** o `preco_tabela` passa a ser o
+       varejo/loja com os adicionais (nunca abaixo do que a linha tinha; `ItemVenda.PrecoTabelaParaPrecoManual`, e o
+       diálogo mostra esse de tabela): esses preços dependem da quantidade e a linha manual não é mais recalculada, então
+       a redução medida contra o atacado congelado sumiria do limite ao diminuir a quantidade depois (12 latas a 3,19 de
+       atacado alteradas para 3,20 e depois 1 lata sairiam 8% abaixo do varejo sem limite nem liberação). Por isso o preço
+       acima do atacado e abaixo do varejo conta como redução. A redução `reducao_preco_manual = max(0, arred2(qtd ×
+       tabela) − valor_bruto)`, que o
+       `ItemVenda.ReducaoPrecoManual` já contava (12.3), entra no % do item e no da venda com meio centavo de folga (dois
+       `arred2`); acima do limite do operador o supervisor libera (o mesmo pedido de liberação do desconto, PDV 31.3) e a
+       liberação vai em `liberacoes` da venda com a ação nova **`alterar_preco`** (o item e o % pedido; `AcaoLiberacao` e
+       `ACOES_LIBERACAO_VENDA` do shared, conferidas pelo `ContratosEventosTests`; o campo é texto livre no contrato, a
+       nuvem de hoje aceita). A alteração que não aumenta a redução do item (subir o preço, ou reduzir menos) passa sem o
+       limite. **Sem `pdv.venda.alterar_preco`** (o padrão do operador; supervisor e encarregado a têm, F3-B3): toda
+       alteração é do supervisor, como o desconto sem a permissão (12.2), com o limite dele para a redução e a liberação
+       sempre registrada. Isso diverge do texto do plano e da PDV 10.5 ("flag ligada + permissão"), que deixariam a tela
+       fechada para quem não tem a permissão: a tela abre e o supervisor libera cada alteração (D123, até o dono
+       confirmar). A auditoria `preco_alterado` leva o antes e o depois; com a liberação, também a `liberacao`. A
+       linha mostra "└ preço alterado (tabela 12,90)"; no cupom e na NFC-e o item vai com o preço alterado, sem desconto.
+     - **Acréscimo no total (F6 › 3; 12.2).** `Desconto.LerAcrescimo` (o formato e as bordas do desconto: o % menor que
+       100 com até 4 casas, o R$ com até 2; os mesmos botões "Aplicar em R$"/"Aplicar em %" da decisão 65) e
+       `Venda.AplicarAcrescimo`: substitui o anterior, o % vira valor na hora com arred2 sobre Σ(valor_bruto −
+       desconto_item − desconto_promocao) e fica fixo em R$ (a venda não tem coluna do % do acréscimo, 12.1), maior que
+       zero e menor que essa base. O rateio em `acrescimo_rateado` (12.4) e o "Falta" do pagamento já existiam; o cupom
+       já imprimia "Acréscimos". `pdv.venda.acrescimo` está no perfil do operador; sem ela, o supervisor libera antes do
+       valor, e a liberação fica só na auditoria (`liberacao` com o `acrescimo_total`), porque a SYNC 9.7 não tem a ação
+       de acréscimo em `liberacoes`. O F6 › 4 passa a tirar o desconto do operador e o acréscimo no total, o que houver,
+       num commit só. O acréscimo é recusado quando é maior ou igual ao valor dos itens (a 12.2 só pede > 0; o de 100% ou
+       mais é dedo que escorregou), também padrão até a confirmação do dono (D123).
+     - **Arredondamento** (Padrões da Fase 3): o `ArredondamentoTests` varre o código do PDV e recusa `Math.Round`/
+       `decimal.Round` fora do `Core/Numeros/Arredondamento.cs` (só os de `double`, milissegundos do relógio e do boot,
+       ficam de fora). Saíram três: o `FormatoProtocolo.Decimal` (o bancário, sem efeito nos valores já na escala, agora o
+       `Arredondamento.Arred`), o % das `liberacoes` e o ticket médio do resumo; o peso da `BalancaSimulada` também passa
+       pelo `Arred3`, e o `GenesisPDV.Hardware` ganhou a referência ao Core (os `packages.lock.json` foram refeitos com
+       `dotnet restore --force-evaluate`).
+     - **Testes.** `PrecoManualTests` (Core: o genérico com a descrição e o preço, o preço zero e as 3 casas recusados,
+       sem o diálogo continua sem preço; o "Solicita preço" abaixo da tabela fora do limite e sem agrupar; o manual que
+       não muda com o atacado; os critérios da 12.5 "10,00 → 8,00 com limite de 10% pede senha (20%)", o supervisor de
+       12% que não libera e o de 20% que libera; dentro do limite e o aumento sem supervisor; sem a permissão; a redução
+       que soma com o desconto no total; as recusas; a quantidade do item alterado; o atacado 12 → 1 e o mix com a linha
+       cancelada medidos contra o varejo; o produto de preço zero só com a permissão; o genérico com complementos que
+       soma o adicional ao digitado; o teto do preço e do bruto; o acréscimo em % e em R$, as bordas e o F6 › 4; a
+       propriedade de 2.000 vendas aleatórias com desconto no item, desconto e acréscimo no total: Σ acréscimo rateado
+       exata, Σ líquidos = total e nenhum líquido abaixo de R$ 0,01, com o acréscimo que dá R$ 0,00 tratado como a recusa
+       esperada, para não depender da semente), `ArredondamentoTests` (a
+       varredura), `CicloOnlineTests` e `CatalogoRotulosConfiguracaoTests` (as permissões, o perfil e os padrões das
+       chaves novas contra o shared), `PrecoManualTelasTests` (App headless: o genérico com o zero recusado e a
+       confirmação acima do limite; o "Solicita preço" com o de tabela; o `Ctrl+F6` que bipa sem a chave e, com ela, pede
+       o supervisor e sobe a liberação e o `manual` no `venda.finalizada`; o F1 com "Desligadas na loja" só com o recurso
+       e com o `Ctrl+F6` em "próxima versão" sem ele; o produto de preço zero recusado à MARIA e, com a permissão, com o
+       diálogo e a origem `sem_preco`; o genérico com complementos (os complementos e depois o preço); o F6 › 3 em %, sem
+       a permissão de acréscimo com a liberação do CARLOS nas duas auditorias, o F6 › 4 sozinho e com o desconto no
+       total junto, e o cupom; sem o recurso nada aparece); na API, `venda-eventos.test.ts` aplica a venda v1 com o preço alterado, a liberação
+       `alterar_preco` e o acréscimo rateado, sem alerta.

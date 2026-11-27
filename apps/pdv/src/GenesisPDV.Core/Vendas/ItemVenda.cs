@@ -220,6 +220,18 @@ public sealed class ItemVenda
     public decimal ValorTabela => Numeros.Arredondamento.Arred2(Quantidade * PrecoTabela);
 
     /// <summary>
+    /// O <c>preco_tabela</c> que a linha leva ao virar preço manual no <c>Ctrl+F6</c> (PDV 10.5, 12.3; F3-B16): no atacado,
+    /// na faixa, no mix e na embalagem, o varejo/loja com a camada de acréscimos (nunca abaixo do preço que a linha tinha),
+    /// porque esses preços dependem da quantidade e a linha manual não é mais recalculada (11.3.1): a redução medida contra o
+    /// preço de atacado congelado faria o desconto real sumir do limite quando a quantidade diminuísse depois. Nas demais
+    /// origens (varejo, loja, promocional e a linha já manual), o <c>preco_tabela</c> de agora.
+    /// </summary>
+    public decimal PrecoTabelaParaPrecoManual =>
+        (Vendas.OrigemPreco.PorQuantidade(OrigemPreco) || OrigemPreco == Vendas.OrigemPreco.Embalagem) && PrecoVarejoComAcrescimos is { } varejo
+            ? Math.Max(PrecoTabela, varejo)
+            : PrecoTabela;
+
+    /// <summary>
     /// <c>reducao_preco_manual</c> (12.3): só preço digitado reduz em relação à tabela. Atacado, mix, embalagem e o
     /// rateio do combo não são desconto (11.3) — no combo e na embalagem o valor autoritativo pode diferir 1 centavo
     /// de <c>arred2(qtd × preço)</c>.

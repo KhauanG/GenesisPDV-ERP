@@ -163,6 +163,9 @@ public sealed partial class CicloOnlineTests
         // C11c (D38): o teto do desconto pelos cascos sem supervisor.
         Assert.Matches($@"\['{Regex.Escape(ChavesConfiguracao.DescontoCascosMaxSemSupervisor)}', dinheiro, '50\.00',", catalogo);
         Assert.Equal(50m, ChavesConfiguracao.DescontoCascosMaxSemSupervisorPadrao);
+        // F3-B16 (PDV 10.4): acima do limite do preço digitado, o caixa pede confirmação.
+        Assert.Matches($@"\['{Regex.Escape(ChavesConfiguracao.LimitePrecoDigitado)}', dinheiro, '9999\.99',", catalogo);
+        Assert.Equal(9999.99m, Core.Vendas.RegrasPrecoManual.LimitePadrao);
         Assert.Matches($@"\['{Regex.Escape(ChavesConfiguracao.ResumoDiarioModo)}', umDe\(\['{ChavesConfiguracao.ResumoPorDias}', '{ChavesConfiguracao.ResumoPorHorario}'\]\), '{ChavesConfiguracao.ResumoPorDias}',", catalogo);
     }
 
@@ -223,6 +226,7 @@ public sealed partial class CicloOnlineTests
                      Core.Caixa.PermissoesPdv.ConsultarHistoricoVendas, Core.Caixa.PermissoesPdv.ConsultarFechamentos,
                      Core.Caixa.PermissoesPdv.VerDiagnostico, Core.Caixa.PermissoesPdv.PacoteSuporte,
                      Core.Caixa.PermissoesPdv.VerAuditoriaLocal, Core.Caixa.PermissoesPdv.ParametrosLocais,
+                     Core.Caixa.PermissoesPdv.Acrescimo, Core.Caixa.PermissoesPdv.AlterarPreco,
                  })
         {
             Assert.Contains($"['{chave}',", permissoes, StringComparison.Ordinal);
@@ -232,6 +236,10 @@ public sealed partial class CicloOnlineTests
         // operador (por padrão nada muda; o dono a tira do perfil para exigir o PIN do supervisor).
         Assert.Contains("['pdv.venda.cancelar_item', 'Cancelar item']", permissoes, StringComparison.Ordinal);
         Assert.Contains(Core.Caixa.PermissoesPdv.CancelarItem, Core.Caixa.PermissoesPdv.PerfilOperador);
+
+        // F3-B16 (PDV 10.5, 12.2): o acréscimo é do operador; alterar o preço, não (o supervisor libera).
+        Assert.Contains(Core.Caixa.PermissoesPdv.Acrescimo, Core.Caixa.PermissoesPdv.PerfilOperador);
+        Assert.DoesNotContain(Core.Caixa.PermissoesPdv.AlterarPreco, Core.Caixa.PermissoesPdv.PerfilOperador);
 
         foreach (var chave in Core.Caixa.PermissoesPdv.SemLiberacao)
         {

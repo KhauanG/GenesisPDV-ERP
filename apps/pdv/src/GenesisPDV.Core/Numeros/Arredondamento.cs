@@ -13,6 +13,13 @@ public static class Arredondamento
 
     public static readonly decimal Centavo = 0.01m;
 
+    /// <summary>
+    /// "Meio para cima" em <paramref name="casas"/> casas: o único arredondamento de decimal do PDV fora deste arquivo passa
+    /// por aqui (o padrão do .NET, sem o <see cref="MidpointRounding"/>, é o bancário; o <c>ArredondamentoTests</c> varre o
+    /// código e recusa <c>Math.Round</c>/<c>decimal.Round</c> de decimal em outro lugar; Fase 3, F3-B16).
+    /// </summary>
+    public static decimal Arred(decimal valor, int casas) => decimal.Round(valor, casas, MidpointRounding.AwayFromZero);
+
     public static decimal Arred2(decimal valor) => decimal.Round(valor, CasasDinheiro, MidpointRounding.AwayFromZero);
 
     public static decimal Arred3(decimal valor) => decimal.Round(valor, CasasQuantidade, MidpointRounding.AwayFromZero);

@@ -114,6 +114,18 @@ public static class ChavesConfiguracao
     /// </summary>
     public const string ExibeEstoqueBusca = "pdv.exibe_estoque_busca";
 
+    /// <summary>
+    /// "Altera Preço no PDV" (PDV 10.5; MD 3.1.2, por loja; padrão desligada): ligada, o <c>Ctrl+F6</c> altera o preço do
+    /// item selecionado (Fase 3, F3-B16); desligada, a ação não aparece.
+    /// </summary>
+    public const string AlteraPrecoPdv = "pdv.altera_preco_pdv";
+
+    /// <summary>
+    /// Limite do preço digitado (PDV 10.4, 10.5; padrão R$ 9.999,99): acima dele, o preço digitado e o alterado pedem uma
+    /// confirmação (F3-B16). Vazio = sem limite.
+    /// </summary>
+    public const string LimitePrecoDigitado = "pdv.limite_preco_digitado";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -135,6 +147,7 @@ public static class ChavesConfiguracao
         [RecusaProdutoComVariacoes] = true,
         [ConsultaOutrasLojas] = true,
         [ExibeEstoqueBusca] = true,
+        [AlteraPrecoPdv] = false,
     };
 
     public const decimal ToleranciaPadrao = 0m;

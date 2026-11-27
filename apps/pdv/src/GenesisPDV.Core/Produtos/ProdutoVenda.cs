@@ -67,6 +67,24 @@ public sealed record ProdutoVenda(
     [JsonIgnore]
     public bool TemVariacoesAtivas { get; init; }
 
+    /// <summary>
+    /// <c>produtos.solicita_preco_pdv</c> (PDV 10.4; Fase 3, F3-B16): o caixa pede o preço na inclusão, com o de tabela
+    /// pré-preenchido quando há.
+    /// </summary>
+    public bool SolicitaPreco { get; init; }
+
+    /// <summary>
+    /// <c>produtos.generico</c> (PDV 10.4; F3-B16): o caixa pede a descrição (até 120 caracteres, o nome do produto
+    /// pré-preenchido) e o preço; o item usa o NCM e a tributação do genérico.
+    /// </summary>
+    public bool Generico { get; init; }
+
+    /// <summary>
+    /// A inclusão pede o preço (10.4): o genérico ou o "Solicita preço PDV", fora do combo (o preço do combo é o da regra
+    /// dele, 10.9.1).
+    /// </summary>
+    public bool PedePreco => (Generico || SolicitaPreco) && !EhKit;
+
     public bool Fracionavel => PermiteFracao ?? UnidadesFracionaveis.Contains(Unidade);
 
     /// <summary>Varejo da regra 11.3 passo 3: <c>produtos_lojas.preco_venda ?? produtos.preco_venda</c>.</summary>

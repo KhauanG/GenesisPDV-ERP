@@ -54,6 +54,9 @@ public class CatalogoRotulosConfiguracaoTests
         Assert.Equal(ChavesConfiguracao.ToleranciaPadrao,
             decimal.Parse(JsonSerializer.Deserialize<string>(CatalogoRotulosConfiguracao.De(ChavesConfiguracao.ToleranciaDiferencaCaixa)!.PadraoJson)!,
                 System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal(Core.Vendas.RegrasPrecoManual.LimitePadrao,
+            decimal.Parse(JsonSerializer.Deserialize<string>(CatalogoRotulosConfiguracao.De(ChavesConfiguracao.LimitePrecoDigitado)!.PadraoJson)!,
+                System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal("null", CatalogoRotulosConfiguracao.De(ChavesConfiguracao.DiasMaxOffline)!.PadraoJson);
         Assert.Equal("null", CatalogoRotulosConfiguracao.De(ChavesConfiguracao.ValorLimiteSangria)!.PadraoJson);
     }

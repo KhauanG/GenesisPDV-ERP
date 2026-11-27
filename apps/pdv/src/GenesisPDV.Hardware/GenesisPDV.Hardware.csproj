@@ -7,4 +7,8 @@
     <PackageReference Include="QRCoder" />
     <PackageReference Include="System.IO.Ports" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- O arredondamento do PDV (Core/Numeros/Arredondamento.cs, "meio para cima"): o peso da balança passa por ele (F3-B16). -->
+    <ProjectReference Include="..\GenesisPDV.Core\GenesisPDV.Core.csproj" />
+  </ItemGroup>
 </Project>

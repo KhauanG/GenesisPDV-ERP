@@ -992,6 +992,23 @@ corpo do PR-17.
   do líquido mínimo); genérico com preço zero recusado; o teste que recusa `Math.Round` fora do `Arredondamento`; TelasTests.
 - **Pronto:** os critérios 10.4 (sem o serviço avulso, F3-Q6), 10.5 e 12.5 no caixa de teste.
 - **Depende de:** F3-B13.
+- [**Feito (F3-B16)** (README do PDV › decisão 103, README da API › decisão 233; PDV 10.4, 10.5, 12.2): como descrito,
+  sem migração, sem coluna nova, sem evento novo e sem versão nova do PDV. Escolhas técnicas: as três telas abrem pelo
+  recurso da onda R3 (sem ele o caixa vende como antes, e o produto de preço zero continua recusado); o preço digitado
+  vai também no `preco_tabela` (não conta no limite) e o preço é digitado em R$ com até 2 casas, com a confirmação no
+  segundo Enter acima de `pdv.limite_preco_digitado` e o teto de R$ 999.999,99 (o contrato da venda); o ERP continua
+  exigindo preço > 0 no genérico, e o caixa pré-preenche o preço do cadastro; o produto de preço zero sem as marcas abre
+  o diálogo do preço só para quem tem `pdv.venda.alterar_preco` (tabela da PDV 10.1); o `Ctrl+F6` recusa o combo, o
+  item com desconto e a venda com pagamento, o aumento não passa pelo limite, na linha de atacado, faixa, mix ou
+  embalagem a redução é medida contra o varejo (o preço manual não segue a quantidade), e sem `pdv.venda.alterar_preco`
+  toda alteração é do supervisor (diverge do "só com a permissão" das entregas acima; roadmap §16, D123); a liberação vai em
+  `liberacoes` como `alterar_preco` (movida para `ACOES_LIBERACAO_VENDA`); o acréscimo em % vira R$ na hora sobre a base
+  do rateio, fica fixo, é menor que essa base, e a liberação do supervisor sem `pdv.venda.acrescimo` fica só na
+  auditoria; o F6 › 4 tira o desconto do operador e o acréscimo. O teste que recusa `Math.Round`/`decimal.Round` fora do
+  `Arredondamento` levou o `FormatoProtocolo`, o % das liberações, o ticket médio e o peso simulado ao `Arredondamento`
+  (o `GenesisPDV.Hardware` passou a referenciar o Core). Sem mudança na sincronização da API: a matriz de
+  compatibilidade não roda neste bloco (o handler é o mesmo; a venda com o preço alterado e o acréscimo é coberta pela
+  integração).]
 
 #### F3-B17 – Tipo de preço F8 (PDV 11.2)
 - **Tamanho:** P/M · **Rigor:** completo (dinheiro); conforme a F3-Q2

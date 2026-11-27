@@ -15,7 +15,7 @@ public static class StatusVenda
 
 /// <summary>
 /// Ações de <c>liberacoes</c> do payload da venda (sincronizacao.md 9.7; <c>ACOES_LIBERACAO_VENDA</c> do contrato): uma por
-/// ação que exige supervisor. As demais (preço manual, limite de valor, PIX manual) entram com o diálogo de cada uma, e
+/// ação que exige supervisor. As demais (limite de valor, tipo de preço, lote vencido…) entram com o diálogo de cada uma, e
 /// cada constante nova entra também em <c>eventos.conferencias.json</c> (o <c>ContratosEventosTests</c> compara as listas).
 /// </summary>
 public static class AcaoLiberacao
@@ -34,6 +34,12 @@ public static class AcaoLiberacao
     /// crédito acima de <c>pdv.desconto_cascos_max_sem_supervisor</c> (README › decisão 56). Item e % nulos.
     /// </summary>
     public const string DescontoCascos = "desconto_cascos";
+
+    /// <summary>
+    /// Preço do item alterado (<c>Ctrl+F6</c>, PDV 10.5; Fase 3, F3-B16) liberado pelo supervisor: a redução passou do
+    /// limite do operador, ou o operador não tem <c>pdv.venda.alterar_preco</c>. Com o item e o % pedido.
+    /// </summary>
+    public const string AlterarPreco = "alterar_preco";
 }
 
 /// <summary>Valores de <c>pagamentos_venda.status</c>.</summary>

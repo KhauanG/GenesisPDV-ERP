@@ -441,6 +441,9 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogg
                 ControlaEstoque = p.ControlaEstoque,
                 IdadeMinima = p.IdadeMinima,
                 TemVariacoesAtivas = comVariacaoAtiva.Contains(p.Id),
+                // PDV 10.4 (F3-B16): o caixa pede o preço (e, no genérico, a descrição) na inclusão.
+                SolicitaPreco = p.SolicitaPrecoPdv,
+                Generico = p.Generico,
                 FichaTecnica = p.Tipo == TipoProduto.Produzido
                     ? fichas.Where(c => c.ProdutoId == p.Id)
                         .Select(c => new ComponenteFicha(c.ComponenteId, c.ComponenteVariacaoId, c.Quantidade, c.PerdaPct)).ToList()

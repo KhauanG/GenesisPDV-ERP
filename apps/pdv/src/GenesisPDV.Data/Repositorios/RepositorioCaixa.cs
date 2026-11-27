@@ -770,7 +770,7 @@ public sealed record ResumoTurno(
     decimal TotalDescontos,
     int QtdLiberacoes)
 {
-    public decimal TicketMedio => QtdVendas == 0 ? 0m : decimal.Round(TotalVendas / QtdVendas, 2, MidpointRounding.AwayFromZero);
+    public decimal TicketMedio => QtdVendas == 0 ? 0m : Core.Numeros.Arredondamento.Arred2(TotalVendas / QtdVendas);
 }
 
 /// <param name="Linhas">Os movimentos da sessão como gravados (lista de sangrias e reforços do relatório).</param>

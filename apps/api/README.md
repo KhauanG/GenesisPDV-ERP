@@ -8158,6 +8158,19 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        cancelamento que estorna, a v1 do PDV instalado igual a antes, a recusa do id repetido, o lote e a promoção
        desconhecidos no `venda.finalizada` e na forma B; o `recalcular-saldos` idêntico no fim da suíte).
 
+233. **`alterar_preco` entre as ações de liberação que o caixa gera** (Fase 3, F3-B16; PDV 10.5, 12.3; SYNC 9.7; README
+     do PDV › decisão 103; `packages/shared/src/sync/eventos.ts`, `testes/sync/eventos.conferencias.json`). O `Ctrl+F6`
+     do caixa da R3 grava a liberação do supervisor com a ação `alterar_preco` (a redução de preço acima do limite do
+     operador, ou o operador sem `pdv.venda.alterar_preco`): ela sai de `ACOES_LIBERACAO_FASE3` (as só constantes, decisão
+     222) e entra em `ACOES_LIBERACAO_VENDA`, conferida pelos dois lados contra a conferência. Nada muda no handler: o
+     campo é texto livre no contrato e a liberação vai no `depois` da auditoria `criar` da venda, como as outras; o item
+     com `origem_preco = 'manual'` e o `preco_tabela` mantido (maior que o `preco_unitario`) já passava no
+     `conferirSomasVenda`, que confere o `valor_bruto` pelo `preco_unitario`. O preço digitado do genérico e do
+     "Solicita preço" chega com o próprio preço também no `preco_tabela`. O cadastro continua exigindo preço > 0 em todo
+     vendável (`regrasProduto`), inclusive no genérico, que leva um preço de referência (o caixa o pré-preenche). Teste:
+     `venda-eventos.test.ts` (a venda v1 com o preço alterado, um genérico com a descrição digitada, a liberação
+     `alterar_preco` e o acréscimo no total rateado: aplica sem alerta e grava como veio).
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

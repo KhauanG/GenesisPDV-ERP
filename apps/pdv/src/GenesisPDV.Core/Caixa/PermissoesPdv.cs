@@ -35,6 +35,20 @@ public static class PermissoesPdv
     public const string CancelarItem = "pdv.venda.cancelar_item";
     public const string DescontoTotal = "pdv.venda.desconto_total";
 
+    // Preço e acréscimo no caixa (Fase 3, F3-B16; PDV 10.5, 12.2).
+
+    /// <summary>
+    /// F6 › 3 Acréscimo no total (12.2): no perfil do operador; sem ela, o supervisor libera o acréscimo (31.3).
+    /// </summary>
+    public const string Acrescimo = "pdv.venda.acrescimo";
+
+    /// <summary>
+    /// <c>Ctrl+F6</c> Alterar o preço do item (10.5), só com <c>pdv.altera_preco_pdv</c> ligada na loja. Fora do perfil do
+    /// operador (supervisor e encarregado): sem ela, toda alteração é liberada pelo supervisor; com ela, só a redução acima
+    /// do limite de desconto (12.3).
+    /// </summary>
+    public const string AlterarPreco = "pdv.venda.alterar_preco";
+
     // Venda real (Fase 1C, bloco C11a; PDV 16.2, 16.7, 29.1).
 
     /// <summary>Confirmar PIX manualmente (16.7). Fora do perfil do operador: com ela e a chave do supervisor desligada, lança sozinho.</summary>

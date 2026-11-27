@@ -23,6 +23,19 @@ public sealed partial class VendaViewModel : ViewModelBase
     private readonly Dictionary<string, System.Windows.Input.ICommand> _acoes;
     private DateTimeOffset? _ultimoPullVisto;
 
+    /// <summary>
+    /// O recurso da onda R3 (F3-B4) e o <c>pdv.altera_preco_pdv</c> da loja, relidos com o mapa (ao abrir a venda e depois
+    /// de cada pull, <see cref="RecarregarAtalhosAsync"/>): o F6 › 3 e o <c>Ctrl+F6</c> (F3-B16) só aparecem com eles.
+    /// </summary>
+    private bool _recursoOnda;
+
+    /// <summary>
+    /// Só a chave <c>pdv.altera_preco_pdv</c> da loja, guardada à parte do recurso da onda: sem o recurso, o <c>Ctrl+F6</c>
+    /// nem existe nesta versão (o F1 o lista em "Chegam numa próxima versão"); com o recurso e a chave desligada, ele está
+    /// "Desligado na loja" (o F1 aponta o ERP).
+    /// </summary>
+    private bool _alterarPrecoNaLoja;
+
     public VendaViewModel(ShellViewModel shell)
     {
         _shell = shell;
@@ -48,6 +61,8 @@ public sealed partial class VendaViewModel : ViewModelBase
             [AcoesAtalho.CancelarVenda] = CancelarVendaCommand,
             [AcoesAtalho.Cliente] = ClienteCommand,
             [AcoesAtalho.DescontoAcrescimo] = DescontoCommand,
+            // F3-B16 (PDV 10.5): só com pdv.altera_preco_pdv ligada e o recurso da onda (AcaoLigada).
+            [AcoesAtalho.AlterarPreco] = AlterarPrecoCommand,
             [AcoesAtalho.MenuFuncoes] = FuncoesCommand,
             [AcoesAtalho.BloquearTerminal] = BloquearTelaCommand,
             [AcoesAtalho.SincronizarAgora] = SincronizarAgoraCommand,
@@ -608,6 +623,12 @@ public sealed partial class VendaViewModel : ViewModelBase
             return;
         }
 
+        if (resultado.Tipo == TipoResultadoEntrada.InformarPreco)
+        {
+            await AbrirPrecoDigitadoAsync(resultado.Resolvido!, resultado.Multiplicador ?? 1m, codigo, "busca", null);
+            return;
+        }
+
         FecharDialogo(resultado.Item?.Sequencia);
         AbrirCascosSeNecessario(resultado.Item);
     }
@@ -625,10 +646,38 @@ public sealed partial class VendaViewModel : ViewModelBase
     public async Task IncluirComComplementosAsync(
         ProdutoResolvido produto, decimal quantidade, string? codigo, string? origemEntrada, IReadOnlyCollection<Guid> complementos)
     {
+        // O com complementos que pede preço (PDV 10.4; F3-B16): o diálogo do preço vem depois do dos complementos (os dois
+        // abrem pelo mesmo portão, o recurso da onda), e a inclusão leva as opções e o preço juntos.
+        if (ServicoVenda.PedePrecoNoCaixa(produto.Produto))
+        {
+            await AbrirPrecoDigitadoAsync(produto, quantidade, codigo, origemEntrada, complementos);
+            return;
+        }
+
         var item = await ServicoVenda.IncluirAsync(produto, quantidade, codigo, origemEntrada, complementos: complementos);
         MultiplicadorPendente = null;
         LimparPosVenda();
         FecharDialogo(item.Sequencia, $"{item.Descricao} incluído com {complementos.Count} complemento(s).");
+        AbrirCascosSeNecessario(item);
+    }
+
+    /// <summary>O diálogo do preço do genérico e do "Solicita preço PDV" (PDV 10.4; F3-B16), com o limite da loja.</summary>
+    private async Task AbrirPrecoDigitadoAsync(
+        ProdutoResolvido produto, decimal quantidade, string? codigo, string? origemEntrada, IReadOnlyCollection<Guid>? complementos)
+    {
+        var limite = await ServicoVenda.LimitePrecoDigitadoAsync();
+        AbrirDialogo(new DialogoPrecoDigitadoViewModel(this, produto, quantidade, codigo, origemEntrada, complementos, limite));
+    }
+
+    /// <summary>Enter no diálogo do preço digitado: inclui o item com o preço (e as opções dos complementos, se houver).</summary>
+    public async Task IncluirComPrecoAsync(
+        ProdutoResolvido produto, decimal quantidade, string? codigo, string? origemEntrada, IReadOnlyCollection<Guid>? complementos,
+        PrecoDigitado preco)
+    {
+        var item = await ServicoVenda.IncluirAsync(produto, quantidade, codigo, origemEntrada, complementos: complementos, precoDigitado: preco);
+        MultiplicadorPendente = null;
+        LimparPosVenda();
+        FecharDialogo(item.Sequencia, $"{item.Descricao} incluído por R$ {NumeroBr.Preco(item.PrecoUnitario)}.");
         AbrirCascosSeNecessario(item);
     }
 
@@ -653,13 +702,129 @@ public sealed partial class VendaViewModel : ViewModelBase
         });
     }
 
+    /// <summary>
+    /// F6 › 4 (PDV 12.2): tira o desconto no total do operador e o acréscimo no total (F3-B16), o que houver; os dois
+    /// juntos num commit só.
+    /// </summary>
     public async Task RemoverDescontoTotalAsync()
     {
         await Executar(async () =>
         {
+            var venda = ServicoVenda.Atual;
+            var temAcrescimo = venda is { AcrescimoTotal: > 0m };
+            var temDesconto = venda is not null && venda.DescontoTotal - venda.DescontoCascos > 0m;
+            if (temAcrescimo)
+            {
+                await ServicoVenda.RemoverAcrescimoTotalAsync(removerDesconto: temDesconto);
+                FecharDialogo(mensagem: temDesconto ? "Desconto e acréscimo no total removidos." : "Acréscimo no total removido.");
+                return;
+            }
+
             await ServicoVenda.RemoverDescontoTotalAsync();
             FecharDialogo(mensagem: "Desconto no total removido.");
         });
+    }
+
+    /// <summary>
+    /// F6 › 3 Acréscimo no total (PDV 12.2; F3-B16): com <c>pdv.venda.acrescimo</c> (no perfil do operador) abre o valor;
+    /// sem ela, o supervisor libera antes e a liberação vai com o acréscimo.
+    /// </summary>
+    public void AbrirAcrescimo()
+    {
+        if (Sessao.Operador?.Tem(Core.Caixa.PermissoesPdv.Acrescimo) == true)
+        {
+            AbrirDialogo(new DialogoValorAcrescimoViewModel(this, null));
+            return;
+        }
+
+        PedirLiberacao(Core.Caixa.PermissoesPdv.Acrescimo, "Acréscimo no total (sem a permissão de acréscimo)", concedida =>
+        {
+            AbrirDialogo(new DialogoValorAcrescimoViewModel(this, concedida));
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>Aplica o acréscimo no total e fecha o diálogo com o valor aplicado.</summary>
+    public async Task AplicarAcrescimoAsync(Desconto acrescimo, LiberacaoConcedida? liberacao)
+    {
+        var valor = await ServicoVenda.AcrescimoAsync(acrescimo, liberacao);
+        FecharDialogo(mensagem: liberacao is null
+            ? $"Acréscimo de R$ {NumeroBr.Dinheiro(valor)} aplicado."
+            : $"Acréscimo de R$ {NumeroBr.Dinheiro(valor)} aplicado com liberação de {liberacao.Supervisor.Nome}.");
+    }
+
+    /// <summary>
+    /// <c>Ctrl+F6</c> Alterar preço (PDV 10.5; F3-B16) com o item selecionado: só com <c>pdv.altera_preco_pdv</c> ligada e o
+    /// recurso da onda (fora disso a tecla bipa, <see cref="AcaoLigada"/>).
+    /// </summary>
+    [RelayCommand]
+    private Task AlterarPreco() => Executar(async () =>
+    {
+        if (Dialogo is not null)
+        {
+            return;
+        }
+
+        if (!ServicoVenda.VendaAberta)
+        {
+            throw new RegraNegocioException("Não há venda em andamento.");
+        }
+
+        if (ItemSelecionado is not { Cancelado: false } linha)
+        {
+            throw new RegraNegocioException("Selecione um item não cancelado (setas ↑/↓) para alterar o preço.");
+        }
+
+        if (linha.Item.EhKit)
+        {
+            throw new RegraNegocioException("Item de combo: o preço é o do combo (cancele e inclua de novo).");
+        }
+
+        var limite = await ServicoVenda.LimitePrecoDigitadoAsync();
+        AbrirDialogo(new DialogoAlterarPrecoViewModel(this, linha, limite));
+    });
+
+    /// <summary>
+    /// Enter no diálogo do <c>Ctrl+F6</c>: aplica o preço; a redução acima do limite do operador (12.3) ou o operador sem
+    /// <c>pdv.venda.alterar_preco</c> pedem o supervisor (PIN, motivo e o limite dele), e a liberação entra em
+    /// <c>liberacoes</c> da venda (<c>alterar_preco</c>).
+    /// </summary>
+    public async Task AplicarAlterarPrecoAsync(int sequencia, decimal preco, Action<string> aoAplicar)
+    {
+        ArgumentNullException.ThrowIfNull(aoAplicar);
+        var resultado = await ServicoVenda.AlterarPrecoAsync(sequencia, preco);
+        if (resultado.Situacao == SituacaoDesconto.ExigeLiberacao)
+        {
+            var permissao = Core.Caixa.PermissoesPdv.AlterarPreco;
+            var pedido = resultado.PercentualPedido;
+            var porque = Sessao.Operador?.Tem(permissao) == true
+                ? $"redução de {NumeroBr.Percentual(pedido)}%, seu limite: {NumeroBr.Percentual(Sessao.Operador.LimiteDescontoEfetivoPct)}%"
+                : "sem a permissão de alterar preço";
+            PedirLiberacao(
+                permissao,
+                $"Preço do item {sequencia} para R$ {NumeroBr.Preco(preco)} ({porque})",
+                async concedida =>
+                {
+                    var liberacao = new Liberacao(concedida.Supervisor.Id, concedida.Supervisor.LimiteDescontoPct, concedida.Motivo,
+                        concedida.ConcedidaEm, concedida.Supervisor.Master);
+                    var liberado = await ServicoVenda.AlterarPrecoAsync(sequencia, preco, liberacao);
+                    if (!liberado.Aplicado)
+                    {
+                        throw new RegraNegocioException(
+                            $"A redução de {NumeroBr.Percentual(pedido)}% excede também o limite do supervisor ({NumeroBr.Percentual(liberacao.LimiteEfetivoPct)}%).");
+                    }
+
+                    aoAplicar($"Preço do item {sequencia} alterado para R$ {NumeroBr.Preco(preco)} com liberação de {concedida.Supervisor.Nome}.");
+                });
+            return;
+        }
+
+        if (!resultado.Aplicado)
+        {
+            throw new RegraNegocioException($"Preço do item {sequencia} não alterado.");
+        }
+
+        aoAplicar($"Preço do item {sequencia} alterado para R$ {NumeroBr.Preco(preco)}.");
     }
 
     [RelayCommand]
@@ -689,6 +854,10 @@ public sealed partial class VendaViewModel : ViewModelBase
             case TipoResultadoEntrada.EscolherComplementos:
                 MultiplicadorPendente = null;
                 AbrirDialogo(new DialogoComplementosViewModel(this, resultado.Resolvido!, resultado.Multiplicador ?? 1m, resultado.Codigo, null));
+                break;
+            case TipoResultadoEntrada.InformarPreco:
+                MultiplicadorPendente = null;
+                await AbrirPrecoDigitadoAsync(resultado.Resolvido!, resultado.Multiplicador ?? 1m, resultado.Codigo, null, null);
                 break;
             case TipoResultadoEntrada.ItemIncluido:
                 MultiplicadorPendente = null;
@@ -908,7 +1077,7 @@ public sealed partial class VendaViewModel : ViewModelBase
             return;
         }
 
-        AbrirDialogo(new DialogoMenuDescontoViewModel(this, ItemSelecionado));
+        AbrirDialogo(new DialogoMenuDescontoViewModel(this, ItemSelecionado, AcrescimoDisponivel));
     }
 
     [RelayCommand]
@@ -1152,14 +1321,30 @@ public sealed partial class VendaViewModel : ViewModelBase
     private bool Disponivel(string acao, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out System.Windows.Input.ICommand? alvo)
     {
         alvo = null;
-        return Mapa.Da(acao).Habilitado && _acoes.TryGetValue(acao, out alvo);
+        return Mapa.Da(acao).Habilitado && AcaoLigada(acao) && _acoes.TryGetValue(acao, out alvo);
     }
+
+    /// <summary>
+    /// A ação que depende de uma regra da loja (F3-B16): o <c>Ctrl+F6</c> só com <c>pdv.altera_preco_pdv</c> ligada e o
+    /// recurso da onda (PDV 10.5: "flag desligada → a ação não aparece"); as demais, sempre.
+    /// </summary>
+    private bool AcaoLigada(string acao) => acao != AcoesAtalho.AlterarPreco || (_recursoOnda && _alterarPrecoNaLoja);
+
+    /// <summary>O F6 › 3 Acréscimo no total (F3-B16): só com o recurso da onda (a tela grava o <c>acrescimo_total</c>).</summary>
+    public bool AcrescimoDisponivel => _recursoOnda;
 
     /// <summary>A mensagem da tecla de uma ação desabilitada ou que este caixa ainda não tem (PDV 28.3).</summary>
     public const string MensagemAcaoIndisponivel = "Ação indisponível";
 
     /// <summary>A ação existe nesta versão do caixa (a tecla dela faz algo quando habilitada).</summary>
-    public bool TemAcao(string acao) => _acoes.ContainsKey(acao);
+    public bool TemAcao(string acao) => _acoes.ContainsKey(acao) && AcaoLigada(acao);
+
+    /// <summary>
+    /// A ação existe nesta versão, mas a regra da loja a deixa de fora (o <c>Ctrl+F6</c> sem <c>pdv.altera_preco_pdv</c>). Sem
+    /// o recurso da onda a causa não é a loja (a API ainda não anunciou a R3): aí o F1 a trata como de uma próxima versão.
+    /// </summary>
+    public bool DesligadaNaLoja(string acao) =>
+        _acoes.ContainsKey(acao) && acao == AcoesAtalho.AlterarPreco && _recursoOnda && !_alterarPrecoNaLoja;
 
     /// <summary>As ligações de teclado do mapa (a View as aplica): uma por gesto, com a ação de cada tecla.</summary>
     public IEnumerable<(Avalonia.Input.KeyGesture Gesto, string Acao)> TeclasDaVenda() =>
@@ -1172,7 +1357,12 @@ public sealed partial class VendaViewModel : ViewModelBase
     public async Task RecarregarAtalhosAsync()
     {
         var mapa = await _atalhos.RecarregarAsync();
-        if (mapa.Assinatura != Mapa.Assinatura)
+        var recurso = await ServicoVenda.RecursoDaOndaAsync();
+        var alterarPrecoNaLoja = await ServicoVenda.AlteraPrecoNaLojaAsync();
+        var ligadasMudaram = recurso != _recursoOnda || alterarPrecoNaLoja != _alterarPrecoNaLoja;
+        _recursoOnda = recurso;
+        _alterarPrecoNaLoja = alterarPrecoNaLoja;
+        if (mapa.Assinatura != Mapa.Assinatura || ligadasMudaram)
         {
             AplicarMapa(mapa);
         }
@@ -1181,7 +1371,7 @@ public sealed partial class VendaViewModel : ViewModelBase
     private void AplicarMapa(MapaAtalhos mapa)
     {
         Mapa = mapa;
-        var barra = mapa.Barra(a => _acoes.ContainsKey(a.Acao) && a.Acao != AcoesAtalho.ConfiguracaoTerminal, MaximoBotoesBarra - 1)
+        var barra = mapa.Barra(a => TemAcao(a.Acao) && a.Acao != AcoesAtalho.ConfiguracaoTerminal, MaximoBotoesBarra - 1)
             .Select(a => new AtalhoBarraViewModel(a.Tecla, a.Rotulo, _acoes[a.Acao], Destaque: a.Acao == AcoesAtalho.ConcluirVenda))
             .ToList();
         // A engrenagem no fim da barra (Central do PDV, bloco G3): o mesmo do Funções › 8, com a tecla de Funções do mapa.
