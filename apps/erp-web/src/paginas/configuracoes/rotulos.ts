@@ -1,6 +1,9 @@
 /**
- * Rótulos e controles das chaves de Configurações exibidas nesta fase (ERP 9.1, 9.3.1, 9.9). Tipo, padrão e flags
- * Loja/PDV vêm do catálogo `@genesis/shared/configuracoes` (MD 3.1.2); aqui só a apresentação.
+ * Rótulos e controles das chaves de Configurações (ERP 9.1, 9.3, 9.9, 9.10 e, só em Lojas › Parâmetros, as de loja da
+ * 9.4 e da 9.7). Tipo, padrão e flags Loja/PDV vêm do catálogo `@genesis/shared/configuracoes` (MD 3.1.2); a versão
+ * do PDV que dá efeito à chave, de `VERSAO_PDV_DA_CHAVE`; aqui só a apresentação. F3-B12 (README › decisão 91): a chave
+ * que nenhum caixa nem a nuvem lê ainda leva `semEfeito` (o selo "sem efeito ainda", campo editável), e a das fases
+ * fiscal, financeira e de alertas leva `fase` (o selo com a fase, campo desabilitado).
  */
 export type TipoCampo =
   'bool' | 'int' | 'dinheiro' | 'pct' | 'hora' | 'texto' | { opcoes: Array<[valor: string, rotulo: string]> };
@@ -11,9 +14,16 @@ export interface RotuloConfiguracao {
   tipo: TipoCampo;
   bloco: string;
   ajuda?: string;
-  /** Módulo opcional ainda não entregue (comandas, delivery): aparece desabilitado. */
+  /** Módulo opcional ainda não entregue (comandas, delivery): o selo "módulo futuro". */
   fut?: boolean;
+  /** Fase que dá efeito à chave (ex.: "Fase 6" para a NF-e): o selo com a fase e o campo desabilitado. */
+  fase?: string;
+  /** Nada lê a chave ainda (nem o caixa nem a nuvem): o selo "sem efeito ainda", com este texto na dica. */
+  semEfeito?: string;
 }
+
+const SEM_LEITOR_PDV = 'Nenhuma versão do PDV lê esta configuração ainda';
+const VENDA_ERP = 'Vale para a venda do ERP, que ainda não existe (Fase 3, PR-28)';
 
 const r = (
   chave: string,
@@ -33,7 +43,10 @@ export const ABA_GERAL: RotuloConfiguracao[] = [
   r('geral.ativa', 'Ativa (Não = modo implantação: PDVs não abrem caixa)', 'bool', 'Geral'),
   r('geral.altera_preco_produto_erp', 'Altera preço do produto no ERP', 'bool', 'Geral'),
   r('geral.produto_usa_fornecedores', 'Produto usa fornecedores', 'bool', 'Geral'),
-  r('geral.utiliza_servico_avulso', 'Utiliza serviço avulso', 'bool', 'Geral'),
+  // D77 (F3-Q6 = B): o serviço avulso fica no backlog.
+  r('geral.utiliza_servico_avulso', 'Utiliza serviço avulso', 'bool', 'Geral', {
+    semEfeito: 'O serviço avulso ficou para depois (D77)',
+  }),
   r('geral.margem_lucro_pct', 'Margem de lucro padrão (%)', 'pct', 'Geral', {
     ajuda: '0 = sem sugestão de preço',
   }),
@@ -176,11 +189,15 @@ export const ABA_PARAMETROS: RotuloConfiguracao[] = [
   r('pdv.exibe_cardapio_interno', 'Exibe cardápio interno', 'bool', 'PDV', { fut: true }),
   r('pdv.exibe_estoque_busca', 'Exibe estoque na busca', 'bool', 'PDV'),
   r('pdv.dias_validade_cupom_troca', 'Dias de validade do cupom de troca', 'int', 'PDV'),
-  r('pdv.fonte_lista', 'Tamanho da fonte – lista de itens', 'int', 'PDV'),
-  r('pdv.fonte_total', 'Tamanho da fonte – total', 'int', 'PDV'),
-  r('pdv.fonte_codigo', 'Tamanho da fonte – campo de código', 'int', 'PDV'),
-  r('pdv.usa_pinpad_virtual', 'Usa pinpad virtual', 'bool', 'PDV'),
-  r('pdv.desmembra_produto_kit', 'Desmembra produto kit (linhas dos componentes na tela)', 'bool', 'PDV'),
+  r('pdv.fonte_lista', 'Tamanho da fonte – lista de itens', 'int', 'PDV', { semEfeito: SEM_LEITOR_PDV }),
+  r('pdv.fonte_total', 'Tamanho da fonte – total', 'int', 'PDV', { semEfeito: SEM_LEITOR_PDV }),
+  r('pdv.fonte_codigo', 'Tamanho da fonte – campo de código', 'int', 'PDV', { semEfeito: SEM_LEITOR_PDV }),
+  r('pdv.usa_pinpad_virtual', 'Usa pinpad virtual', 'bool', 'PDV', {
+    semEfeito: 'O TEF entra na Fase 6',
+  }),
+  r('pdv.desmembra_produto_kit', 'Desmembra produto kit (linhas dos componentes na tela)', 'bool', 'PDV', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
   r('pdv.solicita_abertura_caixa', 'Solicita abertura de caixa no PDV', 'bool', 'PDV'),
   r(
     'pdv.resumo_diario_modo',
@@ -208,19 +225,45 @@ export const ABA_PARAMETROS: RotuloConfiguracao[] = [
     ajuda:
       'Sim: na pesquisa F2 do caixa, o F4 mostra online a quantidade do produto nas outras lojas e no CD (sem a loja de treino e sem custo). Não: o F4 avisa que a consulta está desligada',
   }),
+  // D15 (F3-Q27 = A, decidida pelo dono em 25/11/2026).
   r('pdv.limite_valor_venda', 'Limite de valor de vendas PDV', 'dinheiro', 'PDV', {
-    ajuda: 'Vazio = sem limite',
+    ajuda:
+      'A venda com o total acima deste valor pede o supervisor ao concluir. Vazio = sem limite (o sugerido para a loja)',
   }),
   r('pdv.aviso_vencimento', 'Aviso de vencimento', 'bool', 'PDV'),
   r('pdv.aviso_vencimento_dias', 'Dias de aviso de vencimento', 'int', 'PDV'),
   r('pdv.limite_venda_em_aberto', 'Limite de vendas em aberto por terminal', 'int', 'PDV', {
-    ajuda: 'Vazio = sem limite',
+    ajuda:
+      'Máximo de vendas suspensas ("estacionadas") ao mesmo tempo em cada caixa. Vazio = sem limite; 0 = não deixa suspender. Sugestão: 3',
   }),
   r('pdv.imprime_sangria_automaticamente', 'Imprime sangria automaticamente', 'bool', 'PDV'),
   r('pdv.valor_limite_sangria', 'Valor limite para bloquear o PDV e fazer sangria', 'dinheiro', 'PDV', {
     ajuda: 'Vazio = desligado',
   }),
   r('pdv.exibe_foto_produto', 'Exibe foto do produto no PDV', 'bool', 'PDV'),
+  // 9.3.4, 9.3.5 e 9.3.7: os módulos ainda não entregues (P5/P6), para a loja ver que existem e que esperam a fase.
+  r(
+    'pdv.pesquisa_satisfacao_url_imagem',
+    'Imagem da pesquisa de satisfação (URL)',
+    'texto',
+    'Pesquisa de satisfação',
+    {
+      fut: true,
+    },
+  ),
+  r('pdv.mobile.usa_comanda', 'Usa comanda', 'bool', 'PDV Mobile', { fut: true }),
+  r('pdv.mobile.usa_pedido', 'Usa pedido', 'bool', 'PDV Mobile', { fut: true }),
+  r('pdv.mobile.imprime_pelo_mobile', 'Imprime pelo mobile', 'bool', 'PDV Mobile', { fut: true }),
+  r('pdv.mobile.abertura', 'Abertura de caixa', 'bool', 'PDV Mobile', { fut: true }),
+  r('pdv.mobile.reforco', 'Reforço', 'bool', 'PDV Mobile', { fut: true }),
+  r('pdv.mobile.sangria', 'Sangria', 'bool', 'PDV Mobile', { fut: true }),
+  r('erp.email_produtos_vencendo', 'E-mail de produtos vencendo', 'bool', 'ERP – alertas', {
+    fase: 'Fase 5',
+  }),
+  r('erp.dias_produtos_vencendo', 'Dias de antecedência do e-mail', 'int', 'ERP – alertas', {
+    fase: 'Fase 5',
+  }),
+  r('erp.email_destino_vencendo', 'E-mail de destino', 'texto', 'ERP – alertas', { fase: 'Fase 5' }),
 ];
 
 export const ABA_PDV: RotuloConfiguracao[] = [
@@ -228,7 +271,7 @@ export const ABA_PDV: RotuloConfiguracao[] = [
   r('pdv.orcamento_pdv', 'Orçamento PDV', 'bool', 'PDV'),
   r('pdv.altera_preco_pdv', 'Altera preço no PDV', 'bool', 'PDV'),
   r('pdv.pedido_pdv', 'Pedido PDV', 'bool', 'PDV', { fut: true }),
-  r('pdv.agrupa_produtos', 'Agrupa produtos', 'bool', 'PDV'),
+  r('pdv.agrupa_produtos', 'Agrupa produtos', 'bool', 'PDV', { semEfeito: SEM_LEITOR_PDV }),
   r('pdv.solicita_vendedor_comanda', 'Solicita vendedor na comanda', 'bool', 'PDV', { fut: true }),
   r('pdv.forca_escolha_vendedor', 'Força escolha do vendedor', 'bool', 'PDV'),
   r('pdv.solicita_vendedor_finalizacao', 'Solicita vendedor na finalização', 'bool', 'PDV'),
@@ -249,6 +292,7 @@ export const ABA_PDV: RotuloConfiguracao[] = [
     'Formas eletrônicas preenchidas automaticamente no fechamento',
     'bool',
     'Avançado',
+    { semEfeito: SEM_LEITOR_PDV },
   ),
   r(
     'pdv.imprime_calculado_no_fechamento',
@@ -257,36 +301,60 @@ export const ABA_PDV: RotuloConfiguracao[] = [
     'Avançado',
   ),
   r('pdv.sangria_limitada_ao_saldo', 'Sangria limitada ao saldo da gaveta', 'bool', 'Avançado'),
-  r('pdv.sangria_exige_senha_quem_retira', 'Sangria exige senha de quem retira', 'bool', 'Avançado'),
+  r('pdv.sangria_exige_senha_quem_retira', 'Sangria exige senha de quem retira', 'bool', 'Avançado', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
   r('pdv.dias_max_offline', 'Dias máximos offline', 'int', 'Avançado'),
   r('pdv.bloqueio_estoque_offline', 'Bloqueio de estoque também offline', 'bool', 'Avançado'),
-  r('pdv.crediario_exige_online', 'Crediário exige internet', 'bool', 'Avançado'),
+  r('pdv.crediario_exige_online', 'Crediário exige internet', 'bool', 'Avançado', {
+    semEfeito: 'O crediário no caixa vem com o financeiro (Fase 4)',
+  }),
   r('pdv.crediario_exige_senha_cliente', 'Crediário exige senha do cliente', 'bool', 'Avançado'),
   r('pdv.vale_exige_online', 'Vale exige internet', 'bool', 'Avançado'),
   r('pdv.vale_exige_cliente_acima', 'Vale exige cliente acima de (0 = nunca)', 'dinheiro', 'Avançado'),
+  // F3-B3 (D96): o código de conferência de 4 dígitos do vale.
+  r('pdv.vale_exige_conferencia', 'Vale exige o código de conferência', 'bool', 'Avançado', {
+    ajuda: 'Sim: o vale sai com 4 dígitos impressos, que o operador digita no uso, além de ler o código',
+  }),
   r('pdv.troca_kit_parcial', 'Troca parcial de kit', 'bool', 'Avançado'),
-  r('pdv.devolucao_emite_nfe_entrada', 'Devolução emite NF-e de entrada', 'bool', 'Avançado'),
+  r('pdv.devolucao_emite_nfe_entrada', 'Devolução emite NF-e de entrada', 'bool', 'Avançado', {
+    fase: 'Fase 6',
+  }),
   r('pdv.delivery_emite_nota_na_saida', 'Delivery emite nota na saída', 'bool', 'Avançado', { fut: true }),
-  r('pdv.pix_validade_s', 'Validade do QR PIX (s)', 'int', 'Avançado'),
-  r('pdv.primeiro_vencimento_dias', '1º vencimento do crediário (dias)', 'int', 'Avançado'),
-  r('pdv.pergunta_cpf_na_finalizacao', 'Pergunta CPF na finalização', 'bool', 'Avançado'),
+  r('pdv.pix_validade_s', 'Validade do QR PIX (s)', 'int', 'Avançado', {
+    semEfeito: 'O PIX dinâmico (QR pelo banco) ainda não existe',
+  }),
+  r('pdv.primeiro_vencimento_dias', '1º vencimento do crediário (dias)', 'int', 'Avançado', {
+    semEfeito: 'O crediário no caixa vem com o financeiro (Fase 4)',
+  }),
+  r('pdv.pergunta_cpf_na_finalizacao', 'Pergunta CPF na finalização', 'bool', 'Avançado', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
   r('pdv.horas_alerta_sessao', 'Alerta de sessão aberta há mais de (h)', 'int', 'Avançado'),
   r('pdv.bloqueia_sessao_dia_anterior', 'Bloqueia sessão de dia anterior', 'bool', 'Avançado'),
   r('pdv.cancelar_item_exige_supervisor', 'Cancelar item sempre pede supervisor', 'bool', 'Avançado'),
   r('pdv.limite_preco_digitado', 'Limite de preço digitado', 'dinheiro', 'Avançado'),
-  r('pdv.troco_maximo', 'Troco máximo sem confirmação', 'dinheiro', 'Avançado'),
-  r('pdv.exige_impressao_danfe', 'Exige impressão do DANFE NFC-e', 'bool', 'Avançado'),
-  r('pdv.imprime_qr_pix', 'Imprime QR do PIX estático', 'bool', 'Avançado'),
+  r('pdv.troco_maximo', 'Troco máximo sem confirmação', 'dinheiro', 'Avançado', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
+  r('pdv.exige_impressao_danfe', 'Exige impressão do DANFE NFC-e', 'bool', 'Avançado', {
+    fase: 'Fase fiscal',
+  }),
+  r('pdv.imprime_qr_pix', 'Imprime QR do PIX estático', 'bool', 'Avançado', { semEfeito: SEM_LEITOR_PDV }),
   r(
     'pdv.limite_padrao_cliente_pdv',
     'Limite de crediário do cliente criado no caixa',
     'dinheiro',
     'Avançado',
   ),
-  r('pdv.imprime_itens_cancelados', 'Imprime itens cancelados no comprovante', 'bool', 'Avançado'),
+  r('pdv.imprime_itens_cancelados', 'Imprime itens cancelados no comprovante', 'bool', 'Avançado', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
   r('pdv.pessoas_meses_relevancia', 'Meses de relevância de clientes no PDV', 'int', 'Avançado'),
   r('pdv.permite_pin_curto', 'Aceita PIN curto (4–5 dígitos)', 'bool', 'Avançado'),
-  r('pdv.login_aceita_senha_erp', 'Login no PDV aceita a senha do ERP (só online)', 'bool', 'Avançado'),
+  r('pdv.login_aceita_senha_erp', 'Login no PDV aceita a senha do ERP (só online)', 'bool', 'Avançado', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
   r('pdv.taxa_servico_no_documento_fiscal', 'Taxa de serviço no documento fiscal', 'bool', 'Avançado', {
     fut: true,
   }),
@@ -301,8 +369,20 @@ export const ABA_PDV: RotuloConfiguracao[] = [
       ],
     },
     'Avançado',
+    { semEfeito: SEM_LEITOR_PDV },
   ),
-  r('pdv.vasilhame_comodato', 'Empréstimo de cascos (comodato)', 'bool', 'Avançado', { fut: true }),
+  // D84 (F3-Q13 = B): pronto e desligado; com a trava dura do F3-B12 (só liga com todos os caixas na R4).
+  r('pdv.vasilhame_comodato', 'Empréstimo de cascos (comodato)', 'bool', 'Avançado'),
+  r(
+    'pdv.vasilhame_comodato_max_por_cliente',
+    'Cascos em comodato por cliente sem o supervisor',
+    'int',
+    'Avançado',
+    {
+      ajuda:
+        'Saldo do cliente depois do empréstimo; acima, o supervisor libera. 0 = sempre pede o supervisor',
+    },
+  ),
   r('pdv.cancelamento_devolve_vazios', 'Cancelar venda devolve os vazios trazidos', 'bool', 'Avançado', {
     ajuda:
       'Sim: o caixa devolve os cascos ao cliente e o estoque de vazios volta. Não: os vazios ficam na loja',
@@ -315,6 +395,102 @@ export const ABA_PDV: RotuloConfiguracao[] = [
     'Avançado',
     { ajuda: 'Acima disso o caixa pede o supervisor. 0 = sem teto' },
   ),
+];
+
+/** Aba Vendas (ERP 9.10). As de NF-e ficam desabilitadas até a Fase 6. O "Nº da próxima venda" é por loja, à parte. */
+export const ABA_VENDAS: RotuloConfiguracao[] = [
+  r('vendas.gera_datas_parcelamento', 'Gera datas de parcelamento', 'bool', 'Vendas', {
+    semEfeito: VENDA_ERP,
+  }),
+  r('vendas.usa_remessa', 'Usa remessa', 'bool', 'Vendas', { fase: 'Fase 6' }),
+  r('vendas.usa_recibo', 'Usa recibo', 'bool', 'Vendas', { semEfeito: SEM_LEITOR_PDV }),
+  r('vendas.titulo_recibo', 'Título do recibo', 'texto', 'Vendas', { semEfeito: SEM_LEITOR_PDV }),
+  r('vendas.quatro_casas_decimais', '4 casas decimais no preço unitário', 'bool', 'Vendas', {
+    semEfeito: SEM_LEITOR_PDV,
+  }),
+  r('vendas.exige_tipo_frete', 'Exige tipo de frete', 'bool', 'Vendas', { semEfeito: VENDA_ERP }),
+  r('vendas.valida_estoque', 'Valida estoque', 'bool', 'Vendas', {
+    ajuda: 'No caixa, liga o mesmo bloqueio de "Bloqueia venda sem estoque" (Parâmetros)',
+  }),
+  r('vendas.solicita_id_orcamento', 'Solicita o número do orçamento ao iniciar a venda', 'bool', 'Vendas'),
+  r('vendas.numeracao_propria', 'Numeração própria', 'bool', 'Vendas', {
+    ajuda: 'Sim: o número das vendas do ERP de cada loja pode ser definido em "Nº da próxima venda" (abaixo)',
+  }),
+  r('vendas.permite_produtos_iguais', 'Permite produtos iguais', 'bool', 'Vendas', { semEfeito: VENDA_ERP }),
+  r('vendas.bloqueia_pf_fora_estado', 'Bloqueia NF-e para pessoa física de outro estado', 'bool', 'Vendas', {
+    fase: 'Fase 6',
+  }),
+  r('vendas.valida_volumes_nfe', 'Valida volumes da NF-e', 'bool', 'Vendas', { fase: 'Fase 6' }),
+  r('vendas.vale_frase_bloqueio', 'Frase de bloqueio do vale compra', 'texto', 'Vale compra', {
+    ajuda: 'Impressa no vale (ex.: "Não é válido como dinheiro")',
+  }),
+  r('vendas.vale_rodape', 'Rodapé do vale compra', 'texto', 'Vale compra'),
+];
+
+const opcoes = (...pares: Array<[string, string]>): TipoCampo => ({ opcoes: pares });
+
+/**
+ * Só em Lojas › Parâmetros (10.3.9 lista também as de loja da 9.4 e da 9.7): as abas Fiscal e Financeiro das
+ * Configurações entram com as fases delas; até lá, aparecem desabilitadas, com a fase.
+ */
+export const PARAMETROS_LOJA_OUTRAS_FASES: RotuloConfiguracao[] = [
+  r('fiscal.inf_adic_contribuinte', 'Informações adicionais ao contribuinte', 'texto', 'Fiscal', {
+    fase: 'Fase fiscal',
+  }),
+  r('fiscal.inf_adic_fisco', 'Informações adicionais ao fisco', 'texto', 'Fiscal', { fase: 'Fase fiscal' }),
+  r('fiscal.prazo_transmissao_contingencia_h', 'Prazo de transmissão em contingência (h)', 'int', 'Fiscal', {
+    fase: 'Fase fiscal',
+  }),
+  r('fiscal.inutilizacao_prazo_dia', 'Dia limite da inutilização', 'int', 'Fiscal', { fase: 'Fase fiscal' }),
+  r('fiscal.exige_st_retido_nfce', 'Exige ST retido na NFC-e', 'bool', 'Fiscal', { fase: 'Fase fiscal' }),
+  r(
+    'fiscal.st_retido_criterio',
+    'Critério do ST retido',
+    opcoes(['ultima_entrada', 'Última entrada'], ['media_ponderada', 'Média ponderada']),
+    'Fiscal',
+    { fase: 'Fase fiscal' },
+  ),
+  r(
+    'fiscal.taxa_entrega_como',
+    'Taxa de entrega na nota como',
+    opcoes(['vfrete', 'Frete'], ['outro', 'Outras despesas']),
+    'Fiscal',
+    { fase: 'Fase fiscal' },
+  ),
+  r(
+    'fiscal.danfe_modo',
+    'DANFE NFC-e',
+    opcoes(
+      ['completo', 'Completo'],
+      ['resumido', 'Resumido'],
+      ['eletronico_se_solicitado', 'Eletrônico se pedido'],
+    ),
+    'Fiscal',
+    { fase: 'Fase fiscal' },
+  ),
+  r('fiscal.intervalo_status_sefaz_s', 'Intervalo da consulta de status (s)', 'int', 'Fiscal', {
+    fase: 'Fase fiscal',
+  }),
+  r(
+    'fiscal.atacado_como',
+    'Atacado na nota como',
+    opcoes(['preco_unitario', 'Preço unitário'], ['desconto_item', 'Desconto no item']),
+    'Fiscal',
+    { fase: 'Fase fiscal' },
+  ),
+  r(
+    'fiscal.servico_no_pdv',
+    'Serviço no caixa',
+    opcoes(['bloquear', 'Bloquear'], ['documento_separado', 'Documento separado']),
+    'Fiscal',
+    { fase: 'Fase fiscal' },
+  ),
+  r('fiscal.exige_vinculacao_pagamento', 'Exige vinculação do pagamento', 'bool', 'Fiscal', {
+    fase: 'Fase fiscal',
+  }),
+  r('financeiro.conta_destino_sangria', 'Conta de destino da sangria', 'texto', 'Financeiro', {
+    fase: 'Fase 4',
+  }),
 ];
 
 export const ROTULOS_ACOES_ATALHO: Record<string, string> = {

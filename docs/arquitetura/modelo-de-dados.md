@@ -818,22 +818,22 @@ Loja = aceita sobreposição por loja; PDV = desce para o PDV. Valores monetári
 | `os.tipo`, `os.template_arquivo_id` | `loja_celulares`/`oficina_mecanica`; uuid | — | — | — | Ordem de Serviço (futuro) |
 | `pdv.exibe_cardapio_interno` | bool | `false` | S | S | Parâmetros › Exibe cardápio interno |
 | `pdv.exibe_estoque_busca` | bool | `true` | S | S | Parâmetros › Exibe estoque na busca |
-| `pdv.dias_validade_cupom_troca` | inteiro | `30` | S | S | Parâmetros › Dias de validade do cupom de troca |
-| `pdv.fonte_lista`, `pdv.fonte_total`, `pdv.fonte_codigo` | inteiro (pt) | `14`, `36`, `20` | S | S | Parâmetros › tamanhos de fonte |
+| `pdv.dias_validade_cupom_troca` | inteiro 0–365 | `30` | S | S | Parâmetros › Dias de validade do cupom de troca |
+| `pdv.fonte_lista`, `pdv.fonte_total`, `pdv.fonte_codigo` | inteiro (pt) 10–32, 20–72, 10–40 | `14`, `36`, `20` | S | S | Parâmetros › tamanhos de fonte |
 | `pdv.usa_pinpad_virtual` | bool | `false` | S | S | Parâmetros › Usa pinpad virtual |
 | `pdv.desmembra_produto_kit` | bool | `false` | S | S | Parâmetros › Desmembra Produto Kit. Só muda a **tela de venda** do PDV (ligado: as linhas dos componentes ficam visíveis sob a linha do combo; desligado: só a linha do combo, expansível); `itens_venda`, comprovante e NFC-e têm sempre os componentes (PDV 10.9.1) |
 | `pdv.solicita_abertura_caixa` | bool | `true` | S | S | Parâmetros › SolicitaAberturaCaixaPDV |
 | `pdv.resumo_diario_modo` | `intervalo_dias`/`horario` | `intervalo_dias` | S | S | Parâmetros › Resumo Diário por intervalo de dias ou horário: só o **filtro** do relatório Resumo diário do PDV (por dias operacionais ou por faixa de horário); não muda o dia operacional |
 | `pdv.comandas_numeracao_automatica` | bool | `false` | S | S | Parâmetros › Comandas com numeração automática |
 | `pdv.usa_preco_volume` | bool | `false` | S | S | Parâmetros › Usa Produto Preço Volume |
-| `pdv.vale_compra_validade_dias` | inteiro | `90` | — | S | Parâmetros › Data de Expiração do Vale Compra |
+| `pdv.vale_compra_validade_dias` | inteiro 1–730 | `90` | — | S | Parâmetros › Data de Expiração do Vale Compra |
 | `pdv.imprime_cupom_troca` | bool | `false` | S | S | Parâmetros › Imprime cupom de troca |
 | `pdv.bloqueia_venda_sem_estoque` | bool | `false` | S | S | Parâmetros › Bloqueia venda sem estoque |
 | `pdv.recusa_produto_com_variacoes` | bool | `true` | S | S | Novo (Fase 2, F2-B34; roadmap D44, decidida pelo dono em 05/11/2026): o caixa recusa o código de uma variação e o pai `com_variacoes` com variação ativa ("Produto com variações: venda disponível na próxima versão"); desligada, vende o pai como antes (PDV 10.2) |
 | `pdv.consulta_outras_lojas` | bool | `true` | S | S | Novo (Fase 2, F2-B35; roadmap D53, vale a recomendação sem resposta explícita do dono): o `F4` da pesquisa do caixa consulta online o saldo vendável das lojas reais e do CD (sem a loja de treino, só quantidades), para qualquer operador; desligada, o caixa não consulta e a API recusa (PDV 10.3; SYNC 1.4) |
 | `pdv.limite_valor_venda` | dinheiro | nulo | S | S | Parâmetros › Limite de Valor de Vendas PDV |
-| `pdv.aviso_vencimento`, `pdv.aviso_vencimento_dias` | bool, inteiro | `false`, `30` | S | S | Parâmetros › Aviso de vencimento + dias |
-| `pdv.limite_venda_em_aberto` | inteiro | nulo | S | S | Parâmetros › Limite Venda em Aberto (semântica em aberto — ver 8) |
+| `pdv.aviso_vencimento`, `pdv.aviso_vencimento_dias` | bool, inteiro 1–365 | `false`, `30` | S | S | Parâmetros › Aviso de vencimento + dias |
+| `pdv.limite_venda_em_aberto` | inteiro | nulo | S | S | Parâmetros › Limite Venda em Aberto: máximo de vendas suspensas por caixa; nulo = sem limite, 0 = não deixa suspender (D15, decidida pelo dono em 25/11/2026) |
 | `pdv.imprime_sangria_automaticamente` | bool | `true` | S | S | Parâmetros › Imprime sangria automaticamente |
 | `pdv.valor_limite_sangria` | dinheiro | nulo | S | S | Parâmetros › Valor limite para bloquear PDV e fazer sangria |
 | `pdv.exibe_foto_produto` | bool | `false` | S | S | Parâmetros › Exibe foto do produto no PDV |
@@ -5513,7 +5513,7 @@ modelo. O código usa sempre a coluna "Nome oficial"; os documentos devem ser al
 | `idade_minima` booleano (ERP 8.2.6) | `produtos.idade_minima smallint` (ex.: 18) | |
 | `max_parcelas` (PDV 16.8) | `formas_pagamento.parcelas_maximo` | |
 | `tipo_estoque` "Avaria" como movimento separado (PDV 23.2) | `TROCA_PDV` lançado no tipo de estoque `avaria` | |
-| `limite_venda_em_aberto` | `pdv.limite_venda_em_aberto` | ERP 9.3.1 e PDV 22.3/29.3 usam a chave como máximo de vendas suspensas/em aberto por terminal; o limite de crédito padrão é `financeiro.limite_credito_padrao` (ERP 7.2, 9.7). A semântica do Nuvem3 continua em aberto (roadmap D15) |
+| `limite_venda_em_aberto` | `pdv.limite_venda_em_aberto` | ERP 9.3.1 e PDV 22.3/29.3 usam a chave como máximo de vendas suspensas/em aberto por terminal; o limite de crédito padrão é `financeiro.limite_credito_padrao` (ERP 7.2, 9.7). Decidida pelo dono em 25/11/2026 (D15 = F3-Q27 (A)): como na especificação; nulo = sem limite, 0 = não deixa suspender |
 | `pdv.resumo_diario_hora_corte` (ERP 9.3.1); "Resumo diário por" como definição do dia operacional | `geral.dia_operacional_hora_corte` (regra 1.2) | `pdv.resumo_diario_modo` é só o filtro do relatório Resumo diário |
 | `horas_alerta_sessao` local de 16 h (PDV 8.1) | `pdv.horas_alerta_sessao` (nuvem, padrão 24) | Não há valor local |
 | `cancelar_item_exige_supervisor`, `limite_preco_digitado`, `troco_maximo`, `imprime_qr_pix`, `limite_padrao_cliente_pdv`, `imprime_itens_cancelados`, `bloqueia_sessao_dia_anterior` (PDV) | `pdv.<mesmo nome>` (3.1.2) | |

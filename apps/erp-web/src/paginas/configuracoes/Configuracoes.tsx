@@ -1,4 +1,9 @@
-import { normalizarTeclaAtalho, type AtalhoPdv } from '@genesis/shared';
+import {
+  NUMERO_VENDA_MAXIMO,
+  normalizarTeclaAtalho,
+  type AtalhoPdv,
+  type NumeracaoVendaErp,
+} from '@genesis/shared';
 import {
   Alert,
   Button,
@@ -24,13 +29,17 @@ import { useNavigate, useParams } from 'react-router';
 import { apiErp } from '../../api/clientes';
 import { ErroRequisicao } from '../../api/http';
 import { usePode } from '../../auth/permissoes';
+import { SeletorLoja } from '../../componentes/seletores';
 import { CamposConfiguracoes } from './CamposConfiguracoes';
-import { ABA_GERAL, ABA_PARAMETROS, ABA_PDV, ROTULOS_ACOES_ATALHO } from './rotulos';
+import { ABA_GERAL, ABA_PARAMETROS, ABA_PDV, ABA_VENDAS, ROTULOS_ACOES_ATALHO } from './rotulos';
 
 const ROTA = '/cadastros/configuracoes';
-const ABAS = ['geral', 'parametros', 'pdv'] as const;
+const ABAS = ['geral', 'parametros', 'pdv', 'vendas'] as const;
 
-/** Cadastros › Configurações (ERP 9): abas Geral, Parâmetros (PDV) e PDV com a tabela de atalhos. */
+/**
+ * Cadastros › Configurações (ERP 9): abas Geral, Parâmetros (PDV), PDV com a tabela de atalhos e Vendas com o "Nº da
+ * próxima venda" por loja (F3-B12).
+ */
 export function Configuracoes() {
   useDocumentTitle('Configurações · GenesisPDV');
   const { aba } = useParams();
@@ -57,6 +66,7 @@ export function Configuracoes() {
           <Tabs.Tab value="geral">Geral</Tabs.Tab>
           <Tabs.Tab value="parametros">Parâmetros</Tabs.Tab>
           <Tabs.Tab value="pdv">PDV</Tabs.Tab>
+          <Tabs.Tab value="vendas">Vendas</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="geral">
           <CamposConfiguracoes itens={ABA_GERAL} somenteLeitura={somenteLeitura} />
@@ -70,12 +80,120 @@ export function Configuracoes() {
             <TabelaAtalhos somenteLeitura={somenteLeitura} />
           </Stack>
         </Tabs.Panel>
+        <Tabs.Panel value="vendas">
+          <Stack gap="lg">
+            <CamposConfiguracoes itens={ABA_VENDAS} somenteLeitura={somenteLeitura} />
+            <ProximaVendaErp somenteLeitura={somenteLeitura} />
+          </Stack>
+        </Tabs.Panel>
       </Tabs>
       <Text size="xs" c="dimmed">
-        As abas Ordem de Serviço, Fiscal, Tributação, Orçamentos, Financeiro, CFOP&apos;s e Vendas entram com
-        as fases que usam essas configurações. Valores por loja: Lojas › Parâmetros.
+        As abas Ordem de Serviço, Fiscal, Tributação, Orçamentos, Financeiro e CFOP&apos;s entram com as fases
+        que usam essas configurações. Valores por loja: Lojas › Parâmetros.
       </Text>
     </Stack>
+  );
+}
+
+/**
+ * "Nº da próxima venda" das vendas do ERP, por loja (ERP 9.10; F3-B12): o contador do caixa 0. Só se edita com
+ * "Numeração própria" ligada (e gravada); a API recusa o número que não passa do último usado.
+ */
+export function ProximaVendaErp({ somenteLeitura }: { somenteLeitura?: boolean }) {
+  const queryClient = useQueryClient();
+  const [lojaId, setLojaId] = useState<string | null>(null);
+  const [valor, setValor] = useState<number | ''>('');
+  const [erro, setErro] = useState<string | null>(null);
+  // Sob 'configuracoes': gravar "Numeração própria" no bloco acima invalida e relê esta também.
+  const chave = ['configuracoes', 'numeracao-venda-erp', lojaId];
+  const dados = useQuery({
+    queryKey: chave,
+    queryFn: () => apiErp.get<NumeracaoVendaErp>(`/lojas/${lojaId}/numeracao-venda-erp`),
+    enabled: !!lojaId,
+  });
+  const gravar = useMutation({
+    mutationFn: (proximoNumero: number) =>
+      apiErp.put<NumeracaoVendaErp>(`/lojas/${lojaId}/numeracao-venda-erp`, { proximoNumero }),
+    onSuccess: (r) => {
+      queryClient.setQueryData(chave, r);
+      setValor('');
+      setErro(null);
+      notifications.show({ color: 'green', message: `Próxima venda do ERP: nº ${r.proximoNumero}` });
+    },
+    onError: (e) => {
+      setErro(
+        e instanceof ErroRequisicao ? (e.campos?.proximoNumero?.[0] ?? e.message) : (e as Error).message,
+      );
+    },
+  });
+  const d = dados.data;
+  const editavel = !somenteLeitura && !!d?.numeracaoPropria;
+  return (
+    <Paper withBorder p="sm">
+      <Title order={5} mb="xs">
+        Nº da próxima venda (vendas do ERP)
+      </Title>
+      <Group align="flex-end" gap="sm">
+        <SeletorLoja
+          label="Loja"
+          w={260}
+          size="xs"
+          value={lojaId}
+          onChange={(id) => {
+            setLojaId(id);
+            setValor('');
+            setErro(null);
+          }}
+        />
+        {d && (
+          <>
+            <NumberInput
+              label="Nº da próxima venda"
+              size="xs"
+              w={180}
+              allowDecimal={false}
+              // Sem prender ao mínimo: o número menor que o último usado volta com a mensagem da API.
+              min={1}
+              max={NUMERO_VENDA_MAXIMO}
+              clampBehavior="none"
+              placeholder={String(d.proximoNumero)}
+              value={valor}
+              disabled={!editavel}
+              error={erro}
+              onChange={(v) => {
+                setValor(typeof v === 'number' ? v : '');
+                setErro(null);
+              }}
+            />
+            {editavel && (
+              <Button
+                size="xs"
+                leftSection={<IconDeviceFloppy size={14} />}
+                disabled={valor === ''}
+                loading={gravar.isPending}
+                onClick={() => valor !== '' && gravar.mutate(valor)}
+              >
+                Gravar número
+              </Button>
+            )}
+          </>
+        )}
+      </Group>
+      {dados.isError && (
+        <Alert color="red" mt="xs">
+          {(dados.error as Error).message}
+        </Alert>
+      )}
+      <Text size="xs" c="dimmed" mt="xs">
+        {!lojaId
+          ? 'Escolha a loja.'
+          : d
+            ? d.numeracaoPropria
+              ? `Último número usado: ${d.ultimoNumero}. O próximo tem de ser maior que ele.`
+              : `Próxima venda: nº ${d.proximoNumero}, na sequência. Para definir o número, ligue "Numeração própria" e grave.`
+            : null}
+      </Text>
+    </Paper>
   );
 }
 

@@ -7,9 +7,12 @@ import {
   gravarAtalhosSchema,
   gravarConfiguracoesSchema,
   grupoDaChave,
+  consultaTerminaisDesatualizadosSchema,
   validarValorConfiguracao,
+  valorGravadoValido,
   VERSAO_PDV_GUARDA_VARIACOES,
   type AtalhoPdv,
+  type RespostaTerminaisDesatualizados,
   type RespostaTerminaisSemGuardaVariacoes,
   type ValorConfiguracao,
 } from '@genesis/shared';
@@ -22,14 +25,19 @@ import { ErroApi } from '../comum/erros.js';
 import { origemDaRequisicao, Req, Sessao, type RequisicaoGenesis } from '../comum/requisicao.js';
 import { SERVICOS } from '../comum/tokens-nest.js';
 import { validar } from '../comum/zod.js';
-import { atalhosPdv, caixas, configuracoes, lojas, terminais } from '../database/empresa/schema/index.js';
+import { atalhosPdv, configuracoes, lojas, terminais } from '../database/empresa/schema/index.js';
 import { CHAVES_SENHA_CLIENTE_PDV, pessoaRelevante } from '../sync/fluxos.js';
 import { tocar } from '../sync/toque.js';
-import { compararVersoes } from '../sync/versoes-app.js';
 import { ATALHOS_PDV_PADRAO } from '../database/seed/dados/tabelas-md.js';
 import type { Servicos } from '../servicos.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { valorJson } from './valores.js';
+import {
+  abaixoDaVersao,
+  chaveComDesatualizados,
+  conferirTravaVersao,
+  terminaisAtivos,
+} from './versao-pdv.js';
 
 const LOCALIZACAO = 'Cadastros › Configurações';
 
@@ -81,10 +89,19 @@ export class ConfiguracoesController {
             )
         : [];
       return defs.map((d) => {
-        const empresa = linhas.find((l) => l.chave === d.chave && l.escopo === 'empresa');
-        const loja = q.lojaId
+        const empresaGravada = linhas.find((l) => l.chave === d.chave && l.escopo === 'empresa');
+        const lojaGravada = q.lojaId
           ? linhas.find((l) => l.chave === d.chave && l.escopo === 'loja' && l.lojaId === q.lojaId)
           : undefined;
+        // F3-B12: o gravado que saiu da faixa do catálogo não vale (cai no nível seguinte) e volta à parte, para o aviso.
+        const valida = (l: typeof empresaGravada) =>
+          l && valorGravadoValido(d.chave, l.valor) ? l : undefined;
+        const empresa = valida(empresaGravada);
+        const loja = valida(lojaGravada);
+        const foraDaFaixa = {
+          ...(empresaGravada && !empresa ? { empresa: empresaGravada.valor } : {}),
+          ...(lojaGravada && !loja ? { loja: lojaGravada.valor } : {}),
+        };
         const mascarar = (v: unknown) => (d.segredo && v !== undefined ? '***' : v);
         return {
           chave: d.chave,
@@ -96,6 +113,7 @@ export class ConfiguracoesController {
           pdv: d.pdv,
           segredo: !!d.segredo,
           lojasSobrepondo: linhas.filter((l) => l.chave === d.chave && l.escopo === 'loja').length,
+          ...(Object.keys(foraDaFaixa).length && !d.segredo ? { foraDaFaixa } : {}),
         };
       });
     });
@@ -139,6 +157,8 @@ export class ConfiguracoesController {
             .where(and(eq(lojas.id, lojaId), isNull(lojas.excluidoEm)));
           if (!l) throw ErroApi.naoEncontrado('Loja não encontrada.');
         }
+        // F3-B12: a chave que muda o preço ou o pagamento só liga com os caixas na versão que a entende.
+        await conferirTravaVersao(tx, sessao, lojaId, valores);
         const antes: Record<string, unknown> = {};
         const depois: Record<string, unknown> = {};
         for (const [chave, valor] of Object.entries(valores)) {
@@ -241,38 +261,45 @@ export class ConfiguracoesController {
    * pai, e a tela de configurações avisa antes de gravar. Abaixo de `VERSAO_PDV_GUARDA_VARIACOES` ou sem versão
    * conhecida (a do último heartbeat, `terminais.versao_app`). Mesma permissão de quem grava a chave. Os detalhes só
    * das lojas permitidas ao usuário (ERP 2.1); como a chave vale para a empresa toda, os caixas antigos das outras
-   * lojas entram só na contagem (`outrasLojas`), sem nome de loja, caixa, descrição nem versão.
+   * lojas entram só na contagem (`outrasLojas`), sem nome de loja, caixa, descrição nem versão. Desde o F3-B12 é o
+   * caso particular de `terminais-desatualizados` (a mesma consulta), mantido para o modal "Gravar mesmo assim".
    */
   @Permissao('configuracoes.editar')
   @Get('configuracoes/terminais-sem-guarda-variacoes')
   async terminaisSemGuardaVariacoes(
     @Sessao() sessao: SessaoErp,
   ): Promise<RespostaTerminaisSemGuardaVariacoes> {
-    const linhas = await this.s.tenancy.cx().consulta((db) =>
-      db
-        .select({
-          id: terminais.id,
-          lojaId: terminais.lojaId,
-          lojaNome: lojas.nome,
-          numeroCaixa: caixas.numero,
-          descricao: terminais.descricao,
-          versaoApp: terminais.versaoApp,
-        })
-        .from(terminais)
-        .innerJoin(caixas, eq(caixas.id, terminais.caixaId))
-        .leftJoin(lojas, eq(lojas.id, terminais.lojaId))
-        .where(and(inArray(terminais.status, ['ativo', 'desativando']), isNull(terminais.excluidoEm)))
-        .orderBy(asc(lojas.nome), asc(caixas.numero)),
-    );
-    const antigos = linhas.filter(
-      (t) => !t.versaoApp || compararVersoes(t.versaoApp, VERSAO_PDV_GUARDA_VARIACOES) < 0,
-    );
+    const ativos = await this.s.tenancy.cx().consulta((db) => terminaisAtivos(db));
+    const antigos = ativos.filter((t) => abaixoDaVersao(t, VERSAO_PDV_GUARDA_VARIACOES));
     const visiveis = antigos.filter((t) => lojaPermitida(sessao, t.lojaId));
     return {
       versaoMinima: VERSAO_PDV_GUARDA_VARIACOES,
       terminais: visiveis.map(({ lojaId: _lojaId, ...t }) => t),
       outrasLojas: antigos.length - visiveis.length,
     };
+  }
+
+  /**
+   * "Tem efeito a partir do PDV x.y; N caixas desatualizados" (F3-B12): para cada chave pedida (só as de
+   * `VERSAO_PDV_DA_CHAVE`), os terminais ativos abaixo da versão dela. Sem `lojaId`, os de todas as lojas (a chave da
+   * empresa vale em todas); com `lojaId` (Lojas › Parâmetros), só os da loja, que tem de ser permitida. Os detalhes só
+   * das lojas permitidas, as outras na contagem (decisão 181). `configuracoes.ver`: é a informação que acompanha a
+   * chave na tela; mas os detalhes de cada terminal (id, caixa, descrição, versão) são os da listagem de terminais, e
+   * só vão a quem tem `terminais.ver` ou `configuracoes.editar` (`veDetalhesTerminais`); os outros recebem a contagem
+   * (`semDetalhes`).
+   */
+  @Permissao('configuracoes.ver')
+  @Get('configuracoes/terminais-desatualizados')
+  async terminaisDesatualizados(
+    @Query() query: unknown,
+    @Sessao() sessao: SessaoErp,
+  ): Promise<RespostaTerminaisDesatualizados> {
+    const q = validar(consultaTerminaisDesatualizadosSchema, query);
+    if (q.lojaId) garantirLoja(sessao, q.lojaId);
+    const ativos = await this.s.tenancy
+      .cx()
+      .consulta((db) => terminaisAtivos(db, q.lojaId ? [q.lojaId] : undefined));
+    return { chaves: q.chave.map((c) => chaveComDesatualizados(sessao, c, ativos)) };
   }
 
   /** Tabela de atalhos do PDV da empresa (ERP 9.9; MD 3.10.2, 7.8). */

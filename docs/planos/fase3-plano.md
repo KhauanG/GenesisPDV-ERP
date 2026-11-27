@@ -861,6 +861,19 @@ corpo do PR-17.
   conta; loja não permitida); vitest das abas.
 - **Pronto:** toda chave Loja = S aparece em Lojas › Parâmetros; a aba Vendas grava; o aviso e a trava aparecem.
 - **Depende de:** F3-B3.
+- [**Feito (F3-B12)** (README da API › decisão 230, README do ERP › decisão 91; ERP 9.3.1, 9.10, 10.3.9; MD 3.1.2):
+  como descrito. Escolhas técnicas: `VERSAO_PDV_DA_CHAVE` conferido nas tags `pdv-v0.10.0`..`pdv-v0.13.0` (o 0.13.0 lê as
+  mesmas chaves que a `main`) e nos blocos que passam a ler cada chave (R3 0.14.0, R4 0.15.0, R5 0.16.0), com a trava só
+  em `pdv.vasilhame_comodato` por ora (as promoções entram no F3-B34; o vale como pagamento e a baixa interna são formas
+  de pagamento, e os blocos delas decidem); a consulta aceita várias chaves (`?chave=a,b`, uma ida por bloco da tela) e
+  `lojaId`; a trava recusa só quando o valor efetivo **passa** de desligado a ligado numa loja com terminal ativo abaixo
+  (na empresa, as lojas sem valor próprio; na loja, inclusive o "Herdar"), e o terminal ativado depois com PDV antigo
+  fica com o aviso; a rota das variações e o modal "Gravar mesmo assim" ficam, pela mesma consulta; o valor fora da faixa
+  cai no nível seguinte (a loja na empresa), e o pull o manda como está (nenhum PDV lê as seis chaves ainda); o "último
+  usado" do caixa 0 conta também a maior venda gravada; `configuracoes.ver/editar` nas rotas da numeração (o campo é da
+  aba Vendas). Além do pedido, para "nenhuma chave sem efeito parecer funcionar": o selo "sem efeito ainda" nas chaves
+  que nenhuma versão do PDV nem a nuvem lê, e as chaves de loja da 9.4/9.7 e da 9.3.7 em Lojas › Parâmetros,
+  desabilitadas com a fase.]
 
 ### PR-19 – Caixa: atalhos, complementos e preços
 

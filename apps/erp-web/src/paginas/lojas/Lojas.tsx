@@ -49,7 +49,13 @@ import { tiposELimiteArquivo, UploadArquivo } from '../../componentes/campos/Upl
 import { FormularioEntidade } from '../../componentes/FormularioEntidade';
 import { Listagem, type ConfigListagem } from '../../componentes/listagem/Listagem';
 import { CamposConfiguracoes } from '../configuracoes/CamposConfiguracoes';
-import { ABA_GERAL, ABA_PARAMETROS, ABA_PDV } from '../configuracoes/rotulos';
+import {
+  ABA_GERAL,
+  ABA_PARAMETROS,
+  ABA_PDV,
+  ABA_VENDAS,
+  PARAMETROS_LOJA_OUTRAS_FASES,
+} from '../configuracoes/rotulos';
 import { NaoEncontrado } from '../Erros';
 import { badgeAtivo, OPCOES_SITUACAO } from '../estoques/Estoques';
 import { CaixasLoja } from './CaixasLoja';
@@ -258,7 +264,17 @@ const CAMPOS_FISCAL = [
   'nfceValorExigeIdentificacao',
 ];
 const CAMPOS_ANEXOS = ['logotipoArquivoId', 'fotoArquivoId'];
-const PARAMETROS_LOJA = [...ABA_GERAL, ...ABA_PARAMETROS, ...ABA_PDV];
+/**
+ * Lojas › Parâmetros (ERP 10.3.9): toda chave Loja = S das abas (9.1, 9.3, 9.9, 9.10) e, desabilitadas com a fase, as
+ * de loja da 9.4 e da 9.7 (F3-B12); a API devolve só as de loja quando recebe a loja.
+ */
+export const PARAMETROS_LOJA = [
+  ...ABA_GERAL,
+  ...ABA_PARAMETROS,
+  ...ABA_PDV,
+  ...ABA_VENDAS,
+  ...PARAMETROS_LOJA_OUTRAS_FASES,
+];
 
 /**
  * Lojas – formulário (ERP 10.3). "Nova loja" é o assistente de primeira configuração (MD 7.13): estoque homônimo

@@ -1,6 +1,12 @@
 import {
   CHAVES_TIPO_PRODUTO,
+  CODIGO_TERMINAIS_DESATUALIZADOS,
+  faixaConfiguracao,
+  temVersaoPdv,
+  type ChaveComTerminaisDesatualizados,
+  type RespostaTerminaisDesatualizados,
   type RespostaTerminaisSemGuardaVariacoes,
+  type TerminalDesatualizado,
   type ValorConfiguracao,
 } from '@genesis/shared';
 import {
@@ -47,6 +53,30 @@ const CHAVE_VARIACOES = CHAVES_TIPO_PRODUTO.com_variacoes!;
 /** O que a confirmação mostra: os terminais antigos, ou o erro da consulta (a gravação continua possível). */
 type AvisoVariacoes = { resposta: RespostaTerminaisSemGuardaVariacoes } | { erro: string };
 
+/** "Loja – caixa 01 (versão 0.13.0)", como no modal das variações. */
+export function descreverTerminal(t: TerminalDesatualizado): string {
+  return (
+    `${t.lojaNome ?? 'Loja'} – caixa ${String(t.numeroCaixa).padStart(2, '0')}` +
+    `${t.descricao ? ` (${t.descricao})` : ''}: versão ${t.versaoApp ?? 'desconhecida'}`
+  );
+}
+
+/**
+ * F3-B12: "Tem efeito a partir do PDV x.y; N caixas desatualizados: …" (só com caixa desatualizado); a chave com trava
+ * diz sempre que só liga com todos os caixas na versão. `null` = nada a dizer.
+ */
+export function textoVersaoChave(r: ChaveComTerminaisDesatualizados): string | null {
+  const n = r.terminais.length + r.outrasLojas + (r.semDetalhes ?? 0);
+  const lista = [
+    ...r.terminais.map(descreverTerminal),
+    ...(r.semDetalhes ? [`${r.semDetalhes} das suas lojas (os detalhes pedem "PDVs/Terminais: Ver")`] : []),
+    ...(r.outrasLojas ? [`${r.outrasLojas} de outras lojas, fora do seu acesso`] : []),
+  ].join('; ');
+  const trava = r.trava ? `Só liga com todos os caixas ativos no PDV ${r.versaoMinima} ou mais novo. ` : '';
+  if (!n) return trava ? trava.trim() : null;
+  return `${trava}Tem efeito a partir do PDV ${r.versaoMinima}; ${n} caixa(s) desatualizado(s): ${lista}`;
+}
+
 const exibir = (tipo: TipoCampo, v: unknown): unknown => {
   if (v === null || v === undefined) return tipo === 'bool' ? false : '';
   if (tipo === 'dinheiro' || tipo === 'pct') return Number(v);
@@ -68,17 +98,21 @@ function Campo({
   const comum = { 'aria-label': def.rotulo, disabled: desabilitado, size: 'xs' as const };
   if (t === 'bool')
     return <Switch {...comum} checked={!!valor} onChange={(e) => aoMudar(e.currentTarget.checked)} />;
-  if (t === 'int')
+  if (t === 'int') {
+    // A faixa do catálogo (F3-B12: as da ERP 9.3.1); a API confere de novo.
+    const faixa = faixaConfiguracao(def.chave);
     return (
       <NumberInput
         {...comum}
         w={140}
         allowDecimal={false}
-        min={0}
+        min={faixa?.min ?? 0}
+        max={faixa?.max}
         value={valor as number | ''}
         onChange={aoMudar}
       />
     );
+  }
   if (t === 'dinheiro')
     return (
       <NumberInput
@@ -161,6 +195,22 @@ export function CamposConfiguracoes({
   });
   const porChave = useMemo(() => new Map((dados.data ?? []).map((v) => [v.chave, v])), [dados.data]);
   const visiveis = itens.filter((i) => porChave.has(i.chave));
+  // F3-B12: os caixas abaixo da versão que dá efeito a cada chave da aba (na loja, só os dela).
+  const chavesComVersao = visiveis.filter((i) => temVersaoPdv(i.chave)).map((i) => i.chave);
+  const versoes = useQuery({
+    queryKey: ['configuracoes', 'terminais-desatualizados', chavesComVersao.join(','), lojaId ?? null],
+    queryFn: () =>
+      apiErp.get<RespostaTerminaisDesatualizados>(
+        `/configuracoes/terminais-desatualizados${query({ chave: chavesComVersao.join(','), lojaId })}`,
+      ),
+    enabled: chavesComVersao.length > 0,
+  });
+  const versaoPorChave = useMemo(
+    () => new Map((versoes.data?.chaves ?? []).map((c) => [c.chave, c])),
+    [versoes.data],
+  );
+  // O 422 da trava dura (F3-B12): a lista dos caixas que impedem ligar, num modal.
+  const [travadas, setTravadas] = useState<ChaveComTerminaisDesatualizados[] | null>(null);
 
   const inicial = useMemo(() => {
     const valores: Record<string, unknown> = {};
@@ -181,7 +231,11 @@ export function CamposConfiguracoes({
   const personalizado = { ...inicial.personalizado, ...edicoesPersonalizado };
 
   const alteradas = itens.filter((i) => {
-    if (!porChave.has(i.chave)) return false;
+    const info = porChave.get(i.chave);
+    if (!info) return false;
+    // O gravado fora da faixa (F3-B12) conta como alteração: o exibido (o padrão na empresa, o "Herdar" na loja) é o
+    // que já vale, e sem isto não haveria como gravá-lo para apagar a linha inválida e o aviso.
+    if ((lojaId ? info.foraDaFaixa?.loja : info.foraDaFaixa?.empresa) !== undefined) return true;
     if (lojaId && personalizado[i.chave] !== inicial.personalizado[i.chave]) return true;
     return (
       JSON.stringify(paraCatalogo(i.tipo, valores[i.chave])) !==
@@ -213,6 +267,11 @@ export function CamposConfiguracoes({
     onError: (e) => {
       if (e instanceof ErroRequisicao && e.campos) {
         setErros(Object.fromEntries(Object.entries(e.campos).map(([k, v]) => [k, v[0] ?? ''])));
+      }
+      const detalhes = e instanceof ErroRequisicao ? e.corpo.detalhes : undefined;
+      if (detalhes?.codigo === CODIGO_TERMINAIS_DESATUALIZADOS && Array.isArray(detalhes.chaves)) {
+        setTravadas(detalhes.chaves as ChaveComTerminaisDesatualizados[]);
+        void queryClient.invalidateQueries({ queryKey: ['configuracoes', 'terminais-desatualizados'] });
       }
       notifications.show({ color: 'red', message: (e as Error).message });
     },
@@ -258,6 +317,10 @@ export function CamposConfiguracoes({
                 .map((i) => {
                   const info = porChave.get(i.chave)!;
                   const herdando = !!lojaId && !personalizado[i.chave];
+                  const versao = versaoPorChave.get(i.chave);
+                  const textoVersao = versao ? textoVersaoChave(versao) : null;
+                  const foraDaFaixa = lojaId ? info.foraDaFaixa?.loja : info.foraDaFaixa?.empresa;
+                  const faixa = faixaConfiguracao(i.chave);
                   return (
                     <Table.Tr key={i.chave} data-chave={i.chave}>
                       <Table.Td>
@@ -267,6 +330,18 @@ export function CamposConfiguracoes({
                             <Badge size="xs" variant="outline" color="gray">
                               módulo futuro
                             </Badge>
+                          )}
+                          {i.fase && (
+                            <Badge size="xs" variant="outline" color="gray">
+                              {i.fase}
+                            </Badge>
+                          )}
+                          {i.semEfeito && (
+                            <Tooltip label={i.semEfeito} multiline w={260}>
+                              <Badge size="xs" variant="outline" color="yellow">
+                                sem efeito ainda
+                              </Badge>
+                            </Tooltip>
                           )}
                           {!lojaId && info.lojasSobrepondo > 0 && (
                             <Tooltip
@@ -281,6 +356,18 @@ export function CamposConfiguracoes({
                             {i.ajuda}
                           </Text>
                         )}
+                        {textoVersao && (
+                          <Text size="xs" c={versao?.trava ? 'orange' : 'dimmed'} data-versao-chave={i.chave}>
+                            {textoVersao}
+                          </Text>
+                        )}
+                        {foraDaFaixa !== undefined && (
+                          <Text size="xs" c="orange">
+                            {`O valor gravado ${String(foraDaFaixa)} está fora da faixa${
+                              faixa ? ` ${faixa.min}–${faixa.max}` : ''
+                            } e não vale: vale o ${lojaId ? 'da empresa' : 'padrão'}. Gravar apaga o valor inválido (com o valor exibido ou outro válido).`}
+                          </Text>
+                        )}
                         {erros[i.chave] && (
                           <Text size="xs" c="red">
                             {erros[i.chave]}
@@ -291,7 +378,7 @@ export function CamposConfiguracoes({
                         <Table.Td w={230}>
                           <SegmentedControl
                             size="xs"
-                            disabled={somenteLeitura}
+                            disabled={somenteLeitura || !!i.fase}
                             data={[
                               { value: 'herdar', label: 'Herdar da empresa' },
                               { value: 'personalizar', label: 'Personalizar' },
@@ -310,7 +397,7 @@ export function CamposConfiguracoes({
                             herdando ? exibir(i.tipo, info.valorEmpresa ?? info.padrao) : valores[i.chave]
                           }
                           aoMudar={(v) => setValores((s) => ({ ...s, [i.chave]: v }))}
-                          desabilitado={somenteLeitura || herdando}
+                          desabilitado={somenteLeitura || herdando || !!i.fase}
                         />
                       </Table.Td>
                     </Table.Tr>
@@ -335,6 +422,41 @@ export function CamposConfiguracoes({
           </Button>
         </Group>
       )}
+      <Modal opened={!!travadas} onClose={() => setTravadas(null)} title="Caixas com o PDV antigo" size="lg">
+        {travadas && (
+          <Stack gap="sm">
+            <Text size="sm">
+              Esta configuração muda o preço ou o pagamento: com ela ligada, os caixas antigos cobrariam
+              diferente dos novos. Atualize o PDV destes caixas, ou desative os que não estão em uso, e grave
+              de novo.
+            </Text>
+            {travadas.map((c) => (
+              <Stack key={c.chave} gap={4}>
+                <Text size="sm" fw={500}>
+                  {itens.find((i) => i.chave === c.chave)?.rotulo ?? c.chave}: PDV {c.versaoMinima} ou mais
+                  novo
+                </Text>
+                <List size="sm">
+                  {c.terminais.map((t) => (
+                    <List.Item key={t.id}>{descreverTerminal(t)}</List.Item>
+                  ))}
+                  {(c.semDetalhes ?? 0) > 0 && (
+                    <List.Item>{`${c.semDetalhes} caixa(s) das suas lojas (os detalhes pedem "PDVs/Terminais: Ver")`}</List.Item>
+                  )}
+                  {c.outrasLojas > 0 && (
+                    <List.Item>{`${c.outrasLojas} caixa(s) de outras lojas, fora do seu acesso`}</List.Item>
+                  )}
+                </List>
+              </Stack>
+            ))}
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setTravadas(null)}>
+                Fechar
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
       <Modal
         opened={!!avisoVariacoes}
         onClose={() => setAvisoVariacoes(null)}

@@ -1638,6 +1638,47 @@ Divergências e lacunas (precedência ADR > MD > SYNC > ERP/PDV) e escolhas téc
     ciente"; o 409 `ja_cancelada` mostrando o bloqueio e atualizando o detalhe atrás do modal; o bloqueio da sessão
     aberta sem o formulário).
 
+91. **Parâmetros-PDV: aba Vendas, Lojas › Parâmetros completo, o aviso da versão do PDV e a trava** (Fase 3, F3-B12;
+    ERP 9.3.1, 9.10, 10.3.9; D15; README da API › decisão 230; `src/paginas/configuracoes/{rotulos.ts,
+    CamposConfiguracoes.tsx,Configuracoes.tsx}`, `src/paginas/lojas/Lojas.tsx`). Escolhas, sem pergunta ao dono:
+    - **Aba Vendas** (`ABA_VENDAS`, todas as `vendas.*` do catálogo) e, abaixo dela, o "Nº da próxima venda" por loja
+      (`ProximaVendaErp`: o seletor das lojas permitidas, o número só editável com "Numeração própria" gravada; a
+      recusa da API aparece no campo, sem prender o campo ao mínimo; a consulta fica sob a chave `configuracoes` e é
+      relida quando o bloco de cima grava). As de NF-e (remessa, PF fora do estado, volumes) desabilitadas com "Fase 6".
+    - **Lojas › Parâmetros** (`PARAMETROS_LOJA`): toda chave Loja = S do catálogo, uma vez só (o vitest confere contra o
+      catálogo): as das abas, os blocos de módulos futuros da 9.3 (PDV Mobile, pesquisa de satisfação; "ERP – alertas"
+      com "Fase 5") e, desabilitadas com a fase, as de loja da 9.4 (fiscal) e da 9.7 (financeiro), que ainda não têm aba
+      nas Configurações. Entraram também na aba PDV as do F3-B3 (`pdv.vasilhame_comodato_max_por_cliente`,
+      `pdv.vale_exige_conferencia`), e o comodato deixou de ser "módulo futuro" (está pronto e desligado, D84, com a trava).
+    - **Selos** (`RotuloConfiguracao`): `fase` (o selo com a fase e o campo desabilitado, também o "Herdar/Personalizar")
+      e `semEfeito` (o selo amarelo "sem efeito ainda", com a explicação na dica e o campo editável, para a loja poder
+      deixar pronto): a chave que nenhuma versão do PDV nem a nuvem lê ainda (conferido nas tags do PDV: fontes,
+      agrupar produtos, troco máximo, CPF na finalização, confirmação de idade, recibo, entre outras), a do crediário e
+      do PIX dinâmico (Fase 4) e as que só valem para a venda do ERP. Nenhuma chave de `VERSAO_PDV_DA_CHAVE` tem selo (o
+      vitest confere).
+    - **Aviso da versão**: cada bloco consulta uma vez `GET /configuracoes/terminais-desatualizados` com as chaves
+      visíveis que têm versão (na loja, com a loja) e mostra, sob a chave, "Tem efeito a partir do PDV x.y; N caixa(s)
+      desatualizado(s): Loja – caixa 01: versão 0.13.0; …" só quando há caixa antigo; a chave com trava diz sempre "Só
+      liga com todos os caixas ativos no PDV x.y ou mais novo" (em laranja). A consulta que falha não mostra nada (a API
+      continua barrando a trava). Quem só tem "Configurações: Ver" (sem "PDVs/Terminais: Ver" nem "Configurações:
+      Editar") recebe os caixas das suas lojas só na contagem (`semDetalhes`): "N das suas lojas (os detalhes pedem
+      "PDVs/Terminais: Ver")".
+    - **Trava**: o 422 `TERMINAIS_DESATUALIZADOS` abre o modal "Caixas com o PDV antigo" com os caixas por chave (os de
+      outras lojas só na contagem), sem "Gravar mesmo assim", e a mensagem fica no campo.
+    - **Faixa**: o campo inteiro usa o mínimo e o máximo do catálogo (`faixaConfiguracao`); o valor gravado fora da
+      faixa vem em `foraDaFaixa` e a linha avisa "O valor gravado X está fora da faixa a–b e não vale: vale o padrão (na
+      loja, o da empresa). Gravar apaga o valor inválido (com o valor exibido ou outro válido)." A chave com
+      `foraDaFaixa` no escopo da tela conta como alteração mesmo sem mexer: o exibido já é o que vale (o padrão na
+      empresa, o "Herdar" na loja), e gravá-lo manda o padrão (a API apaga a linha igual ao padrão) ou o `null` na loja.
+    - **D15** (F3-Q27 = A) na ajuda das duas chaves: o limite de valor pede o supervisor ao concluir (vazio = sem
+      limite); o "em aberto" é o máximo de vendas suspensas por caixa (vazio = sem limite, 0 = não deixa suspender;
+      sugestão 3). Os padrões do catálogo não mudam (nulos): a sugestão é do dono configurar.
+    - Testes: `src/paginas/configuracoes/ParametrosPdv.test.tsx` (as chaves Loja = S, a aba Vendas e as da Fase 6, os
+      selos fora das chaves com versão, a ajuda da D15, o texto do aviso, a consulta só das chaves com versão e com a
+      loja, a contagem `semDetalhes`, a fase desabilitando, o aviso fora da faixa e a gravação que o apaga na empresa e
+      na loja, o modal da trava e o "Nº da próxima venda" sem e com a chave,
+      com a recusa no campo); os de `Configuracoes.test.tsx` e `Lojas.test.tsx` sem mudança.
+
 ## O que ainda não foi feito (Fase 0)
 
 Busca global (Ctrl+K) (o ícone Tarefas do cabeçalho chegou no F2-B30, decisão 65); avisos globais (certificado, PDV com pendências); "Ver diferenças" no conflito 409 e o antes × depois no Histórico do formulário (o do relatório Histórico de produtos chegou no F2-B42, decisão 76); "Mostrar

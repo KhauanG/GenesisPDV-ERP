@@ -8035,6 +8035,72 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        a loja não permitida, 404; a gravação 403 com só `vendas.cancelar`, a prévia 200; o razão e o `recalcular-saldos`
        idênticos no fim).
 
+230. **Parâmetros-PDV: a versão do PDV de cada chave, a trava dura, as faixas da 9.3.1 e o "Nº da próxima venda"**
+     (F3-B12; plano `docs/planos/fase3-plano.md`; ERP 9.3.1, 9.10, 10.3.9; D15 = F3-Q27 (A); `packages/shared/src/
+     configuracoes.ts`, `configuracoes/{versao-pdv,valores,configuracoes.controller}.ts`,
+     `lojas/{numeracao-venda-erp,lojas.controller}.ts`). Sem migração e sem PDV. Escolhas técnicas, sem pergunta ao
+     dono:
+     - **`VERSAO_PDV_DA_CHAVE`** (shared): a chave que o PDV instalado pode não ler, com a primeira versão que a lê e
+       se tem trava. Conferida contra as tags `pdv-v0.10.0`..`pdv-v0.13.0` (as chaves que cada versão lê: 0.13.0 lê as
+       mesmas que a `main`; a guarda das variações, o F4 "Outras lojas" e o saldo na busca vêm do 0.11.0) e contra os
+       blocos do plano que passam a ler cada chave: R3 (0.14.0) preço digitado e alterado, lote vencendo, etiqueta de
+       balança, vendas em aberto, limite de valor (D15), foto e vendedor; R4 (0.15.0) comodato, cliente criado no
+       caixa, trocas e vales; R5 (0.16.0) orçamentos. `produtos.variacoes_habilitadas` entra com a
+       `VERSAO_PDV_GUARDA_VARIACOES` (a constante continua; o `GET /configuracoes/terminais-sem-guarda-variacoes` e o
+       modal "Gravar mesmo assim" ficam, agora pela mesma consulta, `terminaisAtivos`). Cada bloco seguinte acrescenta
+       a sua chave (a das promoções, F3-B34, com trava); se a release sair com outro número, troca-se a constante.
+     - **`GET /configuracoes/terminais-desatualizados?chave=a,b[&lojaId=]`** (`configuracoes.ver`: é o que a tela
+       mostra junto da chave): por chave pedida (só as do mapa, conferidas com `temVersaoPdv`, que usa `Object.hasOwn`:
+       com o `in`, `toString` ou `__proto__` passariam e a comparação de versões daria 500; outra é 422), os terminais `ativo`/`desativando` abaixo da versão ou sem versão conhecida (o revogado e o que provisiona
+       não contam). Sem `lojaId`, todas as lojas (a chave da empresa vale em todas); com `lojaId`, só ela, que tem de
+       ser permitida (403). Detalhes só das lojas permitidas, as outras na contagem `outrasLojas` (decisão 181). Os
+       detalhes de cada terminal (id, caixa, descrição, versão) são os da listagem de terminais (`terminais.ver`): vão
+       só a quem tem `terminais.ver` ou `configuracoes.editar` (quem grava a chave já recebe a lista na trava e na
+       guarda das variações; `veDetalhesTerminais`); só com `configuracoes.ver`, os das lojas permitidas vão na
+       contagem `semDetalhes`, como a prontidão faz sem `terminais.ver`.
+     - **Trava dura** (`conferirTravaVersao`, dentro da transação do `PUT /configuracoes`, que já tem a 7300001): a
+       gravação que faz o valor efetivo de uma chave com `trava` **passar** de desligado a ligado numa loja com terminal
+       ativo abaixo da versão é recusada com 422 `REGRA_NEGOCIO`, `detalhes.codigo = 'TERMINAIS_DESATUALIZADOS'`, a
+       lista por chave (com a mesma regra de visibilidade) e a mensagem no campo; nada é gravado. Na empresa, contam as
+       lojas sem valor próprio válido; na loja, só ela, inclusive o "Herdar" que traz a empresa ligada. Desligar, e
+       regravar o que já estava ligado, sempre passa. Só chaves booleanas têm trava (o `configuracoes.spec.ts`
+       confere) e hoje é só `pdv.vasilhame_comodato` (R4): a chave das promoções nasce com o F3-B34, e o vale como
+       pagamento e a baixa interna são formas de pagamento (os blocos delas decidem a trava). Fica de fora, de
+       propósito: o terminal ativado **depois** com um PDV antigo (a versão mínima do canal é quem segura a ativação),
+       e por isso o ERP mostra o aviso também com a chave ligada.
+     - **Faixas da ERP 9.3.1** (`pdv.dias_validade_cupom_troca` 0–365, `pdv.fonte_lista` 10–32, `pdv.fonte_total`
+       20–72, `pdv.fonte_codigo` 10–40, `pdv.vale_compra_validade_dias` 1–730, `pdv.aviso_vencimento_dias` 1–365). O
+       valor já gravado fora da faixa não é recusado nem apagado: `valorGravadoValido` (shared) o tira do valor efetivo
+       em `lerConfiguracoes` e na listagem, que cai no nível seguinte (a loja na empresa, a empresa no padrão), e a
+       listagem o devolve em `foraDaFaixa` para o aviso do ERP; a gravação nova já usa a faixa. A chave fora do
+       catálogo continua valendo como gravada em `lerConfiguracoes` (como antes). O pull continua mandando a linha
+       como está: nenhum PDV lê estas seis chaves ainda, e o bloco que passar a lê-las aplica a mesma faixa no caixa.
+     - **"Nº da próxima venda" do ERP** (`GET`/`PUT /lojas/:id/numeracao-venda-erp`, `configuracoes.ver` e
+       `configuracoes.editar`: o campo fica na aba Vendas das Configurações; loja permitida, 403): a numeração `venda` do
+       caixa 0 (dono `nuvem`). O "último usado" é o maior entre o contador e a maior venda do caixa 0 gravada
+       (`uq_vendas_numero`), para um contador atrasado não repetir número. Só com `vendas.numeracao_propria` (422
+       `REGRA_NEGOCIO`); o número ≤ último usado é 422 no campo `proximoNumero`; até `NUMERO_VENDA_MAXIMO`. A linha do
+       contador é lida com `for update` (a mesma que a venda do ERP do F3-B54 vai travar para tirar o número): duas
+       gravações ao mesmo tempo ficam em fila, e repetir o próximo atual não grava nem audita (só regrava se o contador
+       ficou atrás da maior venda). Sem a 7300001: `numeracoes` não desce e o trigger dela é o `fn_versao_local`. A
+       loja sem a linha (de antes do assistente, MD 7.13) a ganha pelo `garantirNumeracoesLoja`. Auditoria `editar` em
+       `numeracoes` com o próximo e o último, antes e depois.
+     - **Compatibilidade.** Nenhum evento, fluxo, `versoes_schema` nem tabela espelhada muda; o PDV 0.13.0 instalado
+       segue igual (a trava só age no ERP, e a chave com trava nasce desligada).
+     - **Testes.** `packages/shared/src/configuracoes.spec.ts` (as faixas, o valor fora da faixa, o mapa só com chaves
+       do catálogo e trava só em booleana desligada no padrão, a consulta e o número); `test/integracao/
+       parametros-pdv.test.ts` (a consulta por chave na ordem pedida com o revogado fora e o sem versão dentro, por loja,
+       o Gerente só com a contagem da outra loja, 403 da loja e sem permissão, 422 da chave sem versão e das do
+       protótipo (`toString`, `__proto__`), o perfil só com `configuracoes.ver` com a contagem `semDetalhes`; a trava na
+       empresa com a lista e sem gravar, o Gerente barrado pela loja que não vê, desligar passa, a loja com valor próprio
+       desligado fora da conta, o "Herdar" e o "Personalizar" da loja conferidos, regravar ligado passa, o terminal
+       revogado não conta e o `desativando` (em substituição) conta, na trava e no aviso, a loja fora do acesso 403, a
+       chave sem trava grava; o valor fora da faixa na empresa e na loja, igual na listagem e no `lerConfiguracao`, e a
+       gravação com a faixa nova; a numeração sem a chave, a primeira gravação criando a linha, ≤ último, repetir sem
+       auditoria, a corrida do mesmo número auditada uma vez e a do menor perdendo, 403, a sequência por loja e o
+       contador atrás de uma venda do caixa 0 (o último usado é a venda, e gravar o próximo exibido acerta o contador)); o
+       `terminais.test.ts` da rota das variações, sem mudança.
+
 ## O que ainda não foi feito (Fase 0)
 
 Acesso como suporte; aba Acessos do usuário (sessões ativas, últimos logins); anexos de loja/marca/categoria (envio

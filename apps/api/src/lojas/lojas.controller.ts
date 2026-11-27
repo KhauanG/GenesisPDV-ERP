@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import {
   alterarLojaSchema,
+  alterarNumeracaoVendaErpSchema,
   criarLojaSchema,
   filtroLojasSchema,
   limiteDeslocamento,
@@ -8,6 +9,7 @@ import {
   type CriarLoja,
   type LojaDetalhe,
   type LojaResumo,
+  type NumeracaoVendaErp,
   type Pagina,
 } from '@genesis/shared';
 import { and, count, eq, ilike, inArray, isNull, max, ne, or, sql } from 'drizzle-orm';
@@ -50,6 +52,7 @@ import { cancelarCodigosPendentes } from '../terminais/codigos-pendentes.js';
 import type { DbEmpresa } from '../tenancy/tenancy.js';
 import { fluxosAfetados } from './fluxos-afetados.js';
 import { garantirMunicipio } from './municipio.js';
+import { lerNumeracaoVendaErp } from './numeracao-venda-erp.js';
 import { garantirNumeracoesLoja } from './numeracoes.js';
 
 /** Vincular a loja a um estoque existente exige vê-lo (decisão 149): senão a criação o concederia a quem cria. */
@@ -163,6 +166,75 @@ export class LojasController {
     const d = await this.s.tenancy.cx().consulta((db) => detalheLoja(db, lojaId));
     if (!d) throw ErroApi.naoEncontrado('Loja não encontrada.');
     return d;
+  }
+
+  /**
+   * "Nº da próxima venda" das vendas do ERP da loja (ERP 9.10; F3-B12), lido pela aba Vendas das Configurações (por
+   * isso `configuracoes.ver`, e não `lojas.ver`). Ver `numeracao-venda-erp.ts`.
+   */
+  @Permissao('configuracoes.ver')
+  @Get(':id/numeracao-venda-erp')
+  async numeracaoVendaErp(@Param('id') id: string, @Sessao() sessao: SessaoErp): Promise<NumeracaoVendaErp> {
+    const lojaId = validar(z.uuid(), id);
+    garantirLoja(sessao, lojaId);
+    const {
+      numeracaoId: _id,
+      contador: _c,
+      ...r
+    } = await this.s.tenancy.cx().consulta((db) => lerNumeracaoVendaErp(db, lojaId, false));
+    return r;
+  }
+
+  /**
+   * Grava o "Nº da próxima venda" (`ultimo_numero = proximoNumero − 1` da numeração `venda` do caixa 0): só com
+   * `vendas.numeracao_propria` ligada; o número tem de ser maior que o último usado (o contador ou a maior venda do
+   * caixa 0), para nunca repetir número; repetir o próximo atual só grava se o contador ficou atrás. A linha do contador fica com
+   * `for update` (a corrida com outra gravação ou com a venda do ERP espera); `numeracoes` não desce ao PDV e o trigger
+   * dela é o `fn_versao_local`, sem a 7300001. Auditoria `editar` em `numeracoes`.
+   */
+  @Permissao('configuracoes.editar')
+  @Put(':id/numeracao-venda-erp')
+  async gravarNumeracaoVendaErp(
+    @Param('id') id: string,
+    @Body() corpo: unknown,
+    @Sessao() sessao: SessaoErp,
+    @Req() req: RequisicaoGenesis,
+  ): Promise<NumeracaoVendaErp> {
+    const lojaId = validar(z.uuid(), id);
+    const { proximoNumero } = validar(alterarNumeracaoVendaErpSchema, corpo);
+    garantirLoja(sessao, lojaId);
+    return this.s.tenancy.cx().transacao(async (tx) => {
+      const atual = await lerNumeracaoVendaErp(tx, lojaId, true);
+      if (!atual.numeracaoPropria)
+        throw new ErroApi(
+          'REGRA_NEGOCIO',
+          'Ligue "Numeração própria" (Configurações › Vendas) para definir o número da próxima venda.',
+        );
+      if (proximoNumero <= atual.ultimoNumero)
+        throw new ErroApi('VALIDACAO', 'Verifique os campos destacados.', {
+          campos: {
+            proximoNumero: [`Tem de ser maior que o último número usado (${atual.ultimoNumero}).`],
+          },
+        });
+      const { numeracaoId, contador, ...r } = atual;
+      // Repetir o próximo atual não grava, a não ser que o contador tenha ficado atrás da maior venda do caixa 0.
+      if (proximoNumero - 1 === contador) return r;
+      await tx
+        .update(numeracoes)
+        .set({ ultimoNumero: proximoNumero - 1 })
+        .where(eq(numeracoes.id, numeracaoId!));
+      await this.s.auditoria.registrar(tx, origemDaRequisicao(req), {
+        acao: 'editar',
+        entidade: 'numeracoes',
+        registroId: numeracaoId,
+        lojaId,
+        localizacao: 'Cadastros › Configurações › Vendas',
+        descricao: `Nº da próxima venda do ERP: ${atual.proximoNumero} → ${proximoNumero}`,
+        antes: { proximo_numero: atual.proximoNumero, ultimo_numero: atual.ultimoNumero },
+        depois: { proximo_numero: proximoNumero, ultimo_numero: proximoNumero - 1 },
+      });
+      return { ...r, ultimoNumero: proximoNumero - 1, proximoNumero };
+    });
   }
 
   @Permissao('lojas.criar')
