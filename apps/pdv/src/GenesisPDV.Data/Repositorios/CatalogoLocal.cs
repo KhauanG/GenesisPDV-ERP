@@ -392,6 +392,8 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogg
                 .OrderBy(c => c.Ordem)
                 .ToListAsync(ct);
 
+        var complementos = await ComplementosAsync(db, produtos.Where(p => p.Tipo == TipoProduto.ComComplementos).Select(p => p.Id).ToList(), ct);
+
         var gruposPorId = grupos.ToDictionary(
             g => g.Id,
             g => new GrupoPrecoQuantidade(
@@ -418,7 +420,10 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogg
                 Embalagens: codigos
                     .Where(b => b.Fator != 1m || b.Preco != null)
                     .Select(b => new EmbalagemPreco(b.Id, b.Fator, b.Preco, b.UnidadeId is { } u ? siglas.GetValueOrDefault(u) : null))
-                    .ToList());
+                    .ToList(),
+                // Gelada da loja e preço parcelado (PDV 11.1, 11.4; F3-B18): o Alt+G e o pagamento em parcelas.
+                AcrescimoGelada: pl?.AcrescimoGelada,
+                PrecoParcelado: p.PrecoParcelado);
             resultado[p.Id] = new ProdutoVenda(
                 p.Id,
                 p.Codigo,
@@ -439,14 +444,87 @@ public sealed class CatalogoLocal(IDbContextFactory<PdvDbContext> fabrica, ILogg
                 ControlaEstoque = p.ControlaEstoque,
                 IdadeMinima = p.IdadeMinima,
                 TemVariacoesAtivas = comVariacaoAtiva.Contains(p.Id),
+                // PDV 10.4 (F3-B16): o caixa pede o preço (e, no genérico, a descrição) na inclusão.
+                SolicitaPreco = p.SolicitaPrecoPdv,
+                Generico = p.Generico,
                 FichaTecnica = p.Tipo == TipoProduto.Produzido
                     ? fichas.Where(c => c.ProdutoId == p.Id)
+                        .Select(c => new ComponenteFicha(c.ComponenteId, c.ComponenteVariacaoId, c.Quantidade, c.PerdaPct)).ToList()
+                    : null,
+                GruposComplementos = p.Tipo == TipoProduto.ComComplementos ? complementos.GetValueOrDefault(p.Id) ?? [] : null,
+            };
+        }
+
+        return resultado;
+    }
+
+    /// <summary>
+    /// Complementos do <c>com_complementos</c> (MD 3.6.8; PDV 10.2; F3-B15): os grupos vivos com as opções ativas, na
+    /// <c>ordem</c> do cadastro; o grupo sem opção ativa fica de fora. A opção vinculada leva o nome do vinculado quando não
+    /// tem descrição própria, e a ficha dele quando é <c>produzido</c> (a baixa dos insumos que o caixa calcula, D17); a
+    /// vinculada a um produto que o espelho não tem (excluído) e sem descrição não aparece.
+    /// </summary>
+    private static async Task<Dictionary<Guid, List<GrupoComplementos>>> ComplementosAsync(PdvDbContext db, List<Guid> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var grupos = await db.Set<ProdutoGrupoComplementosRegistro>().AsNoTracking()
+            .Where(g => ids.Contains(g.ProdutoId) && g.ExcluidoEm == null)
+            .ToListAsync(ct);
+        var idsGrupos = grupos.Select(g => g.Id).ToList();
+        var opcoes = idsGrupos.Count == 0
+            ? []
+            : await db.Set<ProdutoComplementoRegistro>().AsNoTracking()
+                .Where(o => idsGrupos.Contains(o.GrupoId) && o.Ativo && o.ExcluidoEm == null)
+                .ToListAsync(ct);
+        var idsVinculados = opcoes.Where(o => o.ProdutoId != null).Select(o => o.ProdutoId!.Value).Distinct().ToList();
+        var vinculados = idsVinculados.Count == 0
+            ? []
+            : await db.Produtos.AsNoTracking()
+                .Where(p => idsVinculados.Contains(p.Id) && p.ExcluidoEm == null)
+                .Select(p => new { p.Id, p.Nome, p.Tipo, p.ControlaEstoque })
+                .ToDictionaryAsync(p => p.Id, ct);
+        var idsProduzidos = vinculados.Values.Where(v => v.Tipo == TipoProduto.Produzido).Select(v => v.Id).ToList();
+        var fichas = idsProduzidos.Count == 0
+            ? []
+            : await db.ProdutosComponentes.AsNoTracking()
+                .Where(c => idsProduzidos.Contains(c.ProdutoId) && c.Tipo == "ficha_tecnica" && c.ExcluidoEm == null)
+                .OrderBy(c => c.Ordem)
+                .ToListAsync(ct);
+
+        OpcaoComplemento? Opcao(ProdutoComplementoRegistro o)
+        {
+            var vinculado = o.ProdutoId is { } pid ? vinculados.GetValueOrDefault(pid) : null;
+            var descricao = string.IsNullOrWhiteSpace(o.Descricao) ? vinculado?.Nome : o.Descricao;
+            if (string.IsNullOrWhiteSpace(descricao))
+            {
+                return null;
+            }
+
+            return new OpcaoComplemento(o.Id, descricao.Trim(), o.PrecoAdicional, o.ProdutoId, o.BaixaEstoque, o.QuantidadeBaixa, o.Ordem)
+            {
+                VinculadoComSaldo = vinculado is { ControlaEstoque: true }
+                                    && vinculado.Tipo is not (TipoProduto.Kit or TipoProduto.Produzido or TipoProduto.Servico),
+                FichaVinculado = vinculado?.Tipo == TipoProduto.Produzido
+                    ? fichas.Where(c => c.ProdutoId == vinculado.Id)
                         .Select(c => new ComponenteFicha(c.ComponenteId, c.ComponenteVariacaoId, c.Quantidade, c.PerdaPct)).ToList()
                     : null,
             };
         }
 
-        return resultado;
+        return grupos
+            .Select(g => (g.ProdutoId, Grupo: new GrupoComplementos(
+                g.Id, g.Nome, g.Minimo, g.Maximo, g.Obrigatorio, g.Ordem,
+                opcoes.Where(o => o.GrupoId == g.Id).OrderBy(o => o.Ordem).ThenBy(o => o.Id)
+                    .Select(Opcao).OfType<OpcaoComplemento>().ToList())))
+            .Where(x => x.Grupo.Opcoes.Count > 0)
+            .GroupBy(x => x.ProdutoId)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Select(y => y.Grupo).OrderBy(g => g.Ordem).ThenBy(g => g.Nome, StringComparer.Ordinal).ToList());
     }
 
     private static async Task<Dictionary<Guid, string>> SiglasAsync(PdvDbContext db, IEnumerable<Guid> ids, CancellationToken ct)

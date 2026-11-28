@@ -270,7 +270,7 @@
       "genesispdv.data": {
         "type": "Project",
         "dependencies": {
-          "GenesisPDV.Core": "[0.9.0, )",
+          "GenesisPDV.Core": "[0.13.0, )",
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.14, )"
         }
       },

@@ -72,6 +72,12 @@ public static class CatalogoOcorrencias
             "Parâmetros do caixa alterados",
             "Só um registro. Se a tela passou a bloquear sozinha ou a cópia do backup mudou de lugar, confira na aba 7 Parâmetros o que " +
             "está valendo (quem gravou e o antes e o depois ficam no histórico de uso)."),
+        [CodigoOcorrencia.AtalhoInvalido.Codigo] = new(
+            "Atalho do ERP não aplicado",
+            "O caixa continua com a tecla padrão dessa ação (o F1 mostra as teclas que estão valendo); o Concluir venda e o menu de " +
+            "Funções ficam sempre ligados. Corrija no ERP: Cadastros › Configurações › PDV › Atalhos do PDV (cada tecla só numa ação " +
+            "habilitada; Alt+F4, Ctrl+Alt+Del e Ctrl+Alt+T não podem). " +
+            "Depois da próxima sincronização, a tecla do ERP passa a valer."),
         [CodigoOcorrencia.RestauradoOffline.Codigo] = new(
             "Caixa restaurado sem internet",
             "A numeração das vendas saltou para não repetir número depois da restauração do backup. Nada a fazer; quando a internet " +

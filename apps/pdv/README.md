@@ -196,9 +196,12 @@ tudo (dados, backup, logs, impressão) sob essa pasta.
    última venda, **6** resumo diário, **S** status do sync, **V** devolução de cascos (com a venda em andamento,
    desconta os vazios a mais pelo valor do casco; F3 passa a só a entrada). **F12** gestão de vendas da
    sessão (Enter detalhes, **Ctrl+R** reimprime com a marca da 2ª via, **Ctrl+Del** cancela a venda paga: F2/F3
-   escolhem a devolução de cada pagamento, o CARLOS libera). **F5** CPF na nota ou cliente (Ctrl+Del tira). F7, F8,
-   F9, Ctrl+N e Ctrl+T mostram "próximas fases". Todas essas teclas também são **botões** na barra de baixo (o
-   mesmo comando, decisão 65), e o **duplo clique** num item abre a janela do item (quantidade, desconto, remover).
+   escolhem a devolução de cada pagamento, o CARLOS libera). **F5** CPF na nota ou cliente (Ctrl+Del tira).
+   **Ctrl+N** nova venda (com o caixa livre limpa o troco e o cupom da anterior; com itens, C cancela e Esc volta).
+   F7, F8 e Ctrl+T dão um bipe com "Ação indisponível" e ficam fora da barra (chegam com os blocos deles; o F9 vem
+   desabilitado no padrão). As teclas habilitadas que esta versão tem também são **botões** na barra de baixo, na
+   ordem da tabela de atalhos (F2, F4, F10, F12, Ctrl+N, F1, …, com o ⚙ Central no fim; o mesmo comando, decisões 65 e
+   101), e o **duplo clique** num item abre a janela do item (quantidade, desconto, remover).
 6. Pagamento (F10): as formas da loja (espelho `formas_pagamento`; a demonstração só tem Dinheiro — débito, crédito e
    PIX vêm do ERP › Formas de pagamento), **↑/↓** ou **Alt+1..9** escolhem; o valor vem preenchido com o saldo, o troco
    aparece enquanto se digita (só no dinheiro) e, quitado o total, a venda finaliza: grava venda + evento
@@ -3703,9 +3706,10 @@ cascos chegaram no C10b, decisão 53; a configuração do terminal e a abertura 
 da PDV-2 (dinheiro, maquininha e PIX estático chegaram no C11a, decisão 54), confirmação de idade e
 horário restrito (fora da 1C pela O20 e a O21 do dono; só o espelho `restricoes_horario_venda` existe), "Bloqueia venda
 sem estoque" nas alternativas do combo, o filtro `(Tab) Todos | Com estoque | Promoção` da pesquisa F2 (PDV 10.3; o
-resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a venda com complementos e a
-escolha do lote no caixa (Fase 3: o espelho dos complementos chegou na R2, decisão 85, e a nuvem baixa o lote por FEFO,
-D48), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
+resto da 10.3 chegou no F2-B36, decisão 83), a venda de variações (até a Fase 3, o caixa recusa o produto com variações, decisão 81), a
+escolha do lote no caixa (Fase 3: a nuvem baixa o lote por FEFO, D48; a venda com complementos chegou no F3-B15,
+decisão 102; o preço digitado do "Produto genérico" e do "Solicita preço PDV", lacuna da Fase 1 que faltava nesta lista,
+o `Ctrl+F6` e o acréscimo no total, no F3-B16, decisão 103; o serviço avulso `Ctrl+S` fica no backlog, D77), a foto do produto na tela (`pdv.exibe_foto_produto`, decisão 86), agrupamento configurável (`pdv.agrupa_produtos`) e `pdv.desmembra_produto_kit`,
 na Central do PDV (Ctrl+Alt+C ou F11 › 8, aba 3: impressora, gaveta e "Restaurar backup", decisões 61, 63 e 68) o leitor serial, a
 balança, o TEF e a tela, SQLCipher, AppImage e atualização automática (o instalador do Windows e o `.deb` chegaram na implantação I3, decisão 62; o `.deb` saiu da distribuição na decisão 80; a reimpressão e a gestão de vendas chegaram no C11b,
 decisão 55; o desconto pelo valor do casco, no C11c, decisão 56). A senha da forma
@@ -4529,3 +4533,426 @@ reimpresso continua o original, com o número do caixa.
        passam por ele) e o Smart App Control (F3-Q35 b: ligado, os binários sem Authenticode devem ser bloqueados; o
        passo P4 do roteiro anota e para). Sem o roteiro registrado, o PR-22 não começa e a F3-Q33 volta ao dono (plano ›
        F3-B8).
+101. **Atalhos configuráveis no caixa e a Nova venda** (F3-B13; PDV 28.1–28.4; MD 3.10.2, 7.8; README do ERP › decisão
+     92, README da API › decisão 231; `GenesisPDV.Core/Atalhos/MapaAtalhos.cs`, `RepositorioConfiguracoes.MapaAtalhosAsync`,
+     `App/Servicos/ServicoAtalhos.cs`, `VendaViewModel.cs`, `VendaView.axaml(.cs)`, `Dialogos.cs`). O caixa passa a aplicar
+     a tabela `atalhos_pdv` que já descia desde a 1B. Sem migração (EF ou Drizzle), sem `Esquema.g.cs`, sem evento e sem
+     protocolo novo; a versão do PDV não sobe (vai às lojas na R3, 0.14.0, PR-21). O 0.13.0 instalado ignora a tabela como
+     antes. Escolhas técnicas, sem pergunta ao dono:
+     - **O mapa no Core** (`MapaAtalhos`, puro): o catálogo das 36 ações com a tecla, o habilitado e a ordem padrão do seed
+       da nuvem (`ATALHOS_PDV_PADRAO`, MD 7.8; o `MapaAtalhosTests` lê o `tabelas-md.ts` da API e confere ação, tecla,
+       habilitado e ordem, na ordem), mais o rótulo da barra e o texto do F1. Por ação: a linha da loja do terminal, a da
+       empresa ou o padrão; ação que o caixa não conhece (de um ERP mais novo) é ignorada. A tecla é a do
+       `normalizarTeclaAtalho` do shared, conferida pelos mesmos vetores (`packages/shared/testes/sync/atalhos.teclas.vetores.json`,
+       também no `cadastros.spec.ts`). As teclas fixas da 28.3 (Enter, Esc, Tab, setas, Del, dígitos, `+`/`-`) nem têm
+       formato de atalho, e `Alt+F4`, `Ctrl+Alt+Del` e o **`Ctrl+Alt+T` do tema** (PDV 6.8, fixo) são recusados (o
+       `Ctrl+Alt+T` passou a ser recusado também no ERP e na API). Os códigos que já descem valem sobre os nomes do plano
+       (`suspender_venda`, `recuperar_venda`, `cupom_troca_ultima`).
+     - **Tecla recusada ou repetida que chega da nuvem cai na padrão.** A recusada vai direto para a padrão da ação. Duas
+       habilitadas com a mesma tecla (só acontece com a linha da loja sobre a da empresa, ou gravada fora do ERP): cada uma
+       que está fora da padrão volta a ela, repetindo até não sobrar repetição (as padrões não se repetem entre si, então
+       sempre termina, e nenhuma ação habilitada fica sem tecla). A desabilitada não briga: a tecla dela só bipa quando
+       nenhuma habilitada a usa.
+     - **O alerta fica no caixa, não no `alerta.cadastro`.** O plano pedia o `alerta.cadastro`, mas ele é do produto
+       (`produto_id` obrigatório, `tipo_alerta` fechado na v1 da nuvem) e o caixa nunca o gerou: mandar o alerta de um
+       atalho exigiria uma versão nova do evento, contra a regra do anúncio no fim da onda. Como o ERP e o
+       `uq_atalhos_pdv_tecla` já recusam a tecla inválida ou repetida na mesma linha de loja, a única origem é a
+       sobreposição por loja (sem tela no ERP) ou uma gravação fora do ERP. O caixa grava a ocorrência
+       **`ATALHO_INVALIDO`** (nível aviso, origem sistema; a aba 5 Logs da Central mostra com a dica "Atalho do ERP não
+       aplicado" e o caminho do ERP para corrigir), uma vez por conjunto de alertas (o pull se repete a cada 30 s), com a
+       ação, a tecla recebida, a aplicada e o motivo no detalhe.
+     - **Quando relê:** ao abrir a venda (`CarregarAsync`) e a cada pull com sucesso (`UltimoPullSucessoEm` mudou na
+       situação do sync); só remonta a barra, a legenda e as teclas quando a assinatura do mapa muda. Uma falha de
+       leitura mantém o mapa que já valia. O terminal de demonstração usa o espelho dele (normalmente vazio: o padrão).
+     - **As teclas** saem do XAML: a View liga uma `KeyBinding` por tecla do mapa (o dígito também no teclado
+       numérico), todas no `TeclaAtalhoCommand`, e troca as ligações a cada mapa novo (a tecla antiga deixa de valer: o
+       `F4` depois do `Ctrl+R`). Fica no XAML só o `Ctrl+Alt+T` (fixo). A ação habilitada que esta versão tem roda o
+       mesmo comando de antes (as permissões, a liberação do supervisor e a guarda do diálogo aberto ficam nele); a
+       desabilitada no ERP e a que esta versão ainda não tem emitem o bipe (`MessageBeep` do Windows; nos testes, o
+       contador `ServicoAtalhos.Bipes`) e "Ação indisponível (F8 Tipo de preço)". A ligação só consome a tecla quando ela
+       é da venda: com um diálogo aberto, só o bloquear e o sincronizar (que já valiam por cima dele), e a tecla fica
+       para o diálogo e os campos dele (o `Ctrl+A` no campo dos cascos continua selecionando o texto); sem diálogo, as de
+       edição (`Ctrl+A/C/V/X/Z/Y`) de uma ação sem efeito continuam editando o campo de código. O `Ctrl+Alt+C` do login
+       continua fixo (o caminho do técnico para a Central não depende da tabela); na venda, a tecla de
+       `configuracao_terminal` abre a Central como o ⚙.
+     - **A barra** (decisão 65): as ações habilitadas que esta versão tem, pela `ordem` da tabela, até 15, e o ⚙ no fim
+       (16 botões, duas linhas de 8). O ⚙ mostra a tecla de Funções que vale (`F11 › 8` no padrão; `Ctrl+U › 8` com
+       Funções no `Ctrl+U`), e a dica do ⚠ da saúde também; ele **fica mesmo com `configuracao_terminal` desabilitada
+       no ERP** (padrão até a confirmação do dono): é a opção 8 do menu de funções, que não depende da tabela, e o
+       caminho do técnico (decisão 68); desabilitada, só a tecla dela (`Ctrl+Alt+C` na venda) bipa. As que esta versão
+       ainda não tem (F7, F8, F9, Ctrl+T, …) saíram da barra (antes
+       apareciam apagadas, com "disponível nas próximas fases") e entram com o bloco de cada tela. **Com o padrão da
+       nuvem, a ordem muda para o caixa:** F2, F4, F10, F12, Ctrl+N, F1, F3, Shift+F4, F5, F6, F11, Ctrl+Alt+B, Ctrl+Alt+S
+       e o ⚙ (a ordem do MD 7.8, que começa pelas do Nuvem3); a coluna Ordem do ERP rearranja. A legenda em texto (barra
+       de botões desligada) é a mesma lista, em duas linhas.
+     - **Concluir venda e Funções não se desligam** (padrão até a confirmação do dono; roadmap §16). Com a tabela
+       aplicada, desligar `concluir_venda` tiraria o F10 e o CONCLUIR (nenhuma venda termina), e desligar
+       `menu_funcoes` tiraria o F11 e o botão Funções, o único caminho da sangria, do reforço, da troca de turno e do
+       fechamento: o caixa ficaria preso até alguém religar no ERP e o caixa sincronizar. As duas
+       (`MapaAtalhos.Essenciais`, o mesmo `ACOES_ATALHO_ESSENCIAIS` do shared, conferido pelo `acoesEssenciais` dos
+       vetores) ficam sempre ligadas: o ERP trava o Switch delas (a linha antiga desligada grava ligada no próximo
+       Gravar), a API recusa gravá-las desligadas (`itens.N.habilitado`), e a linha desligada que chegar mesmo assim (a
+       da loja ou gravada fora do ERP) vale ligada no caixa, com a `ATALHO_INVALIDO` (motivo "ação essencial: não se
+       desliga"). A tecla delas continua configurável. A Ajuda (F1) pode ser desligada (o caixa não fica preso).
+     - **F1** lista as teclas fixas e cada ação habilitada desta versão com a tecla configurada (as teclas do F11 depois
+       do menu), e, em listas corridas, as que "chegam numa próxima versão" e as "desabilitadas no ERP"; rola quando não
+       cabe.
+     - **Nova venda (`Ctrl+N`)**: com o caixa livre, limpa o que ficou da venda anterior (o troco e o cupom na tela, o
+       multiplicador, o código digitado); o vendedor e o tipo de preço entram nessa limpeza com os blocos deles
+       (F3-B17 e o do vendedor). Com a venda em andamento, "Cancelar a venda [C] / Voltar [Esc]" (Enter também volta: só
+       o C cancela); o C é o cancelamento do Shift+F4 (o motivo e, sem `pdv.venda.cancelar_venda_aberta`, o supervisor).
+       O "Suspender (S)" entra com o F3-B23.
+     - **Testes.** `MapaAtalhosTests` (os vetores, o catálogo × seed, o padrão, a loja sobre a empresa e a de outra loja
+       ignorada, a tecla proibida e a inválida, a repetida e a troca em cadeia, a ação desconhecida e a barra até caber,
+       as essenciais desligadas que ficam ligadas e as mesmas do shared);
+       `AtalhosTelasTests` (os critérios 28.4: o `Ctrl+R` do pull da API falsa remove e o `F4` não faz nada, e a ação
+       desabilitada sai da barra e só bipa; a tecla repetida e a reservada com a ocorrência uma vez e o F1 com as teclas
+       configuradas; a Nova venda sem e com itens; o roteiro abrir, vender em dinheiro e débito, sangria e fechar sem
+       nenhum evento de ponteiro; o CONCLUIR e Funções desligados na nuvem que continuam valendo, com o ⚙ na tecla nova
+       de Funções e o Ctrl+Alt+C desligado que bipa); `UsabilidadeTelasTests` com a barra nova, o F7 que bipa e o clique
+       no Ctrl+Alt+S (botão sem diálogo) seguido do bipe do leitor.
+102. **Complementos no caixa: o diálogo, a camada de acréscimos do item e a v2 do `venda.finalizada`** (F3-B15; PDV
+     10.2; MD 3.6.8, 3.11.3; SYNC 9.7, 17.5; D43, D75 = F3-Q4 (A); README da API › decisão 232; `Core/Produtos/Complementos.cs`,
+     `Core/Vendas/{ItemVenda,Venda}.cs`, `Data/Repositorios/{CatalogoLocal,MapeadorVenda}.cs`, `Sync/Eventos/FabricaEventos.cs`,
+     `App/ViewModels/DialogosComplementos.cs`, `Fiscal/LayoutComprovanteVenda.cs`). O produto "Com complementos" deixa de
+     vender sem eles: o caixa abre o diálogo dos grupos e a venda sobe na v2, com a baixa do vinculado Produzido calculada
+     aqui. A `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21) e o 0.13.0 instalado não muda. Escolhas técnicas,
+     sem pergunta ao dono:
+     - **O portão é o recurso da onda** (decisão 96): o diálogo só abre com o `venda.finalizada` v2 anunciado no último
+       handshake (`ServicoVenda.ComplementosDisponiveisAsync`; na demonstração, sempre). Sem ele (a nuvem de hoje, que só
+       anuncia a v2 no F3-B30, ou o caixa recém-atualizado que abriu sem internet), o produto vende como antes, sem
+       diálogo nem complemento. A finalização grava a maior versão comum anunciada (`VersoesVendaFinalizada` = 1 e 2); a
+       venda montada com os complementos que fecha depois de um handshake sem a v2 vai na v1 com as mesmas linhas de
+       `itens_venda_complementos` sem a `componentes_estoque` (a nuvem grava os complementos sem baixa nem custo, como
+       antes): o fato consumado nunca trava. O `venda.cancelada` forma B continua v1 e leva os complementos sem a chave.
+     - **O cadastro no caixa** (`CatalogoLocal`): os grupos vivos (`excluido_em` nulo) do `com_complementos` com as opções
+       ativas, na `ordem`; o grupo sem opção ativa não aparece e o produto sem grupo vende sem diálogo. A opção vinculada
+       sem descrição própria leva o nome do vinculado; a de um vinculado que o espelho não tem, sem descrição, some. A
+       opção carrega a baixa (`baixa_estoque`, `quantidade_baixa`), se o vinculado tem saldo próprio e a ficha do
+       vinculado Produzido. Os grupos entram no snapshot da venda (`produtos_venda_snapshot`), e uma opção cadastrada no
+       meio da venda é acrescentada a ele sem mudar as que estavam (`RegrasComplementos.Juntar`): a recuperação acha por
+       ele o vinculado e a ficha de toda linha gravada. **Uma fonte por linha:** a escolha é conferida contra o cadastro
+       lido agora (o que o diálogo mostrou: grupos, mínimo, máximo e opções ativas), mas o adicional e a baixa de cada
+       opção saem da opção do snapshot quando ele já a tem (`RegrasComplementos.DoSnapshot`), como o preço e a ficha do
+       item (11.3, D17): a opção alterada por um pull no meio da venda (outro adicional, outra `quantidade_baixa`, outra
+       ficha) segue a da primeira inclusão nas linhas novas, e elas agrupam com as de antes; a opção nova vale como veio.
+     - **A escolha** (`RegrasComplementos.Conferir`, a mesma no diálogo e na venda): cada opção uma vez por unidade do item
+       (D75; `quantidade` sempre 1), só opções dos grupos do produto, e por grupo entre o mínimo (o obrigatório pede ao
+       menos 1) e o máximo, que conta opções diferentes; o grupo obrigatório com menos opções ativas que o mínimo pede o
+       gerente. `null` na inclusão é "sem complementos" (o caminho sem o recurso); a lista vazia é a escolha de nenhum.
+       `grupo_nome` e `descricao` vão cortados em 40 e 60 caracteres (os do contrato).
+     - **A camada de acréscimos do item** (Padrões da Fase 3: regra 11.3 → adicionais → gelada → promoções): o
+       `ItemVenda.AcrescimoUnitario` (Σ adicionais por unidade, derivado das linhas de complemento, sem coluna nova) soma
+       ao preço da regra 11.3 no `preco_unitario` e no `preco_tabela` em todo recálculo (`AplicarPreco`): o atacado por
+       quantidade e o mix trocam só a parte do produto, e a embalagem com preço próprio soma o adicional por unidade base
+       antes do arredondamento do valor. O F8 (F3-B17) e a gelada (F3-B18) reusam a camada. O "varejo 3,49" do cupom, o
+       varejo riscado da tela e a economia no atacado usam o varejo com os adicionais (`PrecoVarejoComAcrescimos`).
+     - **Agrupamento e cancelamento.** Linhas com complementos diferentes não se agrupam; as com a mesma lista (opção,
+       textos, quantidade e adicional comparados como número, sem a ordem) sim, quando o agrupamento estiver ligado (o
+       caixa ainda não liga o `pdv.agrupa_produtos`, Lacunas). Os complementos são fixos desde a inclusão (trocar é
+       cancelar o item e incluir de novo); cancelar o item cancela os complementos (a nuvem não baixa os do item
+       cancelado), e o restante do cancelamento parcial leva a mesma escolha com ids novos. Os ids das linhas saem em
+       ordem crescente na ordem da escolha (`RegrasComplementos.IdsEmOrdem`, também na cópia): o UUIDv7 do mesmo
+       milissegundo desempata pela parte aleatória e as linhas do item gravam o mesmo `criado_em`, então é o id que
+       devolve a ordem do cadastro na venda relida depois de uma queda e na reidratada (tela, cupom e evento).
+     - **A baixa calculada no caixa** (como a ficha do item, D17): o complemento com baixa cujo vinculado é Produzido
+       manda os insumos da ficha já multiplicados (item × complemento × `quantidade_baixa`, com a perda, 3 casas) na
+       `componentes_estoque` da linha (v2); o vinculado com saldo próprio a nuvem baixa pelo cadastro dela, o livre não
+       baixa. O saldo estimado do caixa (SYNC 15.2) passa a contar os dois: na venda em andamento pelo
+       `Venda.BaixasEstimadas`, e nas finalizadas ainda não refletidas (e na devolução da cancelada forma A) pelo
+       `ConsultasVendaLocal.SaldosEstimadosAsync`, que lê também as `itens_venda_complementos` do payload. Só na v2 e
+       só do item não cancelado, a regra do `baixaDoComplemento` da nuvem: os insumos da `componentes_estoque` da linha
+       ou, sem ela, o vinculado da opção no espelho `produtos_complementos` (pelo id, como a nuvem lê o cadastro dela)
+       com `baixa_estoque` e saldo próprio (`controla_estoque`, nem kit, nem produzido, nem serviço), na quantidade item
+       × complemento × `quantidade_baixa` em 3 casas; na v1 a nuvem não baixa os complementos, e o estimado também não.
+       O aviso e o bloqueio da 29.1 na inclusão continuam olhando só o item (o vinculado vendido avulso já vê o
+       consumo dos complementos no estimado).
+     - **Persistência local**: a tabela de movimento `itens_venda_complementos` (as colunas da nuvem, conferidas pelo
+       `EsquemaNuvemTests`; FK para o item com `cascade`), gravada no mesmo commit do item e relida com ele (a venda em
+       andamento volta com os complementos depois de uma queda, PDV 32.3). Pede uma migração EF só local,
+       `Migracoes/<data>_ComplementosVenda.cs`, que só cria a tabela (o plano dizia "sem migração" contando com uma
+       tabela local que não existia; nenhum cursor volta, nenhuma versão local muda, e o 0.10.0 e o 0.13.0 que passam
+       direto para a versão nova a aplicam depois da `FaseTres`). A reidratação (SYNC 22.2) recria as linhas do
+       documento da venda e apaga as do backup antes dos itens.
+     - **O diálogo** (`DialogoComplementosViewModel`, só pelo teclado, como o Montar combo): um grupo por vez com a regra
+       ("Escolha de 1 a 2", "Opcional, até 2") e "N de no máximo M"; ↑/↓ andam entre as opções, Espaço ou 1–9 (também no
+       teclado numérico) marcam e desmarcam (no grupo de no máximo 1, marcar outra troca a escolha; nos demais, passar do
+       máximo mostra a mensagem); Enter confere o grupo e passa ao próximo, e no último inclui o item; Tab/Shift+Tab
+       andam sem conferir (o Enter final confere todos e volta ao que falta); Esc volta ao grupo anterior e, no primeiro,
+       fecha sem incluir nada (nenhum número de venda é gasto). Com `3*<código>`, as 3 unidades levam os mesmos
+       complementos. A tela mostra os complementos sob o item ("└ + MOLHO BARBECUE, + CHEDDAR CREMOSO (+4,50)") e o
+       cupom, um por linha sob a descrição, com o adicional por unidade.
+     - **Testes.** `ComplementosTests` (Core: preço e ordem das linhas; mínimo, máximo, obrigatório, repetida e de fora;
+       o grupo sem opções suficientes; sem a escolha vende como antes; agrupamento; atacado que preserva o adicional e
+       volta ao varejo; cancelamento total e parcial; a baixa estimada e a `componentes_estoque`; a venda recuperada que
+       reprecifica com o adicional e acha a ficha pelo snapshot; a opção e o grupo novos no meio da venda que entram no
+       snapshot e baixam pelo cadastro deles; a opção alterada que segue o preço e a baixa da primeira inclusão; os ids na
+       ordem da escolha), `ComplementosDadosTests` (Data: o catálogo com os grupos vivos e as opções ativas, o nome do
+       vinculado e a ficha; a venda gravada e relida com os complementos na ordem do cadastro, o snapshot com eles e a
+       migração; o saldo estimado que desconta o vinculado e os insumos das finalizadas não refletidas, só na v2 e não do
+       item cancelado, e devolve na cancelada forma A), `RecuperacaoTests` (a venda v2 reidratada com as 4 linhas de
+       complemento da fixture, sem duplicar), `ContratosEventosTests` (a fixture `venda.finalizada.v2.complementos.payload.json`, que o
+       Vitest passa pelo `payloadVendaFinalizadaV2Schema` e o `contratos-eventos.spec.ts` da API pelo upcast da v2, e a
+       mesma venda na v1 sem a chave), `LayoutComprovanteTests` (impressão simulada com os complementos e o atacado),
+       `ComplementosTelasTests` (App headless: "2*" porção com 2 molhos e o cheddar pelo teclado, com as mensagens do
+       mínimo e do máximo, a tela, o cupom e o evento v2 com os insumos; o Tab/Shift+Tab que pulam o obrigatório e o
+       Enter do último grupo que volta a ele sem incluir; o Esc que não inclui e o terminal real sem a v2 que vende sem
+       diálogo); na API, `venda-eventos.test.ts` aplica a fixture do caixa com os ids do ambiente (o
+       barbecue baixa pelo cadastro, o cheddar pelos insumos do caixa, o livre e o item cancelado não).
+
+103. **Preço digitado, alteração de preço (`Ctrl+F6`) e acréscimo no total (F6 › 3)** (F3-B16; PDV 10.4, 10.5, 12.2,
+     12.3, 12.5; D77 = F3-Q6 (B); README da API › decisão 233; `Core/Vendas/{PrecoManual,Venda,Desconto,Constantes}.cs`,
+     `Core/Produtos/ProdutoVenda.cs`, `Core/Numeros/Arredondamento.cs`, `Core/Caixa/PermissoesPdv.cs`,
+     `Data/Repositorios/{CatalogoLocal,RepositorioConfiguracoes}.cs`, `App/Servicos/ServicoVenda.cs`,
+     `App/ViewModels/{VendaViewModel,Dialogos,DialogosPreco,ItemLinhaViewModel}.cs`). Fecha a lacuna da Fase 1 do
+     "Produto genérico" e do "Solicita preço PDV" (o produto de preço zero era recusado e as marcas do cadastro não valiam:
+     a lacuna não estava na lista abaixo) e entrega o `Ctrl+F6` e o acréscimo, previstos para a PDV-2. Sem migração (EF ou
+     Drizzle), sem coluna nova e sem evento novo; a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21) e o 0.13.0
+     instalado não muda. O serviço avulso (`Ctrl+S`, `geral.utiliza_servico_avulso`) fica no backlog (D77). Escolhas
+     técnicas, **padrão até a confirmação do dono** (roadmap §16, D123):
+     - **O portão é o recurso da onda** (decisão 96; Padrões da Fase 3): as três telas gravam ações novas de auditoria
+       (`preco_alterado`, `acrescimo_total`, que só sobem com o `venda.finalizada` v2 anunciado,
+       `CatalogosNuvem.AcoesAuditoriaFase3`), então só abrem com ele (`ServicoVenda.RecursoDaOndaAsync`; na
+       demonstração, sempre). Sem ele o caixa vende como antes: o produto que pede preço sai pelo preço do cadastro, e o
+       de preço zero continua "Produto sem preço" (com ou sem `pdv.venda.alterar_preco`); o F6 não mostra o 3 e o
+       `Ctrl+F6` bipa. A tela de venda guarda o recurso e o `pdv.altera_preco_pdv` com o mapa de atalhos, **em campos
+       separados** (relidos ao abrir a venda e depois de cada pull, decisão 101), para o F6 e a tecla responderem na hora
+       e o F1 dizer a causa certa; o diálogo do preço consulta o recurso em cada inclusão.
+     - **Preço digitado (10.4).** `ProdutoVenda.SolicitaPreco`/`Generico` (as colunas `solicita_preco_pdv` e `generico` do
+       espelho, também no snapshot da venda); `PedePreco` vale fora do combo. A inclusão (`TipoResultadoEntrada.InformarPreco`)
+       abre o `DialogoPrecoDigitadoViewModel`: no genérico, a descrição (o nome do produto pré-preenchido, de 1 a 120
+       caracteres aparados) e o preço; no "Solicita preço", só o preço; nos dois, o preço do cadastro pré-preenchido
+       quando é maior que zero (o ERP exige preço > 0 em todo vendável, `regrasProduto`, e esta fase não muda isso: o
+       genérico do ERP vem com um preço de referência, e o de preço zero de uma importação também abre o diálogo vazio).
+       **O produto de preço zero sem as marcas** (não é genérico nem "Solicita preço", de uma importação) segue a tabela da
+       PDV 10.1: com `pdv.venda.alterar_preco` no operador logado, o caixa o trata como "Solicita preço PDV" e abre o
+       mesmo diálogo, vazio (`ServicoVenda.PedePrecoNoCaixa`; o Core aceita o digitado só com `liberaSemPreco`, que o
+       serviço tira da permissão do logado, sem confiar na tela: `Venda.PedePreco`); sem a permissão, "Produto sem preço —
+       procure o supervisor", como antes. A auditoria leva a origem `sem_preco`.
+       O produto com complementos que pede preço abre o diálogo dos complementos primeiro e o do preço depois. A linha
+       entra com `origem_preco = 'manual'` e o preço digitado (mais os adicionais dos complementos) **também no
+       `preco_tabela`**: o preço digitado é a natureza do produto e não conta no limite de desconto (12.3), e o manual
+       nunca é recalculado (atacado, mix, F8) nem agrupa; conta, sim, na quantidade de referência das outras linhas do
+       mesmo produto. A auditoria `preco_alterado` leva a origem (`generico`/`solicita_preco`/`sem_preco`), o preço e a
+       descrição no `depois`.
+     - **Bordas do preço** (`RegrasPrecoManual`, as mesmas no digitado e no alterado): maior que zero, em R$ com até 2
+       casas (o operador digita reais; o `preco_unitario` continua com 4 casas no banco), até o teto de **R$ 999.999,99**
+       por unidade (`RegrasPrecoManual.PrecoMaximo`: o contrato do `venda.finalizada` aceita o preço com 11 dígitos
+       inteiros e o `valor_bruto` com 13; acima disso a nuvem recusaria a venda inteira, e com a quantidade máxima o bruto
+       deste teto ainda cabe com folga), e acima de `pdv.limite_preco_digitado` (padrão R$ 9.999,99; vazio = sem limite;
+       `ChavesConfiguracao.LimitePrecoDigitado`) o primeiro Enter avisa e o segundo, com o mesmo preço, confirma (a
+       especificação diz "pede confirmação", não recusa; o teto recusa). Toda linha também passa a recusar o
+       `valor_bruto` acima do máximo do contrato (`Venda.ValorBrutoMaximo`, 9.999.999.999.999,99), o que só um preço de
+       cadastro absurdo alcança.
+     - **`Ctrl+F6` (10.5).** A ação `alterar_preco` do mapa (decisão 101) só existe com `pdv.altera_preco_pdv` ligada na
+       loja (padrão desligada; `ChavesConfiguracao.AlteraPrecoPdv`) e o recurso: fora disso fica fora da barra e a tecla
+       bipa "Ação indisponível". O F1 separa as causas: com o recurso e a chave desligada, lista a ação em "Desligadas na
+       loja … (ERP › Configurações › PDV)"; sem o recurso (a API ainda sem a R3, uma volta de versão ou um handshake
+       perdido), em "Chegam numa próxima versão", como as ações que esta versão não tem. Com o item selecionado, o
+       `DialogoAlterarPrecoViewModel` mostra o de tabela e o atual e pede o preço novo por unidade; o
+       `Venda.AlterarPrecoItem` grava `origem_preco = 'manual'`, mantém o `preco_tabela` e recusa o combo (o preço é o do
+       combo), o item com desconto (remova antes: o desconto em R$ sobre um preço novo seria outro %), o mesmo preço e a
+       venda com pagamento lançado. **Na linha de atacado, faixa, mix ou embalagem** o `preco_tabela` passa a ser o
+       varejo/loja com os adicionais (nunca abaixo do que a linha tinha; `ItemVenda.PrecoTabelaParaPrecoManual`, e o
+       diálogo mostra esse de tabela): esses preços dependem da quantidade e a linha manual não é mais recalculada, então
+       a redução medida contra o atacado congelado sumiria do limite ao diminuir a quantidade depois (12 latas a 3,19 de
+       atacado alteradas para 3,20 e depois 1 lata sairiam 8% abaixo do varejo sem limite nem liberação). Por isso o preço
+       acima do atacado e abaixo do varejo conta como redução. A redução `reducao_preco_manual = max(0, arred2(qtd ×
+       tabela) − valor_bruto)`, que o
+       `ItemVenda.ReducaoPrecoManual` já contava (12.3), entra no % do item e no da venda com meio centavo de folga (dois
+       `arred2`); acima do limite do operador o supervisor libera (o mesmo pedido de liberação do desconto, PDV 31.3) e a
+       liberação vai em `liberacoes` da venda com a ação nova **`alterar_preco`** (o item e o % pedido; `AcaoLiberacao` e
+       `ACOES_LIBERACAO_VENDA` do shared, conferidas pelo `ContratosEventosTests`; o campo é texto livre no contrato, a
+       nuvem de hoje aceita). A alteração que não aumenta a redução do item (subir o preço, ou reduzir menos) passa sem o
+       limite. **Sem `pdv.venda.alterar_preco`** (o padrão do operador; supervisor e encarregado a têm, F3-B3): toda
+       alteração é do supervisor, como o desconto sem a permissão (12.2), com o limite dele para a redução e a liberação
+       sempre registrada. Isso diverge do texto do plano e da PDV 10.5 ("flag ligada + permissão"), que deixariam a tela
+       fechada para quem não tem a permissão: a tela abre e o supervisor libera cada alteração (D123, até o dono
+       confirmar). A auditoria `preco_alterado` leva o antes e o depois; com a liberação, também a `liberacao`. A
+       linha mostra "└ preço alterado (tabela 12,90)"; no cupom e na NFC-e o item vai com o preço alterado, sem desconto.
+     - **Acréscimo no total (F6 › 3; 12.2).** `Desconto.LerAcrescimo` (o formato e as bordas do desconto: o % menor que
+       100 com até 4 casas, o R$ com até 2; os mesmos botões "Aplicar em R$"/"Aplicar em %" da decisão 65) e
+       `Venda.AplicarAcrescimo`: substitui o anterior, o % vira valor na hora com arred2 sobre Σ(valor_bruto −
+       desconto_item − desconto_promocao) e fica fixo em R$ (a venda não tem coluna do % do acréscimo, 12.1), maior que
+       zero e menor que essa base. O rateio em `acrescimo_rateado` (12.4) e o "Falta" do pagamento já existiam; o cupom
+       já imprimia "Acréscimos". `pdv.venda.acrescimo` está no perfil do operador; sem ela, o supervisor libera antes do
+       valor, e a liberação fica só na auditoria (`liberacao` com o `acrescimo_total`), porque a SYNC 9.7 não tem a ação
+       de acréscimo em `liberacoes`. O F6 › 4 passa a tirar o desconto do operador e o acréscimo no total, o que houver,
+       num commit só. O acréscimo é recusado quando é maior ou igual ao valor dos itens (a 12.2 só pede > 0; o de 100% ou
+       mais é dedo que escorregou), também padrão até a confirmação do dono (D123).
+     - **Arredondamento** (Padrões da Fase 3): o `ArredondamentoTests` varre o código do PDV e recusa `Math.Round`/
+       `decimal.Round` fora do `Core/Numeros/Arredondamento.cs` (só os de `double`, milissegundos do relógio e do boot,
+       ficam de fora). Saíram três: o `FormatoProtocolo.Decimal` (o bancário, sem efeito nos valores já na escala, agora o
+       `Arredondamento.Arred`), o % das `liberacoes` e o ticket médio do resumo; o peso da `BalancaSimulada` também passa
+       pelo `Arred3`, e o `GenesisPDV.Hardware` ganhou a referência ao Core (os `packages.lock.json` foram refeitos com
+       `dotnet restore --force-evaluate`).
+     - **Testes.** `PrecoManualTests` (Core: o genérico com a descrição e o preço, o preço zero e as 3 casas recusados,
+       sem o diálogo continua sem preço; o "Solicita preço" abaixo da tabela fora do limite e sem agrupar; o manual que
+       não muda com o atacado; os critérios da 12.5 "10,00 → 8,00 com limite de 10% pede senha (20%)", o supervisor de
+       12% que não libera e o de 20% que libera; dentro do limite e o aumento sem supervisor; sem a permissão; a redução
+       que soma com o desconto no total; as recusas; a quantidade do item alterado; o atacado 12 → 1 e o mix com a linha
+       cancelada medidos contra o varejo; o produto de preço zero só com a permissão; o genérico com complementos que
+       soma o adicional ao digitado; o teto do preço e do bruto; o acréscimo em % e em R$, as bordas e o F6 › 4; a
+       propriedade de 2.000 vendas aleatórias com desconto no item, desconto e acréscimo no total: Σ acréscimo rateado
+       exata, Σ líquidos = total e nenhum líquido abaixo de R$ 0,01, com o acréscimo que dá R$ 0,00 tratado como a recusa
+       esperada, para não depender da semente), `ArredondamentoTests` (a
+       varredura), `CicloOnlineTests` e `CatalogoRotulosConfiguracaoTests` (as permissões, o perfil e os padrões das
+       chaves novas contra o shared), `PrecoManualTelasTests` (App headless: o genérico com o zero recusado e a
+       confirmação acima do limite; o "Solicita preço" com o de tabela; o `Ctrl+F6` que bipa sem a chave e, com ela, pede
+       o supervisor e sobe a liberação e o `manual` no `venda.finalizada`; o F1 com "Desligadas na loja" só com o recurso
+       e com o `Ctrl+F6` em "próxima versão" sem ele; o produto de preço zero recusado à MARIA e, com a permissão, com o
+       diálogo e a origem `sem_preco`; o genérico com complementos (os complementos e depois o preço); o F6 › 3 em %, sem
+       a permissão de acréscimo com a liberação do CARLOS nas duas auditorias, o F6 › 4 sozinho e com o desconto no
+       total junto, e o cupom; sem o recurso nada aparece); na API, `venda-eventos.test.ts` aplica a venda v1 com o preço alterado, a liberação
+       `alterar_preco` e o acréscimo rateado, sem alerta.
+
+104. **Tipo de preço `F8` (Varejo · Atacado)** (F3-B17; PDV 11.2, 11.3.1, 11.5; F3-Q2 = D73 (A); README da API › decisão
+     234; `Core/Vendas/{Venda,Constantes}.cs`, `Core/Precos/{MotorPreco,TabelaPreco}.cs`, `Core/Caixa/PermissoesPdv.cs`,
+     `App/Servicos/ServicoVenda.cs`, `App/ViewModels/VendaViewModel.cs`, `App/Views/VendaView.axaml`). O atacado por
+     quantidade (PDV-1) continua, e o `F8` troca a venda inteira para o atacado. Sem migração (EF ou Drizzle), sem coluna
+     nova e sem evento novo: `vendas.tipo_preco` já existia (no banco local, no `MapeadorVenda` e no `venda.finalizada`
+     v1, que a nuvem de hoje aceita com `atacado`); a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21). Escolhas
+     técnicas, **padrão até a confirmação do dono** (roadmap §16, D124):
+     - **O recálculo.** `Venda.AlterarTipoPreco(tipo, temPermissaoAtacado, liberacao)` muda o `TipoPreco` (que deixou de
+       ser só leitura e entra na foto do `Atomico`: uma falha volta o tipo) e recalcula pela regra 11.3 todas as linhas
+       que o `OrigemPreco.Recalculavel` aceita. No Atacado o `MotorPreco` põe o candidato atacado **sem a quantidade
+       mínima** (sem o "12+": a etiqueta fica "ATAC" e a economia aparece; a linha sobe com a `quantidade_referencia_preco`
+       nula, porque o preço veio do tipo da venda, não da quantidade, README da API › decisão 234) e continua valendo o menor: a faixa, o mix, o
+       promocional, o preço da loja e o **fardo** menores ganham dele (a embalagem é recalculada, como dizem os Padrões da
+       Fase 3, resolvendo a lista da 11.2 que a excluía; "não altera o mix", 11.3.1). O produto sem preço de atacado fica
+       no que já valia. O preço manual (digitado ou do `Ctrl+F6`), o combo, o casco, o orçamento e as linhas sem snapshot
+       (venda recuperada de antes da tabela) ficam como estão, e os adicionais dos complementos voltam somados (a camada
+       de acréscimos, decisão 102). A diferença varejo − atacado não é desconto (12.3). O desconto do item em % é refeito
+       e o em R$ fica dentro do teto, e o desconto no total em R$ também (decisão 27: `Recalcular` com o ajuste ao teto).
+       Um item incluído depois já entra no tipo da venda. Cada venda começa no varejo (`Venda.Iniciar`): o tipo não passa
+       para a próxima, e a venda recuperada depois de uma queda volta no tipo gravado.
+     - **Recusas.** O F8 só troca entre Varejo e Atacado (`TipoPrecoVenda.DoF8`): o parcelado vem do pagamento (11.2,
+       F3-B18), e pedir o mesmo tipo é recusado. Só sem pagamento lançado (`ExigirSemPagamentos`, como o `Ctrl+F6`): o
+       total mudaria por baixo de um pagamento (e, com o eletrônico aprovado, os itens já estão travados, 16.1). Com o
+       caixa livre o F8 avisa "Inclua o primeiro item": a venda só nasce no primeiro item, e guardar um tipo "para a
+       próxima" exigiria a liberação e a auditoria fora de uma venda.
+     - **Permissão.** O Atacado pede `pdv.venda.tipo_preco_atacado` (`PermissoesPdv.TipoPrecoAtacado`; fora do perfil do
+       operador, no do supervisor e do encarregado, F3-B3); sem ela o supervisor libera (PIN e motivo, PDV 31.3) e a
+       liberação vai em `liberacoes` da venda com a ação **`tipo_preco`** (da venda toda: item e % nulos; `AcaoLiberacao` e
+       `ACOES_LIBERACAO_VENDA` do shared, conferidas pelo `ContratosEventosTests`; o campo é texto livre, a nuvem de hoje
+       aceita). Com a permissão, a liberação informada é ignorada. A volta ao Varejo não pede nada (só sobe o preço).
+     - **A tecla e a tela.** A ação `tipo_preco` do mapa de atalhos (decisão 101; `F8` no padrão) **alterna** Varejo ↔
+       Atacado: são só dois tipos e o operador vê o resultado na hora ("Preço ATACADO: 2 itens recalculados, total de R$ X
+       para R$ Y"); um F8 a mais volta. A tela marca o tipo ativo à direita do cabeçalho, "PREÇO ATACADO (F8 volta ao
+       varejo)" com a tecla configurada, além do "Preço: ATACADO" que o cabeçalho já mostrava.
+     - **O portão é o recurso da onda** (decisão 96; Padrões da Fase 3): o F8 grava a ação nova de auditoria
+       `tipo_preco_alterado` (que só sobe com o `venda.finalizada` v2 anunciado, `CatalogosNuvem.AcoesAuditoriaFase3`),
+       então o Atacado só existe com ele, como o `Ctrl+F6` (`VendaViewModel.AcaoLigada`); sem ele fica fora da barra, a
+       tecla bipa "Ação indisponível" e o F1 o lista em "Chegam numa próxima versão". A **volta ao Varejo** fica fora do
+       portão: se o recurso some no meio de uma venda no Atacado (a API voltou de versão e o pull relê o handshake), a
+       tecla e o botão continuam enquanto a venda está no Atacado, para o operador desfazer a troca sem cancelar a venda (a
+       auditoria dela fica no caixa até o recurso voltar); de volta ao Varejo, o F8 sai da barra (a `AtualizarTela`
+       remonta a barra quando isso muda) e o comando recusa o Atacado mesmo pelo botão de antes. A auditoria leva o tipo e o total antes e
+       depois e quantas linhas mudaram; com a liberação, também a `liberacao`. A Central descreve a ação
+       (`DescritorAuditoria`).
+     - **Vetores de preço** (`packages/shared/testes/precos/regra-preco.vetores.json`): 31 casos da regra 11.3 com e sem o
+       F8 (varejo, loja, promocional, atacado por quantidade e pelo F8, faixas da loja e gerais, empates e o mix nos dois
+       modos), que o `PrecosVetoresTests` (`MotorPreco`) e o `precos.spec.ts` (`resolverPreco` do shared, o espelho do
+       "Simular" do mix no ERP) conferem: um caso diferente lá e cá é o caixa e o ERP calculando diferente. A embalagem e
+       o parcelado ficam fora do espelho até o F3-B54 (o cálculo da venda em `Dec`) e o F3-B18.
+     - **Testes.** `TipoPrecoTests` (Core: o critério 11.5 "Atacado recalcula e mantém os manuais", a liberação do
+       supervisor e a ignorada com a permissão, as recusas, o fardo com o F8 nos dois sentidos, o mix modo grupo com o F8
+       acima e abaixo da soma, os adicionais dos complementos e o combo, o desconto em % refeito e o tipo da venda
+       recuperada, o desconto do item e o do total em R$ ajustados ao teto (com o aviso, e sem subir na volta), a falha
+       no recálculo que volta o tipo e as linhas pela foto do `Atomico` (o fracionável que no atacado daria R$ 0,00), o
+       motivo longo que não muda nada e o candidato sem limiar no motor, sem a quantidade de referência), `PrecosVetoresTests`,
+       `TipoPrecoTelasTests` (App headless: o F8 da MARIA com a liberação do CARLOS, a marca na tela, as auditorias e a
+       venda finalizada com `tipo_preco = 'atacado'` e a liberação no `venda.finalizada`; com a permissão, o vai e volta
+       sem supervisor e a próxima venda no varejo, depois da finalizada e da cancelada pelo Ctrl+N › C; com pagamento
+       lançado, recusado; sem o recurso, a tecla bipa; o recurso que some com a venda no Atacado ainda deixa voltar ao
+       Varejo); na API,
+       `venda-eventos.test.ts` aplica a venda v1 com `tipo_preco = 'atacado'` e a liberação `tipo_preco`, sem alerta.
+105. **Preço gelada (`Alt+G`) e preço parcelado** (F3-B18; PDV 11.2, 11.3 passo 9, 11.4, 11.5; F3-Q3 = D74 (A); README da
+     API › decisão 235; `Core/Precos/{MotorPreco,TabelaPreco}.cs`, `Core/Vendas/{Venda,ItemVenda,PagamentoVenda,Constantes}.cs`,
+     `Data/Repositorios/{CatalogoLocal,RepositorioVendas,MapeadorVenda}.cs`, `Data/Entidades/TabelasLocais.cs`,
+     `Data/Migracoes/*_GeladoParcelado.cs`, `App/Servicos/ServicoVenda.cs`, `App/ViewModels/{VendaViewModel,
+     DialogoPagamentoViewModel,ItemLinhaViewModel}.cs`, `App/Views/VendaView.axaml`, `Fiscal/LayoutComprovanteVenda.cs`,
+     `packages/shared/src/precos.ts`). Sem migração Drizzle, sem coluna nova na nuvem e sem evento novo: o gelado vai
+     **dentro** do `preco_unitario` e do `preco_tabela`, e o parcelado é o `vendas.tipo_preco = 'parcelado'` e o
+     `origem_preco = 'parcelado'` que o contrato v1 já tinha; uma migração EF **só local** (`GeladoParcelado`, sem volta de
+     cursor); a `<Version>` não sobe (vai às lojas na R3, 0.14.0, PR-21). Escolhas técnicas, **padrão até a confirmação do
+     dono** (roadmap §16, D125):
+     - **As fontes.** A `TabelaPreco` ganhou o `AcrescimoGelada` (`produtos_lojas.acrescimo_gelada` da loja do terminal) e o
+       `PrecoParcelado` (`produtos.preco_parcelado`), lidos pelo `CatalogoLocal` e guardados no snapshot da primeira
+       inclusão (11.3: um pull no meio da venda não muda a gelada nem o parcelado dos itens já incluídos; o snapshot antigo,
+       sem os campos, lê nulo).
+     - **Gelada.** `Venda.AlternarGelado(sequencia)` liga e desliga: `ItemVenda.AcrescimoGelada` (> 0 = gelado) entra na
+       camada de acréscimos do item (`AcrescimoUnitario` = complementos + gelada, decisão 102), somada por unidade a todo
+       preço recalculado (atacado, faixa, mix, embalagem, `F8` e parcelado: regra 11.3 → complementos → gelada →
+       promoções), ao `preco_unitario` e ao `preco_tabela`; a origem do preço não muda, e não é acréscimo da venda nem
+       desconto (a economia do atacado é contra o varejo com o gelado). Só com `acrescimo_gelada > 0` no snapshot; desligar
+       tira o valor que foi somado (não o do espelho de agora). Recusado no combo, no casco, na balança tipo Valor, no
+       orçamento, no preço digitado ou alterado (o preço manual é o final: cancelar e incluir de novo) e na linha
+       recuperada sem snapshot. Com pagamento lançado, ligar pode (o total sobe, como incluir um item) e desligar não (o
+       total cairia, decisão 8). Gelado e natural **não se agrupam** (o agrupamento da inclusão exige o natural); o
+       cancelamento parcial leva o gelado à linha que sobra. Sem auditoria: o acréscimo é um preço do cadastro.
+     - **A marca só no caixa.** Nenhuma coluna nova em `itens_venda` (Padrões da Fase 3): a marca fica na tabela local
+       `itens_venda_gelados` (PK o item, o acréscimo por unidade em escala de preço, FK cascata ao item e à venda; MD
+       4.4.14), gravada no mesmo commit da venda e espelhando os itens gelados (o tirado sai), e não é apagada no
+       encerramento (a reimpressão mostra "GELADO"). A venda recuperada depois de uma queda volta com ela (o agrupamento e
+       o desfazer); a reidratação (SYNC 22.2) recria os itens sem ela.
+     - **Parcelado** (D74: "produto sem Preço parcelado cadastrado não muda nada"). O `MotorPreco` ganhou o passo 9: com
+       `ParametrosPreco.Parcelado`, o `preco_parcelado > 0` **substitui** todos os candidatos (não é o menor; a quantidade
+       de referência sobe nula); o `TipoPreco` dos parâmetros continua o do `F8` de antes, para as linhas sem o
+       parcelado. A `Venda` guarda esse tipo em `TipoPrecoAntesParcelado`. `PreverPrecoParcelado()` dá o "total passa de R$
+       X para R$ Y" sem mudar nada (a foto do `Atomico`); `AplicarPrecoParcelado()` (na tela de pagamento) passa a venda a
+       `parcelado` e recalcula; nenhuma linha passando a `parcelado`, volta tudo e não muda o tipo. Recusado com pagamento
+       eletrônico aprovado (`PagamentoVenda.Eletronico`: cartão ou PIX, e também o VA/VR ou o "outros" passado na
+       maquininha, com a bandeira, ou no PIX, com a cobrança; o vale de papel lançado direto, não); o dinheiro antes não
+       impede (o "Falta" sobe). O parcelado menor que o preço atual (D125, decisão 3) com dinheiro lançado é recusado quando
+       derruba o total até o já pago ou deixa o cartão em parcelas com valor zero ou negativo
+       (`Venda.MotivoParceladoSemValor`, conferido na prévia e de novo no `AplicarPrecoParcelado(valor)`; decisão 8).
+       `VoltarDoPrecoParcelado()` volta ao tipo do F8 quando não há pagamento ativo em mais de uma parcela, chamado ao
+       remover o pagamento, ao lançar outro à vista, ao voltar aos itens, ao abrir o pagamento e na venda recuperada na
+       abertura do caixa (`ServicoVenda.RecuperarAsync`, com a auditoria; não no `RegistrarProdutos`, que também refaz a
+       venda depois de um erro com a maquininha ainda na tela): o parcelado confirmado nunca fica sem o pagamento parcelado.
+       A tela desfaz esse estado (`Venda.ParceladoSemPagamentoParcelado`, `ServicoVenda.VoltarDoPrecoParceladoAsync`, com
+       a auditoria) antes de mostrar valores à vista: no Esc da maquininha (também na segunda tentativa, já no parcelado),
+       na liberação da forma negada ou cancelada (o `aoDesistir` do `PedirLiberacao`), no F10 que reabre o pagamento e,
+       como defesa, no Enter do pagamento (recusa e pede para conferir o valor); o lançamento à vista que sai do parcelado
+       dentro do Core grava a saída na auditoria do mesmo commit ("(pagamento à vista)"). O `OrigemPreco.Recalculavel`
+       passou a aceitar o `parcelado` (o preço vem do tipo da venda e volta com ele); com o pagamento parcelado lançado, o
+       Esc aos itens mantém o parcelado e o item novo já entra nele. O F8 continua recusado com pagamento lançado.
+     - **O tipo do F8 de antes, só no caixa.** A coluna local `estado_operacao.tipo_preco_antes_parcelado` (MD 4.4.7), gravada
+       com a venda atual e limpa no encerramento: a venda recuperada no parcelado volta ao Atacado certo ao remover o
+       pagamento (sem ela, ao Varejo). A nuvem só vê o `parcelado`.
+     - **A tela.** No crédito com "Permite parcelar" e mais de uma parcela, o Enter da tela de pagamento abre as **parcelas
+       antes da maquininha** (`DialogoParcelasViewModel`; sem TEF, o operador escolhe antes de passar o cartão). Em 2× ou
+       mais com a prévia mudando o total, "Preço parcelado: total passa de R$ X para R$ Y — [Enter] Confirmar / [Esc]
+       Voltar"; confirmado, a maquininha (`DialogoPosViewModel`, com as parcelas fixas no título) cobra o valor informado
+       mais a diferença do parcelado (o "Falta" todo no caso comum; num pagamento parcial, a diferença vai inteira no
+       cartão parcelado, que é quem a causa). O "Não aprovado" volta os preços. A tela marca "PREÇO PARCELADO" no
+       cabeçalho e a coluna de preço "PARC". O `Alt+G` (a ação `gelada` do mapa, decisão 101) marca "GELADO (+1,00)" sob o
+       item, na tela e no cupom; com ele a barra do padrão fica com 16 botões (o máximo).
+     - **O portão é o recurso da onda** (decisão 96): o parcelado grava a auditoria `tipo_preco_alterado` (a entrada e as
+       saídas, com o total antes e depois e as parcelas), e o `Alt+G` é tela nova da R3; os dois só existem com o recurso.
+       Sem ele, as parcelas ficam informativas na maquininha e o preço não muda (como no 0.13.0), e o `Alt+G` bipa; como o
+       F8, desfazer o gelado fica fora do portão (o recurso que some no meio da venda). Nenhuma chave nova: o cadastro do
+       preço parcelado é o que liga a regra (o PDV instalado o ignora, e há um caixa só em uso).
+     - **Vetores de preço:** 7 casos novos do parcelado em `regra-preco.vetores.json` (substitui o varejo, o atacado do F8,
+       a faixa e o promocional, e o menor que o varejo; o produto sem parcelado segue no F8; zero não vale; sem o pagamento
+       parcelado não vale), conferidos pelo `MotorPreco` e pelo `resolverPreco` do shared (que ganhou o `precoParcelado` e o
+       `parcelado`).
+     - **Testes.** `GeladaParceladoTests` (Core: o `Alt+G` liga e desfaz; com o atacado por quantidade e com o F8; gelado e
+       natural sem agrupar e o cancelamento parcial; o desconto em % refeito; as recusas, com o pagamento lançado; a venda
+       recuperada com o gelado; o critério 11.5 "crédito 3× aplica o parcelado; remover volta"; sem preço parcelado nada
+       muda; o F8 no Atacado e a volta a ele; o gelado por cima do parcelado; a recusa com o eletrônico e o dinheiro que não
+       impede; o VA na maquininha que recusa e o de papel que não; o parcelado menor que o já pago; a volta pelo
+       lançamento à vista e pelo Esc; a recuperada nos três casos, e com o gelado ou o complemento no atacado mantendo o
+       "ATAC 12+"; as recusas do `Alt+G` no casco, na balança, no orçamento, sem snapshot e no acréscimo inválido; o passo
+       9 do motor),
+       `PrecosVetoresTests`, `GeladoParceladoDadosTests` e `CatalogoLocalTests` (Data: a tabela local e a coluna do estado,
+       a recuperação, o encerramento, a gelada da loja do terminal e o parcelado do produto), `GeladaParceladoTelasTests` (App
+       headless: o `Alt+G`, a linha natural, a recusa, o cupom e o payload sem chave nova; o crédito em 3× com a
+       confirmação, o "PARC" sem o varejo riscado, o "Não aprovado" que volta, a venda finalizada no parcelado; a liberação
+       negada que volta os preços e o F10 seguinte no débito à vista; o pagamento à vista e o F10 reaberto com a auditoria;
+       o Del do cartão parcelado e o Esc do pagamento; a venda recuperada entre a confirmação e a maquininha; sem o recurso,
+       as parcelas na maquininha e o `Alt+G` que bipa, e o recurso que some com o gelado ainda deixa tirá-lo), `AtalhosTelasTests` e `UsabilidadeTelasTests` atualizados (o `Alt+G` é desta versão);
+       `ContratosEventosTests` gera a fixture `venda.finalizada.gelada_parcelado.payload.json` (v1) e confere que as
+       operações do caixa dão as mesmas linhas, e o `venda-eventos.test.ts` da API a aplica (o `conferirSomasVenda` aceita o
+       gelado dentro do preço). A matriz de compatibilidade não roda neste bloco: o handler e o protocolo da API não mudaram.

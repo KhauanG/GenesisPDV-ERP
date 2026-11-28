@@ -26,17 +26,30 @@ public enum TipoResultadoEntrada
 
     /// <summary>Combo com alternativas: a tela abre o diálogo Montar combo (PDV 10.9.1).</summary>
     MontarCombo,
+
+    /// <summary>Produto com complementos, com o recurso da onda: a tela abre o diálogo dos complementos (PDV 10.2; F3-B15).</summary>
+    EscolherComplementos,
+
+    /// <summary>
+    /// Produto genérico ou "Solicita preço PDV", com o recurso da onda: a tela abre o diálogo do preço (PDV 10.4; F3-B16).
+    /// </summary>
+    InformarPreco,
 }
 
 /// <param name="Combo">Combo a montar (<see cref="TipoResultadoEntrada.MontarCombo"/>), com a quantidade em <paramref name="Multiplicador"/>.</param>
-/// <param name="Codigo">Código lido que originou o combo.</param>
+/// <param name="Codigo">Código lido que originou o combo ou o produto com complementos.</param>
+/// <param name="Resolvido">
+/// Produto com complementos a escolher (<see cref="TipoResultadoEntrada.EscolherComplementos"/>) ou que pede o preço
+/// (<see cref="TipoResultadoEntrada.InformarPreco"/>).
+/// </param>
 public sealed record ResultadoEntrada(
     TipoResultadoEntrada Tipo,
     ItemVenda? Item = null,
     decimal? Multiplicador = null,
     string? TextoPesquisa = null,
     ComboResolvido? Combo = null,
-    string? Codigo = null);
+    string? Codigo = null,
+    ProdutoResolvido? Resolvido = null);
 
 public sealed record ResultadoFinalizacao(Venda Venda, long SequenciaEvento, string? TextoCupom, IReadOnlyList<string> Avisos);
 
@@ -199,6 +212,18 @@ public sealed class ServicoVenda(
         }
 
         await RegistrarProdutosAsync(Atual, ct);
+        // O preço parcelado confirmado e não pago (a queda veio entre o "Confirmar" e a maquininha, F3-B18) não fica na venda
+        // recuperada: sem o pagamento parcelado, os preços voltam aos do F8, gravados antes de a tela abrir.
+        var totalParcelado = Atual.Total;
+        if (Atual.VoltarDoPrecoParcelado())
+        {
+            await repositorio.SalvarEmAndamentoAsync(
+                Atual,
+                AuditoriaParcelado(Atual, TipoPrecoVenda.Parcelado, totalParcelado, Atual.Total,
+                    $"Preço parcelado desfeito na venda {Atual.NumeroExibicao} (recuperada sem o pagamento parcelado)", null, null),
+                ct);
+        }
+
         var vinculada = await VincularSessaoSeAusenteAsync(ct);
         log.LogWarning("Venda {Numero} recuperada após interrupção ({Itens} itens)", Atual.NumeroExibicao, Atual.QtdItens);
         await terminal.RegistrarAuditoriaAsync("venda_recuperada", Operador.Id, "venda", Atual.Id,
@@ -346,9 +371,72 @@ public sealed class ServicoVenda(
             return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, linhas[0]);
         }
 
+        // PDV 10.2 (F3-B15): o diálogo dos complementos só com o recurso da onda (o venda.finalizada v2 anunciado no último
+        // handshake, F3-B4); sem ele, o produto "com complementos" vende como antes, sem diálogo (D43 até a R3).
+        if (RegrasComplementos.TemComplementos(resolvido.Produto) && await ComplementosDisponiveisAsync(ct))
+        {
+            return new ResultadoEntrada(TipoResultadoEntrada.EscolherComplementos, Multiplicador: quantidade, Codigo: codigo, Resolvido: resolvido);
+        }
+
+        // PDV 10.4 (F3-B16): o diálogo do preço do genérico e do "Solicita preço PDV" também só com o recurso da onda (a tela
+        // grava o preco_alterado, uma ação nova de auditoria); sem ele, vende pelo cadastro e o de preço zero é recusado,
+        // como antes. O com complementos que pede preço abre o dos complementos primeiro, e o do preço depois. O produto de
+        // preço zero sem as marcas abre o mesmo diálogo para quem tem pdv.venda.alterar_preco (tabela da PDV 10.1); sem a
+        // permissão, segue para a recusa "Produto sem preço — procure o supervisor".
+        if (PedePrecoNoCaixa(resolvido.Produto) && await RecursoDaOndaAsync(ct))
+        {
+            return new ResultadoEntrada(TipoResultadoEntrada.InformarPreco, Multiplicador: quantidade, Codigo: codigo, Resolvido: resolvido);
+        }
+
         var item = await IncluirAsync(resolvido, quantidade, codigo, origemEntrada, ct);
         return new ResultadoEntrada(TipoResultadoEntrada.ItemIncluido, item);
     }
+
+    /// <summary>
+    /// O produto pede o preço na inclusão (PDV 10.1 e 10.4; F3-B16): o genérico e o "Solicita preço PDV"; e o de preço zero
+    /// sem as marcas quando o operador tem <c>pdv.venda.alterar_preco</c> ("trata como Solicita preço PDV"). O portão do
+    /// recurso da onda fica com quem chama.
+    /// </summary>
+    public bool PedePrecoNoCaixa(ProdutoVenda produto) => Venda.PedePreco(produto, LiberaSemPreco);
+
+    /// <summary>O operador logado tem <c>pdv.venda.alterar_preco</c>: o preço do produto sem preço (PDV 10.1).</summary>
+    private bool LiberaSemPreco => sessao.Operador?.Tem(PermissoesPdv.AlterarPreco) == true;
+
+    /// <summary>
+    /// O caixa escolhe complementos (PDV 10.2; F3-B15): a nuvem anunciou o <c>venda.finalizada</c> v2 no último handshake
+    /// (<c>RecursoDisponivel</c>, F3-B4; na demonstração, sempre). Sem handshake depois da atualização, não.
+    /// </summary>
+    public Task<bool> ComplementosDisponiveisAsync(CancellationToken ct = default) =>
+        repositorioCaixa.RecursoDisponivelAsync("venda.finalizada", FabricaEventos.VersaoVendaFinalizadaComplementos, ct);
+
+    /// <summary>
+    /// O recurso da onda R3 (<c>venda.finalizada</c> v2 anunciado no último handshake; F3-B4; na demonstração, sempre): o
+    /// portão das telas do F3-B16 (o preço digitado, o <c>Ctrl+F6</c> e o F6 › 3) e do <c>F8</c> (F3-B17), que gravam ações
+    /// novas de auditoria (<c>preco_alterado</c>, <c>acrescimo_total</c>, <c>tipo_preco_alterado</c>; Padrões da Fase 3).
+    /// </summary>
+    public Task<bool> RecursoDaOndaAsync(CancellationToken ct = default) =>
+        repositorioCaixa.RecursoDisponivelAsync(Sync.Push.RecursoNuvem.OndaR3.Tipo, Sync.Push.RecursoNuvem.OndaR3.Versao, ct);
+
+    /// <summary>
+    /// <c>Ctrl+F6</c> (PDV 10.5; F3-B16): <c>pdv.altera_preco_pdv</c> ligada na loja e o recurso da onda; senão a ação não
+    /// aparece (fora da barra, e a tecla bipa).
+    /// </summary>
+    public async Task<bool> AlterarPrecoDisponivelAsync(CancellationToken ct = default) =>
+        await AlteraPrecoNaLojaAsync(ct) && await RecursoDaOndaAsync(ct);
+
+    /// <summary>
+    /// Só a chave <c>pdv.altera_preco_pdv</c> da loja (sem o recurso da onda): a tela separa as duas causas no F1 (a chave
+    /// desligada é da loja; sem o recurso, a ação nem existe nesta versão).
+    /// </summary>
+    public async Task<bool> AlteraPrecoNaLojaAsync(CancellationToken ct = default) =>
+        sessao.Identidade is { } identidade
+        && await configuracoes.ObterBoolAsync(ChavesConfiguracao.AlteraPrecoPdv, identidade.LojaId, ct);
+
+    /// <summary><c>pdv.limite_preco_digitado</c> da loja (padrão R$ 9.999,99; vazio = sem limite), PDV 10.4.</summary>
+    public async Task<decimal?> LimitePrecoDigitadoAsync(CancellationToken ct = default) =>
+        sessao.Identidade is { } identidade
+            ? await configuracoes.ObterDinheiroAsync(ChavesConfiguracao.LimitePrecoDigitado, identidade.LojaId, RegrasPrecoManual.LimitePadrao, ct)
+            : RegrasPrecoManual.LimitePadrao;
 
     /// <summary><c>pdv.consulta_outras_lojas</c> da loja do terminal (F2-B35; padrão do catálogo: ligada).</summary>
     public async Task<bool> ConsultaOutrasLojasLigadaAsync(CancellationToken ct = default) =>
@@ -472,17 +560,51 @@ public sealed class ServicoVenda(
         return new ResultadoCascosDescontados(descontado, null);
     }
 
+    /// <param name="complementos">As opções do diálogo dos complementos (F3-B15); nulo = sem complementos, como antes.</param>
+    /// <param name="precoDigitado">O do diálogo do preço (PDV 10.4; F3-B16), com a auditoria <c>preco_alterado</c>.</param>
     public async Task<ItemVenda> IncluirAsync(
         ProdutoResolvido produto,
         decimal quantidade,
         string? codigoLido,
         string? origemEntrada = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? complementos = null,
+        PrecoDigitado? precoDigitado = null)
     {
         var agora = relogio.Agora;
-        await AbrirVendaSeNecessarioAsync(v => Afetados(v, v.AdicionarItem(produto, quantidade, codigoLido, agora)), ct);
+        // O preço do produto sem preço (10.1) é do operador com pdv.venda.alterar_preco: conferido aqui, no logado agora.
+        var liberaSemPreco = precoDigitado is not null && LiberaSemPreco;
+        await AbrirVendaSeNecessarioAsync(
+            v => Afetados(v, v.AdicionarItem(
+                produto, quantidade, codigoLido, agora, complementos: complementos, precoDigitado: precoDigitado, liberaSemPreco: liberaSemPreco)), ct);
+        Func<Venda, ItemVenda, IReadOnlyList<RegistroAuditoria>>? auditoria =
+            precoDigitado is null ? null : (_, item) => [AuditoriaPrecoDigitado(item, produto.Produto)];
         return await ExecutarAsync(
-            v => v.AdicionarItem(produto, quantidade, codigoLido, agora, origemEntrada: origemEntrada), null, ct, (v, item) => Afetados(v, item));
+            v => v.AdicionarItem(
+                produto, quantidade, codigoLido, agora, origemEntrada: origemEntrada, complementos: complementos, precoDigitado: precoDigitado,
+                liberaSemPreco: liberaSemPreco),
+            auditoria, ct, (v, item) => Afetados(v, item));
+    }
+
+    /// <summary>
+    /// <c>preco_alterado</c> do preço digitado na inclusão (10.4): sobe no lote de auditoria com o recurso da onda
+    /// (<c>CatalogosNuvem.AcoesAuditoriaFase3</c>), com a origem e o preço no <c>depois</c>.
+    /// </summary>
+    private RegistroAuditoria AuditoriaPrecoDigitado(ItemVenda item, ProdutoVenda produto)
+    {
+        // O de preço zero sem as marcas (10.1) fica identificado: foi o operador com pdv.venda.alterar_preco quem deu o preço.
+        var (origem, rotulo) = produto.Generico ? ("generico", "produto genérico")
+            : produto.SolicitaPreco ? ("solicita_preco", "solicita preço")
+            : ("sem_preco", "produto sem preço no cadastro");
+        return new("preco_alterado", Operador.Id, "itens_venda", item.Id,
+            $"Preço digitado de R$ {NumeroBr.Preco(item.PrecoUnitario)} no item {item.Sequencia} ({rotulo})",
+            Localizacao: "PDV › Preço digitado",
+            Depois: new JsonObject
+            {
+                ["origem"] = origem,
+                ["preco_unitario"] = FormatoProtocolo.Preco(item.PrecoUnitario),
+                ["descricao"] = item.Descricao,
+            }.ToJsonString());
     }
 
     /// <summary>
@@ -827,6 +949,211 @@ public sealed class ServicoVenda(
 
     public Task RemoverDescontoTotalAsync(CancellationToken ct = default) => ExecutarAsync(v => v.RemoverDescontoTotal(), ct);
 
+    /// <summary>
+    /// <c>Ctrl+F6</c> (PDV 10.5; F3-B16): o preço do item passa a ser o digitado. Com <c>pdv.venda.alterar_preco</c>, a
+    /// redução conta no limite de desconto do operador (12.3) e acima dele o supervisor libera; sem ela, toda alteração é
+    /// do supervisor (limite 0% e a liberação obrigatória). Grava a auditoria <c>preco_alterado</c> (antes e depois) e, com
+    /// a liberação, a <c>liberacao</c> e a linha de <c>liberacoes</c> da venda (<c>alterar_preco</c>).
+    /// </summary>
+    public Task<ResultadoDesconto> AlterarPrecoAsync(int sequencia, decimal preco, Liberacao? liberacao = null, CancellationToken ct = default)
+    {
+        var temPermissao = Operador.Tem(PermissoesPdv.AlterarPreco);
+        decimal precoAntes = 0m;
+        return ExecutarAsync(
+            v =>
+            {
+                precoAntes = v.ObterItem(sequencia).PrecoUnitario;
+                return v.AlterarPrecoItem(sequencia, preco, temPermissao ? Limite : 0m, liberacao, exigeLiberacao: !temPermissao);
+            },
+            (v, r) =>
+            {
+                if (!r.Aplicado)
+                {
+                    return [];
+                }
+
+                var item = v.ObterItem(sequencia);
+                var texto = $"Preço do item {sequencia} alterado de R$ {NumeroBr.Preco(precoAntes)} para R$ {NumeroBr.Preco(item.PrecoUnitario)}";
+                var alterado = new RegistroAuditoria("preco_alterado", Operador.Id, "itens_venda", item.Id,
+                    texto + (r.PorLiberacao ? " liberado pelo supervisor" : string.Empty), r.PorLiberacao ? liberacao!.SupervisorId : null,
+                    "PDV › Alterar preço", r.PorLiberacao ? liberacao!.Motivo : null,
+                    Antes: new JsonObject { ["preco_unitario"] = FormatoProtocolo.Preco(precoAntes) }.ToJsonString(),
+                    Depois: new JsonObject
+                    {
+                        ["preco_unitario"] = FormatoProtocolo.Preco(item.PrecoUnitario),
+                        ["preco_tabela"] = FormatoProtocolo.Preco(item.PrecoTabela),
+                    }.ToJsonString());
+                return r.PorLiberacao
+                    ? [alterado, new RegistroAuditoria("liberacao", Operador.Id, "itens_venda", item.Id, $"{texto} liberado pelo supervisor",
+                        liberacao!.SupervisorId, "PDV › Alterar preço", liberacao.Motivo,
+                        Depois: new JsonObject { ["preco_unitario"] = FormatoProtocolo.Preco(item.PrecoUnitario) }.ToJsonString())]
+                    : [alterado];
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// <c>F8</c> Tipo de preço (PDV 11.2; F3-B17): troca o tipo da venda em andamento e recalcula as linhas (o Core,
+    /// <see cref="Venda.AlterarTipoPreco"/>). O Atacado pede <c>pdv.venda.tipo_preco_atacado</c>; sem ela, a
+    /// <paramref name="liberacao"/> do supervisor (que vira a linha <c>tipo_preco</c> de <c>liberacoes</c>). Grava a
+    /// auditoria <c>tipo_preco_alterado</c> (o tipo e o total antes e depois) e, com a liberação, a <c>liberacao</c>, no
+    /// mesmo commit da venda. A tela só chega aqui com o recurso da onda R3 (a ação de auditoria é nova; Padrões da Fase 3).
+    /// </summary>
+    public Task<ResultadoTipoPreco> AlterarTipoPrecoAsync(string tipo, Liberacao? liberacao = null, CancellationToken ct = default)
+    {
+        var temPermissao = Operador.Tem(PermissoesPdv.TipoPrecoAtacado);
+        var tipoAntes = Atual?.TipoPreco;
+        return ExecutarAsync(
+            v => v.AlterarTipoPreco(tipo, temPermissao, liberacao),
+            (v, r) =>
+            {
+                if (!r.Aplicado)
+                {
+                    return [];
+                }
+
+                var texto = $"Tipo de preço da venda {v.NumeroExibicao} de {TipoPrecoVenda.Rotulo(tipoAntes ?? TipoPrecoVenda.Varejo)} para "
+                            + $"{TipoPrecoVenda.Rotulo(r.Tipo)} (total de R$ {NumeroBr.Dinheiro(r.TotalAntes)} para R$ {NumeroBr.Dinheiro(r.TotalDepois)})";
+                var antes = new JsonObject
+                {
+                    ["tipo_preco"] = tipoAntes,
+                    ["total"] = FormatoProtocolo.Dinheiro(r.TotalAntes),
+                }.ToJsonString();
+                var depois = new JsonObject
+                {
+                    ["tipo_preco"] = r.Tipo,
+                    ["total"] = FormatoProtocolo.Dinheiro(r.TotalDepois),
+                    ["itens_recalculados"] = r.LinhasAlteradas,
+                }.ToJsonString();
+                var alterado = new RegistroAuditoria("tipo_preco_alterado", Operador.Id, "vendas", v.Id,
+                    texto + (r.PorLiberacao ? " liberado pelo supervisor" : string.Empty), r.PorLiberacao ? liberacao!.SupervisorId : null,
+                    "PDV › Tipo de preço", r.PorLiberacao ? liberacao!.Motivo : null, Antes: antes, Depois: depois);
+                return r.PorLiberacao
+                    ? [alterado, new RegistroAuditoria("liberacao", Operador.Id, "vendas", v.Id, $"{texto} liberado pelo supervisor",
+                        liberacao!.SupervisorId, "PDV › Tipo de preço", liberacao.Motivo,
+                        Depois: new JsonObject { ["tipo_preco"] = r.Tipo }.ToJsonString())]
+                    : [alterado];
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// <c>Alt+G</c> Gelada (PDV 11.4; F3-B18): liga ou desliga o gelado no item (o Core, <see cref="Venda.AlternarGelado"/>). A
+    /// marca vai à tabela local <c>itens_venda_gelados</c> no mesmo commit da venda; não há ação de auditoria (o acréscimo
+    /// fica no <c>preco_unitario</c> e no <c>preco_tabela</c>, como um preço do cadastro).
+    /// </summary>
+    public Task<ResultadoGelado> AlternarGeladoAsync(int sequencia, CancellationToken ct = default) =>
+        ExecutarAsync(v => v.AlternarGelado(sequencia), ct);
+
+    /// <summary>
+    /// O preço parcelado confirmado na tela de pagamento (PDV 11.2; F3-B18; D74), antes de passar o cartão em mais de uma
+    /// parcela: a venda vai a <c>tipo_preco = 'parcelado'</c> (o Core, <see cref="Venda.AplicarPrecoParcelado"/>), com a
+    /// auditoria <c>tipo_preco_alterado</c> (o tipo e o total antes e depois, e as parcelas) no mesmo commit. Sem item com o
+    /// preço parcelado, nada muda. A tela só chega aqui com o recurso da onda R3 (Padrões da Fase 3). <paramref name="valor"/>
+    /// é o informado para o cartão em parcelas: o parcelado que não deixa valor para ele é recusado
+    /// (<see cref="Venda.MotivoParceladoSemValor"/>).
+    /// </summary>
+    public Task<ResultadoParcelado> AplicarPrecoParceladoAsync(int parcelas, decimal? valor = null, CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        return ExecutarAsync(
+            v => v.AplicarPrecoParcelado(valor),
+            (v, r) => r.Aplica
+                ? [AuditoriaParcelado(v, tipoAntes, r.TotalAntes, r.TotalDepois,
+                    $"Preço parcelado na venda {v.NumeroExibicao} (cartão em {parcelas}×)", r.LinhasAlteradas, parcelas)]
+                : [],
+            ct);
+    }
+
+    /// <summary>
+    /// Sai do preço parcelado confirmado sem o pagamento parcelado (a maquininha não aprovou, a liberação da forma foi negada,
+    /// a tela de pagamento reaberta; PDV 11.2; F3-B18): os preços e o tipo voltam aos do <c>F8</c>, com a auditoria
+    /// <c>tipo_preco_alterado</c>. Devolve se voltou; fora desse estado não grava nada.
+    /// </summary>
+    public Task<bool> VoltarDoPrecoParceladoAsync(CancellationToken ct = default)
+    {
+        if (Atual is not { ParceladoSemPagamentoParcelado: true })
+        {
+            return Task.FromResult(false);
+        }
+
+        var totalAntes = Atual.Total;
+        return ExecutarAsync(
+            v => v.VoltarDoPrecoParcelado(),
+            (v, voltou) => voltou
+                ? [AuditoriaParcelado(v, TipoPrecoVenda.Parcelado, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao}", null, null)]
+                : [],
+            ct);
+    }
+
+    /// <summary>A auditoria <c>tipo_preco_alterado</c> da entrada e da saída do preço parcelado (F3-B18), como a do F8.</summary>
+    private RegistroAuditoria AuditoriaParcelado(
+        Venda v, string? tipoAntes, decimal totalAntes, decimal totalDepois, string texto, int? linhas, int? parcelas)
+    {
+        var antes = new JsonObject { ["tipo_preco"] = tipoAntes, ["total"] = FormatoProtocolo.Dinheiro(totalAntes) }.ToJsonString();
+        var depois = new JsonObject { ["tipo_preco"] = v.TipoPreco, ["total"] = FormatoProtocolo.Dinheiro(totalDepois) };
+        if (linhas is { } n)
+        {
+            depois["itens_recalculados"] = n;
+        }
+
+        if (parcelas is { } p)
+        {
+            depois["parcelas"] = p;
+        }
+
+        return new RegistroAuditoria("tipo_preco_alterado", Operador.Id, "vendas", v.Id,
+            $"{texto}: total de R$ {NumeroBr.Dinheiro(totalAntes)} para R$ {NumeroBr.Dinheiro(totalDepois)}", null,
+            "PDV › Pagamento", null, Antes: antes, Depois: depois.ToJsonString());
+    }
+
+    /// <summary>
+    /// F6 › 3 Acréscimo no total (PDV 12.2; F3-B16), com a auditoria <c>acrescimo_total</c>; sem <c>pdv.venda.acrescimo</c>,
+    /// com a <paramref name="liberacao"/> do supervisor (e a auditoria <c>liberacao</c>). O acréscimo não tem limite de % do
+    /// operador nem linha em <c>liberacoes</c> (a SYNC 9.7 não tem a ação): a liberação fica na auditoria. Devolve o valor.
+    /// </summary>
+    public Task<decimal> AcrescimoAsync(Desconto acrescimo, LiberacaoConcedida? liberacao = null, CancellationToken ct = default)
+    {
+        if (liberacao is null && !Operador.Tem(PermissoesPdv.Acrescimo))
+        {
+            throw new RegraNegocioException("Sem a permissão de acréscimo: o supervisor libera.");
+        }
+
+        return ExecutarAsync(
+            v => v.AplicarAcrescimo(acrescimo),
+            (v, valor) =>
+            {
+                var pct = acrescimo.Tipo == TipoDesconto.Percentual ? $" ({NumeroBr.Percentual(acrescimo.Valor)}%)" : string.Empty;
+                var texto = $"Acréscimo no total de R$ {NumeroBr.Dinheiro(valor)}{pct}";
+                var depois = new JsonObject { ["acrescimo_total"] = FormatoProtocolo.Dinheiro(valor) }.ToJsonString();
+                var registro = new RegistroAuditoria("acrescimo_total", Operador.Id, "vendas", v.Id,
+                    texto + (liberacao is null ? string.Empty : " liberado pelo supervisor"), liberacao?.Supervisor.Id, "PDV › Acréscimo",
+                    liberacao?.Motivo, Depois: depois);
+                return liberacao is null
+                    ? [registro]
+                    : [registro, new RegistroAuditoria("liberacao", Operador.Id, "vendas", v.Id, $"{texto} liberado pelo supervisor",
+                        liberacao.Supervisor.Id, "PDV › Acréscimo", liberacao.Motivo, Depois: depois)];
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// F6 › 4 (sem permissão especial, 12.2): tira o acréscimo no total e, com <paramref name="removerDesconto"/>, também o
+    /// desconto no total do operador, num commit só (uma falha volta ao gravado).
+    /// </summary>
+    public Task RemoverAcrescimoTotalAsync(bool removerDesconto = false, CancellationToken ct = default) =>
+        ExecutarAsync(
+            v =>
+            {
+                if (removerDesconto)
+                {
+                    v.RemoverDescontoTotal();
+                }
+
+                v.RemoverAcrescimoTotal();
+            },
+            ct);
+
     /// <summary>F10: abre o pagamento e relê as regras dele (16.1, 16.7).</summary>
     public async Task IniciarPagamentoAsync(CancellationToken ct = default)
     {
@@ -938,9 +1265,23 @@ public sealed class ServicoVenda(
             ? null
             : new Liberacao(liberacao.Supervisor.Id, liberacao.Supervisor.LimiteDescontoEfetivoPct, liberacao.Motivo, liberacao.ConcedidaEm,
                 liberacao.Supervisor.Master);
+        // O lançamento à vista depois do parcelado confirmado sem o pagamento parcelado volta os preços dentro do Core
+        // (F3-B18): a saída do parcelado tem a auditoria tipo_preco_alterado no mesmo commit (PDV 11.2).
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
         await ExecutarAsync(
             v => v.LancarPagamento(forma, valor, relogio.Agora, detalhe, pix, supervisor),
-            (v, p) => AuditoriaPagamento(forma, p, pix, liberacao),
+            (v, p) =>
+            {
+                var auditoria = AuditoriaPagamento(forma, p, pix, liberacao);
+                if (tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado)
+                {
+                    auditoria.Insert(0, AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total,
+                        $"Preço parcelado desfeito na venda {v.NumeroExibicao} (pagamento à vista)", null, null));
+                }
+
+                return auditoria;
+            },
             ct);
         return Atual!.Falta == 0m ? await FinalizarAsync(ct) : null;
     }
@@ -974,9 +1315,45 @@ public sealed class ServicoVenda(
         return lista;
     }
 
-    public Task VoltarParaItensAsync(CancellationToken ct = default) => ExecutarAsync(v => v.VoltarParaItens(), ct);
+    /// <summary>
+    /// Esc na tela de pagamento. O preço parcelado confirmado sem o pagamento parcelado (a liberação da forma recusada) volta
+    /// aqui aos preços do <c>F8</c> (F3-B18), com a auditoria <c>tipo_preco_alterado</c>.
+    /// </summary>
+    public Task VoltarParaItensAsync(CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
+        return ExecutarAsync(
+            v =>
+            {
+                v.VoltarParaItens();
+                return true;
+            },
+            (v, _) => tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado
+                ? [AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao}", null, null)]
+                : [],
+            ct);
+    }
 
-    public Task RemoverPagamentoAsync(int sequencia, CancellationToken ct = default) => ExecutarAsync(v => v.RemoverPagamento(sequencia), ct);
+    /// <summary>
+    /// Del na tela de pagamento. Remover o pagamento parcelado volta os preços e o tipo do <c>F8</c> (PDV 11.2; F3-B18), com a
+    /// auditoria <c>tipo_preco_alterado</c> no mesmo commit.
+    /// </summary>
+    public Task RemoverPagamentoAsync(int sequencia, CancellationToken ct = default)
+    {
+        var tipoAntes = Atual?.TipoPreco;
+        var totalAntes = Atual?.Total ?? 0m;
+        return ExecutarAsync(
+            v =>
+            {
+                v.RemoverPagamento(sequencia);
+                return true;
+            },
+            (v, _) => tipoAntes == TipoPrecoVenda.Parcelado && v.TipoPreco != TipoPrecoVenda.Parcelado
+                ? [AuditoriaParcelado(v, tipoAntes, totalAntes, v.Total, $"Preço parcelado desfeito na venda {v.NumeroExibicao} (pagamento removido)", null, null)]
+                : [],
+            ct);
+    }
 
     /// <summary>Lança dinheiro na forma Dinheiro da loja (a primeira do tipo); quitado o total, finaliza.</summary>
     public async Task<ResultadoFinalizacao?> LancarDinheiroAsync(decimal valorRecebido, CancellationToken ct = default)
@@ -1054,11 +1431,15 @@ public sealed class ServicoVenda(
         var venda = Atual ?? throw new RegraNegocioException("Não há venda em andamento.");
         await ExigirSessaoDaVendaAsync(ct);
         var eventoId = IdGerador.Novo();
+        // SYNC 17.5 (F3-B4, F3-B15): a maior versão comum anunciada; sem handshake, a v1 (a venda com complementos vai na v1
+        // sem a baixa calculada no caixa, e a nuvem grava os complementos como antes).
+        var versao = await repositorioCaixa.VersaoParaGravarAsync("venda.finalizada", FabricaEventos.VersoesVendaFinalizada, ct)
+                     ?? FabricaEventos.VersaoSchemaVenda;
         long sequencia;
         try
         {
             venda.Finalizar(relogio.Agora, eventoId);
-            sequencia = await repositorio.EncerrarAsync(venda, FabricaEventos.VendaFinalizada(venda, eventoId), ct: ct);
+            sequencia = await repositorio.EncerrarAsync(venda, FabricaEventos.VendaFinalizada(venda, eventoId, versao), ct: ct);
         }
         catch
         {

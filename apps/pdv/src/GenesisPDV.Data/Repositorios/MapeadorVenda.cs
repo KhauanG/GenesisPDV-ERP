@@ -4,9 +4,10 @@ using GenesisPDV.Data.Entidades;
 namespace GenesisPDV.Data.Repositorios;
 
 /// <summary>
-/// Converte o agregado <see cref="Venda"/> nas linhas de <c>vendas</c>, <c>itens_venda</c>, <c>pagamentos_venda</c> e da
+/// Converte o agregado <see cref="Venda"/> nas linhas de <c>vendas</c>, <c>itens_venda</c> (com os
+/// <c>itens_venda_complementos</c>, F3-B15), <c>pagamentos_venda</c> e da
 /// tabela local <c>liberacoes_venda</c>, mais as <c>cobrancas_pix</c> do PIX estático/manual (C11a) e a tabela local
-/// <c>cascos_descontados_venda</c> (C11c).
+/// <c>cascos_descontados_venda</c> (C11c), e a marca local do gelado (<c>itens_venda_gelados</c>, F3-B18).
 /// </summary>
 internal static class MapeadorVenda
 {
@@ -72,6 +73,23 @@ internal static class MapeadorVenda
             }
 
             CopiarItem(item, linha, agora);
+
+            // Os complementos (F3-B15) nascem com o item e não mudam: só a linha nova os grava.
+            foreach (var c in item.Complementos.Where(c => linha.Complementos.All(g => g.Id != c.Id)))
+            {
+                linha.Complementos.Add(new ItemVendaComplementoRegistro
+                {
+                    Id = c.Id,
+                    ItemVendaId = item.Id,
+                    CriadoEm = agora,
+                    AtualizadoEm = agora,
+                    ComplementoId = c.ComplementoId,
+                    GrupoNome = c.GrupoNome,
+                    Descricao = c.Descricao,
+                    Quantidade = c.Quantidade,
+                    PrecoAdicional = c.PrecoAdicional,
+                });
+            }
         }
 
         foreach (var pagamento in v.Pagamentos)
@@ -190,6 +208,15 @@ internal static class MapeadorVenda
         OcorridoEm = l.OcorridoEm,
     };
 
+    /// <summary>Linha local da marca do gelado do item (PDV 11.4; F3-B18).</summary>
+    public static ItemVendaGeladoLocal ParaLinha(Guid vendaId, ItemVenda i, DateTimeOffset agora) => new()
+    {
+        ItemVendaId = i.Id,
+        VendaId = vendaId,
+        AcrescimoUnitario = i.AcrescimoGelada,
+        RegistradoEm = agora,
+    };
+
     /// <summary>Linha local do casco descontado na venda (C11c).</summary>
     public static CascoDescontadoVendaLocal ParaLinha(Guid vendaId, CascoDescontado c) => new()
     {
@@ -205,13 +232,18 @@ internal static class MapeadorVenda
     /// Espelho das formas usadas (C11a): <c>restringe_idade_minima</c> e "exige pessoa" não têm coluna em
     /// <c>pagamentos_venda</c> e voltam ao pagamento pela forma, para a venda recuperada manter as duas regras.
     /// </param>
+    /// <param name="gelados">A marca local do gelado (F3-B18): o acréscimo por unidade de cada item gelado.</param>
+    /// <param name="tipoPrecoAntesParcelado">O tipo do F8 da venda no parcelado (<c>estado_operacao</c>, F3-B18).</param>
     public static Venda ParaDominio(
         VendaRegistro r,
         IEnumerable<LiberacaoVendaLocal>? liberacoes = null,
         IEnumerable<CobrancaPixRegistro>? cobrancas = null,
         IReadOnlyDictionary<Guid, FormaPagamentoRegistro>? formas = null,
-        IEnumerable<CascoDescontadoVendaLocal>? cascosDescontados = null)
+        IEnumerable<CascoDescontadoVendaLocal>? cascosDescontados = null,
+        IEnumerable<ItemVendaGeladoLocal>? gelados = null,
+        string? tipoPrecoAntesParcelado = null)
     {
+        var acrescimosGelada = (gelados ?? []).ToDictionary(g => g.ItemVendaId, g => g.AcrescimoUnitario);
         var estado = new EstadoVenda(
             Id: r.Id,
             Numero: r.Numero,
@@ -245,7 +277,8 @@ internal static class MapeadorVenda
             Observacao: r.Observacao,
             DescontoTotalOrigem: r.DescontoTotalOrigem,
             IdadeConfirmadaPorId: r.IdadeConfirmadaPorId,
-            IdadeConfirmadaEm: r.IdadeConfirmadaEm);
+            IdadeConfirmadaEm: r.IdadeConfirmadaEm,
+            TipoPrecoAntesParcelado: tipoPrecoAntesParcelado);
 
         var itens = r.Itens.Select(i => new ItemVenda(
             id: i.Id,
@@ -289,7 +322,12 @@ internal static class MapeadorVenda
                     i.KitComponenteId!.Value,
                     i.KitAlternativaId,
                     i.KitAcrescimo)
-                : null));
+                : null,
+            complementos: i.Complementos
+                .OrderBy(c => c.CriadoEm).ThenBy(c => c.Id)
+                .Select(c => new ComplementoItem(c.Id, c.ComplementoId, c.GrupoNome, c.Descricao, c.Quantidade, c.PrecoAdicional))
+                .ToList(),
+            acrescimoGelada: acrescimosGelada.GetValueOrDefault(i.Id)));
 
         var pagamentos = r.Pagamentos.Select(p => new PagamentoVenda(
             id: p.Id,

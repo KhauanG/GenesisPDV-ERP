@@ -82,6 +82,11 @@ public static partial class DescritorAuditoria
         new("desconto_item", GrupoAuditoria.Vendas, "deu desconto num item", "Desconto no item"),
         new("desconto_total", GrupoAuditoria.Vendas, "deu desconto no total da venda", "Desconto no total"),
         new("desconto_item_removido", GrupoAuditoria.Vendas, "tirou o desconto de um item", "Desconto do item tirado"),
+        // Fase 3, F3-B16 (PDV 10.4, 10.5, 12.2): sobem só com o recurso da onda (CatalogosNuvem.AcoesAuditoriaFase3).
+        new("preco_alterado", GrupoAuditoria.Vendas, "alterou o preço de um item", "Preço alterado"),
+        new("acrescimo_total", GrupoAuditoria.Vendas, "deu acréscimo no total da venda", "Acréscimo no total"),
+        // F3-B17 (PDV 11.2): o F8, também só com o recurso da onda.
+        new("tipo_preco_alterado", GrupoAuditoria.Vendas, "trocou o tipo de preço da venda", "Tipo de preço alterado"),
         new("cascos_trazidos", GrupoAuditoria.Vendas, "registrou os cascos trazidos", "Cascos trazidos"),
         new("cascos_descontados", GrupoAuditoria.Vendas, "descontou cascos na venda", "Cascos descontados"),
         new("pix_confirmado_manual", GrupoAuditoria.Vendas, "confirmou um PIX à mão", "PIX confirmado à mão"),

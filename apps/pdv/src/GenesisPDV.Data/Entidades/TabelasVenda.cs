@@ -151,6 +151,25 @@ public class ItemVendaRegistro : LinhaMovimento
     public Guid? AutorizadoPorId { get; set; }
     public string? MotivoCancelamento { get; set; }
     public DateTimeOffset IncluidoEm { get; set; }
+
+    /// <summary>Os complementos escolhidos do item (F3-B15), gravados com ele na inclusão e nunca alterados depois.</summary>
+    public List<ItemVendaComplementoRegistro> Complementos { get; set; } = [];
+}
+
+/// <summary>
+/// <c>itens_venda_complementos</c> (MD 3.11.3; PDV 10.2; Fase 3, F3-B15): as mesmas colunas da nuvem, gravadas no
+/// mesmo commit do item para a venda em andamento voltar com os complementos depois de uma queda (PDV 32.3). Sobe no
+/// documento da venda (<c>venda.finalizada</c>, <c>venda.cancelada</c> forma B); o <c>componentes_estoque</c> é só do
+/// payload.
+/// </summary>
+public class ItemVendaComplementoRegistro : LinhaMovimento
+{
+    public Guid ItemVendaId { get; set; }
+    public Guid? ComplementoId { get; set; }
+    public string GrupoNome { get; set; } = string.Empty;
+    public string Descricao { get; set; } = string.Empty;
+    [Escala(Escalas.Quantidade)] public decimal Quantidade { get; set; } = 1m;
+    [Escala(Escalas.Preco)] public decimal PrecoAdicional { get; set; }
 }
 
 /// <summary><c>pagamentos_venda</c>.</summary>

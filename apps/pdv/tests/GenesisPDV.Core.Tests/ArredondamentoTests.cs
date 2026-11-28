@@ -1,8 +1,9 @@
+using System.Text.RegularExpressions;
 using GenesisPDV.Core.Numeros;
 
 namespace GenesisPDV.Core.Tests;
 
-public class ArredondamentoTests
+public partial class ArredondamentoTests
 {
     [Theory]
     [InlineData("0.005", "0.01")]
@@ -98,5 +99,73 @@ public class ArredondamentoTests
         Assert.True(Arredondamento.CabeEm(12.50m, 2));
         Assert.True(Arredondamento.CabeEm(12.500m, 2));
         Assert.False(Arredondamento.CabeEm(12.505m, 2));
+    }
+
+    [Fact]
+    public void Arred_em_n_casas_usa_meio_para_cima()
+    {
+        Assert.Equal(12.3457m, Arredondamento.Arred(12.34565m, Arredondamento.CasasPercentual));
+        Assert.Equal(0.125m, Arredondamento.Arred(0.1245m, 3));
+        Assert.Equal(3m, Arredondamento.Arred(2.5m, 0));
+    }
+
+    /// <summary>
+    /// Padrões da Fase 3 (F3-B16; PDV 12.1): todo arredondamento de decimal do PDV passa pelo <see cref="Arredondamento"/>.
+    /// O padrão do .NET (<c>decimal.Round</c>/<c>Math.Round</c> sem o <see cref="MidpointRounding"/>) é o bancário, que dá
+    /// 2,67 em 2,675 e um centavo diferente da NFC-e. O teste varre o código dos projetos do PDV e recusa a chamada fora do
+    /// arquivo dele; ficam de fora só as de <c>double</c> (milissegundos do relógio e do boot), uma por linha, na lista.
+    /// </summary>
+    [Fact]
+    public void Nenhum_arredondamento_de_decimal_fora_do_arquivo_do_arredondamento()
+    {
+        var src = Path.Combine(PastaPdv(), "src");
+        var arquivos = Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                        && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToList();
+        Assert.True(arquivos.Count > 50, "a varredura achou o código do PDV");
+
+        var achados = new List<string>();
+        foreach (var arquivo in arquivos)
+        {
+            if (Path.GetFileName(arquivo) == "Arredondamento.cs")
+            {
+                continue;
+            }
+
+            var linhas = File.ReadAllLines(arquivo);
+            for (var i = 0; i < linhas.Length; i++)
+            {
+                var linha = linhas[i];
+                if (ChamadaDeArredondamento().IsMatch(linha) && !linha.TrimStart().StartsWith("///", StringComparison.Ordinal) && !DeDouble(linha))
+                {
+                    achados.Add($"{Path.GetRelativePath(src, arquivo)}:{i + 1}: {linha.Trim()}");
+                }
+            }
+        }
+
+        Assert.True(achados.Count == 0, "Use o Arredondamento (Core/Numeros) no lugar de:\n" + string.Join('\n', achados));
+    }
+
+    /// <summary>As de <c>double</c> que o PDV tem: o desvio do relógio e o boot da máquina, em milissegundos e minutos.</summary>
+    private static bool DeDouble(string linha) =>
+        linha.Contains("Math.Round(", StringComparison.Ordinal)
+        && (linha.Contains(".TotalMilliseconds", StringComparison.Ordinal) || linha.Contains("(double)", StringComparison.Ordinal));
+
+    [GeneratedRegex(@"\b(Math|decimal|Decimal)\.Round\s*\(")]
+    private static partial Regex ChamadaDeArredondamento();
+
+    /// <summary><c>apps/pdv</c>, subindo a partir da saída do teste até achar o <c>GenesisPDV.slnx</c>.</summary>
+    private static string PastaPdv()
+    {
+        for (var pasta = new DirectoryInfo(AppContext.BaseDirectory); pasta is not null; pasta = pasta.Parent)
+        {
+            if (File.Exists(Path.Combine(pasta.FullName, "GenesisPDV.slnx")))
+            {
+                return pasta.FullName;
+            }
+        }
+
+        throw new InvalidOperationException("GenesisPDV.slnx não encontrado acima da pasta do teste.");
     }
 }

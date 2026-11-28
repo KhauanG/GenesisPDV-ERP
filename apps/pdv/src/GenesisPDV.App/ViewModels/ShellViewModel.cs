@@ -370,7 +370,7 @@ public sealed partial class ShellViewModel(IServiceProvider servicos, ILogger<Sh
     /// <summary>A venda em pagamento (o F10 aberto) ou um diálogo de pagamento na frente: o bloqueio por inatividade espera.</summary>
     private bool EmPagamento(VendaViewModel? venda) =>
         Servico<ServicoVenda>().Atual is { Status: GenesisPDV.Core.Vendas.StatusVenda.EmPagamento }
-        || venda?.Dialogo is DialogoPagamentoViewModel or DialogoPixViewModel or DialogoPosViewModel;
+        || venda?.Dialogo is DialogoPagamentoViewModel or DialogoPixViewModel or DialogoPosViewModel or DialogoParcelasViewModel;
 
     /// <summary>
     /// Bloqueia a tela (PDV 7.4): pela inatividade ou pelo F11 › 7 / Ctrl+Alt+B. A venda em andamento fica como estava. A

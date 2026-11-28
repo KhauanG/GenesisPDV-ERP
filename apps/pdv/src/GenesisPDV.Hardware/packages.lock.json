@@ -119,6 +119,9 @@
         "type": "Transitive",
         "resolved": "10.0.14",
         "contentHash": "g8byPDtP2LDNkHcnyuhrJpS16Y09jppi71t7vD2t5B3Hqcz0YrZJMLBDWN9AsJVW50yZ54iM70YSPOC6+3X0IA=="
+      },
+      "genesispdv.core": {
+        "type": "Project"
       }
     }
   }

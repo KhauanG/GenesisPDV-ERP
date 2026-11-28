@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GenesisPDV.App.Servicos;
+using GenesisPDV.Core.Atalhos;
 using GenesisPDV.Core.Caixa;
 using GenesisPDV.Core.Comum;
 using GenesisPDV.Core.Numeros;
@@ -128,12 +129,19 @@ public sealed partial class DialogoRemoverItemViewModel(VendaViewModel venda, in
 }
 
 /// <summary>
-/// F6 Desconto: 1 = no item selecionado, 2 = no total, 4 = remover desconto do total (PDV 12.2), 5 = remover o desconto
-/// do item selecionado.
+/// F6 Desconto: 1 = no item selecionado, 2 = no total, 3 = acréscimo no total (F3-B16, só com o recurso da onda),
+/// 4 = remover o desconto e o acréscimo do total (PDV 12.2), 5 = remover o desconto do item selecionado.
 /// </summary>
-public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, ItemLinhaViewModel? item) : DialogoViewModel(venda)
+public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, ItemLinhaViewModel? item, bool acrescimo = false) : DialogoViewModel(venda)
 {
-    public override string Titulo => "Desconto";
+    public override string Titulo => acrescimo ? "Desconto / acréscimo" : "Desconto";
+
+    /// <summary>O "3 Acréscimo no total" (F3-B16): só com o recurso da onda (a tela grava o <c>acrescimo_total</c>).</summary>
+    public bool TemAcrescimo => acrescimo;
+
+    public string OpcaoRemoverTotal => acrescimo ? "4  Remover o desconto/acréscimo do total" : "4  Remover o desconto do total";
+
+    public string Teclas => acrescimo ? "[1] [2] [3] [4] [5] ou clique para escolher" : "[1] [2] [4] [5] ou clique para escolher";
 
     public bool TemItem => item is { Cancelado: false };
 
@@ -158,6 +166,9 @@ public sealed partial class DialogoMenuDescontoViewModel(VendaViewModel venda, I
                 break;
             case "2":
                 Venda.AbrirDialogo(new DialogoValorDescontoViewModel(Venda, null));
+                break;
+            case "3" when acrescimo:
+                Venda.AbrirAcrescimo();
                 break;
             case "4":
                 await Venda.RemoverDescontoTotalAsync();
@@ -439,36 +450,90 @@ public sealed partial class DialogoConfirmacaoViewModel(VendaViewModel venda, st
     }
 }
 
-public sealed class DialogoAjudaViewModel(VendaViewModel venda) : DialogoViewModel(venda)
+/// <summary>
+/// F1 Ajuda (PDV 28.3): as teclas fixas e todas as ações do mapa de atalhos com a tecla configurada (F3-B13), por
+/// <c>ordem</c>. As habilitadas que este caixa tem, uma por linha (com as teclas do F11 depois do menu); as que ainda não
+/// existem nesta versão e as desabilitadas no ERP, numa lista corrida cada (a tecla delas só bipa).
+/// </summary>
+public sealed class DialogoAjudaViewModel : DialogoViewModel
 {
+    public DialogoAjudaViewModel(VendaViewModel venda)
+        : base(venda)
+    {
+        var mapa = venda.Mapa;
+        var linhas = new List<string>
+        {
+            "Enter      Incluir o código digitado/bipado (aceita 3*código e 0,750*código)",
+            "+ / -      Somar ou tirar 1 do último item",
+            "↑ ↓        Selecionar item          Home/End  Primeiro/último item",
+        };
+        foreach (var a in mapa.Atalhos.Where(a => a.Habilitado && venda.TemAcao(a.Acao)))
+        {
+            linhas.Add($"{a.Tecla,-11}{a.Catalogo.Descricao}");
+            if (a.Acao == AcoesAtalho.MenuFuncoes)
+            {
+                linhas.Add("           1 Sangria  2 Reforço  3 Fechamento  4 Reimprimir  5 Cancelar última  6 Resumo diário");
+                linhas.Add("           S Status do sync  V Vasilhames (na sangria/reforço: F2 Quem retira  F3 Cédulas  F12 Movimentos)");
+                linhas.Add("           7 Bloquear a tela  8 ⚙ Central do PDV (Painel de saúde, impressora e gaveta; também o ⚙ da barra)  9 Abrir a gaveta");
+            }
+        }
+
+        linhas.Add("Ctrl+Alt+T Alternar tema escuro/claro (tecla fixa)");
+        linhas.Add("⚠ na barra  Problema no Painel de saúde: o clique abre a Central e diz o que fazer");
+        linhas.Add("Mouse      Botões da barra de baixo = as mesmas teclas; duplo clique no item abre a janela do item");
+        var futuras = mapa.Atalhos.Where(a => a.Habilitado && !venda.TemAcao(a.Acao) && !venda.DesligadaNaLoja(a.Acao)).ToList();
+        if (futuras.Count > 0)
+        {
+            linhas.Add($"Chegam numa próxima versão: {string.Join("  ·  ", futuras.Select(a => $"{a.Tecla} {a.Rotulo}"))}");
+        }
+
+        // F3-B16: o Ctrl+F6 existe nesta versão e a nuvem anunciou o recurso da onda, mas a loja não o ligou (ERP ›
+        // Configurações › PDV › Altera preço no PDV). Sem o recurso, ele fica nas de uma próxima versão, acima.
+        var desligadas = mapa.Atalhos.Where(a => a.Habilitado && venda.DesligadaNaLoja(a.Acao)).ToList();
+        if (desligadas.Count > 0)
+        {
+            linhas.Add($"Desligadas na loja: {string.Join("  ·  ", desligadas.Select(a => $"{a.Tecla} {a.Rotulo}"))} (ERP › Configurações › PDV)");
+        }
+
+        var desabilitadas = mapa.Atalhos.Where(a => !a.Habilitado).ToList();
+        if (desabilitadas.Count > 0)
+        {
+            linhas.Add($"Desabilitadas no ERP: {string.Join("  ·  ", desabilitadas.Select(a => $"{a.Tecla} {a.Rotulo}"))}");
+        }
+
+        Atalhos = linhas;
+    }
+
     public override string Titulo => "Atalhos do caixa";
 
-    public IReadOnlyList<string> Atalhos { get; } =
-    [
-        "Enter      Incluir o código digitado/bipado (aceita 3*código e 0,750*código)",
-        "+ / -      Somar ou tirar 1 do último item",
-        "↑ ↓        Selecionar item          Home/End  Primeiro/último item",
-        "F2         Pesquisar produto (na pesquisa, F4 = estoque nas outras lojas, online)    F3  Quantidade",
-        "F4         Remover (cancelar) item  Shift+F4  Cancelar a venda",
-        "F5         CPF na nota / cliente    F6  Desconto (item / total)",
-        "F10        Concluir venda: ↑↓ ou Alt+1..9 escolhem a forma (cartão: maquininha; PIX: QR e supervisor)",
-        "Ctrl+Alt+T Alternar tema escuro/claro    Ctrl+Alt+B Bloquear a tela (F11 › 7; desbloqueia com o PIN)",
-        "F11        Funções: 1 Sangria  2 Reforço  3 Fechamento  4 Reimprimir  5 Cancelar última  6 Resumo diário",
-        "           S Status do sync  V Vasilhames (na sangria/reforço: F2 Quem retira  F3 Cédulas  F12 Movimentos)",
-        "           7 Bloquear a tela  8 ⚙ Central do PDV (Painel de saúde, impressora e gaveta; também o ⚙ da barra)  9 Abrir a gaveta",
-        "⚠ na barra  Problema no Painel de saúde: o clique abre a Central e diz o que fazer",
-        "F12        Gestão de vendas: Enter detalhes  Ctrl+R reimprimir  Ctrl+Del cancelar venda paga (gerente ou encarregado)",
-        "           F3 Caixas anteriores (os fechados dos últimos 30 dias, na Central › 1 Vendas)",
-        "Ctrl+Alt+S Sincronizar agora",
-        "Mouse      Botões da barra de baixo = as teclas F; duplo clique no item abre a janela do item",
-        "F7 F8 F9 Ctrl+N Ctrl+T  Chegam nas próximas fases",
-    ];
+    public IReadOnlyList<string> Atalhos { get; }
 
     protected override Task AoConfirmarAsync()
     {
         Venda.FecharDialogo();
         return Task.CompletedTask;
     }
+}
+
+/// <summary>
+/// Ctrl+N Nova venda com a venda em andamento (PDV 28.3): C cancela a atual (o mesmo do Shift+F4: o motivo e, sem a
+/// permissão, o supervisor), Esc ou Enter voltam à venda. O "Suspender (S)" entra com o F3-B23.
+/// </summary>
+public sealed partial class DialogoNovaVendaViewModel(VendaViewModel venda, string numero, decimal total) : DialogoViewModel(venda)
+{
+    public override string Titulo => "Nova venda";
+
+    public string Mensagem => $"A venda {numero} (R$ {NumeroBr.Dinheiro(total)}) está em andamento. Para começar outra, cancele esta.";
+
+    /// <summary>Enter não cancela nada: volta à venda (o cancelamento só pelo C).</summary>
+    protected override Task AoConfirmarAsync()
+    {
+        Venda.FecharDialogo();
+        return Task.CompletedTask;
+    }
+
+    [RelayCommand]
+    private void CancelarAtual() => Venda.CancelarParaNovaVenda();
 }
 
 /// <summary>
@@ -622,11 +687,12 @@ public sealed partial class DialogoItemViewModel : DialogoViewModel
     }
 }
 
-/// <summary>Botão da barra de funções da venda (decisão 65): a tecla, a função e o mesmo comando da tecla.</summary>
-/// <param name="Futuro">Função das próximas fases (F7, F8, F9, Ctrl+N, Ctrl+T): o botão mostra o "em breve" de sempre.</param>
-/// <param name="Destaque">O F10 CONCLUIR.</param>
-public sealed record AtalhoBarraViewModel(
-    string Tecla, string Funcao, System.Windows.Input.ICommand Comando, object? Parametro = null, bool Futuro = false, bool Destaque = false)
+/// <summary>
+/// Botão da barra de funções da venda (decisão 65): a tecla configurada no mapa de atalhos (F3-B13), a função e o mesmo
+/// comando da tecla.
+/// </summary>
+/// <param name="Destaque">O CONCLUIR (a ação <c>concluir_venda</c>).</param>
+public sealed record AtalhoBarraViewModel(string Tecla, string Funcao, System.Windows.Input.ICommand Comando, bool Destaque = false)
 {
     public string Rotulo => $"{Tecla} {Funcao}";
 }

@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using GenesisPDV.Core.Numeros;
+using GenesisPDV.Core.Vendas;
 using GenesisPDV.Data.Entidades;
 using Microsoft.EntityFrameworkCore;
 
@@ -217,8 +219,10 @@ public sealed class ConsultasVendaLocal(IDbContextFactory<PdvDbContext> fabrica)
     /// refletidas baixam. Refletido = evento confirmado e (cursor do fluxo <c>estoque</c> ≥ <c>versao_nuvem_fim</c>, ou a
     /// linha do saldo com versão acima da <c>versao_nuvem</c>). O rejeitado continua contando (a venda aconteceu); o
     /// descartado no ERP (<c>resultado.descartado</c>) deixa de contar. A baixa vem do payload: o item ou, no produzido,
-    /// os insumos de <c>componentes_estoque</c>; os componentes do combo já são itens. A venda finalizada cancelada no
-    /// caixa (<c>venda.cancelada</c> forma A, C11b) devolve a baixa até o estorno se refletir.
+    /// os insumos de <c>componentes_estoque</c>; os componentes do combo já são itens. Desde o F3-B15, na v2, também os
+    /// complementos do item não cancelado: os insumos da <c>componentes_estoque</c> da linha ou o vinculado com saldo
+    /// próprio (o mesmo <c>Venda.BaixasEstimadas</c> da venda em andamento). A venda finalizada cancelada no caixa
+    /// (<c>venda.cancelada</c> forma A, C11b) devolve a baixa até o estorno se refletir.
     /// </summary>
     public async Task<IReadOnlyDictionary<Guid, decimal>> SaldosEstimadosAsync(IReadOnlyCollection<Guid> produtos, CancellationToken ct = default)
     {
@@ -253,16 +257,32 @@ public sealed class ConsultasVendaLocal(IDbContextFactory<PdvDbContext> fabrica)
         var eventos = await db.EventosSaida.AsNoTracking()
             .Where(e => e.Tipo == "venda.finalizada"
                         && (e.Status != StatusEventoSaida.Confirmado || e.VersaoNuvemFim == null || e.VersaoNuvemFim > cursor))
-            .Select(e => new { e.Status, e.VersaoNuvem, e.Payload, e.Resultado })
+            .Select(e => new { e.Status, e.VersaoNuvem, e.VersaoSchema, e.Payload, e.Resultado })
             .ToListAsync(ct);
-        foreach (var e in eventos)
-        {
-            if (Descartado(e.Resultado))
-            {
-                continue;
-            }
 
-            foreach (var (produtoId, quantidade) in Baixas(e.Payload))
+        // C11b: a venda finalizada cancelada no caixa (forma A) devolve o estoque na nuvem; até o estorno se refletir, o
+        // que ela baixou volta ao estimado. O payload da forma A não traz os itens: vêm do `venda.finalizada` dela.
+        var cancelamentos = await db.EventosSaida.AsNoTracking()
+            .Where(e => e.Tipo == "venda.cancelada"
+                        && (e.Status != StatusEventoSaida.Confirmado || e.VersaoNuvemFim == null || e.VersaoNuvemFim > cursor))
+            .Select(e => new { e.AgregadoId, e.Status, e.VersaoNuvem, e.Resultado })
+            .ToListAsync(ct);
+        var vendasCanceladas = cancelamentos.Where(c => !Descartado(c.Resultado)).Select(c => c.AgregadoId).Distinct().ToList();
+        var finalizadas = await db.EventosSaida.AsNoTracking()
+            .Where(e => e.Tipo == "venda.finalizada" && vendasCanceladas.Contains(e.AgregadoId))
+            .Select(e => new { e.AgregadoId, e.VersaoSchema, e.Payload, e.Resultado })
+            .ToListAsync(ct);
+
+        var lidos = eventos.Where(e => !Descartado(e.Resultado)).Select(e => (Evento: e, Baixas: Ler(e.Payload, e.VersaoSchema))).ToList();
+        var lidasCanceladas = finalizadas.GroupBy(f => f.AgregadoId).Select(g => g.First())
+            .Where(f => !Descartado(f.Resultado))
+            .ToDictionary(f => f.AgregadoId, f => Ler(f.Payload, f.VersaoSchema));
+        var vinculados = await VinculadosComSaldoAsync(
+            db, lidos.SelectMany(l => l.Baixas.Vinculados).Concat(lidasCanceladas.Values.SelectMany(l => l.Vinculados)).Select(v => v.Complemento), ct);
+
+        foreach (var (e, lido) in lidos)
+        {
+            foreach (var (produtoId, quantidade) in Baixas(lido, vinculados))
             {
                 if (!resultado.ContainsKey(produtoId))
                 {
@@ -277,27 +297,15 @@ public sealed class ConsultasVendaLocal(IDbContextFactory<PdvDbContext> fabrica)
             }
         }
 
-        // C11b: a venda finalizada cancelada no caixa (forma A) devolve o estoque na nuvem; até o estorno se refletir, o
-        // que ela baixou volta ao estimado. O payload da forma A não traz os itens: vêm do `venda.finalizada` dela.
-        var cancelamentos = await db.EventosSaida.AsNoTracking()
-            .Where(e => e.Tipo == "venda.cancelada"
-                        && (e.Status != StatusEventoSaida.Confirmado || e.VersaoNuvemFim == null || e.VersaoNuvemFim > cursor))
-            .Select(e => new { e.AgregadoId, e.Status, e.VersaoNuvem, e.Resultado })
-            .ToListAsync(ct);
-        var vendasCanceladas = cancelamentos.Where(c => !Descartado(c.Resultado)).Select(c => c.AgregadoId).Distinct().ToList();
-        var finalizadas = await db.EventosSaida.AsNoTracking()
-            .Where(e => e.Tipo == "venda.finalizada" && vendasCanceladas.Contains(e.AgregadoId))
-            .Select(e => new { e.AgregadoId, e.Payload, e.Resultado })
-            .ToListAsync(ct);
         foreach (var c in cancelamentos.Where(c => !Descartado(c.Resultado)))
         {
             // Forma B (venda em andamento) não tem `venda.finalizada`: não baixou nada.
-            if (finalizadas.FirstOrDefault(f => f.AgregadoId == c.AgregadoId) is not { } finalizada || Descartado(finalizada.Resultado))
+            if (!lidasCanceladas.TryGetValue(c.AgregadoId, out var lido))
             {
                 continue;
             }
 
-            foreach (var (produtoId, quantidade) in Baixas(finalizada.Payload))
+            foreach (var (produtoId, quantidade) in Baixas(lido, vinculados))
             {
                 var refletido = c.Status == StatusEventoSaida.Confirmado && c.VersaoNuvem is { } v && versaoLinha.GetValueOrDefault(produtoId) > v;
                 if (resultado.ContainsKey(produtoId) && !refletido)
@@ -310,16 +318,29 @@ public sealed class ConsultasVendaLocal(IDbContextFactory<PdvDbContext> fabrica)
         return resultado;
     }
 
-    /// <summary>Baixas do payload <c>venda.finalizada</c>: item não cancelado ou os insumos da ficha (unidade base).</summary>
-    private static IEnumerable<(Guid Produto, decimal Quantidade)> Baixas(string payload)
+    /// <summary>
+    /// O que um <c>venda.finalizada</c> baixa, lido do payload: <see cref="Fixas"/> são o item não cancelado ou os insumos
+    /// da ficha dele (unidade base) e, na v2, os insumos da <c>componentes_estoque</c> da linha do complemento;
+    /// <see cref="Vinculados"/> são as linhas de complemento da v2 sem a lista, cujo vinculado a nuvem baixa pelo cadastro
+    /// (<see cref="VinculadosComSaldoAsync"/>), com as vezes = quantidade do item × a do complemento.
+    /// </summary>
+    private sealed record BaixasDoPayload(List<(Guid Produto, decimal Quantidade)> Fixas, List<(Guid Complemento, decimal Vezes)> Vinculados);
+
+    /// <summary>
+    /// Lê as baixas do payload. Os complementos (F3-B15) contam só na v2 e só os do item não cancelado, a mesma regra do
+    /// <c>baixaDoComplemento</c> da nuvem: na v1 ela grava os complementos sem baixa nenhuma.
+    /// </summary>
+    private static BaixasDoPayload Ler(string payload, int versaoSchema)
     {
+        var fixas = new List<(Guid, decimal)>();
+        var vinculados = new List<(Guid, decimal)>();
         using var doc = JsonDocument.Parse(payload);
         if (!doc.RootElement.TryGetProperty("itens_venda", out var itens) || itens.ValueKind != JsonValueKind.Array)
         {
-            yield break;
+            return new BaixasDoPayload(fixas, vinculados);
         }
 
-        var lista = new List<(Guid, decimal)>();
+        var ativos = new Dictionary<Guid, decimal>();
         foreach (var i in itens.EnumerateArray())
         {
             if (i.TryGetProperty("cancelado", out var c) && c.ValueKind == JsonValueKind.True)
@@ -327,19 +348,94 @@ public sealed class ConsultasVendaLocal(IDbContextFactory<PdvDbContext> fabrica)
                 continue;
             }
 
-            if (i.TryGetProperty("componentes_estoque", out var comps) && comps.ValueKind == JsonValueKind.Array && comps.GetArrayLength() > 0)
+            if (i.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
             {
-                lista.AddRange(comps.EnumerateArray().Select(x => (Guid.Parse(x.GetProperty("produto_id").GetString()!), Decimal(x.GetProperty("quantidade")))));
+                ativos[Guid.Parse(id.GetString()!)] = Decimal(i.GetProperty("quantidade"));
+            }
+
+            if (Componentes(i) is { } comps)
+            {
+                fixas.AddRange(comps);
                 continue;
             }
 
-            lista.Add((Guid.Parse(i.GetProperty("produto_id").GetString()!), Decimal(i.GetProperty("quantidade"))));
+            fixas.Add((Guid.Parse(i.GetProperty("produto_id").GetString()!), Decimal(i.GetProperty("quantidade"))));
         }
 
-        foreach (var x in lista)
+        if (versaoSchema < 2
+            || !doc.RootElement.TryGetProperty("itens_venda_complementos", out var linhas) || linhas.ValueKind != JsonValueKind.Array)
+        {
+            return new BaixasDoPayload(fixas, vinculados);
+        }
+
+        foreach (var l in linhas.EnumerateArray())
+        {
+            if (!l.TryGetProperty("item_venda_id", out var item) || item.ValueKind != JsonValueKind.String
+                || !ativos.TryGetValue(Guid.Parse(item.GetString()!), out var quantidadeItem))
+            {
+                continue;
+            }
+
+            if (Componentes(l) is { } comps)
+            {
+                fixas.AddRange(comps);
+                continue;
+            }
+
+            if (l.TryGetProperty("complemento_id", out var opcao) && opcao.ValueKind == JsonValueKind.String)
+            {
+                var quantidade = l.TryGetProperty("quantidade", out var q) && q.ValueKind != JsonValueKind.Null ? Decimal(q) : 1m;
+                vinculados.Add((Guid.Parse(opcao.GetString()!), quantidadeItem * quantidade));
+            }
+        }
+
+        return new BaixasDoPayload(fixas, vinculados);
+    }
+
+    /// <summary>A <c>componentes_estoque</c> não vazia da linha (item ou complemento); nula sem ela.</summary>
+    private static List<(Guid, decimal)>? Componentes(JsonElement linha) =>
+        linha.TryGetProperty("componentes_estoque", out var comps) && comps.ValueKind == JsonValueKind.Array && comps.GetArrayLength() > 0
+            ? comps.EnumerateArray().Select(x => (Guid.Parse(x.GetProperty("produto_id").GetString()!), Decimal(x.GetProperty("quantidade")))).ToList()
+            : null;
+
+    /// <summary>As baixas do payload, com o vinculado de cada complemento resolvido pelo espelho (3 casas, a conta da nuvem).</summary>
+    private static IEnumerable<(Guid Produto, decimal Quantidade)> Baixas(BaixasDoPayload lido, IReadOnlyDictionary<Guid, (Guid Produto, decimal QuantidadeBaixa)> vinculados)
+    {
+        foreach (var x in lido.Fixas)
         {
             yield return x;
         }
+
+        foreach (var (complemento, vezes) in lido.Vinculados)
+        {
+            if (vinculados.TryGetValue(complemento, out var v) && Arredondamento.Arred3(vezes * v.QuantidadeBaixa) is > 0m and var quantidade)
+            {
+                yield return (v.Produto, quantidade);
+            }
+        }
+    }
+
+    /// <summary>
+    /// As opções (espelho <c>produtos_complementos</c>, pelo id, como a nuvem lê o cadastro dela) com <c>baixa_estoque</c>
+    /// cujo vinculado tem saldo próprio: <c>controla_estoque</c> e não é kit, produzido nem serviço (o produzido baixa
+    /// pela <c>componentes_estoque</c> da linha; os outros a nuvem só custeia).
+    /// </summary>
+    private static async Task<Dictionary<Guid, (Guid Produto, decimal QuantidadeBaixa)>> VinculadosComSaldoAsync(
+        PdvDbContext db, IEnumerable<Guid> complementos, CancellationToken ct)
+    {
+        var ids = complementos.Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var semBaixaPropria = new[] { TipoProduto.Kit, TipoProduto.Produzido, TipoProduto.Servico };
+        var linhas = await db.Set<ProdutoComplementoRegistro>().AsNoTracking()
+            .Where(o => ids.Contains(o.Id) && o.BaixaEstoque && o.ProdutoId != null)
+            .Join(db.Produtos.AsNoTracking().Where(p => p.ControlaEstoque && !semBaixaPropria.Contains(p.Tipo)),
+                o => o.ProdutoId, p => (Guid?)p.Id, (o, p) => new { o.Id, Produto = p.Id, o.QuantidadeBaixa })
+            .ToListAsync(ct);
+        return linhas.ToDictionary(l => l.Id, l => (l.Produto, l.QuantidadeBaixa));
     }
 
     private static decimal Decimal(JsonElement e) =>

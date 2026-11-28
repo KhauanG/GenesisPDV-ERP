@@ -370,4 +370,47 @@ describe('Atalhos do PDV', () => {
     expect(await screen.findByText('Tecla já usada em Pesquisar produto')).toBeInTheDocument();
     expect(chamadas.some((c) => c.metodo === 'PUT')).toBe(false);
   });
+
+  it('F3-B13: Concluir venda e Menu de funções não se desligam (a linha antiga desligada grava ligada)', async () => {
+    const u = userEvent.setup();
+    const atalhos: AtalhoPdv[] = [
+      { id: 'a', acao: 'concluir_venda', tecla: 'F10', habilitado: true, ordem: 5 },
+      { id: 'b', acao: 'menu_funcoes', tecla: 'F11', habilitado: false, ordem: 26 },
+      { id: 'c', acao: 'ajuda', tecla: 'F1', habilitado: true, ordem: 19 },
+    ];
+    const { chamadas } = simularApi(
+      ...rotasSessao({ permissoes: ['configuracoes.ver', 'configuracoes.editar'] }),
+      ({ url }) => (url.pathname === '/api/atalhos-pdv' ? { corpo: atalhos } : undefined),
+    );
+    renderizarComSessao(<TabelaAtalhos />);
+    const concluir = await screen.findByRole('switch', { name: 'Habilitar Concluir venda' });
+    const funcoes = screen.getByRole('switch', { name: 'Habilitar Menu de funções' });
+    expect(concluir).toBeDisabled();
+    expect(concluir).toBeChecked();
+    expect(funcoes).toBeDisabled();
+    expect(funcoes).toBeChecked();
+    expect(screen.getByRole('switch', { name: 'Habilitar Ajuda' })).toBeEnabled();
+    expect(
+      screen.getByText(/Concluir venda e Menu de\s+funções não podem ser desabilitadas/),
+    ).toBeInTheDocument();
+    await u.click(screen.getByRole('button', { name: 'Gravar atalhos' }));
+    await waitFor(() => expect(chamadas.filter((c) => c.metodo === 'PUT')).toHaveLength(1));
+    const put = chamadas.find((c) => c.metodo === 'PUT')!;
+    const corpo = put.corpo as { itens: Array<{ acao: string; habilitado: boolean }> };
+    expect(corpo.itens.find((i) => i.acao === 'menu_funcoes')!.habilitado).toBe(true);
+  });
+
+  it('F3-B13: avisa a versão do caixa que aplica a tabela e recusa o Ctrl+Alt+T do tema', async () => {
+    simularApi(
+      ...rotasSessao({ permissoes: ['configuracoes.ver', 'configuracoes.editar'] }),
+      ({ url, metodo }) =>
+        url.pathname === '/api/atalhos-pdv' && metodo === 'GET'
+          ? { corpo: [{ id: 'a', acao: 'ajuda', tecla: 'F1', habilitado: true, ordem: 19 }] }
+          : undefined,
+    );
+    renderizarComSessao(<TabelaAtalhos />);
+    expect(await screen.findByText(/a partir do PDV 0\.14\.0/)).toBeInTheDocument();
+    const r = validarAtalhos([{ acao: 'ajuda', tecla: 'ctrl+alt+t', habilitado: true, ordem: 19 }]);
+    expect(r[0]!.erro).toContain('inválida');
+  });
 });

@@ -8100,6 +8100,102 @@ automático e "Restaurar backup" já na 1C, sem cifra).
        auditoria, a corrida do mesmo número auditada uma vez e a do menor perdendo, 403, a sequência por loja e o
        contador atrás de uma venda do caixa 0 (o último usado é a venda, e gravar o próximo exibido acerta o contador)); o
        `terminais.test.ts` da rota das variações, sem mudança.
+231. **`Ctrl+Alt+T` recusado na tabela de atalhos do PDV** (Fase 3, F3-B13; PDV 28.3, 6.8; README do PDV › decisão 101,
+     README do ERP › decisão 92; `packages/shared/src/configuracoes.ts`). O `PUT /atalhos-pdv` (o `gravarAtalhosSchema`)
+     passa a recusar o `Ctrl+Alt+T` como já recusava o `Alt+F4` e o `Ctrl+Alt+Del`: é o alternar tema do caixa, tecla fixa
+     do PDV fora da tabela, e o caixa (`MapaAtalhos`) também a recusa, caindo na tecla padrão da ação. A regra é uma só,
+     conferida dos dois lados pelos vetores `packages/shared/testes/sync/atalhos.teclas.vetores.json` (`cadastros.spec.ts`
+     e o `MapaAtalhosTests` do PDV). Nenhuma linha gravada muda (o seed não usa a tecla); uma tabela que já a tivesse
+     acusaria a linha na próxima gravação. Sem migração e sem mudança no pull (a tabela já descia). O mesmo schema
+     **recusa desligar `concluir_venda` e `menu_funcoes`** (`ACOES_ATALHO_ESSENCIAIS`; 422 em `itens.N.habilitado`;
+     padrão até a confirmação do dono, README do PDV › decisão 101): desligadas, o caixa ficaria sem concluir a venda
+     ou sem sangria, reforço e fechamento. Uma linha que já estivesse desligada não muda na base (o ERP a mostra e
+     grava ligada; o caixa a liga ao aplicar). Teste: `formas-configuracoes.test.ts` (o 422 do `Ctrl+Alt+T` e o da
+     ação essencial desligada).
+232. **Complementos na nuvem: o `venda.finalizada` v2 baixa o produto vinculado e soma o custo ao item; o lote e a
+     promoção que a nuvem não conhece** (Fase 3, F3-B14; MD 3.6.8, 3.11.3; SYNC 9.7, 10.2, 17.5; D43;
+     `sync/handlers/vendas.ts`, `packages/shared/src/sync/eventos.ts`). Sem migração e sem evento novo.
+     - **v2 aceita e não anunciada.** O contrato ganha a `payloadVendaFinalizadaV2Schema`: a v1 com a
+       `componentes_estoque` (só payload, a mesma forma da do item) na linha de `itens_venda_complementos`, a ficha do
+       vinculado Produzido calculada no caixa e **já multiplicada** (item × complemento × `quantidade_baixa` × a ficha,
+       com a perda). O handler passa a ser o da v2 (`anunciada: false`), com a v1 pelo upcast identidade
+       (`versoes[1]`): `versoes_schema` continua `venda.finalizada: [1]` até o F3-B30 (R3), e o PDV instalado (0.13.0)
+       segue gravando a v1. A semântica nova vale **só para o evento que nasceu na v2** (`ctx.versaoOrigem`, decisão
+       223): a v1, inclusive no Reprocessar, grava os complementos sem baixa nem custo, como antes.
+     - **Quem baixa (`baixaDoComplemento`), pelo cadastro atual da nuvem** (como o `controla_estoque` do item):
+       complemento conhecido, com `baixa_estoque` e o produto vinculado, de item não cancelado. Com a
+       `componentes_estoque` na linha, os insumos que controlam estoque saem como `BAIXA_INSUMO`; senão o vinculado com
+       saldo próprio (controla estoque e não é `kit`, `produzido` nem `servico`) sai como `VENDA_PDV` de
+       `arred3(quantidade do item × quantidade do complemento × quantidade_baixa)` (sem a quantidade na linha, 1, o
+       padrão do banco; a conta que arredonda a zero não baixa). `documento_item_id` = id da linha do complemento (T4):
+       o reenvio é idempotente pela mesma chave, e o cancelamento (forma A ou pelo ERP, decisão 228) estorna os
+       movimentos como os do item, ao custo da saída, porque lê tudo o que é da venda. O movimento do complemento leva
+       `preco_venda` nulo: o adicional está no preço do item (PDV 10.2) e não se divide por movimento. No evento da v2,
+       um complemento com o mesmo id de um item da venda é `PAYLOAD_INVALIDO` (os dois somariam no mesmo movimento e o
+       custo do complemento entraria duas vezes). Não baixam: o livre, o sem `baixa_estoque`, o desconhecido (o
+       `complemento_id` gravado nulo, decisão 191) e o do item cancelado.
+     - **Custo (`custoDosComplementos`).** Σ `custo_total` dos movimentos da linha mais o custo de referência
+       (`arred2(preco_custo × quantidade)`, T22) do que não baixa: o insumo da ficha sem controle de estoque e o
+       vinculado sem saldo próprio (não controla estoque, ou kit, Produzido ou serviço sem a ficha no payload, mesmo
+       com controle de estoque). Soma ao item antes da divisão (`custoDosItens`): porção de 2 unidades a 8,00 com 4
+       sachês de cheddar a 0,50 e 4 de barbecue a 0,40 dá `custo_unitario` 9,8000 e `vendas.custo_total` 19,60. Item
+       sem complemento com custo: a conta de antes.
+     - **Ids que a nuvem não conhece (padrões da Fase 3).** O `lote_id` do item (tem FK para `produtos_lotes`) que não
+       existe vira nulo no `INSERT` e no motor, com o texto e a validade do lote mantidos, e abre `LOTE_DESCONHECIDO`
+       (aviso, `chave_deduplicacao = 'lote_desconhecido:<lote_id>'`); antes, o 23503 recusava a venda inteira. O
+       `promocao_id` que não existe em `promocoes` (sem FK) fica **cru**, porque o `ck_itens_venda_promocao` exige o id
+       quando há `desconto_promocao`, e abre `PROMOCAO_DESCONHECIDA` (aviso, `'promocao_desconhecida:<promocao_id>'`).
+       As duas regras valem em toda versão (não mudam o que a v1 gravava quando o id existe) e também na forma B do
+       `venda.cancelada`, que grava os mesmos itens (`montarLinhas`) e abre os mesmos dois alertas na gravação nova
+       (`idsDesconhecidos` no `preparar`, `alertarIdsDesconhecidos` no `aplicar`, as funções do `venda.finalizada`; o
+       reenvio `ja_existia` não alerta de novo), com o texto de quem cancelou em andamento, sem falar de baixa. A regra
+       do lote sem id procurado pelo código (F3-Q5) é do F3-B19.
+     - **Fora daqui:** o caixa que vende com complementos (F3-B15, que grava a v2 só com o recurso anunciado); a troca
+       parcial do item com complementos (F3-B43: o estorno de hoje é inteiro, e a linha do complemento não tem
+       `quantidade_devolvida`). Testes: `vendas.spec.ts` (`baixaDoComplemento`, `custoDosComplementos`),
+       `eventos.spec.ts` do shared (o schema da v2) e `venda-eventos.test.ts` (porção com 2 molhos, a ficha do
+       Produzido, o Produzido que controla estoque sem a ficha só pela referência, o livre e o sem controle, o
+       cancelamento que estorna, a v1 do PDV instalado igual a antes, a recusa do id repetido, o lote e a promoção
+       desconhecidos no `venda.finalizada` e na forma B; o `recalcular-saldos` idêntico no fim da suíte).
+
+233. **`alterar_preco` entre as ações de liberação que o caixa gera** (Fase 3, F3-B16; PDV 10.5, 12.3; SYNC 9.7; README
+     do PDV › decisão 103; `packages/shared/src/sync/eventos.ts`, `testes/sync/eventos.conferencias.json`). O `Ctrl+F6`
+     do caixa da R3 grava a liberação do supervisor com a ação `alterar_preco` (a redução de preço acima do limite do
+     operador, ou o operador sem `pdv.venda.alterar_preco`): ela sai de `ACOES_LIBERACAO_FASE3` (as só constantes, decisão
+     222) e entra em `ACOES_LIBERACAO_VENDA`, conferida pelos dois lados contra a conferência. Nada muda no handler: o
+     campo é texto livre no contrato e a liberação vai no `depois` da auditoria `criar` da venda, como as outras; o item
+     com `origem_preco = 'manual'` e o `preco_tabela` mantido (maior que o `preco_unitario`) já passava no
+     `conferirSomasVenda`, que confere o `valor_bruto` pelo `preco_unitario`. O preço digitado do genérico e do
+     "Solicita preço" chega com o próprio preço também no `preco_tabela`. O cadastro continua exigindo preço > 0 em todo
+     vendável (`regrasProduto`), inclusive no genérico, que leva um preço de referência (o caixa o pré-preenche). Teste:
+     `venda-eventos.test.ts` (a venda v1 com o preço alterado, um genérico com a descrição digitada, a liberação
+     `alterar_preco` e o acréscimo no total rateado: aplica sem alerta e grava como veio).
+
+234. **`tipo_preco` entre as ações de liberação que o caixa gera** (Fase 3, F3-B17; PDV 11.2; SYNC 9.7; README do PDV ›
+     decisão 104; `packages/shared/src/sync/eventos.ts`, `testes/sync/eventos.conferencias.json`). O `F8` do caixa da R3
+     troca a venda para o tipo de preço Atacado; o operador sem `pdv.venda.tipo_preco_atacado` passa pelo supervisor, e a
+     liberação sobe com a ação `tipo_preco` (da venda toda: `item_venda_id` e `valor_pct` nulos). Ela sai de
+     `ACOES_LIBERACAO_FASE3` (decisão 222) e entra em `ACOES_LIBERACAO_VENDA`, como o `alterar_preco` (decisão 233). Nada
+     muda no handler: `vendas.tipo_preco = 'atacado'` já era aceito no `venda.finalizada` v1 e gravado como veio, as linhas
+     no atacado pelo `F8` (o candidato sem a quantidade mínima, que vale pelo tipo da venda e não pela quantidade) levam
+     `origem_preco = 'atacado'` com `quantidade_referencia_preco` nulo (o `MotorPreco` do caixa não grava a referência
+     nesse caso), e o
+     `conferirSomasVenda` confere o `valor_bruto` pelo `preco_unitario`. Teste: `venda-eventos.test.ts` (a venda v1 com
+     `tipo_preco = 'atacado'` e a liberação `tipo_preco`: aplica sem alerta, grava o tipo, a origem e a liberação na
+     auditoria `criar` e baixa o estoque).
+235. **Preço gelada e parcelado do caixa sem mudança na nuvem** (Fase 3, F3-B18; PDV 11.2, 11.4; D74; README do PDV ›
+     decisão 105; `packages/shared/src/precos.ts`, `testes/precos/regra-preco.vetores.json`,
+     `testes/sync/venda.finalizada.gelada_parcelado.payload.json`). O caixa da R3 soma o acréscimo gelada
+     (`produtos_lojas.acrescimo_gelada`) **dentro** do `preco_unitario` e do `preco_tabela` (a marca "gelado" fica só no
+     caixa: nenhuma coluna nova em `itens_venda`, Padrões da Fase 3) e, no crédito em mais de uma parcela, manda a venda com
+     `vendas.tipo_preco = 'parcelado'` e as linhas com `preco_parcelado` em `origem_preco = 'parcelado'`: os dois valores já
+     estavam no contrato v1 (`TIPOS_PRECO_VENDA`, `ORIGENS_PRECO_ITEM`) e nos CHECKs. Nada muda no handler: o
+     `conferirSomasVenda` confere o `valor_bruto` pelo `preco_unitario` (com o gelado dentro), e a linha grava como veio.
+     O `resolverPreco` do shared (o espelho do `MotorPreco`) ganhou o passo 9 (`precoParcelado` substitui os candidatos
+     com `parametros.parcelado`) e a origem `parcelado` em `ROTULOS_ORIGEM_PRECO`; o "Simular" do mix no ERP não o usa.
+     Teste: `venda-eventos.test.ts` aplica a fixture que o PDV gera (`ContratosEventosTests`: 2 latas geladas e 1 natural
+     no parcelado, a água no varejo, o crédito em 3×), sem alerta, com o tipo, as origens, os preços, as parcelas e a
+     baixa, e o reenvio `ja_existia`; `eventos.spec.ts` passa a fixture pelo zod e confere o hash JCS.
 
 ## O que ainda não foi feito (Fase 0)
 

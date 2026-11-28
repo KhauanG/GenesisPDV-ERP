@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GenesisPDV.Core.Atalhos;
 using GenesisPDV.Data.Entidades;
 using Microsoft.EntityFrameworkCore;
 
@@ -113,6 +114,18 @@ public static class ChavesConfiguracao
     /// </summary>
     public const string ExibeEstoqueBusca = "pdv.exibe_estoque_busca";
 
+    /// <summary>
+    /// "Altera Preço no PDV" (PDV 10.5; MD 3.1.2, por loja; padrão desligada): ligada, o <c>Ctrl+F6</c> altera o preço do
+    /// item selecionado (Fase 3, F3-B16); desligada, a ação não aparece.
+    /// </summary>
+    public const string AlteraPrecoPdv = "pdv.altera_preco_pdv";
+
+    /// <summary>
+    /// Limite do preço digitado (PDV 10.4, 10.5; padrão R$ 9.999,99): acima dele, o preço digitado e o alterado pedem uma
+    /// confirmação (F3-B16). Vazio = sem limite.
+    /// </summary>
+    public const string LimitePrecoDigitado = "pdv.limite_preco_digitado";
+
     /// <summary>Padrões booleanos do catálogo das chaves de caixa.</summary>
     public static readonly IReadOnlyDictionary<string, bool> PadroesBool = new Dictionary<string, bool>(StringComparer.Ordinal)
     {
@@ -134,6 +147,7 @@ public static class ChavesConfiguracao
         [RecusaProdutoComVariacoes] = true,
         [ConsultaOutrasLojas] = true,
         [ExibeEstoqueBusca] = true,
+        [AlteraPrecoPdv] = false,
     };
 
     public const decimal ToleranciaPadrao = 0m;
@@ -281,6 +295,23 @@ public sealed class RepositorioConfiguracoes(IDbContextFactory<PdvDbContext> fab
                     : new ValorConfiguracao(chave, linha.Valor, linha.Escopo == "loja" ? OrigemConfiguracao.Loja : OrigemConfiguracao.Empresa, linha.AtualizadoEm);
             }),
         ];
+    }
+
+    /// <summary>
+    /// O mapa de atalhos da loja do terminal (F3-B13; PDV 28.1; MD 3.10.2): as linhas vivas do espelho
+    /// <c>atalhos_pdv</c> da empresa e da loja, montadas pelo <see cref="MapaAtalhos"/> do Core (a da loja sobre a da
+    /// empresa, o padrão do catálogo para a ação sem linha). Uma consulta só, de poucas dezenas de linhas: a tela relê a
+    /// cada pull.
+    /// </summary>
+    public async Task<MapaAtalhos> MapaAtalhosAsync(Guid lojaId, CancellationToken ct = default)
+    {
+        await using var db = await fabrica.CreateDbContextAsync(ct);
+        var linhas = await db.Set<AtalhoPdvRegistro>().AsNoTracking()
+            .Where(a => a.ExcluidoEm == null && (a.LojaId == null || a.LojaId == lojaId))
+            .OrderBy(a => a.Id)
+            .Select(a => new { a.LojaId, a.Acao, a.Tecla, a.Habilitado, a.Ordem })
+            .ToListAsync(ct);
+        return MapaAtalhos.Montar(linhas.Select(a => new LinhaAtalho(a.LojaId, a.Acao, a.Tecla, a.Habilitado, a.Ordem)), lojaId);
     }
 
     /// <summary>Quando as regras da loja desceram da nuvem pela última vez (o pull do fluxo <c>configuracao</c> com sucesso).</summary>

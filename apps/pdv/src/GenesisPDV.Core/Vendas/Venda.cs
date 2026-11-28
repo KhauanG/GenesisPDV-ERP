@@ -39,7 +39,8 @@ public sealed record EstadoVenda(
     string? Observacao = null,
     string? DescontoTotalOrigem = null,
     Guid? IdadeConfirmadaPorId = null,
-    DateTimeOffset? IdadeConfirmadaEm = null);
+    DateTimeOffset? IdadeConfirmadaEm = null,
+    string? TipoPrecoAntesParcelado = null);
 
 /// <summary>
 /// Agregado da venda do PDV: itens, descontos, pagamentos, totais e troco (PDV 10–17, 34.1). Toda regra de valor
@@ -50,6 +51,12 @@ public sealed class Venda
     public const int MaximoItens = 990;
     public const int MaximoPagamentos = 10;
     public const decimal QuantidadeMaxima = 9999.999m;
+
+    /// <summary>
+    /// O maior <c>valor_bruto</c> de uma linha que o contrato da venda aceita (<c>dinheiro = decimalTexto(13, 2)</c> do
+    /// <c>venda.finalizada</c>; F3-B16): acima disso a nuvem recusaria o evento inteiro, então a linha é recusada no caixa.
+    /// </summary>
+    public const decimal ValorBrutoMaximo = 9_999_999_999_999.99m;
 
     /// <summary>
     /// <c>vendas.motivo_cancelamento</c> (O6 do dono; <c>MOTIVO_CANCELAMENTO_VENDA_*</c> do contrato, sincronizacao.md 9.9):
@@ -124,6 +131,7 @@ public sealed class Venda
         DescontoTotalOrigem = e.DescontoTotalOrigem;
         IdadeConfirmadaPorId = e.IdadeConfirmadaPorId;
         IdadeConfirmadaEm = e.IdadeConfirmadaEm;
+        TipoPrecoAntesParcelado = e.TipoPreco == TipoPrecoVenda.Parcelado ? e.TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo : null;
         _fuso = Comum.DiaOperacional.ObterFuso(fusoHorario);
         _horaCorte = horaCorte;
         _usaPrecoVolume = usaPrecoVolume;
@@ -148,7 +156,19 @@ public sealed class Venda
     public Guid? ClienteId { get; private set; }
     public string? CpfCnpjNota { get; private set; }
     public string? NomeNota { get; private set; }
-    public string TipoPreco { get; }
+    /// <summary>
+    /// <c>vendas.tipo_preco</c>: começa no varejo em toda venda e muda pelo <c>F8</c> (<see cref="AlterarTipoPreco"/>, PDV
+    /// 11.2; F3-B17); o parcelado entra com o pagamento parcelado (<see cref="AplicarPrecoParcelado"/>, F3-B18).
+    /// </summary>
+    public string TipoPreco { get; private set; }
+
+    /// <summary>
+    /// No parcelado (F3-B18), o tipo do <c>F8</c> que a venda tinha antes dele (<c>varejo</c> ou <c>atacado</c>): as linhas sem
+    /// preço parcelado seguem nele, e remover o pagamento parcelado volta a ele. Nulo fora do parcelado. Não é coluna da
+    /// nuvem: fica só no caixa (<c>estado_operacao.tipo_preco_antes_parcelado</c>), para a venda recuperada voltar certo.
+    /// </summary>
+    public string? TipoPrecoAntesParcelado { get; private set; }
+
     public int QtdItens { get; private set; }
     public decimal SubtotalBruto { get; private set; }
     public decimal DescontoItens { get; private set; }
@@ -248,7 +268,7 @@ public sealed class Venda
             Status: StatusVenda.EmAndamento,
             StatusFiscal: Vendas.StatusFiscal.NaoAplicavel,
             OperadorId: operadorId,
-            TipoPreco: "varejo",
+            TipoPreco: TipoPrecoVenda.Varejo,
             DescontoTotal: 0m,
             DescontoTotalPct: null,
             AcrescimoTotal: 0m,
@@ -367,7 +387,8 @@ public sealed class Venda
             if (!item.Cancelado && ContaParaPreco(item) && OrigemPreco.PorQuantidade(item.OrigemPreco))
             {
                 var r = Resolver(registrado, item, porProduto, porGrupo);
-                if (r.Origem == item.OrigemPreco && r.Preco == item.PrecoUnitario)
+                // O gravado tem a camada de acréscimos (complementos e gelado) por cima do preço da regra.
+                if (r.Origem == item.OrigemPreco && r.Preco + item.AcrescimoUnitario == item.PrecoUnitario)
                 {
                     item.LimiarPreco = r.Limiar;
                     item.NomeGrupoPreco = r.GrupoNome;
@@ -387,14 +408,34 @@ public sealed class Venda
         }
     }
 
+    /// <param name="complementos">
+    /// As opções escolhidas no diálogo dos complementos (PDV 10.2; F3-B15), conferidas pelas
+    /// <see cref="RegrasComplementos"/> contra o produto lido; nulo = sem complementos, como antes (o produto
+    /// <c>com_complementos</c> sem o recurso da onda, F3-B4, vende assim). Lista vazia é a escolha de nenhum (todos os
+    /// grupos opcionais).
+    /// </param>
+    /// <param name="precoDigitado">
+    /// O preço (e, no genérico, a descrição) do diálogo de preço do produto que pede preço (PDV 10.4; F3-B16): a linha entra
+    /// com <c>origem_preco = 'manual'</c> e o preço digitado (mais os adicionais dos complementos) também no
+    /// <c>preco_tabela</c>, porque não é desconto (12.3), e nunca é recalculada. Nulo = o preço da regra 11.3, como antes (o
+    /// produto que pede preço sem o recurso da onda, F3-B4, vende assim, e o de preço zero continua recusado).
+    /// </param>
+    /// <param name="liberaSemPreco">
+    /// O operador tem <c>pdv.venda.alterar_preco</c> (a tela confere): o produto de preço zero que não é genérico nem
+    /// "Solicita preço" aceita o <paramref name="precoDigitado"/> como o "Solicita preço PDV" (tabela da PDV 10.1). Sem
+    /// isso, esse produto continua "Produto sem preço — procure o supervisor".
+    /// </param>
     public ItemVenda AdicionarItem(
         ProdutoResolvido resolvido,
         decimal multiplicador,
         string? codigoLido,
         DateTimeOffset agora,
         bool agrupar = false,
-        string? origemEntrada = null) =>
-        Atomico(() => AdicionarItemInterno(resolvido, multiplicador, codigoLido, agora, agrupar, origemEntrada));
+        string? origemEntrada = null,
+        IReadOnlyCollection<Guid>? complementos = null,
+        PrecoDigitado? precoDigitado = null,
+        bool liberaSemPreco = false) =>
+        Atomico(() => AdicionarItemInterno(resolvido, multiplicador, codigoLido, agora, agrupar, origemEntrada, complementos, precoDigitado, liberaSemPreco));
 
     private ItemVenda AdicionarItemInterno(
         ProdutoResolvido resolvido,
@@ -402,12 +443,40 @@ public sealed class Venda
         string? codigoLido,
         DateTimeOffset agora,
         bool agrupar,
-        string? origemEntrada)
+        string? origemEntrada,
+        IReadOnlyCollection<Guid>? complementos,
+        PrecoDigitado? precoDigitado,
+        bool liberaSemPreco)
     {
         ArgumentNullException.ThrowIfNull(resolvido);
         ExigirStatus(StatusVenda.EmAndamento, "incluir itens");
         var produto = resolvido.Produto;
-        ValidarVendavel(produto);
+        if (precoDigitado is null)
+        {
+            ValidarVendavel(produto);
+        }
+        else
+        {
+            // O preço vem do diálogo (10.4): o produto de preço zero (o genérico típico) entra com o digitado. O de preço
+            // zero sem as marcas também, como o "Solicita preço PDV", quando o operador tem pdv.venda.alterar_preco (10.1).
+            ValidarComponente(produto);
+            if (!PedePreco(produto, liberaSemPreco))
+            {
+                if (produto.PrecoBase <= 0m)
+                {
+                    ValidarVendavel(produto);
+                }
+
+                throw new RegraNegocioException($"{produto.Descricao} não pede preço no caixa: o preço é o do cadastro.");
+            }
+
+            _ = RegrasPrecoManual.ValidarPreco(precoDigitado.Preco);
+            if (precoDigitado.Descricao is not null && !produto.Generico)
+            {
+                throw new RegraNegocioException("Só o produto genérico tem a descrição digitada no caixa.");
+            }
+        }
+
         if (produto.EhKit)
         {
             throw new RegraNegocioException($"{produto.Descricao} é um combo: inclua pelo código do combo (Montar combo).");
@@ -423,11 +492,24 @@ public sealed class Venda
             throw new RegraNegocioException("Preço da embalagem inválido — procure o gerente.");
         }
 
+        // A escolha é conferida contra o produto lido agora (o mesmo que o diálogo mostrou), e cada unidade do item leva
+        // as mesmas opções (F3-Q4): o adicional soma por unidade ao preço (a camada de acréscimos do item). O preço e a
+        // baixa de cada opção saem do snapshot quando ele já a tem (a opção da primeira inclusão, como o preço do item):
+        // uma opção alterada por um pull no meio da venda não mistura o preço novo com a baixa antiga na mesma linha.
+        var snapshot = _produtos.TryGetValue(produto.Id, out var anterior) ? anterior.Produto.GruposComplementos : null;
+        var escolhidos = complementos is null
+            ? []
+            : RegrasComplementos.Linhas(RegrasComplementos.DoSnapshot(RegrasComplementos.Conferir(produto, complementos), snapshot));
+        var acrescimo = RegrasComplementos.Adicional(escolhidos);
         var quantidade = resolvido.Fator * multiplicador;
         ValidarQuantidade(quantidade, produto.Fracionavel);
-        _ = ValorBrutoValido(quantidade, produto.PrecoBase);
+        _ = ValorBrutoValido(quantidade, (precoDigitado?.Preco ?? produto.PrecoBase) + acrescimo);
         var totalAntes = Total;
         var registrado = Registrar(produto, agora, resolvido.Embalagem);
+        if (precoDigitado is not null)
+        {
+            return IncluirComPrecoDigitado(resolvido, registrado, quantidade, codigoLido, agora, origemEntrada, escolhidos, acrescimo, precoDigitado, totalAntes);
+        }
 
         // O fardo também segue o snapshot: o preço do fardo da primeira inclusão (mesmo código e mesmo fator).
         var embalagem = resolvido.Embalagem is { } lida
@@ -443,7 +525,9 @@ public sealed class Venda
                 && !i.EhKit
                 && !i.EhCasco
                 && OrigemPreco.Recalculavel(i.OrigemPreco)
-                && i.DescontoItem == 0m);
+                && i.DescontoItem == 0m
+                && !i.Gelado
+                && RegrasComplementos.Mesmos(i.Complementos, escolhidos));
             if (existente is not null)
             {
                 var novaQuantidade = existente.Quantidade + quantidade;
@@ -469,16 +553,68 @@ public sealed class Venda
             unidade: produto.Unidade,
             fracionavel: produto.Fracionavel,
             quantidade: quantidade,
-            precoTabela: registrado.Produto.PrecoBase,
-            precoUnitario: registrado.Produto.PrecoBase,
+            precoTabela: registrado.Produto.PrecoBase + acrescimo,
+            precoUnitario: registrado.Produto.PrecoBase + acrescimo,
             origemPreco: registrado.Produto.Precos?.PrecoVendaLoja is not null ? OrigemPreco.Loja : OrigemPreco.Varejo,
-            valorBruto: ValorBrutoValido(quantidade, registrado.Produto.PrecoBase),
+            valorBruto: ValorBrutoValido(quantidade, registrado.Produto.PrecoBase + acrescimo),
             descontoItem: 0m,
             incluidoEm: agora,
-            origemEntrada: origemEntrada)
+            origemEntrada: origemEntrada,
+            complementos: escolhidos)
         {
             Embalagem = embalagem,
             PrecoVarejo = registrado.Produto.PrecoBase,
+        };
+        _itens.Add(item);
+        AbaterDescontadosPelosDevidos(item, 0m);
+        Recalcular(ajustarDescontoTotalAoTeto: true);
+        ExigirTotalNaoReduzidoComPagamento(totalAntes, "incluir itens");
+        return item;
+    }
+
+    /// <summary>
+    /// A linha do preço digitado (10.4): sempre uma linha nova (o preço manual não agrupa nem é recalculado pelo atacado ou
+    /// pelo mix, 11.3.1), com o preço digitado + os adicionais por unidade no <c>preco_unitario</c> e no <c>preco_tabela</c>.
+    /// A embalagem lida fica só para a recuperação reconhecer a linha: o preço é o digitado, por unidade do produto.
+    /// </summary>
+    private ItemVenda IncluirComPrecoDigitado(
+        ProdutoResolvido resolvido,
+        ProdutoRegistrado registrado,
+        decimal quantidade,
+        string? codigoLido,
+        DateTimeOffset agora,
+        string? origemEntrada,
+        IReadOnlyList<ComplementoItem> escolhidos,
+        decimal acrescimo,
+        PrecoDigitado precoDigitado,
+        decimal totalAntes)
+    {
+        var produto = resolvido.Produto;
+        var descricao = precoDigitado.Descricao is { } d ? RegrasPrecoManual.DescricaoGenerico(d) : produto.Descricao;
+        var preco = precoDigitado.Preco + acrescimo;
+        ExigirEspacoItens(1);
+        var item = new ItemVenda(
+            id: IdGerador.Novo(),
+            sequencia: ProximaSequencia(),
+            produtoId: produto.Id,
+            codigoLido: codigoLido,
+            codigoBarrasId: resolvido.CodigoBarrasId,
+            descricao: descricao,
+            unidade: produto.Unidade,
+            fracionavel: produto.Fracionavel,
+            quantidade: quantidade,
+            precoTabela: preco,
+            precoUnitario: preco,
+            origemPreco: OrigemPreco.Manual,
+            valorBruto: ValorBrutoValido(quantidade, preco),
+            descontoItem: 0m,
+            incluidoEm: agora,
+            origemEntrada: origemEntrada,
+            complementos: escolhidos)
+        {
+            Embalagem = resolvido.Embalagem is { } lida
+                ? registrado.Produto.Precos?.Embalagens?.FirstOrDefault(e => e.CodigoBarrasId == lida.CodigoBarrasId) ?? lida
+                : null,
         };
         _itens.Add(item);
         AbaterDescontadosPelosDevidos(item, 0m);
@@ -794,7 +930,9 @@ public sealed class Venda
                 origemEntrada: item.OrigemEntrada,
                 pesoDigitado: item.PesoDigitado,
                 grupoPrecoQuantidadeId: item.GrupoPrecoQuantidadeId,
-                quantidadeReferenciaPreco: item.QuantidadeReferenciaPreco)
+                quantidadeReferenciaPreco: item.QuantidadeReferenciaPreco,
+                complementos: RegrasComplementos.Copiar(item.Complementos),
+                acrescimoGelada: item.AcrescimoGelada)
             {
                 Embalagem = item.Embalagem,
                 PrecoVarejo = item.PrecoVarejo,
@@ -1196,7 +1334,9 @@ public sealed class Venda
     /// <summary>Σ economia em relação ao varejo nas linhas de atacado/faixa/mix ("Economia atacado: R$ 3,60").</summary>
     public decimal EconomiaAtacado => ItensAtivos.Sum(i => i.EconomiaAtacado);
 
-    private ParametrosPreco Parametros => new(LojaId, _usaPrecoVolume, TipoPreco);
+    private ParametrosPreco Parametros => TipoPreco == TipoPrecoVenda.Parcelado
+        ? new(LojaId, _usaPrecoVolume, TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo, Parcelado: true)
+        : new(LojaId, _usaPrecoVolume, TipoPreco);
 
     /// <summary>
     /// Registra o snapshot na primeira inclusão do produto (PDV 11.3). Uma embalagem lida depois e que não estava no
@@ -1207,6 +1347,17 @@ public sealed class Venda
         if (!_produtos.TryGetValue(produto.Id, out var registrado))
         {
             registrado = new ProdutoRegistrado(produto, produto.Precos?.PromocaoVigenteEm(agora) == true);
+            _produtos[produto.Id] = registrado;
+        }
+
+        // Uma opção cadastrada no meio da venda entra no snapshot (sem mudar as que já estavam: o preço e a baixa delas
+        // seguem os da primeira inclusão, como o preço do item), para a recuperação achar o vinculado e a ficha de toda
+        // linha gravada.
+        if (!ReferenceEquals(registrado.Produto.GruposComplementos, produto.GruposComplementos)
+            && RegrasComplementos.Juntar(registrado.Produto.GruposComplementos, produto.GruposComplementos) is { } grupos
+            && !ReferenceEquals(grupos, registrado.Produto.GruposComplementos))
+        {
+            registrado = registrado with { Produto = registrado.Produto with { GruposComplementos = grupos } };
             _produtos[produto.Id] = registrado;
         }
 
@@ -1281,15 +1432,18 @@ public sealed class Venda
     {
         decimal preco;
         decimal bruto;
+        // A camada de acréscimos do item (F3-B15; Padrões da Fase 3: regra 11.3 → adicionais dos complementos → gelada →
+        // promoções): o adicional por unidade volta somado a todo preço recalculado.
+        var acrescimo = item.AcrescimoUnitario;
         if (r.Origem == OrigemPreco.Embalagem && item.Embalagem is { Preco: { } precoEmbalagem } embalagem)
         {
             // Preço da embalagem é autoritativo (10.2): valor = arred2(preço × multiplicador); unitário com 4 casas.
-            bruto = Arredondamento.Arred2(precoEmbalagem * (item.Quantidade / embalagem.Fator));
+            bruto = Arredondamento.Arred2((precoEmbalagem * (item.Quantidade / embalagem.Fator)) + (acrescimo * item.Quantidade));
             preco = Arredondamento.Arred4(bruto / item.Quantidade);
         }
         else
         {
-            preco = r.Preco;
+            preco = r.Preco + acrescimo;
             bruto = ValorBrutoValido(item.Quantidade, preco);
         }
 
@@ -1346,6 +1500,16 @@ public sealed class Venda
             item.DescontoItemPct = null;
             item.TetoDescontoPct = null;
         }
+    }
+
+    /// <summary>
+    /// A inclusão aceita o preço digitado (10.1, 10.4): o genérico e o "Solicita preço PDV"; e o produto avulso de preço
+    /// zero, como o "Solicita preço PDV", quando o operador tem <c>pdv.venda.alterar_preco</c>.
+    /// </summary>
+    public static bool PedePreco(ProdutoVenda produto, bool liberaSemPreco)
+    {
+        ArgumentNullException.ThrowIfNull(produto);
+        return produto.PedePreco || (liberaSemPreco && !produto.EhKit && produto.PrecoBase <= 0m);
     }
 
     /// <summary>Item avulso, kit e casco: ativo, vendável e com preço &gt; 0 (PDV 10.1).</summary>
@@ -1535,6 +1699,380 @@ public sealed class Venda
         Recalcular();
     });
 
+    // ---------------------------------------------------------------- alteração de preço (PDV 10.5)
+
+    /// <summary>
+    /// <c>Ctrl+F6</c> com o item selecionado (PDV 10.5; Fase 3, F3-B16): o preço unitário passa a ser o digitado, com
+    /// <c>origem_preco = 'manual'</c> (nunca mais recalculado) e o <c>preco_tabela</c> mantido (no atacado, na faixa, no mix e
+    /// na embalagem, o varejo: <see cref="ItemVenda.PrecoTabelaParaPrecoManual"/>). A redução em relação à
+    /// tabela (<c>reducao_preco_manual</c>, 12.3) conta no limite de desconto do item e da venda; acima do limite do
+    /// operador, o supervisor libera (a linha de <c>liberacoes</c> com a ação <c>alterar_preco</c>). Subir o preço não
+    /// passa pelo limite.
+    /// </summary>
+    /// <param name="exigeLiberacao">
+    /// O operador sem <c>pdv.venda.alterar_preco</c>: a alteração inteira (até a que sobe o preço) é do supervisor, como o
+    /// desconto sem a permissão (12.2); a tela passa o limite do operador como 0%.
+    /// </param>
+    public ResultadoDesconto AlterarPrecoItem(
+        int sequencia, decimal preco, decimal limiteOperadorPct, Liberacao? liberacao = null, bool exigeLiberacao = false)
+    {
+        ExigirStatus(StatusVenda.EmAndamento, "alterar o preço");
+        var item = ObterItemAtivo(sequencia);
+        ExigirSemPagamentos("alterar o preço");
+        if (item.EhKit)
+        {
+            throw new RegraNegocioException("Item de combo: o preço é o do combo (cancele e inclua de novo).");
+        }
+
+        if (item.DescontoItem > 0m || item.DescontoPromocao > 0m)
+        {
+            throw new RegraNegocioException($"O item {sequencia} tem desconto: remova o desconto antes de alterar o preço.");
+        }
+
+        _ = RegrasPrecoManual.ValidarPreco(preco);
+        if (preco == item.PrecoUnitario)
+        {
+            throw new RegraNegocioException($"O preço do item {sequencia} já é R$ {NumeroBr.Preco(preco)}.");
+        }
+
+        var bruto = ValorBrutoValido(item.Quantidade, preco);
+        // O atacado, a faixa, o mix e a embalagem dependem da quantidade: a linha manual leva o varejo como tabela, e a
+        // redução é medida contra ele (senão diminuir a quantidade depois tiraria o desconto real do limite; 12.3).
+        var precoTabela = item.PrecoTabelaParaPrecoManual;
+        var valorTabela = Arredondamento.Arred2(item.Quantidade * precoTabela);
+        var reducao = Math.Max(0m, valorTabela - bruto);
+
+        // O % é sobre o valor de tabela (12.3): a redução vem de dois arred2 (o bruto e o de tabela), meio centavo de folga.
+        var ativos = ItensAtivos.ToList();
+        var medidaItem = new MedidaDesconto(reducao, valorTabela, reducao > 0m ? 1 : 0);
+        var medidaVenda = new MedidaDesconto(
+            ativos.Sum(i => i.DescontoItem) + ativos.Sum(i => i.Sequencia == sequencia ? reducao : i.ReducaoPrecoManual) + DescontoTotalDoOperador,
+            ativos.Sum(i => i.Sequencia == sequencia ? valorTabela : i.ValorTabela),
+            ativos.Count(i => i.DescontoItem > 0m) + (DescontoTotalDoOperador > 0m ? 1 : 0) + medidaItem.Arredondamentos);
+        // A alteração que não aumenta a redução do item (subir o preço, ou reduzir menos) só diminui o desconto da venda:
+        // passa sem o limite, mesmo que outra redução já aceita (liberada) esteja acima do limite deste operador.
+        var resultado = exigeLiberacao
+            ? AvaliarLiberacaoObrigatoria([medidaItem, medidaVenda], bruto, liberacao)
+            : reducao <= item.ReducaoPrecoManual
+                ? new ResultadoDesconto(SituacaoDesconto.Aplicado, medidaItem.Percentual, bruto)
+                : AvaliarLimite([medidaItem, medidaVenda], bruto, limiteOperadorPct, liberacao);
+        if (!resultado.Aplicado)
+        {
+            return resultado;
+        }
+
+        Atomico(() =>
+        {
+            item.PrecoTabela = precoTabela;
+            item.PrecoUnitario = preco;
+            item.ValorBruto = bruto;
+            item.OrigemPreco = OrigemPreco.Manual;
+            item.GrupoPrecoQuantidadeId = null;
+            item.QuantidadeReferenciaPreco = null;
+            item.LimiarPreco = null;
+            item.NomeGrupoPreco = null;
+            AceitarNoTetoDoTotal(medidaVenda);
+            if (resultado.PorLiberacao)
+            {
+                item.AutorizadoPorId = liberacao!.SupervisorId;
+            }
+
+            Recalcular();
+            if (resultado.PorLiberacao)
+            {
+                RegistrarLiberacao(liberacao!, AcaoLiberacao.AlterarPreco, item.Id, resultado.PercentualPedido);
+            }
+        });
+        return resultado;
+    }
+
+    /// <summary>
+    /// <c>F8</c> Tipo de preço (PDV 11.2; Fase 3, F3-B17; F3-Q2): troca o <c>vendas.tipo_preco</c> da venda em andamento
+    /// entre Varejo e Atacado e recalcula pela regra 11.3 todas as linhas recalculáveis (<see cref="OrigemPreco.Recalculavel"/>,
+    /// inclusive a do fardo: no Atacado o candidato atacado entra sem a quantidade mínima e vale o menor, 11.3.1), com os
+    /// adicionais dos complementos preservados. O preço manual, o combo, o casco e as linhas sem snapshot ficam como estão;
+    /// o produto sem preço de atacado fica no varejo (ou na faixa/mix que já valia). A diferença não é desconto (12.3). O
+    /// desconto do item em % é refeito e o em R$ fica dentro do teto (11.3.1), e o desconto no total em R$ também
+    /// (decisão 27). Só sem pagamento lançado (o total muda; o parcelado volta com o F3-B18).
+    /// </summary>
+    /// <param name="temPermissaoAtacado">
+    /// O operador tem <c>pdv.venda.tipo_preco_atacado</c>: sem ela, o Atacado pede o supervisor (<paramref name="liberacao"/>,
+    /// que vira a linha <c>tipo_preco</c> de <c>liberacoes</c>, da venda toda). A volta ao Varejo não pede permissão.
+    /// </param>
+    public ResultadoTipoPreco AlterarTipoPreco(string tipo, bool temPermissaoAtacado, Liberacao? liberacao = null)
+    {
+        ArgumentNullException.ThrowIfNull(tipo);
+        ExigirStatus(StatusVenda.EmAndamento, "trocar o tipo de preço");
+        if (tipo == TipoPrecoVenda.Parcelado)
+        {
+            throw new RegraNegocioException("O preço parcelado não se escolhe no F8: ele vem do pagamento em mais de uma parcela.");
+        }
+
+        if (!TipoPrecoVenda.DoF8.Contains(tipo))
+        {
+            throw new RegraNegocioException($"Tipo de preço inválido: {tipo}.");
+        }
+
+        if (tipo == TipoPreco)
+        {
+            throw new RegraNegocioException($"A venda já está no preço {TipoPrecoVenda.Rotulo(tipo).ToUpperInvariant()}.");
+        }
+
+        ExigirSemPagamentos("trocar o tipo de preço");
+        var totalAntes = Total;
+        var porLiberacao = tipo == TipoPrecoVenda.Atacado && !temPermissaoAtacado;
+        if (porLiberacao)
+        {
+            if (liberacao is null)
+            {
+                return new ResultadoTipoPreco(SituacaoDesconto.ExigeLiberacao, tipo, totalAntes, totalAntes, 0);
+            }
+
+            if (string.IsNullOrWhiteSpace(liberacao.Motivo) || liberacao.Motivo.Trim().Length > MotivoLiberacaoMaximo)
+            {
+                throw new RegraNegocioException($"Informe o motivo da liberação (até {MotivoLiberacaoMaximo} caracteres).");
+            }
+        }
+
+        var precosAntes = ItensAtivos.ToDictionary(i => i.Sequencia, i => i.PrecoUnitario);
+        Atomico(() =>
+        {
+            TipoPreco = tipo;
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+            if (porLiberacao)
+            {
+                RegistrarLiberacao(liberacao!, AcaoLiberacao.TipoPreco, null, null);
+            }
+        });
+        var alteradas = ItensAtivos.Count(i => precosAntes.TryGetValue(i.Sequencia, out var antes) && antes != i.PrecoUnitario);
+        return new ResultadoTipoPreco(SituacaoDesconto.Aplicado, tipo, totalAntes, Total, alteradas, porLiberacao);
+    }
+
+    // ---------------------------------------------------------------- gelada e parcelado (PDV 11.2, 11.4; F3-B18)
+
+    /// <summary>
+    /// <c>Alt+G</c> Gelada (PDV 11.4; Fase 3, F3-B18): liga ou desliga o gelado no item. Ligado, soma por unidade o
+    /// <c>produtos_lojas.acrescimo_gelada</c> do snapshot da primeira inclusão ao <c>preco_unitario</c> e ao
+    /// <c>preco_tabela</c> (a camada de acréscimos do item, depois dos complementos; <c>origem_preco</c> mantém a origem): não é
+    /// acréscimo da venda (não vai ao <c>acrescimo_total</c> nem a <c>vOutro</c>) nem desconto. Só no item que a regra 11.3
+    /// recalcula (fora do combo, do casco, da balança tipo Valor, do orçamento, do preço digitado e da linha sem snapshot) e
+    /// só com o acréscimo &gt; 0 na loja; desligar usa o valor que foi somado. O desconto do item em % é refeito e o em R$
+    /// fica no teto (11.3.1). Com pagamento lançado, ligar pode (o total sobe, como incluir um item) e desligar só se o
+    /// total não cair (decisão 8).
+    /// </summary>
+    public ResultadoGelado AlternarGelado(int sequencia)
+    {
+        ExigirStatus(StatusVenda.EmAndamento, "marcar o gelado");
+        var item = ObterItemAtivo(sequencia);
+        if (item.EhKit)
+        {
+            throw new RegraNegocioException("Item de combo: o gelado não se aplica ao combo.");
+        }
+
+        if (item.EhCasco)
+        {
+            throw new RegraNegocioException("Item de casco: o gelado é do produto cheio.");
+        }
+
+        if (item.OrigemPreco is OrigemPreco.Manual or OrigemPreco.Balanca or OrigemPreco.Orcamento or OrigemPreco.KitRateio)
+        {
+            throw new RegraNegocioException(item.OrigemPreco == OrigemPreco.Manual
+                ? $"O item {sequencia} tem o preço digitado: o preço é o digitado (cancele e inclua de novo para o gelado)."
+                : $"O item {sequencia} tem o preço fechado: o gelado não se aplica.");
+        }
+
+        if (item.PrecoFixado || !_produtos.TryGetValue(item.ProdutoId, out var registrado))
+        {
+            throw new RegraNegocioException($"O item {sequencia} foi recuperado sem o cadastro da inclusão: cancele e inclua de novo para o gelado.");
+        }
+
+        var acrescimo = item.Gelado ? 0m : registrado.Produto.Precos?.AcrescimoGelada ?? 0m;
+        if (!item.Gelado && acrescimo <= 0m)
+        {
+            throw new RegraNegocioException($"{item.Descricao} não tem preço gelado nesta loja.");
+        }
+
+        if (!item.Gelado && !Arredondamento.CabeEm(acrescimo, Arredondamento.CasasPreco))
+        {
+            throw new RegraNegocioException("Acréscimo gelada inválido no cadastro — procure o gerente.");
+        }
+
+        var totalAntes = Total;
+        var antes = item.AcrescimoGelada;
+        Atomico(() =>
+        {
+            item.AcrescimoGelada = acrescimo;
+            _ = ValorBrutoValido(item.Quantidade, item.PrecoUnitario - antes + acrescimo);
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+            ExigirTotalNaoReduzidoComPagamento(totalAntes, "tirar o gelado");
+        });
+        return new ResultadoGelado(sequencia, item.Gelado, item.Gelado ? acrescimo : antes, totalAntes, Total);
+    }
+
+    /// <summary>
+    /// Quanto o preço parcelado mudaria a venda (PDV 11.2; F3-B18), sem mudar nada: a prévia da confirmação "Preço parcelado:
+    /// total passa de R$ X para R$ Y". <see cref="ResultadoParcelado.Aplica"/> falso = nenhum item tem <c>preco_parcelado</c>
+    /// (ou a venda já está no parcelado): o pagamento em parcelas segue sem mudar o preço (D74).
+    /// </summary>
+    public ResultadoParcelado PreverPrecoParcelado()
+    {
+        var totalAntes = Total;
+        if (TipoPreco == TipoPrecoVenda.Parcelado)
+        {
+            return new ResultadoParcelado(totalAntes, totalAntes, 0);
+        }
+
+        var foto = Fotografar();
+        try
+        {
+            return PassarAoParcelado(totalAntes);
+        }
+        finally
+        {
+            Reverter(foto);
+        }
+    }
+
+    /// <summary>
+    /// O preço parcelado confirmado (PDV 11.2, 11.3 passo 9; F3-B18; D74): na tela de pagamento, antes de passar o cartão
+    /// em mais de uma parcela numa forma que parcela, a venda passa a <c>tipo_preco = 'parcelado'</c> e as linhas que a regra
+    /// recalcula com <c>preco_parcelado &gt; 0</c> passam a ele (<c>origem_preco = 'parcelado'</c>, com os adicionais e o
+    /// gelado); as demais ficam no tipo do <c>F8</c> (<see cref="TipoPrecoAntesParcelado"/>). Nenhum item com o preço
+    /// parcelado: não muda nada (<see cref="ResultadoParcelado.Aplica"/> falso). Recusado com pagamento eletrônico (cartão
+    /// ou PIX) já aprovado: aquele valor foi cobrado com o preço de antes. Recusado também quando o parcelado menor que o preço
+    /// atual (D125, decisão 3) não deixa valor para o pagamento parcelado (<see cref="MotivoParceladoSemValor"/>). A volta é
+    /// <see cref="VoltarDoPrecoParcelado"/>.
+    /// </summary>
+    /// <param name="valorInformado">
+    /// O valor que o operador informou para o cartão em parcelas, antes do parcelado (a maquininha cobra ele mais a
+    /// <see cref="ResultadoParcelado.Diferenca"/>); nulo confere só o total contra o já pago.
+    /// </param>
+    public ResultadoParcelado AplicarPrecoParcelado(decimal? valorInformado = null)
+    {
+        ExigirStatus(StatusVenda.EmPagamento, "aplicar o preço parcelado");
+        if (TipoPreco == TipoPrecoVenda.Parcelado)
+        {
+            return new ResultadoParcelado(Total, Total, 0);
+        }
+
+        if (MotivoParceladoRecusado is { } motivo)
+        {
+            throw new RegraNegocioException(motivo);
+        }
+
+        var totalAntes = Total;
+        var foto = Fotografar();
+        try
+        {
+            var resultado = PassarAoParcelado(totalAntes);
+            if (!resultado.Aplica)
+            {
+                Reverter(foto);
+            }
+            else if (MotivoParceladoSemValor(resultado, valorInformado) is { } semValor)
+            {
+                throw new RegraNegocioException(semValor);
+            }
+
+            return resultado;
+        }
+        catch
+        {
+            Reverter(foto);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Por que o preço parcelado não entra agora (PDV 11.2: "com pagamento eletrônico já aprovado, a troca para parcelado é
+    /// recusada"); nulo = pode. A tela confere antes de pedir a confirmação.
+    /// </summary>
+    public string? MotivoParceladoRecusado => PagamentosAtivos.FirstOrDefault(p => p.Eletronico) is { } eletronico
+        ? $"Já há pagamento eletrônico aprovado ({eletronico.DescricaoForma}): o preço parcelado não se aplica. Lance em 1 parcela, "
+          + "ou remova o pagamento eletrônico antes."
+        : null;
+
+    /// <summary>
+    /// O parcelado menor que o preço atual (D125, decisão 3) com dinheiro já lançado (decisão 4) pode derrubar o total até o
+    /// já pago, ou deixar o cartão em parcelas com valor zero ou negativo: recusado (com pagamento lançado o total não cai
+    /// abaixo do pago, README do PDV, decisão 8). Nulo = pode. A tela confere na prévia, antes de pedir a confirmação.
+    /// </summary>
+    public string? MotivoParceladoSemValor(ResultadoParcelado previa, decimal? valorInformado = null)
+    {
+        ArgumentNullException.ThrowIfNull(previa);
+        if (!previa.Aplica || (previa.TotalDepois > Pago && (valorInformado is not { } valor || valor + previa.Diferenca > 0m)))
+        {
+            return null;
+        }
+
+        return $"O preço parcelado leva o total a R$ {NumeroBr.Dinheiro(previa.TotalDepois)} e não sobra valor para o cartão em "
+               + $"parcelas (já pago R$ {NumeroBr.Dinheiro(Pago)}): lance em 1 parcela, ou remova o pagamento lançado antes.";
+    }
+
+    /// <summary>
+    /// A venda está no preço parcelado sem nenhum pagamento ativo em mais de uma parcela (a maquininha recusou, a liberação
+    /// da forma foi negada, a queda entre o "Confirmar" e a maquininha): o estado que <see cref="VoltarDoPrecoParcelado"/>
+    /// desfaz antes de a tela mostrar valores à vista (F3-B18).
+    /// </summary>
+    public bool ParceladoSemPagamentoParcelado =>
+        Aberta && TipoPreco == TipoPrecoVenda.Parcelado && !PagamentosAtivos.Any(p => p.Parcelas > 1);
+
+    private ResultadoParcelado PassarAoParcelado(decimal totalAntes)
+    {
+        var antes = ItensAtivos.ToDictionary(i => i.Sequencia, i => (i.OrigemPreco, i.PrecoUnitario));
+        TipoPrecoAntesParcelado = TipoPreco;
+        TipoPreco = TipoPrecoVenda.Parcelado;
+        Recalcular(ajustarDescontoTotalAoTeto: true);
+        var alteradas = ItensAtivos.Count(i => i.OrigemPreco == OrigemPreco.Parcelado
+                                              && antes.TryGetValue(i.Sequencia, out var a) && a.OrigemPreco != OrigemPreco.Parcelado);
+        return new ResultadoParcelado(totalAntes, Total, alteradas);
+    }
+
+    /// <summary>
+    /// Sai do preço parcelado quando a venda não tem mais pagamento ativo em mais de uma parcela (o pagamento removido, a
+    /// maquininha recusada antes do lançamento, a volta a 1 parcela; PDV 11.2; F3-B18): o tipo volta ao do <c>F8</c> e as
+    /// linhas, aos preços dele. Devolve se voltou. Com outro pagamento parcelado ativo, fica como está. A venda recuperada
+    /// depois de uma queda passa por aqui na abertura (<c>ServicoVenda.RecuperarAsync</c>), não no <see cref="RegistrarProdutos"/>
+    /// (que também refaz a venda depois de um erro, com o parcelado confirmado ainda na tela da maquininha).
+    /// </summary>
+    public bool VoltarDoPrecoParcelado()
+    {
+        if (!ParceladoSemPagamentoParcelado)
+        {
+            return false;
+        }
+
+        Atomico(() =>
+        {
+            TipoPreco = TipoPrecoAntesParcelado ?? TipoPrecoVenda.Varejo;
+            TipoPrecoAntesParcelado = null;
+            Recalcular(ajustarDescontoTotalAoTeto: true);
+        });
+        return true;
+    }
+
+    /// <summary>
+    /// A ação toda pede o supervisor (o operador sem a permissão dela): sem a liberação, <c>ExigeLiberacao</c>; com ela, o
+    /// % pedido precisa caber no limite do supervisor, e a liberação é sempre usada (vai em <c>liberacoes</c>).
+    /// </summary>
+    private static ResultadoDesconto AvaliarLiberacaoObrigatoria(IReadOnlyList<MedidaDesconto> medidas, decimal valor, Liberacao? liberacao)
+    {
+        var pedido = medidas.Max(m => m.Percentual);
+        if (liberacao is null)
+        {
+            return new ResultadoDesconto(SituacaoDesconto.ExigeLiberacao, pedido, valor);
+        }
+
+        if (string.IsNullOrWhiteSpace(liberacao.Motivo) || liberacao.Motivo.Trim().Length > MotivoLiberacaoMaximo)
+        {
+            throw new RegraNegocioException($"Informe o motivo da liberação (até {MotivoLiberacaoMaximo} caracteres).");
+        }
+
+        return medidas.All(m => m.CabeEm(liberacao.LimiteEfetivoPct))
+            ? new ResultadoDesconto(SituacaoDesconto.Aplicado, pedido, valor, PorLiberacao: true)
+            : new ResultadoDesconto(SituacaoDesconto.LiberacaoInsuficiente, pedido, valor);
+    }
+
     /// <summary>
     /// Desconto de item numa linha de combo (10.9.1): vale para o combo inteiro (o valor do combo) e é rateado entre
     /// as linhas pelo <c>valor_bruto</c>, com o algoritmo da 12.4 (nenhuma linha com líquido zero).
@@ -1682,6 +2220,46 @@ public sealed class Venda
     });
 
     /// <summary>
+    /// F6 › 3 Acréscimo no total (PDV 12.2; Fase 3, F3-B16): em % ou em R$, substitui o acréscimo anterior. O % vira valor
+    /// na hora, com arred2(base × pct ÷ 100) sobre Σ(valor_bruto − desconto_item − desconto_promocao) (12.1; a venda não
+    /// tem coluna do % do acréscimo), e fica fixo em R$ quando os itens mudam. Maior que zero e menor que essa base (o
+    /// acréscimo de 100% ou mais é dedo que escorregou). Rateado em <c>acrescimo_rateado</c> (12.4); devolve o valor.
+    /// </summary>
+    public decimal AplicarAcrescimo(Desconto acrescimo)
+    {
+        ArgumentNullException.ThrowIfNull(acrescimo);
+        ExigirStatus(StatusVenda.EmAndamento, "dar acréscimo");
+        var ativos = ItensAtivos.ToList();
+        if (ativos.Count == 0)
+        {
+            throw new RegraNegocioException("Inclua itens antes de dar acréscimo.");
+        }
+
+        var baseCalculo = BasesRateio(ativos).Sum(b => b.Base);
+        var valor = acrescimo.ValorSobre(baseCalculo);
+        if (valor <= 0m || valor >= baseCalculo)
+        {
+            throw new RegraNegocioException(
+                $"O acréscimo deve ser maior que zero e menor que R$ {NumeroBr.Dinheiro(baseCalculo)} (o valor dos itens).");
+        }
+
+        AplicarAcrescimoTotal(valor);
+        return valor;
+    }
+
+    /// <summary>F6 › 4 sem desconto do operador: tira o acréscimo no total (com pagamento lançado, só removendo-o antes).</summary>
+    public void RemoverAcrescimoTotal() => Atomico(() =>
+    {
+        ExigirStatus(StatusVenda.EmAndamento, "remover o acréscimo");
+        if (AcrescimoTotal == 0m)
+        {
+            throw new RegraNegocioException("A venda não tem acréscimo no total.");
+        }
+
+        AplicarAcrescimoTotal(0m);
+    });
+
+    /// <summary>
     /// Venda em andamento gravada sem sessão de caixa (a do terminal real da 1B, que montava venda sem caixa, D18) entra
     /// na sessão aberta antes de seguir (Fase 1C, C11a; SYNC 8.5): sem isso o <c>venda.finalizada</c> e o
     /// <c>venda.cancelada</c> B subiriam sem <c>sessao_caixa_id</c> e a nuvem os recusaria. Só sem pagamento ativo — a
@@ -1719,6 +2297,8 @@ public sealed class Venda
         }
 
         Status = StatusVenda.EmPagamento;
+        // O parcelado confirmado sem o pagamento parcelado não passa de uma ida ao pagamento para outra (F3-B18).
+        _ = VoltarDoPrecoParcelado();
     }
 
     /// <summary>Esc na tela de pagamento: volta aos itens mantendo os pagamentos não eletrônicos lançados.</summary>
@@ -1726,6 +2306,9 @@ public sealed class Venda
     {
         ExigirStatus(StatusVenda.EmPagamento, "voltar aos itens");
         Status = StatusVenda.EmAndamento;
+        // O parcelado fica só com o pagamento parcelado lançado (F3-B18): a confirmação sem ele (a liberação da forma
+        // recusada, por exemplo) volta aos preços do F8.
+        _ = VoltarDoPrecoParcelado();
     }
 
     /// <summary>Quanto do valor informado é aplicado à venda e quanto vira troco (PDV 16.4), sem lançar.</summary>
@@ -1828,6 +2411,13 @@ public sealed class Venda
         FormaPagamentoInfo forma, decimal valorInformado, DateTimeOffset agora, DetalhePagamento detalhe, ConfirmacaoPix? pix)
     {
         ExigirStatus(StatusVenda.EmPagamento, "lançar pagamento");
+        if (detalhe.Parcelas <= 1)
+        {
+            // O preço parcelado confirmado só vale com o pagamento em parcelas (F3-B18): o lançamento à vista que vem depois
+            // dele (a maquininha recusou e o operador trocou de forma) volta os preços antes de medir o valor.
+            _ = VoltarDoPrecoParcelado();
+        }
+
         if (PagamentosAtivos.Count() >= MaximoPagamentos)
         {
             throw new RegraNegocioException($"Máximo de {MaximoPagamentos} pagamentos por venda.");
@@ -1897,7 +2487,11 @@ public sealed class Venda
                         ?? throw new RegraNegocioException($"Pagamento {sequencia} não encontrado.");
         pagamento.Status = StatusPagamento.Cancelado;
         CancelarCobrancas(pagamento.Id);
-        Recalcular();
+        // Remover o pagamento parcelado volta os preços e o tipo do F8 (PDV 11.2; F3-B18).
+        if (!VoltarDoPrecoParcelado())
+        {
+            Recalcular();
+        }
     });
 
     /// <summary>A cobrança PIX do pagamento removido (ou da venda cancelada) fica <c>cancelada</c> no payload.</summary>
@@ -2196,26 +2790,76 @@ public sealed class Venda
     }
 
     /// <summary>
+    /// <c>itens_venda_complementos[].componentes_estoque</c> do <c>venda.finalizada</c> v2 (SYNC 9.7; F3-B14, F3-B15): o
+    /// complemento com <c>baixa_estoque</c> cujo vinculado é <c>produzido</c> baixa os insumos da ficha do vinculado, do
+    /// snapshot do produto do item, já multiplicados (quantidade do item × a do complemento × <c>quantidade_baixa</c>) e
+    /// com a perda, em 3 casas, como a ficha do item (D17). Vazio nos demais: o vinculado simples ou matéria-prima a
+    /// nuvem baixa pelo cadastro dela, o livre não baixa, e a opção que o snapshot não tem (venda gravada antes dele)
+    /// fica sem a lista (a nuvem entra com o custo de referência).
+    /// </summary>
+    public IReadOnlyList<ComponenteBaixa> ComponentesEstoque(ItemVenda item, ComplementoItem complemento)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(complemento);
+        if (OpcaoDoComplemento(item, complemento) is not { BaixaEstoque: true, FichaVinculado: { Count: > 0 } ficha } opcao)
+        {
+            return [];
+        }
+
+        var vezes = item.Quantidade * complemento.Quantidade * opcao.QuantidadeBaixa;
+        return ficha
+            .Select(c => new ComponenteBaixa(c.ProdutoId, c.VariacaoId, Arredondamento.Arred3(vezes * c.Quantidade * (1m + (c.PerdaPct / 100m)))))
+            .Where(c => c.Quantidade > 0m)
+            .ToList();
+    }
+
+    /// <summary>A opção do cadastro (no snapshot do produto do item) de uma linha de complemento; nula se o snapshot não a tem.</summary>
+    public OpcaoComplemento? OpcaoDoComplemento(ItemVenda item, ComplementoItem complemento)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(complemento);
+        return complemento.ComplementoId is { } id && _produtos.TryGetValue(item.ProdutoId, out var registrado)
+            ? registrado.Produto.GruposComplementos?.SelectMany(g => g.Opcoes).FirstOrDefault(o => o.Id == id)
+            : null;
+    }
+
+    /// <summary>
     /// Quanto a venda tira do saldo de cada produto (SYNC 15.2, "quantidades da venda em andamento"): itens não
-    /// cancelados na unidade base (o fardo já vem multiplicado), os insumos da ficha no lugar do produzido.
+    /// cancelados na unidade base (o fardo já vem multiplicado), os insumos da ficha no lugar do produzido e, desde o
+    /// F3-B15, o vinculado com baixa de cada complemento (ou os insumos da ficha dele).
     /// </summary>
     public IReadOnlyDictionary<Guid, decimal> BaixasEstimadas()
     {
         var baixas = new Dictionary<Guid, decimal>();
+        void Somar(Guid produto, decimal quantidade) => baixas[produto] = baixas.GetValueOrDefault(produto) + quantidade;
         foreach (var item in ItensAtivos)
         {
+            foreach (var complemento in item.Complementos)
+            {
+                var insumos = ComponentesEstoque(item, complemento);
+                foreach (var c in insumos)
+                {
+                    Somar(c.ProdutoId, c.Quantidade);
+                }
+
+                if (insumos.Count == 0 && OpcaoDoComplemento(item, complemento) is { BaixaEstoque: true, VinculadoComSaldo: true, ProdutoId: { } vinculado } opcao)
+                {
+                    Somar(vinculado, Arredondamento.Arred3(item.Quantidade * complemento.Quantidade * opcao.QuantidadeBaixa));
+                }
+            }
+
             var componentes = ComponentesEstoque(item);
             if (componentes.Count > 0)
             {
                 foreach (var c in componentes)
                 {
-                    baixas[c.ProdutoId] = baixas.GetValueOrDefault(c.ProdutoId) + c.Quantidade;
+                    Somar(c.ProdutoId, c.Quantidade);
                 }
 
                 continue;
             }
 
-            baixas[item.ProdutoId] = baixas.GetValueOrDefault(item.ProdutoId) + item.Quantidade;
+            Somar(item.ProdutoId, item.Quantidade);
         }
 
         return baixas;
@@ -2422,7 +3066,7 @@ public sealed class Venda
     /// </summary>
     private void RegistrarLiberacao(Liberacao liberacao, string acao, Guid? itemVendaId, decimal? percentual) =>
         _liberacoes.Add(new LiberacaoVenda(
-            IdGerador.Novo(), acao, itemVendaId, percentual is { } pct ? decimal.Round(pct, 4) : null, liberacao.SupervisorId,
+            IdGerador.Novo(), acao, itemVendaId, percentual is { } pct ? Arredondamento.Arred(pct, Arredondamento.CasasPercentual) : null, liberacao.SupervisorId,
             liberacao.Motivo.Trim(), liberacao.ConcedidaEm));
 
     /// <summary>arred2(quantidade × preço); um item precisa valer ao menos R$ 0,01 (sem isso não há base de rateio).</summary>
@@ -2433,6 +3077,12 @@ public sealed class Venda
         {
             throw new RegraNegocioException(
                 $"Quantidade × preço resulta em R$ 0,00 ({NumeroBr.Quantidade(quantidade)} × {NumeroBr.Preco(preco)}). Aumente a quantidade.");
+        }
+
+        if (bruto > ValorBrutoMaximo)
+        {
+            throw new RegraNegocioException(
+                $"Quantidade × preço passa do valor máximo de uma linha ({NumeroBr.Quantidade(quantidade)} × {NumeroBr.Preco(preco)}). Confira o valor.");
         }
 
         return bruto;
@@ -2473,7 +3123,8 @@ public sealed class Venda
         new FotoCabecalho(
             Status, StatusFiscal, DiaOperacional, DescontoTotal, DescontoTotalPct, DescontoTotalOrigem, AcrescimoTotal,
             FinalizadaEm, CanceladaEm, CanceladaPorId, CancelamentoAutorizadoPorId, MotivoCancelamento, CancelamentoOrigem,
-            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador));
+            EventoFinalizacaoId, _tetoDescontoTotalPct, ClienteId, CpfCnpjNota, NomeNota, _descontoTotalOperador, TipoPreco,
+            TipoPrecoAntesParcelado));
 
     private void Reverter(Foto foto)
     {
@@ -2526,6 +3177,8 @@ public sealed class Venda
         ClienteId = c.ClienteId;
         CpfCnpjNota = c.CpfCnpjNota;
         NomeNota = c.NomeNota;
+        TipoPreco = c.TipoPreco;
+        TipoPrecoAntesParcelado = c.TipoPrecoAntesParcelado;
         RecalcularTotaisSemRateio();
     }
 
@@ -2572,7 +3225,9 @@ public sealed class Venda
         Guid? ClienteId,
         string? CpfCnpjNota,
         string? NomeNota,
-        decimal DescontoTotalOperador);
+        decimal DescontoTotalOperador,
+        string TipoPreco,
+        string? TipoPrecoAntesParcelado);
 
     private static void ValidarQuantidade(decimal quantidade, bool fracionavel)
     {

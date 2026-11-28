@@ -95,6 +95,18 @@ public static class LayoutComprovanteVenda
                         (embalagem.Preco is { } pe ? $" x {NumeroBr.Preco(pe)}" : string.Empty));
             }
 
+            // Complementos (PDV 10.2, 19.2; F3-B15): um por linha, sob o item, com o adicional por unidade (já no unitário).
+            foreach (var complemento in item.Complementos)
+            {
+                p.Linha($"   {complemento.Texto}");
+            }
+
+            // Gelado (PDV 11.4; F3-B18): o acréscimo por unidade, já no unitário.
+            if (item.Gelado)
+            {
+                p.Linha($"   GELADO (+{NumeroBr.Preco(item.AcrescimoGelada)})");
+            }
+
             p.Colunado(
                 $"   {NumeroBr.Quantidade(item.Quantidade)} {item.Unidade} x {NumeroBr.Preco(item.PrecoUnitario)}",
                 item.Cancelado ? "CANCELADO" : NumeroBr.Dinheiro(item.ValorBruto));
@@ -207,7 +219,8 @@ public static class LayoutComprovanteVenda
         // Só o limiar do snapshot: sem ele (venda recuperada sem snapshot) sai sem "12+", nunca a quantidade do cliente.
         var limiar = item.LimiarPreco?.ToString("0.###", NumeroBr.Cultura);
         var nome = item.OrigemPreco == OrigemPreco.GrupoMix ? item.NomeGrupoPreco ?? "MIX" : "ATACADO";
-        var varejo = item.PrecoVarejo is { } v ? $" (varejo {NumeroBr.Preco(v)})" : string.Empty;
+        // Com complementos, o varejo também leva os adicionais (a mesma base do unitário da linha).
+        var varejo = item.PrecoVarejoComAcrescimos is { } v ? $" (varejo {NumeroBr.Preco(v)})" : string.Empty;
         return $"{nome}{(limiar is null ? string.Empty : $" {limiar}+")}{varejo}";
     }
 }

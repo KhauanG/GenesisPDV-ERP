@@ -901,6 +901,16 @@ corpo do PR-17.
   tecla proibida); TelasTests.
 - **Pronto:** os critérios 28.4 num caixa de teste.
 - **Depende de:** F3-B7.
+- [**Feito (F3-B13)** (README do PDV › decisão 101, README do ERP › decisão 92, README da API › decisão 231; PDV 28.3,
+  28.4): como descrito, sem migração, evento nem versão nova do PDV. Escolhas técnicas: os códigos de ação que já descem
+  (`suspender_venda`, `recuperar_venda`, `cupom_troca_ultima`) no lugar dos nomes desta seção; a tecla é a do shared,
+  conferida pelos vetores `atalhos.teclas.vetores.json`, com o `Ctrl+Alt+T` (tema, PDV 6.8) também recusado no ERP e na
+  API; a tecla repetida volta à padrão de quem saiu dela, até não sobrar repetição; o alerta da tecla que não valeu é a
+  ocorrência local `ATALHO_INVALIDO` (Central › Logs), não o `alerta.cadastro`, que é do produto e pediria uma versão
+  nova do evento; as ações que esta versão ainda não tem ficam fora da barra (antes apagadas) e só bipam; a barra segue a
+  `ordem` do padrão da nuvem (a do caixa muda: F2, F4, F10, F12, Ctrl+N, F1…; o ERP rearranja); com um diálogo aberto,
+  só o bloquear e o sincronizar passam por cima dele; o `Ctrl+Alt+C` do login continua fixo; a validação do ERP já
+  existia, e o ERP ganhou só o aviso da versão (0.14.0) sob a tabela.]
 
 #### F3-B14 – Complementos na nuvem: baixa e custo (MD 3.6.8, 3.11.3; D43)
 - **Tamanho:** M · **Rigor:** completo (estoque e custo)
@@ -921,6 +931,17 @@ corpo do PR-17.
   idêntico; o v1 do PDV mais antigo igual a antes.
 - **Pronto:** saldo e custo certos na nuvem para uma venda com complementos.
 - **Depende de:** F3-B4.
+- [**Feito (F3-B14)** (README da API › decisão 232; SYNC 9.7, 10.2, 17.5; MD 3.6.8, 3.11.3): como descrito, sem
+  migração. Escolhas técnicas: o handler passa a ser o da v2, com a v1 pelo upcast identidade, e a baixa e o custo do
+  complemento valem só para o evento que nasceu na v2 (`versaoOrigem`): a v1 do PDV instalado, também no Reprocessar,
+  grava como antes; a baixa segue o cadastro **atual** da nuvem (`baixa_estoque`, o vinculado e a `quantidade_baixa`),
+  como o `controla_estoque` do item; o vinculado sem saldo próprio (sem controle de estoque, ou Produzido sem a ficha)
+  entra só no custo, pelo de referência (T22), e o livre e o sem baixa não têm custo; o movimento do complemento leva
+  `preco_venda` nulo; na v2, o complemento com o id de um item da venda é `PAYLOAD_INVALIDO`; o `lote_id` desconhecido
+  abre também o alerta `LOTE_DESCONHECIDO` (padrões da Fase 3: "anuladas, com o alerta"), e as regras do lote e da
+  promoção valem em toda versão e também na forma B do `venda.cancelada` (o lote anulado e a promoção crua abrem os
+  mesmos alertas na gravação nova, sem repetir no reenvio). Fica para o F3-B43 a troca parcial do
+  item com complementos (o estorno de hoje é inteiro).]
 
 #### F3-B15 – Complementos no caixa (PDV 10.2)
 - **Tamanho:** G · **Rigor:** completo (dinheiro)
@@ -940,6 +961,20 @@ corpo do PR-17.
   (fixture compartilhada); impressão simulada.
 - **Pronto:** "Porção + 2 molhos" vende, imprime e sobe; a nuvem baixa os molhos.
 - **Depende de:** F3-B13, F3-B14.
+- [**Feito (F3-B15)** (README do PDV › decisão 102; PDV 10.2; SYNC 9.7; MD 3.6.8, 3.11.3): como descrito. Escolhas
+  técnicas: o portão é o recurso da onda (o diálogo só abre com o `venda.finalizada` v2 anunciado; até a R3 o produto
+  vende como antes), e a venda com complementos que fecha sem a v2 anunciada vai na v1 com as linhas, sem a
+  `componentes_estoque`; a camada de acréscimos é o `ItemVenda.AcrescimoUnitario`, derivado das linhas, sem coluna;
+  os grupos e as opções (com a baixa e a ficha do vinculado) entram no snapshot da venda; a baixa calculada no caixa
+  é só a do vinculado Produzido (o vinculado com saldo a nuvem baixa pelo cadastro dela, como no F3-B14); o saldo
+  estimado conta os vinculados, na venda em andamento e nas finalizadas ainda não refletidas (só na v2, a regra da
+  nuvem), e o aviso e o bloqueio da 29.1 continuam no item; o adicional e a baixa da opção que o snapshot já tem
+  seguem os da primeira inclusão (uma fonte por linha), e os ids das linhas seguem a ordem do cadastro. **Migração:** o plano dizia
+  "nenhuma", mas o caixa não tinha a tabela local `itens_venda_complementos`: entrou a migração EF só local
+  `ComplementosVenda`, que só cria a tabela (sem volta de cursor, sem coluna nova nas tabelas de movimento da nuvem).
+  O agrupamento continua desligado no caixa (`pdv.agrupa_produtos` é lacuna): o Core já recusa juntar linhas com
+  complementos diferentes. Prova da nuvem: a fixture que o PDV gera (`venda.finalizada.v2.complementos.payload.json`)
+  aplicada na integração da API baixa os molhos.]
 
 #### F3-B16 – Preço digitado, alteração de preço e acréscimo no total (PDV 10.4, 10.5, 12.2)
 - **Tamanho:** M · **Rigor:** completo (dinheiro, permissões)
@@ -957,6 +992,23 @@ corpo do PR-17.
   do líquido mínimo); genérico com preço zero recusado; o teste que recusa `Math.Round` fora do `Arredondamento`; TelasTests.
 - **Pronto:** os critérios 10.4 (sem o serviço avulso, F3-Q6), 10.5 e 12.5 no caixa de teste.
 - **Depende de:** F3-B13.
+- [**Feito (F3-B16)** (README do PDV › decisão 103, README da API › decisão 233; PDV 10.4, 10.5, 12.2): como descrito,
+  sem migração, sem coluna nova, sem evento novo e sem versão nova do PDV. Escolhas técnicas: as três telas abrem pelo
+  recurso da onda R3 (sem ele o caixa vende como antes, e o produto de preço zero continua recusado); o preço digitado
+  vai também no `preco_tabela` (não conta no limite) e o preço é digitado em R$ com até 2 casas, com a confirmação no
+  segundo Enter acima de `pdv.limite_preco_digitado` e o teto de R$ 999.999,99 (o contrato da venda); o ERP continua
+  exigindo preço > 0 no genérico, e o caixa pré-preenche o preço do cadastro; o produto de preço zero sem as marcas abre
+  o diálogo do preço só para quem tem `pdv.venda.alterar_preco` (tabela da PDV 10.1); o `Ctrl+F6` recusa o combo, o
+  item com desconto e a venda com pagamento, o aumento não passa pelo limite, na linha de atacado, faixa, mix ou
+  embalagem a redução é medida contra o varejo (o preço manual não segue a quantidade), e sem `pdv.venda.alterar_preco`
+  toda alteração é do supervisor (diverge do "só com a permissão" das entregas acima; roadmap §16, D123); a liberação vai em
+  `liberacoes` como `alterar_preco` (movida para `ACOES_LIBERACAO_VENDA`); o acréscimo em % vira R$ na hora sobre a base
+  do rateio, fica fixo, é menor que essa base, e a liberação do supervisor sem `pdv.venda.acrescimo` fica só na
+  auditoria; o F6 › 4 tira o desconto do operador e o acréscimo. O teste que recusa `Math.Round`/`decimal.Round` fora do
+  `Arredondamento` levou o `FormatoProtocolo`, o % das liberações, o ticket médio e o peso simulado ao `Arredondamento`
+  (o `GenesisPDV.Hardware` passou a referenciar o Core). Sem mudança na sincronização da API: a matriz de
+  compatibilidade não roda neste bloco (o handler é o mesmo; a venda com o preço alterado e o acréscimo é coberta pela
+  integração).]
 
 #### F3-B17 – Tipo de preço F8 (PDV 11.2)
 - **Tamanho:** P/M · **Rigor:** completo (dinheiro); conforme a F3-Q2
@@ -970,6 +1022,19 @@ corpo do PR-17.
   conferido pelos vetores de preço.
 - **Pronto:** o F8 funciona e grava `vendas.tipo_preco`.
 - **Depende de:** F3-B16.
+- [**Feito (F3-B17)** (README do PDV › decisão 104, README da API › decisão 234; PDV 11.2; SYNC 9.7): como descrito,
+  sem migração, sem coluna nova, sem evento novo e sem versão nova do PDV. Escolhas técnicas (padrão até a confirmação do
+  dono, roadmap §16, D124): o `F8` alterna Varejo ↔ Atacado na venda em andamento (com o caixa livre só avisa; com
+  pagamento lançado é recusado); no Atacado o candidato atacado entra sem a quantidade mínima e vale o menor (a faixa, o
+  mix e o fardo menores ganham dele; a embalagem é recalculada, como manda Padrões); o preço manual, o combo, o casco e
+  os adicionais ficam; sem `pdv.venda.tipo_preco_atacado` o supervisor libera e a liberação `tipo_preco` (da venda toda)
+  sai de `ACOES_LIBERACAO_FASE3` para `ACOES_LIBERACAO_VENDA`; a volta ao Varejo não pede nada; o `F8` só existe com o
+  recurso da onda R3 (a auditoria `tipo_preco_alterado` é nova); a tela marca "PREÇO ATACADO". O `Recalculavel` não
+  mudou de regra (a embalagem já era recalculada; só o comentário). Os vetores de preço, que não existiam, entraram em
+  `packages/shared/testes/precos/regra-preco.vetores.json` (31 casos, conferidos pelo `resolverPreco` do shared e pelo
+  `MotorPreco`), sem a embalagem e o parcelado (o espelho em `Dec` com eles é o F3-B54). Sem mudança no handler da API:
+  a matriz de compatibilidade não roda neste bloco (a venda com o `tipo_preco = 'atacado'` e a liberação é coberta pela
+  integração).]
 
 #### F3-B18 – Preço gelada e preço parcelado (PDV 11.3 passo 9, 11.4)
 - **Tamanho:** M · **Rigor:** completo (dinheiro); o parcelado conforme a F3-Q3
@@ -989,6 +1054,21 @@ corpo do PR-17.
   `conferirSomasVenda` da nuvem (integração com a fixture); venda recuperada mantém o gelado.
 - **Pronto:** os dois critérios no caixa de teste.
 - **Depende de:** F3-B15, F3-B17.
+- [**Feito (F3-B18)** (README do PDV › decisão 105, README da API › decisão 235; PDV 11.2, 11.4, 11.5; MD 4.4.7, 4.4.14):
+  como descrito, sem migração Drizzle, sem coluna nova na nuvem, sem evento novo e sem versão nova do PDV; a migração EF
+  só local `GeladoParcelado` cria a tabela `itens_venda_gelados` (a marca do gelado) e a coluna
+  `estado_operacao.tipo_preco_antes_parcelado` (o tipo do F8 a que o parcelado volta, também na venda recuperada). Escolhas
+  técnicas (padrão até a confirmação do dono, roadmap §16, D125): o `Alt+G` marca a linha inteira do item selecionado e é
+  recusado no combo, no casco, na balança por valor e no preço manual; com pagamento lançado, ligar pode e desligar não;
+  as parcelas do crédito vêm antes da maquininha e o pagamento parcelado cobra o valor informado mais a diferença; o
+  parcelado substitui o preço (mesmo menor que o varejo) só nos produtos que o têm, e os demais ficam no tipo do F8; o
+  "pagamento eletrônico" que recusa o parcelado é o cartão ou o PIX, e também o vale ou o "outros" passado na maquininha ou
+  no PIX (a correção da revisão: o fluxo, não só o tipo); o parcelado menor que o já pago é recusado; a volta acontece
+  também no "Não aprovado", no à vista (com a auditoria da saída), no Esc, na liberação da forma negada, no F10 que reabre o
+  pagamento e na venda recuperada; o `OrigemPreco.Recalculavel` passou a aceitar o `parcelado`; os dois só com o recurso da
+  onda R3 (o parcelado grava a `tipo_preco_alterado`), e nenhuma chave nova (o cadastro do "Preço parcelado" liga a
+  regra). O espelho do shared ganhou o passo 9 e 7 vetores. Sem mudança no handler da API: a matriz de compatibilidade não
+  roda neste bloco (a fixture do caixa é aplicada pela integração).]
 
 ### PR-20 – Caixa: lote, etiqueta e peso
 

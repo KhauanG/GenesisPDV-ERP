@@ -55,13 +55,14 @@ public class CatalogoLocalTests
                 p.PrecoAtacado = 3.19m;
                 p.QtdMinimaAtacado = 12m;
                 p.GrupoPrecoQuantidadeId = Mix;
+                p.PrecoParcelado = 3.69m;
             }),
             Produto(Skol, 125, "CERV SKOL LT 350ML", 2.99m, p => p.GrupoPrecoQuantidadeId = Mix),
             new ProdutoCodigoBarrasRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, Codigo = "7891149103102", Principal = true },
             new ProdutoCodigoBarrasRegistro { Id = Fardo, ProdutoId = Brahma, Codigo = "17891149103109", Fator = 12m, Preco = 37.90m, UnidadeId = Fd },
             new ProdutoCodigoBarrasRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, Codigo = "123456", UsaVenda = false },
-            new ProdutoLojaRegistro { Id = Guid.CreateVersion7(), ProdutoId = Skol, LojaId = Loja, PrecoVenda = 2.89m },
-            new ProdutoLojaRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, LojaId = OutraLoja, PrecoVenda = 0.10m },
+            new ProdutoLojaRegistro { Id = Guid.CreateVersion7(), ProdutoId = Skol, LojaId = Loja, PrecoVenda = 2.89m, AcrescimoGelada = 1.00m },
+            new ProdutoLojaRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, LojaId = OutraLoja, PrecoVenda = 0.10m, AcrescimoGelada = 5.00m },
             new ProdutoPrecoQuantidadeRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, QuantidadeInicial = 6m, QuantidadeFinal = 11m, Preco = 3.39m },
             new ProdutoPrecoQuantidadeRegistro { Id = Guid.CreateVersion7(), ProdutoId = Brahma, LojaId = OutraLoja, QuantidadeInicial = 6m, Preco = 0.50m },
             Produto(Whisky, 501, "WHISKY 1L", 99.90m),
@@ -143,6 +144,12 @@ public class CatalogoLocalTests
         Assert.Equal(ModoPrecoGrupo.Grupo, t.Grupo.Modo);
         Assert.Equal([new FaixaPreco(12m, null, 2.99m)], t.Grupo.Faixas);
         Assert.Single(t.Embalagens!);
+        // F3-B18: o parcelado é do produto; a gelada é da loja do terminal (a de outra loja não vale aqui).
+        Assert.Equal(3.69m, t.PrecoParcelado);
+        Assert.Null(t.AcrescimoGelada);
+        var skol = (await catalogo.ObterAsync(Skol, ct))!;
+        Assert.Equal(1.00m, skol.Precos!.AcrescimoGelada);
+        Assert.Null(skol.Precos.PrecoParcelado);
         Assert.Equal(2.89m, (await catalogo.ObterAsync(Skol, ct))!.PrecoBase);
         Assert.True((await catalogo.ObterAsync(Retornavel, ct))!.Retornavel);
     }

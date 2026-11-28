@@ -1,13 +1,22 @@
 /**
  * Funções puras do handler `venda.finalizada` (bloco C6b da 1C): as conferências de soma da SYNC 9.7 (P6: viram
  * `VENDA_INCONSISTENTE`, não recusa), o custo do item com a ficha mista (T22) e a ordem dos itens para o `INSERT` em
- * blocos (o casco cobrado depois do cheio). A fixture do C4 é a venda que fecha: cada teste estraga uma conta.
+ * blocos (o casco cobrado depois do cheio). A fixture do C4 é a venda que fecha: cada teste estraga uma conta. Desde o
+ * F3-B14, o que cada complemento faz no estoque (`baixaDoComplemento`) e o custo dele somado ao item.
  */
 import { readFileSync } from 'node:fs';
 import { payloadVendaFinalizadaSchema, type PayloadVendaFinalizada } from '@genesis/shared';
 import { describe, expect, it } from 'vitest';
 import type { CadastroProdutoEstoque } from '../../estoques/movimentos.js';
-import { conferirSomasVenda, custoDosItens, ordenarCheiosAntes, pessoasDaVenda } from './vendas.js';
+import {
+  baixaDoComplemento,
+  conferirSomasVenda,
+  custoDosComplementos,
+  custoDosItens,
+  ordenarCheiosAntes,
+  pessoasDaVenda,
+  type ComplementoDaVenda,
+} from './vendas.js';
 
 const FIXTURE = new URL(
   '../../../../../packages/shared/testes/sync/venda.finalizada.payload.json',
@@ -116,6 +125,123 @@ describe('custoDosItens (SYNC 10.2, T22)', () => {
       new Map([['i1', '6.30']]),
     );
     expect(r).toEqual({ unitarios: ['2.1000', '3.2500', null], total: '12.80' });
+  });
+});
+
+describe('complementos: baixa e custo (F3-B14; MD 3.6.8; SYNC 10.2)', () => {
+  const produtos = new Map<string, CadastroProdutoEstoque>([
+    ['porcao', produto('porcao', '8.0000', true)],
+    ['molho', produto('molho', '0.7500', true)],
+    ['sache', { ...produto('sache', '0.3000', false) }],
+    // O Produzido, o kit e o serviço controlam estoque (o padrão do cadastro): o `referencia` deles vem do tipo.
+    ['molho_casa', { ...produto('molho_casa', '9.0000', true), tipo: 'produzido' }],
+    ['combo', { ...produto('combo', '5.0000', true), tipo: 'kit' }],
+    ['montagem', { ...produto('montagem', '1.5000', true), tipo: 'servico' }],
+    ['maionese', produto('maionese', '12.0000', true)],
+    ['alho', produto('alho', '20.0000', false)],
+  ]);
+  const cad = { produtos };
+  const vinculado = (produtoId: string | null, baixaEstoque = true, quantidadeBaixa = '1.000') => ({
+    produtoId,
+    baixaEstoque,
+    quantidadeBaixa,
+  });
+  const linha = (quantidade?: string, componentes: unknown[] = []) =>
+    ({ quantidade, componentes_estoque: componentes }) as never;
+  const item = (quantidade: string, cancelado = false) => ({ quantidade, cancelado });
+
+  it('vinculado com saldo próprio: VENDA_PDV de item × complemento × quantidade_baixa (3 casas)', () => {
+    expect(
+      baixaDoComplemento(2, item('2.000'), linha('2.000'), vinculado('molho', true, '0.030'), cad),
+    ).toEqual({
+      tipo: 'propria',
+      produtoId: 'molho',
+      quantidade: '0.120',
+    });
+    // Sem a quantidade na linha, o padrão do banco (1).
+    expect(baixaDoComplemento(2, item('3.000'), linha(), vinculado('molho'), cad)).toMatchObject({
+      quantidade: '3.000',
+    });
+  });
+
+  it('não baixam: a v1, o livre, o sem baixa_estoque, o desconhecido, o do item cancelado e a conta que dá zero', () => {
+    const nada = { tipo: 'nenhuma' };
+    expect(baixaDoComplemento(1, item('1.000'), linha('1.000'), vinculado('molho'), cad)).toEqual(nada);
+    expect(baixaDoComplemento(2, item('1.000'), linha('1.000'), vinculado(null, false), cad)).toEqual(nada);
+    expect(baixaDoComplemento(2, item('1.000'), linha('1.000'), vinculado('molho', false), cad)).toEqual(
+      nada,
+    );
+    expect(baixaDoComplemento(2, item('1.000'), linha('1.000'), undefined, cad)).toEqual(nada);
+    expect(baixaDoComplemento(2, item('1.000', true), linha('1.000'), vinculado('molho'), cad)).toEqual(nada);
+    expect(
+      baixaDoComplemento(2, item('0.001'), linha('0.001'), vinculado('molho', true, '0.001'), cad),
+    ).toEqual(nada);
+  });
+
+  it('vinculado sem controle de estoque ou kit, Produzido e serviço sem a ficha: só o custo de referência; com a ficha, a ficha', () => {
+    expect(baixaDoComplemento(2, item('1.000'), linha('2.000'), vinculado('sache'), cad)).toEqual({
+      tipo: 'referencia',
+      produtoId: 'sache',
+      quantidade: '2.000',
+    });
+    // Controla estoque, mas o tipo não tem saldo próprio (kit, Produzido, serviço): referência, nunca VENDA_PDV.
+    for (const id of ['molho_casa', 'combo', 'montagem']) {
+      expect(baixaDoComplemento(2, item('2.000'), linha('1.000'), vinculado(id), cad)).toEqual({
+        tipo: 'referencia',
+        produtoId: id,
+        quantidade: '2.000',
+      });
+    }
+    const ficha = [
+      { produto_id: 'maionese', variacao_id: null, quantidade: '0.050', origem: 'ficha_tecnica' },
+    ];
+    expect(baixaDoComplemento(2, item('1.000'), linha('1.000', ficha), vinculado('molho_casa'), cad)).toEqual(
+      {
+        tipo: 'ficha',
+      },
+    );
+  });
+
+  it('o custo dos complementos soma ao do item antes da divisão (com movimento, referência e ficha mista)', () => {
+    const complemento = (id: string, itemId: string, baixa: ComplementoDaVenda['baixa'], componentes = []) =>
+      ({ linha: { id, componentes_estoque: componentes }, itemId, baixa }) as unknown as ComplementoDaVenda;
+    const ficha = [
+      { produto_id: 'maionese', variacao_id: null, quantidade: '0.100', origem: 'ficha_tecnica' },
+      { produto_id: 'alho', variacao_id: null, quantidade: '0.010', origem: 'ficha_tecnica' },
+    ] as never;
+    const complementos = [
+      complemento('c1', 'i1', { tipo: 'propria', produtoId: 'molho', quantidade: '2.000' }),
+      complemento('c2', 'i1', { tipo: 'referencia', produtoId: 'sache', quantidade: '2.000' }),
+      complemento('c3', 'i1', { tipo: 'ficha' }, ficha),
+      complemento('c4', 'i1', { tipo: 'nenhuma' }),
+      complemento('c5', 'i2', { tipo: 'referencia', produtoId: 'sache', quantidade: '1.000' }),
+    ];
+    const movimentos = new Map([
+      ['i1', '16.00'],
+      ['c1', '1.50'],
+      ['c3', '1.20'],
+    ]);
+    const porItem = custoDosComplementos(complementos, cad, movimentos);
+    // c1 1,50 (movimento) + c2 0,60 (2 × 0,30) + c3 1,20 (maionese) + 0,20 (alho 0,01 × 20) = 3,50; c5 0,30.
+    expect([...porItem].map(([k, v]) => [k, v.toFixed(2)])).toEqual([
+      ['i1', '3.50'],
+      ['i2', '0.30'],
+    ]);
+    const itens = [
+      { id: 'i1', produto_id: 'porcao', quantidade: '2.000', componentes_estoque: [] },
+      { id: 'i2', produto_id: 'sache', quantidade: '3.000', componentes_estoque: [] },
+      { id: 'i3', produto_id: 'sache', quantidade: '1.000', componentes_estoque: [] },
+    ] as never;
+    // i1: (16,00 + 3,50) ÷ 2; i2 sem baixa: (3 × 0,30 + 0,30) ÷ 3; i3 sem complemento, como antes.
+    expect(custoDosItens(itens, cad, movimentos, porItem)).toEqual({
+      unitarios: ['9.7500', '0.4000', '0.3000'],
+      total: '21.00',
+    });
+    // Sem complementos, a conta de antes.
+    expect(custoDosItens(itens, cad, movimentos)).toEqual({
+      unitarios: ['8.0000', '0.3000', '0.3000'],
+      total: '17.20',
+    });
   });
 });
 

@@ -65,6 +65,7 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
 
         var estado = await ObterEstadoOperacaoAsync(db, ct);
         estado.VendaAtualId = venda.Aberta ? venda.Id : null;
+        estado.TipoPrecoAntesParcelado = venda.Aberta ? venda.TipoPrecoAntesParcelado : null;
         estado.OperadorId = venda.OperadorId;
         estado.Modo = venda.Status == StatusVenda.EmPagamento ? "pagamento" : "balcao";
         estado.AtualizadoEm = relogio.Agora;
@@ -85,7 +86,7 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
         return registro is not null && StatusVenda.Aberta(registro.Status)
             ? MapeadorVenda.ParaDominio(
                 registro, await LiberacoesAsync(db, id, ct), await CobrancasAsync(db, id, ct), await FormasAsync(db, registro, ct),
-                await CascosDescontadosAsync(db, id, ct))
+                await CascosDescontadosAsync(db, id, ct), await GeladosAsync(db, id, ct), estado.TipoPrecoAntesParcelado)
             : null;
     }
 
@@ -93,11 +94,17 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
     {
         await using var db = await fabrica.CreateDbContextAsync(ct);
         var registro = await CarregarAsync(db, id, rastrear: false, ct);
-        return registro is null
-            ? null
-            : MapeadorVenda.ParaDominio(
-                registro, await LiberacoesAsync(db, id, ct), await CobrancasAsync(db, id, ct), await FormasAsync(db, registro, ct),
-                await CascosDescontadosAsync(db, id, ct));
+        if (registro is null)
+        {
+            return null;
+        }
+
+        // O tipo do F8 de antes do parcelado (F3-B18) só existe para a venda atual (estado_operacao).
+        var estado = await db.EstadoOperacao.AsNoTracking().FirstOrDefaultAsync(ct);
+        return MapeadorVenda.ParaDominio(
+            registro, await LiberacoesAsync(db, id, ct), await CobrancasAsync(db, id, ct), await FormasAsync(db, registro, ct),
+            await CascosDescontadosAsync(db, id, ct), await GeladosAsync(db, id, ct),
+            estado?.VendaAtualId == id ? estado.TipoPrecoAntesParcelado : null);
     }
 
     public async Task<long> EncerrarAsync(Venda venda, EventoParaOutbox? evento, RegistroAuditoria? auditoria = null, CancellationToken ct = default)
@@ -136,6 +143,7 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
         if (estado.VendaAtualId == venda.Id)
         {
             estado.VendaAtualId = null;
+            estado.TipoPrecoAntesParcelado = null;
         }
 
         estado.Modo = "balcao";
@@ -266,6 +274,21 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
 
         db.CascosDescontadosVenda.RemoveRange(cascos.Values);
 
+        // A marca do gelado (F3-B18): espelha os itens gelados — o acréscimo muda com o Alt+G, e o gelado tirado sai.
+        var gelados = await db.ItensVendaGelados.Where(g => g.VendaId == venda.Id).ToDictionaryAsync(g => g.ItemVendaId, ct);
+        foreach (var item in venda.Itens.Where(i => i.Gelado))
+        {
+            if (gelados.Remove(item.Id, out var linha))
+            {
+                linha.AcrescimoUnitario = item.AcrescimoGelada;
+                continue;
+            }
+
+            db.ItensVendaGelados.Add(MapeadorVenda.ParaLinha(venda.Id, item, relogio.Agora));
+        }
+
+        db.ItensVendaGelados.RemoveRange(gelados.Values);
+
         // Cobranças PIX (16.7): a nova entra depois do pagamento a que se liga (FK); a do pagamento removido muda o status.
         var cobrancas = await db.CobrancasPix.Where(c => c.VendaId == venda.Id).ToDictionaryAsync(c => c.Id, ct);
         foreach (var cobranca in venda.CobrancasPix)
@@ -295,12 +318,15 @@ public sealed class RepositorioVendas(IDbContextFactory<PdvDbContext> fabrica, I
     private static async Task<List<CascoDescontadoVendaLocal>> CascosDescontadosAsync(PdvDbContext db, Guid vendaId, CancellationToken ct) =>
         await db.CascosDescontadosVenda.AsNoTracking().Where(c => c.VendaId == vendaId).ToListAsync(ct);
 
+    private static async Task<List<ItemVendaGeladoLocal>> GeladosAsync(PdvDbContext db, Guid vendaId, CancellationToken ct) =>
+        await db.ItensVendaGelados.AsNoTracking().Where(g => g.VendaId == vendaId).ToListAsync(ct);
+
     private static async Task<List<LiberacaoVendaLocal>> LiberacoesAsync(PdvDbContext db, Guid vendaId, CancellationToken ct) =>
         await db.LiberacoesVenda.AsNoTracking().Where(l => l.VendaId == vendaId).ToListAsync(ct);
 
     private static Task<VendaRegistro?> CarregarAsync(PdvDbContext db, Guid id, bool rastrear, CancellationToken ct)
     {
-        var consulta = db.Vendas.Include(v => v.Itens).Include(v => v.Pagamentos).AsSplitQuery();
+        var consulta = db.Vendas.Include(v => v.Itens).ThenInclude(i => i.Complementos).Include(v => v.Pagamentos).AsSplitQuery();
         return (rastrear ? consulta : consulta.AsNoTracking()).FirstOrDefaultAsync(v => v.Id == id, ct);
     }
 

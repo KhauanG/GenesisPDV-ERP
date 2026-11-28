@@ -2192,7 +2192,8 @@ nulo o id desconhecido. O cadastro no ERP é o **F2-B51** (README da API › dec
 `com_complementos`, gravados com o produto; o grupo removido recebe `excluido_em` com as opções (que também ficam com
 `ativo = false`), e a opção removida de um grupo que fica só recebe `ativo = false`; o `produto_id` vinculado é
 Simples, Matéria-prima ou Produzido (o Produzido baixa os insumos da ficha), e o produto que é opção ativa de um grupo
-vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3.
+vivo não se exclui. As duas tabelas entram na versão agregada do produto (409). O uso na venda é da Fase 3: a baixa
+e o custo na nuvem desde o F3-B14 (3.11.3; README da API › decisão 232), o caixa desde o F3-B15 (PDV 10.2; README do PDV › decisão 102).
 
 #### 3.6.9 Demais filhas de `produtos`
 
@@ -3535,6 +3536,13 @@ O PDV monta o grupo `IBSCBS` de cada item e o total `IBSCBSTot` a partir desses 
 `itens_venda_complementos` (D, ↑): CP, `item_venda_id uuid not null`, `complemento_id uuid null → produtos_complementos`,
 `grupo_nome varchar(40) not null`, `descricao varchar(60) not null`, `quantidade numeric(15,3) not null default 1`,
 `preco_adicional numeric(15,4) not null default 0` (já incluído em `itens_venda.preco_unitario`).
+Desde a Fase 3 (F3-B14; README da API › decisão 232), o complemento com `produtos_complementos.baixa_estoque` e o
+produto vinculado baixa estoque na nuvem com `documento_item_id` = id desta linha (`VENDA_PDV` de quantidade do item ×
+`quantidade` × `quantidade_baixa`, ou os insumos da ficha do vinculado Produzido como `BAIXA_INSUMO`, pela
+`componentes_estoque` só do payload do `venda.finalizada` v2), e o custo dele soma ao `itens_venda.custo_unitario` do
+item; o livre e o sem baixa não têm custo nem estoque. No caixa (F3-B15; README do PDV › decisão 102), a tabela local de
+mesmo nome guarda as linhas com o item (migração EF `ComplementosVenda`), `quantidade` = 1 por unidade do item (D75) e o
+`preco_adicional` somado ao `preco_unitario` e ao `preco_tabela`.
 
 #### 3.11.4 `pagamentos_venda` e `parcelas_venda` (D, ↑)
 
@@ -4672,7 +4680,9 @@ Nunca volta (número reservado e não usado vira lacuna — NFC-e: inutilizaçã
 
 Ponto de retomada após queda de energia/travamento: `id INTEGER CHECK (id = 1)`, `operador_id TEXT`,
 `sessao_caixa_id TEXT`, `venda_atual_id TEXT` (venda em andamento na tela), `modo TEXT` (`balcao`, `comanda`,
-`delivery`, `pagamento`, `fechamento`), `bloqueado INTEGER`, `bloqueado_desde TEXT`, `atualizado_em TEXT`.
+`delivery`, `pagamento`, `fechamento`), `bloqueado INTEGER`, `bloqueado_desde TEXT`, `atualizado_em TEXT` e
+`tipo_preco_antes_parcelado TEXT` (Fase 3, F3-B18: `varejo`/`atacado`, o tipo do `F8` da venda atual que está no preço
+parcelado, para a volta ao remover o pagamento parcelado, também na venda recuperada; nulo fora do parcelado).
 Na inicialização: resolve TEF pendente → reabre a venda `venda_atual_id` (se `em_andamento`/`em_pagamento`) → pede
 login do operador.
 
@@ -4737,6 +4747,16 @@ Deduplicação e ack dos comandos do heartbeat (entrega ao menos uma vez, sincro
 (`comandos_terminal.id`), `tipo TEXT`, `recebido_em TEXT`, `status TEXT` (`recebido`, `executado`, `falhou`),
 `resultado TEXT` (JSON). Comando já presente não é executado de novo; o status vai em `comandos_resultado` de todo
 heartbeat até a nuvem parar de reenviá-lo.
+
+#### 4.4.14 `itens_venda_gelados`
+
+Marca "gelado" do item (o `Alt+G`, PDV 11.4; Fase 3, F3-B18): `item_venda_id TEXT PK` (→ `itens_venda`, cascata),
+`venda_id TEXT` (→ `vendas`, cascata), `acrescimo_unitario INTEGER` (escala de preço, `> 0`: o
+`produtos_lojas.acrescimo_gelada` da primeira inclusão, já somado ao `preco_unitario` e ao `preco_tabela`),
+`registrado_em TEXT`. Só local: a nuvem não guarda a marca (nenhuma coluna nova em `itens_venda`, Padrões da Fase 3). Serve
+para a venda recuperada manter o agrupamento (gelado e natural não se agrupam) e o desfazer do `Alt+G`, e para a
+reimpressão; espelha os itens gelados da venda e não é apagada no encerramento. Migração EF `GeladoParcelado`, sem volta
+de cursor.
 
 ### 4.5 Estimativas locais (saldo de estoque, crédito e vale)
 

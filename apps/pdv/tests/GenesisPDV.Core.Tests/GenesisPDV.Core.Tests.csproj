@@ -13,5 +13,10 @@
     <None Include="..\..\..\..\packages\shared\testes\sync\caixa.apuracao.vetores.json" Link="fixtures\sync\caixa.apuracao.vetores.json" CopyToOutputDirectory="PreserveNewest" />
     <!-- Vetores dos códigos do vale e do cupom de troca e do código de conferência (vales.spec.ts do shared; F3-B5). -->
     <None Include="..\..\..\..\packages\shared\testes\sync\vale.codigo.vetores.json" Link="fixtures\sync\vale.codigo.vetores.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Atalhos do caixa (F3-B13): os vetores da tecla (cadastros.spec.ts do shared) e o seed da nuvem com o padrão de cada ação. -->
+    <None Include="..\..\..\..\packages\shared\testes\sync\atalhos.teclas.vetores.json" Link="fixtures\sync\atalhos.teclas.vetores.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Vetores da regra de preço com o F8 (precos.spec.ts do shared; F3-B17). -->
+    <None Include="..\..\..\..\packages\shared\testes\precos\regra-preco.vetores.json" Link="fixtures\precos\regra-preco.vetores.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\apps\api\src\database\seed\dados\tabelas-md.ts" Link="fixtures\api\tabelas-md.ts" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

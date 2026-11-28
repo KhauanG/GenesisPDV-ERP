@@ -1006,7 +1006,8 @@ Depois do login:
 > **Barra de funções clicável e janela do item (versão 0.9.1; dono, 04/11/2026; README do PDV › decisão 65).** Para o
 > caixa que só tem teclado numérico (sem as teclas F), o rodapé vira **botões** — duas linhas de 8, com a tecla e a
 > função (`F1 Ajuda` … `F12 Gestão de vendas`, `Ctrl+N`, `Ctrl+T`, `Shift+F4 Cancelar venda`; `F10 CONCLUIR` em
-> destaque; as funções das próximas fases esmaecidas e com o mesmo aviso "disponível nas próximas fases"). Cada botão
+> destaque; as funções das próximas fases esmaecidas e com o mesmo aviso "disponível nas próximas fases"; desde o
+> F3-B13, a barra sai do mapa de atalhos, na ordem da tabela, e a ação que a versão ainda não tem fica fora dela: 28.3). Cada botão
 > dispara **o mesmo comando da tecla**, com as mesmas permissões e liberações; o botão nunca recebe o foco, e sem
 > diálogo aberto o foco volta ao campo de código (o leitor digita no campo focado). Clicar numa linha da lista
 > seleciona sem tirar o foco do campo. Os diálogos do dia a dia (pagamento — as formas são clicáveis —, maquininha,
@@ -1095,7 +1096,7 @@ escolher a variação (PDV-2), com `pdv.recusa_produto_com_variacoes = true` (pa
 pela pesquisa F2 recusa, com "Produto com variações: venda disponível na próxima versão" (sem abrir a venda nem gastar
 número): o código que resolve para uma variação (`produtos_codigos_barras.variacao_id` não nulo) e o produto pai
 `com_variacoes` com variação ativa no espelho (`produtos_variacoes` ativa e não excluída). O pai sem variação ativa (o
-legado sem grade) vende como simples, e o `com_complementos` vende sem os complementos (até a PDV-2, na Fase 3, D43). Com a chave desligada, o código
+legado sem grade) vende como simples, e o `com_complementos` abre a seleção de complementos (Fase 3, F3-B15; abaixo). Com a chave desligada, o código
 da variação vende o pai, com o preço e o saldo dele (o comportamento do piloto); a nuvem aceita a venda e abre o alerta
 de cadastro (SYNC 15.1). Na pesquisa só por números, o código de uma variação dá a linha dele (como o da embalagem).
 
@@ -1139,7 +1140,7 @@ Validações do produto encontrado:
 | Produto com `idade_minima` | Seção 10.11 |
 | Produto com vasilhame retornável | Seção 10.12 (PDV-1) |
 | Tipo **Com variações** lido pelo código do produto pai | Abre seleção de variação (PDV-2) |
-| Tipo **Com complementos** | Abre seleção de complementos (PDV-2, Fase 3, decisão D43; na PDV-1 vende sem complementos) |
+| Tipo **Com complementos** | Abre seleção de complementos (PDV-2, Fase 3, decisão D43; F3-B15, abaixo). Na PDV-1, e no caixa da Fase 3 enquanto a nuvem não anuncia o `venda.finalizada` v2 (a release R3), vende sem complementos |
 | Tipo **Kit** (combo) | Seção 10.9.1 (PDV-1): diálogo Montar combo quando há posições com alternativas; uma linha por componente |
 | Tipo **Produzido** (ficha técnica) | Seção 10.9.2 (PDV-1) |
 | Produto membro de **grupo de preço por quantidade** (`grupo_preco_quantidade_id`) | Preço pela soma do grupo (11.3.1, PDV-1) |
@@ -1151,6 +1152,22 @@ Validações do produto encontrado:
 
 Produto encontrado e válido → linha incluída e **persistida** (transação local) antes de atualizar a tela. Bipe curto
 de confirmação (opcional).
+
+**Seleção de complementos** — Fase 3 (F3-B15; MD 3.6.8; D43; F3-Q4 = D75; README do PDV › decisão 102). Só com o
+`venda.finalizada` v2 anunciado no último handshake (SYNC 17.5); sem ele, o produto vende sem complementos, como na
+PDV-1.
+
+| Regra | Detalhe |
+|---|---|
+| O que aparece | Os grupos vivos do produto com as opções ativas, na ordem do cadastro; grupo sem opção ativa não aparece; produto sem grupo vende sem o diálogo. A opção vinculada sem descrição mostra o nome do produto vinculado |
+| Escolha | Um grupo por vez, só pelo teclado: ↑/↓ andam entre as opções, Espaço ou 1–9 marcam e desmarcam, Enter confere o grupo e passa ao próximo (no último, inclui o item), Tab/Shift+Tab andam sem conferir, Esc volta ao grupo anterior e, no primeiro, desiste sem incluir nada |
+| Mínimo, máximo, obrigatório | Por grupo: entre o mínimo (o obrigatório pede ao menos 1) e o máximo. Cada opção vale 0 ou 1 vez por unidade do item e o máximo conta opções diferentes (D75: "2 molhos" são dois molhos diferentes). Grupo de no máximo 1: marcar outra troca a escolha. Grupo obrigatório com menos opções ativas que o mínimo: "procure o gerente" |
+| Quantidade | `3*<código>`: as 3 unidades levam os mesmos complementos; `itens_venda_complementos.quantidade` = 1 (por unidade do item) |
+| Preço | `preco_unitario` e `preco_tabela` = preço da 11.3 + Σ `preco_adicional` das opções; o recálculo de atacado e mix (e o F8 e a gelada, 11.2 e 11.4) troca só a parte do produto e preserva os adicionais ("camada de acréscimos do item") |
+| Agrupa produtos | Linhas com complementos diferentes não se agrupam |
+| Cancelamento | Os complementos são fixos desde a inclusão: trocar é cancelar o item e incluir de novo. Cancelar o item cancela os complementos; o restante do cancelamento parcial leva a mesma escolha |
+| Tela e cupom | Sob o item: "+ MOLHO BARBECUE, + CHEDDAR CREMOSO (+4,50)" na tela e uma linha por complemento no cupom, com o adicional por unidade |
+| Estoque | O vinculado com `baixa_estoque` baixa na nuvem (o simples ou matéria-prima pelo cadastro dela; o produzido pelos insumos da ficha que o caixa calcula e manda na `componentes_estoque` da linha, SYNC 9.7); o livre não baixa. O saldo estimado do caixa (29.1) conta os vinculados, na venda em andamento e nas finalizadas ainda não refletidas (só na v2, como a nuvem) |
 
 ### 10.3 Pesquisa de produto (F2) — Fase PDV-1
 
@@ -1231,6 +1248,19 @@ de confirmação (opcional).
   'documento_separado'` (recibo próprio e NFS-e pela nuvem, FUT). O NCM `00` de produto de serviço nunca é usado em
   NFC-e.
 - Limites do preço digitado: > 0 e ≤ `pdv.limite_preco_digitado` (nuvem, padrão R$ 9.999,99); acima pede confirmação.
+- **Fase 3 (F3-B16; README do PDV › decisão 103):** o genérico e o "Solicita preço PDV" chegaram (lacuna da Fase 1). O
+  preço é digitado em R$ com até 2 casas; acima do limite, o primeiro Enter avisa e o segundo, com o mesmo preço,
+  confirma. O preço do cadastro, quando > 0, vem pré-preenchido também no genérico (o ERP exige preço > 0 em todo
+  vendável, e o genérico leva um preço de referência). A linha grava o preço digitado (mais os adicionais dos
+  complementos, 10.2) no `preco_unitario` **e** no `preco_tabela`, com `origem_preco = manual`: não é recalculada (11.3.1)
+  nem agrupa, e não conta como redução no limite de desconto (12.3). O produto com complementos que pede preço abre
+  os complementos e depois o preço. O produto de preço zero sem as marcas (de uma importação) segue a tabela da 10.1:
+  com `pdv.venda.alterar_preco` no operador abre o mesmo diálogo, vazio, como o "Solicita preço PDV"; sem ela,
+  "Produto sem preço — procure o supervisor". O preço digitado tem o teto de R$ 999.999,99 por unidade (o contrato da
+  venda aceita o preço com 11 dígitos inteiros; acima disso a nuvem recusaria a venda inteira). Auditoria
+  `preco_alterado` (origem `generico`/`solicita_preco`/`sem_preco`). As telas da 10.4 abrem só com o recurso da onda R3
+  (o `venda.finalizada` v2 anunciado); sem ele, o caixa vende pelo cadastro e o produto de preço zero continua recusado.
+  O serviço avulso fica no backlog (D77 = F3-Q6 B).
 
 ### 10.5 Alteração de preço no PDV — Fase PDV-2
 
@@ -1240,6 +1270,19 @@ de confirmação (opcional).
   cálculo do limite de desconto (seção 12.3), para que a alteração de preço não burle o limite. Para a NFC-e,
   o item vai com o preço alterado (sem vDesc).
 - Flag desligada → a ação não aparece.
+- **Fase 3 (F3-B16; README do PDV › decisão 103):** `pdv.altera_preco_pdv` é por loja (padrão desligada) e a ação
+  também espera o recurso da onda R3; fora disso o `Ctrl+F6` fica fora da barra e bipa "Ação indisponível", e o F1 diz a
+  causa: com o recurso e a chave desligada, "Desligadas na loja"; sem o recurso, "Chegam numa próxima versão". O preço novo
+  é digitado por unidade, em R$ com até 2 casas, com a confirmação acima de `pdv.limite_preco_digitado` (10.4). Não vale
+  no combo, no item com desconto (remover antes) nem com pagamento lançado. Acima do limite do operador, a liberação do
+  supervisor vai em `liberacoes` com a ação `alterar_preco` (SYNC 9.7). A alteração que não aumenta a redução (subir o
+  preço) não passa pelo limite. Na linha de atacado, faixa, mix ou embalagem, o `preco_tabela` passa a ser o varejo/loja
+  (com os adicionais dos complementos): esses preços dependem da quantidade e a linha manual não é mais recalculada, então
+  a redução é medida contra o varejo (o preço entre o atacado e o varejo conta como redução, e diminuir a quantidade
+  depois não a tira do limite). Sem `pdv.venda.alterar_preco` (fora do perfil do operador), toda alteração é liberada
+  pelo supervisor, como o desconto sem a permissão (12.2) — padrão até a confirmação do dono (roadmap §16, D123): o texto
+  acima ("flag ligada + permissão") deixaria a ação fora para quem não tem a permissão. Auditoria `preco_alterado` com o antes e o depois; a tela
+  mostra "└ preço alterado (tabela X)".
 
 ### 10.6 Código de barras de balança (EAN-13 prefixo 2) — Fase PDV-2
 
@@ -1583,8 +1626,24 @@ Critérios de aceite:
 ### 11.2 Tipo de preço da venda — Fase PDV-2
 
 Atalho **Tipo de preço** (`F8`): Varejo (padrão) · Atacado. Mudar o tipo recalcula todos os itens não cancelados cujo
-`origem_preco` não seja `manual`, `balanca` tipo Valor, `orcamento`, `embalagem` nem `kit_rateio`. Tipo Atacado exige
+`origem_preco` não seja `manual`, `balanca` tipo Valor, `orcamento` nem `kit_rateio`. Tipo Atacado exige
 permissão `pdv.venda.tipo_preco_atacado`; produtos sem preço atacado ficam com o varejo.
+
+Como o caixa faz (Fase 3, F3-B17; README do PDV › decisão 104; padrão até a confirmação do dono, roadmap §16, D124):
+
+- o `F8` (a ação `tipo_preco` do mapa de atalhos, 28.1) **alterna** Varejo ↔ Atacado na venda em andamento e mostra
+  "Preço ATACADO: N itens recalculados, total de R$ X para R$ Y"; a tela marca o tipo ativo ("PREÇO ATACADO (F8 volta ao
+  varejo)") ao lado do cabeçalho. Com o caixa livre, avisa "Inclua o primeiro item" (cada venda começa no varejo e o tipo
+  não passa para a próxima); com pagamento lançado, é recusado;
+- no Atacado o candidato atacado entra **sem a quantidade mínima** e continua valendo o menor candidato (11.3): a faixa, o
+  mix, o promocional, o preço da loja e o **fardo** (a embalagem é recalculada, vale o menor, 11.3.1) ganham dele quando
+  são menores; o combo, o casco, o preço manual e os adicionais dos complementos ficam como estão. A linha no atacado pelo
+  `F8` sobe com `quantidade_referencia_preco` nula (o preço veio do tipo da venda, não da quantidade);
+- sem `pdv.venda.tipo_preco_atacado`, o supervisor libera (PIN e motivo, 31.3) e a liberação sobe em `liberacoes` da venda
+  com a ação `tipo_preco` (sincronizacao.md 9.7); a volta ao Varejo não pede permissão. A auditoria é `tipo_preco_alterado`
+  (o tipo e o total antes e depois), e o `vendas.tipo_preco` sobe no `venda.finalizada`;
+- até a R3 (o recurso da onda anunciado pela nuvem, F3-B4), o `F8` não existe no caixa: a tecla bipa "Ação indisponível".
+  Se o recurso some no meio de uma venda no Atacado (a nuvem voltou de versão), o `F8` ainda volta ao Varejo.
 
 **Parcelado depende da forma de pagamento** (mesma regra do ERP): o preço parcelado não é escolhido no `F8`. Ele é
 aplicado quando a venda recebe um pagamento numa forma com **Permite Parcelar** e `parcelas > 1`: ao escolher as
@@ -1592,6 +1651,32 @@ parcelas na tela de pagamento, o PDV mostra "Preço parcelado: total passa de R$
 Confirmar / [Esc] Voltar", recalcula os itens com `preco_parcelado > 0` (`origem_preco = 'parcelado'`,
 `vendas.tipo_preco = 'parcelado'`) e o "Falta". Remover esse pagamento (ou mudar para 1 parcela) volta os preços.
 Com pagamento eletrônico já aprovado, a troca para parcelado é recusada.
+
+Como o caixa faz o parcelado (Fase 3, F3-B18; D74; README do PDV › decisão 105; padrão até a confirmação do dono, roadmap
+§16, D125):
+
+- no crédito com **Permite Parcelar** e mais de uma parcela, a tela de pagamento pede as **parcelas antes da maquininha**
+  (sem TEF, o operador escolhe antes de passar o cartão). Em 2× ou mais, se algum item tem `preco_parcelado > 0`, mostra
+  "Preço parcelado: total passa de R$ X para R$ Y — [Enter] Confirmar / [Esc] Voltar"; confirmado, a venda vai a
+  `tipo_preco = 'parcelado'` e a maquininha pede o valor informado **mais a diferença** do parcelado (o "Falta" todo, no
+  caso comum). Sem item com o preço parcelado, nada muda (o pagamento em parcelas segue com o preço de antes);
+- o parcelado **substitui** os candidatos da regra 11.3 (passo 9) nas linhas que a regra recalcula, inclusive as do
+  atacado do `F8`; o combo, o casco, o preço manual e a balança tipo Valor ficam como estão, e os adicionais dos
+  complementos e o gelado somam por cima. As linhas sem o preço parcelado ficam no tipo do `F8` de antes (o caixa o
+  guarda no `estado_operacao`, MD 4.4.7), e é a ele que a venda volta;
+- a volta acontece ao remover o pagamento parcelado (Del), no "Não aprovado" da maquininha, ao lançar outro pagamento à
+  vista com o parcelado confirmado e sem o pagamento parcelado, ao voltar aos itens (Esc) nesse estado e na venda
+  recuperada depois de uma queda nesse estado. A tela nunca mostra o "Falta" do parcelado sem o pagamento parcelado:
+  também a liberação da forma negada e o F10 que reabre o pagamento voltam os preços antes (com a auditoria da saída).
+  Com o pagamento parcelado lançado, o Esc mantém o parcelado e o item novo já entra nele. Com pagamento eletrônico já
+  aprovado (cartão ou PIX, e também o vale ou o "outros" passado na maquininha ou no PIX), a troca é recusada; o
+  dinheiro lançado antes não impede, mas o parcelado menor que o preço atual é recusado quando derruba o total até o já
+  pago ou deixa o cartão em parcelas sem valor;
+- a auditoria é a `tipo_preco_alterado` (a entrada e a saída, com o total antes e depois e as parcelas). Até a R3 (o
+  recurso da onda, F3-B4), o caixa não pede as parcelas antes: elas ficam informativas na maquininha e o preço não muda;
+- nenhuma chave nova: o cadastro do "Preço parcelado" no produto é o que liga a regra. O PDV instalado (até o 0.13.0)
+  ignora o `preco_parcelado` e cobra o preço normal no parcelado (o dono conferiu em 26/11/2026 um caixa só em uso: sem
+  divergência entre caixas).
 
 ### 11.3 Algoritmo de resolução do preço unitário — Fase PDV-1 (com PDV-2 onde indicado)
 
@@ -1715,6 +1800,17 @@ Regras:
   item selecionado, `Alt+G` "Gelada" (configurável, 28.2) soma o acréscimo ao `preco_unitario`
   (`origem_preco` mantém a origem e `preco_tabela` inclui o acréscimo). Não é acréscimo da venda (não vai a `vOutro`).
 
+  Como o caixa faz (Fase 3, F3-B18; README do PDV › decisão 105; padrão até a confirmação do dono, roadmap §16, D125):
+  o `Alt+G` (a ação `gelada` do mapa de atalhos, 28.1) **liga e desliga** o gelado no item selecionado, só com
+  `acrescimo_gelada > 0` na loja (do snapshot da primeira inclusão, 11.3); o acréscimo soma **por unidade** na camada de
+  acréscimos do item (regra 11.3 → complementos → gelada → promoções), por cima do atacado, do mix, do `F8` e do
+  parcelado, e o desconto do item em % é refeito. Item gelado e natural **não se agrupam** (o natural bipado depois vai
+  noutra linha); o cancelamento parcial leva o gelado. Fica fora do combo, do casco, da balança tipo Valor, do orçamento e
+  do preço digitado. Com pagamento lançado, ligar pode (o total sobe) e desligar não (o total cairia). A tela e o cupom
+  mostram "GELADO (+1,00)" sob o item. A marca fica **só no caixa** (tabela local `itens_venda_gelados`, MD 4.4.14) para a
+  venda recuperada manter o agrupamento e o desfazer; a nuvem recebe só o `preco_unitario`/`preco_tabela` com o acréscimo
+  (nenhuma coluna nova). Até a R3, a tecla bipa "Ação indisponível".
+
 ### 11.5 Critérios de aceite – preços
 
 - [ ] Produto com preço da loja diferente do produto usa o da loja.
@@ -1730,6 +1826,7 @@ Regras:
 - [ ] Item com atacado/mix mostra "ATAC 12+"/"MIX 12+" na tela e no comprovante; a NFC-e sai com `vUnCom` = preço aplicado e sem `vDesc` pela diferença.
 - [ ] "Leve 3 pague 2" em 6 latas gera desconto de 2 latas em `desconto_promocao` e não pede senha de supervisor.
 - [ ] Lançar crédito em 3 parcelas aplica o preço parcelado; remover o pagamento volta ao varejo.
+- [ ] `Alt+G` no item de produto com gelada de R$ 1,00 na loja soma R$ 1,00 por unidade ao `preco_unitario` e ao `preco_tabela` (também sobre o atacado e o parcelado); o mesmo produto bipado depois, natural, vai noutra linha; a venda recuperada depois de uma queda mantém o gelado e o `Alt+G` o desfaz (F3-B18).
 
 ---
 
@@ -1758,6 +1855,13 @@ Regras:
 
 Incluir ou cancelar itens depois de um desconto no total em **%** recalcula o valor; desconto no total em **R$** é
 mantido fixo e, se ficar ≥ subtotal, é zerado com aviso.
+
+**Acréscimo no total (Fase 3, F3-B16; README do PDV › decisão 103):** em R$ ou em % (os mesmos botões do desconto); o %
+vira valor na hora sobre Σ(valor_bruto − desconto_item − desconto_promocao) e fica fixo em R$ (não há coluna do % do
+acréscimo); maior que zero e menor que essa base; substitui o anterior. Sem `pdv.venda.acrescimo`, o supervisor libera
+(só na auditoria: a SYNC 9.7 não tem a ação em `liberacoes`). Auditoria `acrescimo_total`; o cupom traz "Acréscimos".
+`F6` › `4` tira o desconto do operador e o acréscimo no total, o que houver. Só com o recurso da onda R3 (sem ele, o
+`F6` não mostra o `3`).
 
 ### 12.3 Limite de desconto e senha de liberação — Fase PDV-1
 
@@ -3596,13 +3700,35 @@ e o `8` chegaram na implantação I4; o `8` abre a Central do PDV desde o bloco 
 - **Nova venda** (`Ctrl+N`): sem itens → limpa cliente/vendedor/tipo de preço; com itens → "Suspender (S) / Cancelar
   (C) / Voltar (Esc)".
 - O rodapé mostra os atalhos habilitados por `ordem` até caber; `F1` lista todos, com a tecla configurada.
+- **Como o caixa aplica (Fase 3, F3-B13; README do PDV › decisão 101), a partir do PDV 0.14.0:** a tabela é relida ao
+  abrir a venda e a cada pull; por ação, a linha da loja do terminal, a da empresa ou o padrão (MD 7.8). O `Ctrl+Alt+T`
+  (tema, 6.8) também é tecla fixa e o ERP o recusa. Tecla inválida, reservada ou repetida com outra ação habilitada que
+  chegar da nuvem cai na tecla padrão da ação, com a ocorrência `ATALHO_INVALIDO` na Central › 5 Logs (não há
+  `alerta.cadastro`: ele é do produto). A barra tem as ações habilitadas que a versão do caixa já tem, por `ordem`, até
+  15, mais o ⚙ da Central; a ação que a versão ainda não tem fica fora da barra e a tecla bipa com "Ação indisponível"
+  (o F1 lista essas em "chegam numa próxima versão", e as desabilitadas em "desabilitadas no ERP"). **Concluir venda
+  (`concluir_venda`) e Menu de funções (`menu_funcoes`) não se desligam** (padrão até a confirmação do dono): sem o
+  primeiro nenhuma venda termina, e sem o segundo o caixa fica sem sangria, reforço, troca de turno e fechamento, que só
+  abrem pelo menu. O ERP trava o Habilitado delas e a API recusa gravá-las desligadas; se chegarem desligadas (a linha da
+  loja ou uma gravação fora do ERP), o caixa as liga, com a `ATALHO_INVALIDO`. A tecla delas continua configurável. O
+  **⚙ da Central** fica no fim da barra mesmo com `configuracao_terminal` desabilitada (é a opção 8 do menu de funções,
+  que não depende da tabela, e o caminho do técnico, decisão 68 do PDV; desabilitada, só a tecla dela bipa), com o
+  rótulo da tecla de Funções que vale (`F11 › 8` no padrão; `Ctrl+U › 8` com Funções no `Ctrl+U`). Com um diálogo
+  aberto, as teclas da venda (exceto bloquear e sincronizar) ficam com o diálogo; no campo de código, `Ctrl+A/C/V/X/Z/Y`
+  de uma ação sem efeito continuam editando o texto. O `Ctrl+Alt+C` do login é fixo. **Nova venda** com o caixa livre
+  limpa o troco e o cupom na tela, o multiplicador e o código digitado (o vendedor e o tipo de preço entram com os blocos
+  deles); com itens, "Cancelar (C) / Voltar (Esc)" (o "Suspender (S)" com o F3-B23), e o C é o cancelamento do Shift+F4.
 
 ### 28.4 Critérios de aceite – atalhos
 
-- [ ] Alterar no ERP a tecla de Remover Item para `Ctrl+R` passa a valer no PDV após o pull, e `F4` deixa de fazer a ação.
-- [ ] Ação desabilitada na tabela não aparece no rodapé e a tecla só emite bipe.
-- [ ] O ERP recusa salvar duas ações habilitadas com a mesma tecla.
-- [ ] Um roteiro completo (abrir caixa, vender com 2 formas, sangria, fechar) é executado em teste de UI sem nenhum evento de mouse.
+Cobertos pelos testes do F3-B13 (`AtalhosTelasTests` do PDV; o terceiro, pelo `formas-configuracoes.test.ts` da API e
+pelo `Configuracoes.test.tsx` do ERP); no caixa de verdade, com a R3 (0.14.0).
+
+- [x] Alterar no ERP a tecla de Remover Item para `Ctrl+R` passa a valer no PDV após o pull, e `F4` deixa de fazer a ação.
+- [x] Ação desabilitada na tabela não aparece no rodapé e a tecla só emite bipe (exceto Concluir venda e Menu de
+  funções, que não se desligam, e o ⚙ da Central, fixo no fim da barra: 28.3).
+- [x] O ERP recusa salvar duas ações habilitadas com a mesma tecla.
+- [x] Um roteiro completo (abrir caixa, vender com 2 formas, sangria, fechar) é executado em teste de UI sem nenhum evento de mouse.
 
 ---
 

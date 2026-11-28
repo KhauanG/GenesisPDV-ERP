@@ -549,8 +549,12 @@ export interface NumeracaoVendaErp {
 
 // Atalhos do PDV (ERP 9.9; PDV 28.3; MD 3.10.2)
 
-/** Teclas fixas do PDV e combinações do sistema operacional: nunca configuráveis (PDV 28.3). */
-const TECLAS_PROIBIDAS = new Set(['alt+f4', 'ctrl+alt+del', 'ctrl+alt+delete']);
+/**
+ * Teclas fixas do PDV e combinações do sistema operacional: nunca configuráveis (PDV 28.3). O `Ctrl+Alt+T` é o
+ * alternar tema do caixa (PDV 6.8), fixo como o `Enter` e o `Esc`: o `MapaAtalhos` do PDV recusa as mesmas, conferidas
+ * pelos vetores `testes/sync/atalhos.teclas.vetores.json` (F3-B13).
+ */
+const TECLAS_PROIBIDAS = new Set(['alt+f4', 'ctrl+alt+del', 'ctrl+alt+delete', 'ctrl+alt+t']);
 const MODIFICADORES = ['Ctrl', 'Alt', 'Shift'] as const;
 
 /**
@@ -581,6 +585,15 @@ export function normalizarTeclaAtalho(tecla: string): string | null {
   return TECLAS_PROIBIDAS.has(texto.toLowerCase()) ? null : texto;
 }
 
+/**
+ * Ações de atalho que não se desligam (F3-B13; PDV 28.3; padrão até a confirmação do dono): sem o Concluir venda nenhuma
+ * venda termina, e sem o menu de Funções o caixa fica sem sangria, reforço, troca de turno e fechamento (só abrem pelo
+ * F11). O ERP trava o Habilitado delas e a API recusa gravá-las desligadas; o `MapaAtalhos` do PDV liga as mesmas quando
+ * chegam desligadas (da sobreposição por loja ou de uma gravação fora do ERP), conferidas pelos vetores
+ * `testes/sync/atalhos.teclas.vetores.json`.
+ */
+export const ACOES_ATALHO_ESSENCIAIS: readonly string[] = ['concluir_venda', 'menu_funcoes'];
+
 export const atalhoPdvSchema = z.object({
   acao: z.string().regex(/^[a-z_]{2,40}$/),
   tecla: z
@@ -604,6 +617,12 @@ export const gravarAtalhosSchema = z
   .superRefine((v, ctx) => {
     const porTecla = new Map<string, number>();
     v.itens.forEach((a, i) => {
+      if (!a.habilitado && ACOES_ATALHO_ESSENCIAIS.includes(a.acao))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['itens', i, 'habilitado'],
+          message: 'Esta ação não pode ser desabilitada: sem ela o caixa fica preso',
+        });
       if (!a.habilitado) return;
       const k = a.tecla.toLowerCase();
       const outro = porTecla.get(k);

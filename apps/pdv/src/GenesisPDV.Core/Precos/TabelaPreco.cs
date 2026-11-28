@@ -34,6 +34,14 @@ public sealed record EmbalagemPreco(Guid CodigoBarrasId, decimal Fator, decimal?
 /// <param name="PrecoVendaLoja"><c>produtos_lojas.preco_venda</c> da loja do terminal (nulo = preço geral).</param>
 /// <param name="Faixas"><c>produtos_precos_quantidade</c> da loja do terminal e gerais (<c>loja_id</c> nulo).</param>
 /// <param name="Embalagens">Embalagens do produto, para reconhecer as linhas lidas por <c>codigo_barras_id</c>.</param>
+/// <param name="AcrescimoGelada">
+/// <c>produtos_lojas.acrescimo_gelada</c> da loja do terminal (PDV 11.1, 11.4; Fase 3, F3-B18): o adicional por unidade do
+/// produto vendido gelado, somado pelo <c>Alt+G</c>; nulo ou zero = o produto não tem preço gelado nesta loja.
+/// </param>
+/// <param name="PrecoParcelado">
+/// <c>produtos.preco_parcelado</c> (PDV 11.1, 11.2; F3-B18; D74): o preço do pagamento em mais de uma parcela, que substitui os
+/// candidatos (11.3 passo 9); nulo ou zero = o produto não muda no parcelado.
+/// </param>
 public sealed record TabelaPreco(
     decimal? PrecoVendaLoja = null,
     decimal? PrecoPromocional = null,
@@ -43,7 +51,9 @@ public sealed record TabelaPreco(
     decimal? QtdMinimaAtacado = null,
     IReadOnlyList<FaixaPreco>? Faixas = null,
     GrupoPrecoQuantidade? Grupo = null,
-    IReadOnlyList<EmbalagemPreco>? Embalagens = null)
+    IReadOnlyList<EmbalagemPreco>? Embalagens = null,
+    decimal? AcrescimoGelada = null,
+    decimal? PrecoParcelado = null)
 {
     /// <summary>Grupo que vale na venda: inativo = cada produto conta só a própria quantidade (3.6.13).</summary>
     public GrupoPrecoQuantidade? GrupoAtivo => Grupo is { Ativo: true } g ? g : null;
@@ -57,5 +67,12 @@ public sealed record TabelaPreco(
 
 /// <summary>Parâmetros da loja/venda que entram na regra de preço.</summary>
 /// <param name="UsaPrecoVolume"><c>pdv.usa_preco_volume</c> ("Usa Produto Preço Volume"): habilita as faixas do produto e do grupo.</param>
-/// <param name="TipoPreco"><c>vendas.tipo_preco</c>; <c>atacado</c> (F8, PDV-2) força o candidato atacado.</param>
-public sealed record ParametrosPreco(Guid LojaId, bool UsaPrecoVolume, string TipoPreco = "varejo");
+/// <param name="TipoPreco">
+/// O tipo do <c>F8</c> (<c>varejo</c> ou <c>atacado</c>; PDV 11.2; F3-B17): <c>atacado</c> põe o candidato atacado sem a
+/// quantidade mínima. No parcelado, o tipo que a venda tinha antes dele (as linhas sem preço parcelado seguem nele).
+/// </param>
+/// <param name="Parcelado">
+/// A venda está no preço parcelado (<c>vendas.tipo_preco = 'parcelado'</c>, o pagamento em mais de uma parcela; PDV 11.2;
+/// F3-B18): o <c>preco_parcelado &gt; 0</c> substitui todos os candidatos (11.3 passo 9).
+/// </param>
+public sealed record ParametrosPreco(Guid LojaId, bool UsaPrecoVolume, string TipoPreco = Vendas.TipoPrecoVenda.Varejo, bool Parcelado = false);

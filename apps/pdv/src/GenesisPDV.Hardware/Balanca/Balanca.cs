@@ -33,6 +33,6 @@ public sealed class BalancaSimulada : IBalanca
             throw new FalhaBalancaException("Peso negativo: zere (tare) a balança.");
         }
 
-        return Task.FromResult(new LeituraPeso(decimal.Round(PesoKg, 3), !Instavel));
+        return Task.FromResult(new LeituraPeso(Core.Numeros.Arredondamento.Arred3(PesoKg), !Instavel));
     }
 }

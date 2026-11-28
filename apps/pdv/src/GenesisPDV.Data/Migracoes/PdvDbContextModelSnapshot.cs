@@ -1257,6 +1257,11 @@ namespace GenesisPDV.Data.Migracoes
                         .HasColumnType("TEXT")
                         .HasColumnName("sessao_caixa_id");
 
+                    b.Property<string>("TipoPrecoAntesParcelado")
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("tipo_preco_antes_parcelado");
+
                     b.Property<string>("VendaAtualId")
                         .HasColumnType("TEXT")
                         .HasColumnName("venda_atual_id");
@@ -1271,6 +1276,8 @@ namespace GenesisPDV.Data.Migracoes
                             t.HasCheckConstraint("ck_estado_operacao_id", "id = 1");
 
                             t.HasCheckConstraint("ck_estado_operacao_modo", "modo is null or modo in ('balcao','comanda','delivery','pagamento','fechamento')");
+
+                            t.HasCheckConstraint("ck_estado_operacao_tipo_preco_antes_parcelado", "tipo_preco_antes_parcelado is null or tipo_preco_antes_parcelado in ('varejo','atacado')");
                         });
                 });
 
@@ -2495,6 +2502,101 @@ namespace GenesisPDV.Data.Migracoes
                             t.HasCheckConstraint("ck_itens_orcamento_criado_localmente", "criado_localmente in (0,1)");
 
                             t.HasCheckConstraint("ck_itens_orcamento_id_uuid", "length(id) = 36");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaComplementoRegistro", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AtualizadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("atualizado_em");
+
+                    b.Property<string>("ComplementoId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("complemento_id");
+
+                    b.Property<string>("CriadoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("criado_em");
+
+                    b.Property<string>("Descricao")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("descricao");
+
+                    b.Property<string>("ExcluidoEm")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("excluido_em");
+
+                    b.Property<string>("GrupoNome")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("grupo_nome");
+
+                    b.Property<string>("ItemVendaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("item_venda_id");
+
+                    b.Property<long>("PrecoAdicional")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("preco_adicional");
+
+                    b.Property<long>("Quantidade")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("quantidade");
+
+                    b.Property<long>("Versao")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("versao");
+
+                    b.HasKey("Id")
+                        .HasName("pk_itens_venda_complementos");
+
+                    b.HasIndex("ItemVendaId")
+                        .HasDatabaseName("ix_itens_venda_complementos_item_venda_id");
+
+                    b.ToTable("itens_venda_complementos", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_itens_venda_complementos_id_uuid", "length(id) = 36");
+                        });
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaGeladoLocal", b =>
+                {
+                    b.Property<string>("ItemVendaId")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("item_venda_id");
+
+                    b.Property<long>("AcrescimoUnitario")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("acrescimo_unitario");
+
+                    b.Property<string>("RegistradoEm")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("registrado_em");
+
+                    b.Property<string>("VendaId")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("venda_id");
+
+                    b.HasKey("ItemVendaId")
+                        .HasName("pk_itens_venda_gelados");
+
+                    b.HasIndex("VendaId")
+                        .HasDatabaseName("ix_itens_venda_gelados_venda_id");
+
+                    b.ToTable("itens_venda_gelados", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_itens_venda_gelados_acrescimo", "acrescimo_unitario > 0");
                         });
                 });
 
@@ -8897,6 +8999,33 @@ namespace GenesisPDV.Data.Migracoes
                         .HasConstraintName("fk_fechamentos_caixa_sessao_caixa_id");
                 });
 
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaComplementoRegistro", b =>
+                {
+                    b.HasOne("GenesisPDV.Data.Entidades.ItemVendaRegistro", null)
+                        .WithMany("Complementos")
+                        .HasForeignKey("ItemVendaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_itens_venda_complementos_item_venda_id");
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaGeladoLocal", b =>
+                {
+                    b.HasOne("GenesisPDV.Data.Entidades.ItemVendaRegistro", null)
+                        .WithMany()
+                        .HasForeignKey("ItemVendaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_itens_venda_gelados_item_venda_id");
+
+                    b.HasOne("GenesisPDV.Data.Entidades.VendaRegistro", null)
+                        .WithMany()
+                        .HasForeignKey("VendaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_itens_venda_gelados_venda_id");
+                });
+
             modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
                 {
                     b.HasOne("GenesisPDV.Data.Entidades.VendaRegistro", null)
@@ -8965,6 +9094,11 @@ namespace GenesisPDV.Data.Migracoes
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_produtos_venda_snapshot_venda_id");
+                });
+
+            modelBuilder.Entity("GenesisPDV.Data.Entidades.ItemVendaRegistro", b =>
+                {
+                    b.Navigation("Complementos");
                 });
 
             modelBuilder.Entity("GenesisPDV.Data.Entidades.PagamentoVendaRegistro", b =>

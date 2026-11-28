@@ -1,0 +1,791 @@
+{
+  "descricao": "Regra de preço do PDV 11.3/11.3.1 com o tipo de preço do F8 (11.2; F3-B17) e o parcelado do passo 9 (11.2; F3-B18): o mesmo arquivo que o resolverPreco do shared (precos.spec.ts) e o MotorPreco do PDV (PrecosVetoresTests) conferem. Sem a embalagem (o fardo é candidato só no caixa até o F3-B54). Valores em texto decimal; loja = a do terminal, outra = outra loja, nulo = todas; parcelado ausente = falso.",
+  "casos": [
+    {
+      "nome": "sem tabela: varejo",
+      "produto": {
+        "preco_venda": "3.49"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "preço da loja substitui o do produto",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_loja": "3.29"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.29",
+        "origem": "loja"
+      }
+    },
+    {
+      "nome": "promocional menor",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_promocional": "2.99"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "2.99",
+        "origem": "promocional"
+      }
+    },
+    {
+      "nome": "promocional fora da vigência não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_promocional": "2.99"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": false,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "atacado abaixo da quantidade mínima",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12"
+      },
+      "qtd_total": "11",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "atacado na quantidade mínima",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12"
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "atacado sem quantidade mínima: só pelo F8",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19"
+      },
+      "qtd_total": "500",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "F8 Atacado com 1 unidade: o atacado sem o mínimo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "F8 Atacado no produto sem quantidade mínima",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "F8 Atacado no produto sem preço de atacado: varejo",
+      "produto": {
+        "preco_venda": "9.99"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "9.99",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "F8 Atacado no produto sem preço de atacado: preço da loja",
+      "produto": {
+        "preco_venda": "9.99",
+        "preco_loja": "9.49"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "9.49",
+        "origem": "loja"
+      }
+    },
+    {
+      "nome": "F8 Atacado com promocional menor: vale o promocional",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_promocional": "2.99"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "2.99",
+        "origem": "promocional"
+      }
+    },
+    {
+      "nome": "F8 Atacado com faixa menor: vale a faixa",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "6",
+            "quantidade_final": null,
+            "preco": "3.09"
+          }
+        ]
+      },
+      "qtd_total": "6",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.09",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "F8 Atacado com faixa maior: vale o atacado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "6",
+            "quantidade_final": null,
+            "preco": "3.29"
+          }
+        ]
+      },
+      "qtd_total": "6",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "F8 Atacado com o atacado maior que o preço da loja: vale a loja",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_loja": "2.99"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "2.99",
+        "origem": "loja"
+      }
+    },
+    {
+      "nome": "faixa sem Usa Produto Preço Volume é ignorada",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": "9999",
+            "preco": "3.19"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "faixa 12–9999 com 12",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": "9999",
+            "preco": "3.19"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "faixa final inclusivo",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "6",
+            "quantidade_final": "11",
+            "preco": "3.39"
+          }
+        ]
+      },
+      "qtd_total": "11",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.39",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "faixas que se tocam: a de maior início",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "6",
+            "quantidade_final": "12",
+            "preco": "3.39"
+          },
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "3.29"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.29",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "faixa da loja prevalece sobre a geral",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "3.19"
+          },
+          {
+            "loja": "loja",
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "3.09"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.09",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "faixa de outra loja não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "faixas": [
+          {
+            "loja": "outra",
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "2.00"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "empate promocional × atacado: promocional",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_promocional": "3.19"
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "promocional"
+      }
+    },
+    {
+      "nome": "empate faixa × atacado: quantidade",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "3.19"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "quantidade"
+      }
+    },
+    {
+      "nome": "empate loja × atacado: atacado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_loja": "3.19"
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "mix modo grupo com 12: a faixa do grupo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "grupo",
+          "faixas": [
+            {
+              "loja": null,
+              "quantidade_inicial": "12",
+              "quantidade_final": null,
+              "preco": "2.99"
+            }
+          ]
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "12",
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "2.99",
+        "origem": "grupo_mix"
+      }
+    },
+    {
+      "nome": "mix modo grupo com 11: varejo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "grupo",
+          "faixas": [
+            {
+              "loja": null,
+              "quantidade_inicial": "12",
+              "quantidade_final": null,
+              "preco": "2.99"
+            }
+          ]
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "11",
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "mix modo grupo com o F8 abaixo do mix: o atacado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "grupo",
+          "faixas": [
+            {
+              "loja": null,
+              "quantidade_inicial": "12",
+              "quantidade_final": null,
+              "preco": "2.99"
+            }
+          ]
+        }
+      },
+      "qtd_total": "5",
+      "qtd_grupo": "11",
+      "usa_preco_volume": true,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "mix modo grupo com o F8 no mix menor: o mix",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "grupo",
+          "faixas": [
+            {
+              "loja": null,
+              "quantidade_inicial": "12",
+              "quantidade_final": null,
+              "preco": "2.99"
+            }
+          ]
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "12",
+      "usa_preco_volume": true,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "2.99",
+        "origem": "grupo_mix"
+      }
+    },
+    {
+      "nome": "mix modo grupo mais caro que o atacado com o F8: o atacado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "grupo",
+          "faixas": [
+            {
+              "loja": null,
+              "quantidade_inicial": "12",
+              "quantidade_final": null,
+              "preco": "3.29"
+            }
+          ]
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "12",
+      "usa_preco_volume": true,
+      "tipo_preco": "atacado",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "mix modo produto: a soma do grupo ativa o atacado do membro",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "produto",
+          "faixas": []
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "12",
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "mix modo produto abaixo do mínimo: varejo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "grupo": {
+          "modo": "produto",
+          "faixas": []
+        }
+      },
+      "qtd_total": "6",
+      "qtd_grupo": "11",
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "parcelado substitui o varejo",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado substitui o atacado do F8",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "2",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado substitui a faixa e o promocional menores",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_promocional": "3.09",
+        "preco_parcelado": "3.69",
+        "faixas": [
+          {
+            "loja": null,
+            "quantidade_inicial": "12",
+            "quantidade_final": null,
+            "preco": "2.99"
+          }
+        ]
+      },
+      "qtd_total": "12",
+      "qtd_grupo": null,
+      "usa_preco_volume": true,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.69",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "parcelado menor que o varejo também substitui",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.29"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.29",
+        "origem": "parcelado"
+      }
+    },
+    {
+      "nome": "produto sem preço parcelado segue o F8 no parcelado",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_atacado": "3.19",
+        "qtd_minima_atacado": "12"
+      },
+      "qtd_total": "2",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "atacado",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.19",
+        "origem": "atacado"
+      }
+    },
+    {
+      "nome": "preço parcelado zero não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "0.00"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "parcelado": true,
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    },
+    {
+      "nome": "preço parcelado sem o pagamento parcelado não vale",
+      "produto": {
+        "preco_venda": "3.49",
+        "preco_parcelado": "3.69"
+      },
+      "qtd_total": "1",
+      "qtd_grupo": null,
+      "usa_preco_volume": false,
+      "tipo_preco": "varejo",
+      "promocao_vigente": true,
+      "esperado": {
+        "preco": "3.49",
+        "origem": "varejo"
+      }
+    }
+  ]
+}

@@ -593,11 +593,11 @@
           "Avalonia.Fonts.Inter": "[12.1.4, )",
           "Avalonia.Themes.Fluent": "[12.1.4, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "GenesisPDV.Core": "[0.9.0, )",
-          "GenesisPDV.Data": "[0.9.0, )",
-          "GenesisPDV.Fiscal": "[0.9.0, )",
-          "GenesisPDV.Hardware": "[0.9.0, )",
-          "GenesisPDV.Sync": "[0.9.0, )",
+          "GenesisPDV.Core": "[0.13.0, )",
+          "GenesisPDV.Data": "[0.13.0, )",
+          "GenesisPDV.Fiscal": "[0.13.0, )",
+          "GenesisPDV.Hardware": "[0.13.0, )",
+          "GenesisPDV.Sync": "[0.13.0, )",
           "Microsoft.Extensions.DependencyInjection": "[10.0.14, )",
           "Microsoft.Extensions.Logging": "[10.0.14, )",
           "QRCoder": "[1.6.0, )",
@@ -612,20 +612,21 @@
       "genesispdv.data": {
         "type": "Project",
         "dependencies": {
-          "GenesisPDV.Core": "[0.9.0, )",
+          "GenesisPDV.Core": "[0.13.0, )",
           "Microsoft.EntityFrameworkCore.Sqlite": "[10.0.14, )"
         }
       },
       "genesispdv.fiscal": {
         "type": "Project",
         "dependencies": {
-          "GenesisPDV.Core": "[0.9.0, )",
-          "GenesisPDV.Hardware": "[0.9.0, )"
+          "GenesisPDV.Core": "[0.13.0, )",
+          "GenesisPDV.Hardware": "[0.13.0, )"
         }
       },
       "genesispdv.hardware": {
         "type": "Project",
         "dependencies": {
+          "GenesisPDV.Core": "[0.13.0, )",
           "QRCoder": "[1.6.0, )",
           "System.IO.Ports": "[10.0.14, )"
         }
@@ -634,8 +635,8 @@
         "type": "Project",
         "dependencies": {
           "BouncyCastle.Cryptography": "[2.7.0, )",
-          "GenesisPDV.Core": "[0.9.0, )",
-          "GenesisPDV.Data": "[0.9.0, )",
+          "GenesisPDV.Core": "[0.13.0, )",
+          "GenesisPDV.Data": "[0.13.0, )",
           "Microsoft.Extensions.Http": "[10.0.14, )",
           "Sodium.Core": "[1.4.1, )",
           "System.Security.Cryptography.ProtectedData": "[10.0.14, )"

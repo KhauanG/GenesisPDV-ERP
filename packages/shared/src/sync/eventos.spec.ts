@@ -24,6 +24,7 @@ import {
   payloadVendaCanceladaFinalizadaSchema,
   payloadVendaCanceladaSchema,
   payloadVendaFinalizadaSchema,
+  payloadVendaFinalizadaV2Schema,
   QUANTIDADE_MAXIMA_LINHA_PDV,
   type TipoEventoContratado,
 } from './eventos.js';
@@ -42,7 +43,7 @@ const ler = (nome: string) => lerFixtureSync<Record<string, unknown>>(nome);
 const DA_FASE_0 = 'auditoria.registros.payload.json';
 
 /** Fixture → tipo do evento e schema da forma (o `venda.cancelada` tem duas). */
-const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType }> = {
+const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType; versao?: number }> = {
   'caixa.aberto.payload.json': { tipo: 'caixa.aberto', schema: payloadCaixaAbertoSchema },
   'caixa.reforco.payload.json': { tipo: 'caixa.reforco', schema: payloadCaixaReforcoSchema },
   'caixa.sangria.payload.json': { tipo: 'caixa.sangria', schema: payloadCaixaSangriaSchema },
@@ -57,6 +58,17 @@ const FIXTURES: Record<string, { tipo: TipoEventoContratado; schema: z.ZodType }
   'venda.finalizada.formas.payload.json': { tipo: 'venda.finalizada', schema: payloadVendaFinalizadaSchema },
   // C11c: cascos descontados na venda (desconto_total de origem cliente e devolvidos além dos devidos).
   'venda.finalizada.cascos.payload.json': { tipo: 'venda.finalizada', schema: payloadVendaFinalizadaSchema },
+  // F3-B15: a venda com complementos do caixa novo, na v2 (a `componentes_estoque` na linha do complemento).
+  'venda.finalizada.v2.complementos.payload.json': {
+    tipo: 'venda.finalizada',
+    schema: payloadVendaFinalizadaV2Schema,
+    versao: 2,
+  },
+  // F3-B18: a lata gelada e a natural no preço parcelado (crédito em 3×), sem chave nova (v1).
+  'venda.finalizada.gelada_parcelado.payload.json': {
+    tipo: 'venda.finalizada',
+    schema: payloadVendaFinalizadaSchema,
+  },
   'venda.cancelada.em_andamento.payload.json': {
     tipo: 'venda.cancelada',
     schema: payloadVendaCanceladaEmAndamentoSchema,
@@ -152,12 +164,16 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
     expect(chavesAusentes(schema, ler(nome))).toEqual([]);
   });
 
-  it.each(DE_EVENTO)('%s passa pelo catálogo do tipo e dá o agregado do envelope', (nome, { tipo }) => {
-    const contrato = CONTRATOS_EVENTOS[tipo as TipoEventoContratado];
-    const p = contrato.versoes[1].parse(ler(nome));
-    const id = (contrato.agregadoId as (p: unknown) => string)(p);
-    expect(id).toMatch(/^[0-9a-f-]{36}$/);
-  });
+  it.each(DE_EVENTO)(
+    '%s passa pelo catálogo do tipo e dá o agregado do envelope',
+    (nome, { tipo, versao }) => {
+      const contrato = CONTRATOS_EVENTOS[tipo as TipoEventoContratado];
+      const versoes = contrato.versoes as Record<number, z.ZodType>;
+      const p = versoes[versao ?? 1]!.parse(ler(nome));
+      const id = (contrato.agregadoId as (p: unknown) => string)(p);
+      expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    },
+  );
 
   it('venda.cancelada: a forma vem da chave e cada forma é validada só pelo seu schema', () => {
     const b = ler('venda.cancelada.em_andamento.payload.json');
@@ -449,5 +465,84 @@ describe('payloads dos eventos (fixtures *.payload.json)', () => {
       expect(numero(NUMERO_VENDA_MAXIMO, fixture, schema)).toEqual([]);
       expect(numero(NUMERO_VENDA_MAXIMO + 1, fixture, schema)).toHaveLength(1);
     }
+  });
+});
+
+describe('venda.finalizada v2 (F3-B14; SYNC 17.5)', () => {
+  const ITEM = (ler('venda.finalizada.payload.json').itens_venda as Array<{ id: string }>)[0]!.id;
+  interface Componente {
+    produto_id: string;
+    variacao_id: null;
+    quantidade: string;
+    origem: string;
+  }
+  /** Dois molhos da porção (o 1º item da fixture do C4): um vinculado Produzido, com a ficha, e um livre. */
+  const molhos = () => {
+    const molho = (id: string, descricao: string, componentes: Componente[]) => ({
+      id,
+      item_venda_id: ITEM,
+      complemento_id: '01a1875f-0000-7000-8000-0000000000c1',
+      grupo_nome: 'Molhos',
+      descricao,
+      quantidade: '2.000',
+      preco_adicional: '1.5000',
+      componentes_estoque: componentes as Componente[] | undefined,
+    });
+    return [
+      molho('01a1875f-0000-7000-8000-0000000000a1', 'Molho da casa', [
+        {
+          produto_id: '01a1875f-0000-7000-8000-0000000000b1',
+          variacao_id: null,
+          quantidade: '0.060',
+          origem: 'ficha_tecnica',
+        },
+      ]),
+      molho('01a1875f-0000-7000-8000-0000000000a2', 'Barbecue', []),
+    ];
+  };
+  const comComplementos = (linhas: unknown[]) =>
+    com('venda.finalizada.payload.json', (p) => (p.itens_venda_complementos = linhas));
+
+  it('o contrato do tipo tem a v1 e a v2; a fixture de cada venda da v1 passa igual na v2', () => {
+    expect(CONTRATOS_EVENTOS['venda.finalizada'].versoes).toEqual({
+      1: payloadVendaFinalizadaSchema,
+      2: payloadVendaFinalizadaV2Schema,
+    });
+    for (const nome of [
+      'venda.finalizada.payload.json',
+      'venda.finalizada.formas.payload.json',
+      'venda.finalizada.cascos.payload.json',
+    ]) {
+      expect(payloadVendaFinalizadaV2Schema.parse(ler(nome))).toEqual(
+        payloadVendaFinalizadaSchema.parse(ler(nome)),
+      );
+    }
+  });
+
+  it('a linha do complemento leva a componentes_estoque na v2 (vazia quando falta); a v1 descarta a chave', () => {
+    const p = comComplementos(molhos());
+    expect(problemas(payloadVendaFinalizadaV2Schema, p)).toEqual([]);
+    expect(chavesDescartadas(p, payloadVendaFinalizadaV2Schema.parse(p))).toEqual([]);
+    expect(chavesDescartadas(p, payloadVendaFinalizadaSchema.parse(p))).toEqual([
+      'itens_venda_complementos[0].componentes_estoque',
+      'itens_venda_complementos[1].componentes_estoque',
+    ]);
+    const semLista = comComplementos([{ ...molhos()[1], componentes_estoque: undefined }]);
+    expect(
+      payloadVendaFinalizadaV2Schema.parse(semLista).itens_venda_complementos[0]!.componentes_estoque,
+    ).toEqual([]);
+    // As regras da baixa da ficha valem na lista do complemento: quantidade maior que zero e a origem conhecida.
+    const [ruim] = molhos();
+    ruim!.componentes_estoque![0] = {
+      ...ruim!.componentes_estoque![0]!,
+      quantidade: '0.000',
+      origem: 'outra',
+    };
+    expect(problemas(payloadVendaFinalizadaV2Schema, comComplementos([ruim]))).toHaveLength(2);
+    // A coerência do documento é a mesma da v1: o complemento de um item fora da venda é recusado.
+    const fora = comComplementos([{ ...molhos()[1], item_venda_id: '01a1875f-0000-7000-8000-0000000000ff' }]);
+    expect(problemas(payloadVendaFinalizadaV2Schema, fora)).toEqual([
+      'itens_venda_complementos.0.item_venda_id: item fora da venda',
+    ]);
   });
 });

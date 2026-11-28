@@ -191,6 +191,8 @@ public static class TextoDetalheVenda
         foreach (var i in v.Itens)
         {
             linhas.Add($"{i.Sequencia,3} {i.Descricao,-30} {NumeroBr.Quantidade(i.Quantidade),9} {(i.Cancelado ? "CANCELADO" : NumeroBr.Dinheiro(i.ValorBruto)),10}");
+            // Complementos (PDV 10.2; F3-B15) sob o item, como no cupom.
+            linhas.AddRange(i.Complementos.Select(c => $"      {c.Texto}"));
         }
 
         linhas.Add($"Total R$ {NumeroBr.Dinheiro(v.Total)}");

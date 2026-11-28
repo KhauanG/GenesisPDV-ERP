@@ -4,14 +4,17 @@ using GenesisPDV.Core.Vendas;
 
 namespace GenesisPDV.Core.Precos;
 
-/// <summary>Um candidato da regra 11.3 (passos 4–8).</summary>
+/// <summary>Um candidato da regra 11.3 (passos 4–8, e o parcelado do passo 9).</summary>
 /// <param name="Limiar">Quantidade a partir da qual o candidato vale ("12+"); nulo para varejo/loja/promocional/embalagem.</param>
 public sealed record CandidatoPreco(string Origem, decimal Preco, decimal? Limiar = null);
 
 /// <summary>Preço unitário resolvido pela regra 11.3 para uma linha.</summary>
 /// <param name="Preco">Preço unitário; na embalagem é <c>preco ÷ fator</c> sem arredondar (o valor da linha é o da embalagem).</param>
 /// <param name="PrecoVarejo">Varejo (loja ?? produto), exibido riscado ao lado do preço de atacado/mix.</param>
-/// <param name="QuantidadeReferencia">Snapshot de <c>quantidade_referencia_preco</c> (Q ou <c>qtd_grupo</c> usados).</param>
+/// <param name="QuantidadeReferencia">
+/// Snapshot de <c>quantidade_referencia_preco</c> (Q ou <c>qtd_grupo</c> usados); nulo no atacado do <c>F8</c>, que não
+/// depende da quantidade.
+/// </param>
 /// <param name="GrupoId">Snapshot de <c>grupo_preco_quantidade_id</c> quando a soma do grupo definiu o preço.</param>
 /// <param name="Limiar">A quantidade da faixa/atacado aplicada ("12" de "ATAC 12+").</param>
 /// <param name="GrupoNome">Nome do grupo (mix) para "MIX 12+" e o cupom.</param>
@@ -85,7 +88,9 @@ public static class MotorPreco
 
         if (t.PrecoAtacado is > 0m and var atacado)
         {
-            if (parametros.TipoPreco == "atacado")
+            // Tipo de preço Atacado (F8, PDV 11.2; F3-B17): o candidato atacado entra sem a quantidade mínima (sem o "12+"),
+            // e o menor continua valendo (a faixa, o mix ou o fardo menores ganham dele; 11.3.1 "não altera o mix").
+            if (parametros.TipoPreco == TipoPrecoVenda.Atacado)
             {
                 candidatos.Add(new CandidatoPreco(OrigemPreco.Atacado, atacado));
             }
@@ -98,6 +103,14 @@ public static class MotorPreco
         if (embalagem is { Preco: { } precoEmbalagem, Fator: > 0m })
         {
             candidatos.Add(new CandidatoPreco(OrigemPreco.Embalagem, precoEmbalagem / embalagem.Fator));
+        }
+
+        // Passo 9 (PDV 11.2, 11.3; F3-B18; D74): no pagamento parcelado, o preço parcelado do produto substitui todos os
+        // candidatos (não é o menor: é o preço do parcelamento, confirmado na tela de pagamento). Sem ele, a regra segue.
+        if (parametros.Parcelado && t.PrecoParcelado is > 0m and var parcelado)
+        {
+            candidatos.Add(new CandidatoPreco(OrigemPreco.Parcelado, parcelado));
+            return new PrecoResolvido(parcelado, OrigemPreco.Parcelado, produto.PrecoBase, null, null, null, null, candidatos);
         }
 
         var vencedor = candidatos
@@ -114,8 +127,10 @@ public static class MotorPreco
             grupoId = grupo!.Id;
             grupoNome = grupo.Nome;
         }
-        else if (OrigemPreco.PorQuantidade(vencedor.Origem))
+        else if (OrigemPreco.PorQuantidade(vencedor.Origem) && !(vencedor.Origem == OrigemPreco.Atacado && vencedor.Limiar is null))
         {
+            // O atacado do F8 (candidato sem o limiar) veio do tipo da venda, não da quantidade: sobe com a referência
+            // nula (decisão 234 da API; F3-B17).
             referencia = q;
             if (somaDoGrupo && grupo!.Modo == ModoPrecoGrupo.Produto)
             {

@@ -77,6 +77,8 @@ public static class Inicializacao
         servicos.AddSingleton<ICatalogoProdutos>(sp => sp.GetRequiredService<CatalogoLocal>());
         servicos.AddSingleton<RepositorioEspelhos>();
         servicos.AddSingleton<RepositorioConfiguracoes>();
+        // Atalhos do caixa (F3-B13; PDV 28): o mapa da tabela atalhos_pdv, relido a cada pull pela tela de venda.
+        servicos.AddSingleton<ServicoAtalhos>();
         servicos.AddSingleton<AutenticadorOffline>();
 #if MODO_DEMONSTRACAO
         servicos.AddSingleton<AutenticadorOperadorSimulado>();

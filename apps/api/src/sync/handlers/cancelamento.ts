@@ -79,17 +79,20 @@ import {
   type DependenciaEvento,
 } from './comum.js';
 import {
+  alertarIdsDesconhecidos,
   avancarNumeracao,
   conferirDocumentoVenda,
   conferirSessaoDoDocumento,
   conferirVendaGravada,
   gravarLinhasVenda,
+  idsDesconhecidos,
   montarLinhas,
   paraColunas,
   pessoasDaVenda,
   renumerarVenda,
   resultadoRenumeracao,
   type DocumentoConferido,
+  type IdsDesconhecidos,
 } from './vendas.js';
 
 /** SYNC 10.4: venda cancelada no ERP e, também, no caixa (o que o caixa devolveu fisicamente pode estar em dobro). */
@@ -220,7 +223,8 @@ interface CancelamentoPreparado {
   devolveVazios: boolean;
 }
 
-interface EmAndamentoPreparado extends DocumentoConferido {
+/** A forma B: o documento conferido e os ids que a nuvem não conhece (F3-B14: os alertas, como no `venda.finalizada`). */
+interface EmAndamentoPreparado extends DocumentoConferido, IdsDesconhecidos {
   forma: 'em_andamento';
 }
 
@@ -689,7 +693,14 @@ async function aplicarEmAndamento(
       ...resultadoRenumeracao(renumeracao),
     },
   });
-  return { venda_id: minusculo(v.id), em_andamento: true, ...resultadoRenumeracao(renumeracao) };
+  // F3-B14: o lote anulado e a promoção que a nuvem não conhece abrem o alerta também aqui (só na gravação nova).
+  const alertas = await alertarIdsDesconhecidos(ctx, v, prep, 'em_andamento');
+  return {
+    venda_id: minusculo(v.id),
+    em_andamento: true,
+    ...resultadoRenumeracao(renumeracao),
+    ...(alertas.length ? { alertas } : {}),
+  };
 }
 
 // ---------------------------------------------------------------- catálogo
@@ -730,8 +741,9 @@ export const HANDLERS_CANCELAMENTO: CatalogoHandlers = {
         if (formaVendaCancelada(p) === 'finalizada') {
           return prepararFinalizada(ctx, p as PayloadVendaCanceladaFinalizada);
         }
-        const conferido = await conferirDocumentoVenda(ctx, p as PayloadVendaCanceladaEmAndamento);
-        return { forma: 'em_andamento', ...conferido };
+        const b = p as PayloadVendaCanceladaEmAndamento;
+        const conferido = await conferirDocumentoVenda(ctx, b);
+        return { forma: 'em_andamento', ...conferido, ...(await idsDesconhecidos(ctx.tx, b, conferido)) };
       },
       async aplicar(ctx, p: PayloadVendaCancelada, prep: Preparado) {
         return prep.forma === 'finalizada'

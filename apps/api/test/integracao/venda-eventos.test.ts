@@ -9,7 +9,10 @@
  * (T22), estoque do contexto inativo e excluído, cliente por `pessoas_aliases` com a relevância `compra` (T15), sessão
  * fechada à força pela nuvem, retida e inexistente; a fixture do C4 aplicada e reenviada; TEF, PIX, complemento e
  * parcela; as conferências de soma (`VENDA_INCONSISTENTE`) e o produto inativo (`PRODUTO_INATIVO_VENDIDO`); o estorno
- * do "Definir" que já compensou vendas tardias; e a venda de 1200 itens gravada em blocos. Cada teste usa um caixa e um terminal só seus (`novoPonto`) e produtos próprios: roda sozinho (`-t`) e em qualquer
+ * do "Definir" que já compensou vendas tardias; e a venda de 1200 itens gravada em blocos. F3-B14: a baixa e o custo
+ * dos complementos na v2 (o vinculado, a ficha do Produzido, o livre e o sem controle), o cancelamento que os estorna,
+ * a v1 do PDV instalado igual a antes e o `lote_id`/`promocao_id` que a nuvem não conhece. F3-B15: a fixture da venda
+ * com complementos que o caixa gera (v2) aplicada com os ids do ambiente. Cada teste usa um caixa e um terminal só seus (`novoPonto`) e produtos próprios: roda sozinho (`-t`) e em qualquer
  * ordem.
  */
 import { createHash, generateKeyPairSync, type KeyObject } from 'node:crypto';
@@ -385,6 +388,10 @@ const alertasAbertos = (tipo: string, chave: string) =>
 beforeAll(async () => {
   amb = await criarAmbiente();
   emp = await amb.criarEmpresa();
+  // Cada teste ativa o seu terminal (`novoPonto`): a suíte passa dos 30 do plano padrão.
+  await consultar(amb.bancoControle, 'update empresas set limite_terminais = 60 where codigo = $1', [
+    emp.codigo,
+  ]);
   loja = await criarLoja(emp.nomeBanco, 1, 'Loja 1 - Centro');
   tokenAdmin = await amb.entrar(emp.codigo, 'admin', emp.senha);
   [{ estoque_id: estoqueLoja }] = (await consultar<{ estoque_id: string }>(
@@ -2153,6 +2160,781 @@ describe('limites do estoque e dos valores do evento (SYNC 11.2; README da API �
       .send(lote.replace('"__FUNDO__"', fundo));
     expect(f.status, JSON.stringify(f.body).slice(0, 500)).toBe(400);
     expect(f.body.erro.codigo).toBe('REQUISICAO_INVALIDA');
+  });
+});
+
+describe('complementos na nuvem: baixa e custo (F3-B14; MD 3.6.8, 3.11.3; D43)', () => {
+  // Um terminal só para o bloco; cada teste usa produtos próprios.
+  let p: Ponto;
+  beforeAll(async () => {
+    p = await novoPonto();
+  });
+
+  /** Um grupo de complementos do produto e as opções (o cadastro do F2-B51, direto no banco). */
+  async function grupoComplementos(
+    produtoId: string,
+    nome: string,
+    opcoes: Array<{ produtoId?: string; descricao?: string; baixa?: boolean; quantidadeBaixa?: string }>,
+  ): Promise<string[]> {
+    const [{ id: grupo }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      'insert into produtos_grupos_complementos (produto_id, nome, maximo) values ($1, $2, 5) returning id',
+      [produtoId, nome],
+    )) as [{ id: string }];
+    const ids: string[] = [];
+    for (const [n, o] of opcoes.entries()) {
+      const [{ id }] = (await consultar<{ id: string }>(
+        emp.nomeBanco,
+        `insert into produtos_complementos (grupo_id, produto_id, descricao, preco_adicional, baixa_estoque,
+                                            quantidade_baixa, ordem)
+         values ($1, $2, $3, '1.5000', $4, $5, $6) returning id`,
+        [grupo, o.produtoId ?? null, o.descricao ?? null, o.baixa ?? false, o.quantidadeBaixa ?? '1.000', n],
+      )) as [{ id: string }];
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  /** A linha de `itens_venda_complementos` (v2: com a `componentes_estoque`, vazia por padrão). */
+  const complemento = (
+    v: Venda,
+    item: number,
+    complementoId: string | null,
+    descricao: string,
+    quantidade: string,
+    componentes: Payload[] = [],
+  ) => ({
+    id: uuidv7(),
+    item_venda_id: idItem(v, item),
+    complemento_id: complementoId,
+    grupo_nome: 'Molhos',
+    descricao,
+    quantidade,
+    preco_adicional: '0.0000',
+    componentes_estoque: componentes,
+  });
+
+  /** O evento na v2 (aceita e ainda não anunciada: o caixa da R3 grava, o teste manda direto). */
+  const eventoV2 = (payload: Payload) => evento(p, 'venda.finalizada', payload, { versao_schema: 2 });
+
+  /** Forma A do cancelamento pelo caixa (SYNC 9.9 A): o pagamento devolvido em dinheiro, o estorno do total na gaveta. */
+  const cancelamento = (v: Venda) => {
+    const em = agora();
+    return {
+      vendas: {
+        id: v.vendas.id,
+        status: 'cancelada',
+        cancelada_em: em,
+        cancelada_por_id: operador,
+        cancelamento_autorizado_por_id: operador,
+        motivo_cancelamento: 'Cliente desistiu da porção depois de pagar',
+        cancelamento_origem: 'pdv',
+      },
+      sessao_caixa_cancelamento_id: p.sessao,
+      pagamentos_venda: v.pagamentos_venda.map((pg) => ({
+        id: pg.id,
+        status: 'estornado',
+        estorno: 'dinheiro_devolvido',
+      })),
+      movimentos_caixa: [
+        {
+          id: uuidv7(),
+          sessao_caixa_id: p.sessao,
+          ...linhaDoPonto(p),
+          tipo: 'estorno_venda',
+          forma_pagamento_id: dinheiro,
+          valor: v.vendas.total,
+          operador_id: operador,
+          quem_retira_usuario_id: null,
+          quem_retira_nome: null,
+          observacao: `Estorno da venda ${v.vendas.numero_exibicao}`,
+          inf_adicionais: null,
+          ocorrido_em: em,
+          autorizado_por_id: operador,
+          troca_id: null,
+        },
+      ],
+      transacoes_tef: [],
+    };
+  };
+
+  const movimentosResumidos = async (vendaId: string) =>
+    (await movimentosDaVenda(vendaId))
+      .map((m) => [m.produto_id, m.tipo_movimento, m.quantidade, m.custo_total, m.documento_item_id])
+      .sort();
+
+  /** A porção com saldo e dois molhos vinculados que baixam (um com 2 sachês por escolha). */
+  async function porcaoComMolhos(sufixo: string) {
+    const porcao = await criarProduto({ nome: `PORCAO FRITAS ${sufixo}`, tipo: 'com_complementos' });
+    const cheddar = await criarProduto({
+      nome: `CHEDDAR SACHE ${sufixo}`,
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '0,50',
+    });
+    const barbecue = await criarProduto({
+      nome: `BARBECUE SACHE ${sufixo}`,
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '0,40',
+    });
+    await entrada([
+      [porcao, '10', '8'],
+      [cheddar, '100', '0.50'],
+      [barbecue, '100', '0.40'],
+    ]);
+    const [opCheddar, opBarbecue] = await grupoComplementos(porcao, 'Molhos', [
+      { produtoId: cheddar, baixa: true, quantidadeBaixa: '2.000' },
+      { produtoId: barbecue, baixa: true },
+    ]);
+    return { porcao, cheddar, barbecue, opCheddar: opCheddar!, opBarbecue: opBarbecue! };
+  }
+
+  it('porção com 2 molhos (v2): os vinculados baixam (item × complemento × quantidade_baixa) e o custo soma ao item; reenvio idempotente; cancelamento estorna', async () => {
+    const k = await porcaoComMolhos('B14A');
+    const v = venda(p, [{ produto: k.porcao, quantidade: '2.000', preco: '30.0000' }]);
+    const molhos = [
+      complemento(v, 0, k.opCheddar, 'Cheddar', '1.000'),
+      complemento(v, 0, k.opBarbecue.toUpperCase(), 'Barbecue', '2.000'),
+    ];
+    const payload = { ...v, itens_venda_complementos: molhos };
+    const ev = eventoV2(payload);
+    const [r] = await pushOk(p, [ev]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 3 } });
+    // Cheddar: 2 porções × 1 × 2 sachês = 4; barbecue: 2 × 2 × 1 = 4. Cada um com o id da linha do complemento (T4).
+    expect(await movimentosResumidos(v.vendas.id)).toEqual(
+      [
+        [k.porcao, 'VENDA_PDV', '-2.000', '16.00', idItem(v, 0)],
+        [k.cheddar, 'VENDA_PDV', '-4.000', '2.00', molhos[0]!.id],
+        [k.barbecue, 'VENDA_PDV', '-4.000', '1.60', molhos[1]!.id],
+      ].sort(),
+    );
+    expect([await saldo(k.porcao), await saldo(k.cheddar), await saldo(k.barbecue)]).toEqual([8, 96, 96]);
+    // (16,00 + 2,00 + 1,60) ÷ 2 porções.
+    expect((await itensGravados(v.vendas.id)).map((i) => i.custo_unitario)).toEqual(['9.8000']);
+    expect((await vendaGravada(v.vendas.id))!.custo_total).toBe('19.60');
+    const gravados = await consultar<{ id: string; complemento_id: string }>(
+      emp.nomeBanco,
+      'select id, complemento_id from itens_venda_complementos where item_venda_id = $1 order by id',
+      [idItem(v, 0)],
+    );
+    expect(gravados).toHaveLength(2);
+
+    // Reenvio: o mesmo evento e a mesma venda num evento novo não baixam de novo.
+    const [mesmo] = await pushOk(p, [ev]);
+    expect(mesmo, JSON.stringify(mesmo)).toMatchObject({ status: 'duplicado', resultado: { movimentos: 3 } });
+    const [outro] = await pushOk(p, [eventoV2(payload)]);
+    expect(outro, JSON.stringify(outro)).toMatchObject({
+      status: 'aplicado',
+      resultado: { ja_existia: true },
+    });
+    expect(await movimentosDaVenda(v.vendas.id)).toHaveLength(3);
+    expect([await saldo(k.porcao), await saldo(k.cheddar), await saldo(k.barbecue)]).toEqual([8, 96, 96]);
+
+    // Cancelar a venda no caixa devolve a porção e os molhos, ao custo da saída.
+    const [c] = await pushOk(p, [evento(p, 'venda.cancelada', cancelamento(v))]);
+    expect(c, JSON.stringify(c)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 3 } });
+    const estornos = (await movimentosDaVenda(v.vendas.id)).filter(
+      (m) => m.tipo_movimento === 'CANC_VENDA_PDV',
+    );
+    expect(
+      estornos.map((m) => [m.produto_id, m.quantidade, m.custo_total, m.documento_item_id]).sort(),
+    ).toEqual(
+      [
+        [k.porcao, '2.000', '16.00', idItem(v, 0)],
+        [k.cheddar, '4.000', '2.00', molhos[0]!.id],
+        [k.barbecue, '4.000', '1.60', molhos[1]!.id],
+      ].sort(),
+    );
+    expect([await saldo(k.porcao), await saldo(k.cheddar), await saldo(k.barbecue)]).toEqual([10, 100, 100]);
+  });
+
+  it('livre, sem baixa_estoque e vinculado sem controle não baixam; o vinculado Produzido baixa a ficha do caixa e, sem ela, só entra pela referência; o custo de referência entra no item; o cancelamento estorna a ficha', async () => {
+    const porcao = await criarProduto({
+      nome: 'PORCAO MISTA B14B',
+      tipo: 'servico',
+      controlaEstoque: false,
+      precoCusto: '3',
+    });
+    const gelo = await criarProduto({
+      nome: 'GELO B14B',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '1',
+    });
+    const sache = await criarProduto({
+      nome: 'SACHE SEM CONTROLE B14B',
+      tipo: 'materia_prima',
+      controlaEstoque: false,
+      precoVenda: '0',
+      precoCusto: '0,30',
+    });
+    const maionese = await criarProduto({
+      nome: 'MAIONESE B14B',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '12',
+    });
+    const alho = await criarProduto({
+      nome: 'ALHO B14B',
+      tipo: 'materia_prima',
+      controlaEstoque: false,
+      precoVenda: '0',
+      precoCusto: '20',
+    });
+    const molhoCasa = await criarProduto({
+      nome: 'MOLHO DA CASA B14B',
+      tipo: 'produzido',
+      usaFichaTecnica: true,
+      precoVenda: '4',
+      componentes: [{ tipo: 'ficha_tecnica', componenteId: maionese, quantidade: '0,1' }],
+    });
+    await entrada([
+      [gelo, '50', '1'],
+      [maionese, '10', '12'],
+    ]);
+    // O Produzido controla estoque (o padrão do cadastro) e não tem saldo próprio: sem a ficha, só a referência.
+    const [{ controla }] = (await consultar<{ controla: boolean }>(
+      emp.nomeBanco,
+      'select controla_estoque as controla from produtos where id = $1',
+      [molhoCasa],
+    )) as [{ controla: boolean }];
+    expect(controla).toBe(true);
+    const [livre, semBaixa, semControle, produzido, produzidoSemFicha] = await grupoComplementos(
+      porcao,
+      'Molhos',
+      [
+        { descricao: 'Sem cebola' },
+        { produtoId: gelo, baixa: false },
+        { produtoId: sache, baixa: true },
+        { produtoId: molhoCasa, baixa: true },
+        { produtoId: molhoCasa, baixa: true, quantidadeBaixa: '2.000' },
+      ],
+    );
+    const v = venda(p, [{ produto: porcao, quantidade: '1.000', preco: '25.0000' }]);
+    const ficha = [
+      { produto_id: maionese, variacao_id: null, quantidade: '0.100', origem: 'ficha_tecnica' },
+      { produto_id: alho, variacao_id: null, quantidade: '0.010', origem: 'ficha_tecnica' },
+    ];
+    const linhas = [
+      complemento(v, 0, livre!, 'Sem cebola', '1.000'),
+      complemento(v, 0, semBaixa!, 'Gelo', '1.000'),
+      complemento(v, 0, semControle!, 'Sachê', '1.000'),
+      complemento(v, 0, produzido!, 'Molho da casa', '1.000', ficha),
+      // O PDV não mandou a ficha (cadastro antigo no caixa): nem VENDA_PDV do Produzido nem BAIXA_INSUMO.
+      complemento(v, 0, produzidoSemFicha!, 'Molho da casa duplo', '1.000'),
+    ];
+    const [r] = await pushOk(p, [eventoV2({ ...v, itens_venda_complementos: linhas })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 1 } });
+    expect(await movimentosResumidos(v.vendas.id)).toEqual([
+      [maionese, 'BAIXA_INSUMO', '-0.100', '1.20', linhas[3]!.id],
+    ]);
+    expect([await saldo(gelo), await saldo(maionese), await saldo(molhoCasa)]).toEqual([50, 9.9, 0]);
+    // Porção 3,00 (referência) + sachê 0,30 (referência) + maionese 1,20 + alho 0,20 (0,01 × 20, referência) + o
+    // molho sem a ficha 4,00 (2 × o preco_custo 2,00 do Produzido, referência).
+    expect((await itensGravados(v.vendas.id)).map((i) => i.custo_unitario)).toEqual(['8.7000']);
+    expect((await vendaGravada(v.vendas.id))!.custo_total).toBe('8.70');
+
+    const [c] = await pushOk(p, [evento(p, 'venda.cancelada', cancelamento(v))]);
+    expect(c, JSON.stringify(c)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 1 } });
+    const estorno = (await movimentosDaVenda(v.vendas.id)).find(
+      (m) => m.tipo_movimento === 'ESTORNO_BAIXA_INSUMO',
+    );
+    expect(estorno).toMatchObject({
+      produto_id: maionese,
+      quantidade: '0.100',
+      documento_item_id: linhas[3]!.id,
+    });
+    expect(await saldo(maionese)).toBe(10);
+  });
+
+  it('a fixture do caixa (F3-B15) venda.finalizada.v2.complementos: o barbecue baixa pelo cadastro, o cheddar pelos insumos que o caixa calculou, o livre e o item cancelado não', async () => {
+    const q = await novoPonto();
+    const porcao = await criarProduto({ nome: 'PORCAO FRITAS FIXTURE B15', tipo: 'com_complementos' });
+    const barbecue = await criarProduto({
+      nome: 'MOLHO BARBECUE FIXTURE B15',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '18',
+    });
+    const queijo = await criarProduto({
+      nome: 'QUEIJO CHEDDAR FIXTURE B15',
+      tipo: 'materia_prima',
+      precoVenda: '0',
+      precoCusto: '40',
+    });
+    const cheddar = await criarProduto({
+      nome: 'CHEDDAR CREMOSO FIXTURE B15',
+      tipo: 'produzido',
+      usaFichaTecnica: true,
+      precoVenda: '4,50',
+      componentes: [{ tipo: 'ficha_tecnica', componenteId: queijo, quantidade: '0,08' }],
+    });
+    await entrada([
+      [porcao, '10', '8'],
+      [barbecue, '5', '18'],
+      [queijo, '2', '40'],
+    ]);
+    const [opBarbecue, opRose, opCheddar] = await grupoComplementos(porcao, 'Molhos', [
+      { produtoId: barbecue, baixa: true, quantidadeBaixa: '0.050' },
+      { descricao: 'Rosé' },
+      { produtoId: cheddar, baixa: true },
+    ]);
+    const vendaId = uuidv7();
+    // Ids da fixture que o PDV gera (ContratosEventosTests) → os deste ambiente; as linhas ficam com os ids dela.
+    const ids: Record<string, string> = {
+      '01a187c8-1a2b-7c3d-8e4f-b4c5d6e7f809': vendaId,
+      '01a18752-3782-7bda-ad3c-2d6d1a3d1fa7': loja,
+      '01a18752-c8a9-7970-9641-9f828b9d2434': q.caixa,
+      '01a18751-a521-7238-b924-56de3eb13b90': q.terminal,
+      '01a18755-98a1-7472-96da-1dac72ff5d2a': q.sessao,
+      '01a18754-76cb-7b74-b2e7-06298fadc1a6': operador,
+      '01a1875e-a2ca-7299-9d65-a441d58842de': dinheiro,
+      '01a187c2-6f70-7182-9394-0f1a2b3c4d56': porcao,
+      '01a187c1-3c4d-7e5f-8061-7c8d9e0f1a23': opBarbecue!,
+      '01a187c1-4d5e-7f60-9172-8d9e0f1a2b34': opRose!,
+      '01a187c1-5e6f-7071-8283-9e0f1a2b3c45': opCheddar!,
+      '01a187c4-92a3-74b5-86c7-3c4d5e6f7089': queijo,
+    };
+    const desvio = Date.now() - Date.parse('2026-10-29T17:31:02.114Z');
+    const texto = readFileSync(new URL('venda.finalizada.v2.complementos.payload.json', FIXTURES), 'utf8')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => ids[id] ?? id)
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, (t) =>
+        new Date(Date.parse(t) + desvio).toISOString(),
+      );
+    const payload = JSON.parse(texto) as { vendas: Payload; itens_venda_complementos: Payload[] };
+    payload.vendas.numero_caixa = q.numero;
+    const [r] = await pushOk(q, [evento(q, 'venda.finalizada', payload, { versao_schema: 2 })]);
+    expect(r, JSON.stringify(r)).toMatchObject({
+      status: 'aplicado',
+      resultado: { venda_id: vendaId, movimentos: 3 },
+    });
+
+    const linha = (opcao: string) =>
+      payload.itens_venda_complementos.find((c) => c.complemento_id === opcao)!.id;
+    const movimentos = (await movimentosDaVenda(vendaId)).map((m) => [
+      m.produto_id,
+      m.tipo_movimento,
+      m.quantidade,
+      m.documento_item_id,
+    ]);
+    expect(movimentos.sort()).toEqual(
+      [
+        [porcao, 'VENDA_PDV', '-2.000', '01a187c5-a3b4-75c6-97d8-4d5e6f708192'],
+        [barbecue, 'VENDA_PDV', '-0.100', linha(opBarbecue!)],
+        [queijo, 'BAIXA_INSUMO', '-0.168', linha(opCheddar!)],
+      ].sort(),
+    );
+    expect([await saldo(porcao), await saldo(barbecue), await saldo(queijo), await saldo(cheddar)]).toEqual([
+      8, 4.9, 1.832, 0,
+    ]);
+    const [contagem] = await consultar<{ n: number }>(
+      emp.nomeBanco,
+      `select count(*)::int as n from itens_venda_complementos c join itens_venda i on i.id = c.item_venda_id where i.venda_id = $1`,
+      [vendaId],
+    );
+    expect(contagem).toEqual({ n: 4 });
+  });
+
+  it('o PDV instalado (v1): os complementos gravam como antes, sem baixa nem custo; a v2 não é anunciada', async () => {
+    expect(versoesSchemaAceitas()['venda.finalizada']).toEqual([1]);
+    const k = await porcaoComMolhos('B14C');
+    const v = venda(p, [{ produto: k.porcao, quantidade: '2.000', preco: '30.0000' }]);
+    const molhos = [complemento(v, 0, k.opCheddar, 'Cheddar', '1.000')].map(
+      ({ componentes_estoque: _, ...linha }) => linha,
+    );
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', { ...v, itens_venda_complementos: molhos })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado', resultado: { movimentos: 1 } });
+    expect(await movimentosResumidos(v.vendas.id)).toEqual([
+      [k.porcao, 'VENDA_PDV', '-2.000', '16.00', idItem(v, 0)],
+    ]);
+    expect([await saldo(k.porcao), await saldo(k.cheddar)]).toEqual([8, 100]);
+    expect((await itensGravados(v.vendas.id)).map((i) => i.custo_unitario)).toEqual(['8.0000']);
+    expect((await vendaGravada(v.vendas.id))!.custo_total).toBe('16.00');
+    const [{ n }] = (await consultar<{ n: string }>(
+      emp.nomeBanco,
+      'select count(*)::text as n from itens_venda_complementos where item_venda_id = $1 and complemento_id = $2',
+      [idItem(v, 0), k.opCheddar],
+    )) as [{ n: string }];
+    expect(n).toBe('1');
+  });
+
+  it('lote_id e promocao_id que a nuvem não conhece: o lote vira nulo (o texto fica), a promoção fica crua com o desconto; os alertas; o conhecido fica; reenvio igual', async () => {
+    const prod = await criarProduto({ nome: 'CERV LOTE PROMO B14E' });
+    await entrada([[prod, '20', '2']]);
+    const [{ id: loteConhecido }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into produtos_lotes (produto_id, lote, validade) values ($1, 'L-CONHECIDO', '2027-01-31') returning id",
+      [prod],
+    )) as [{ id: string }];
+    const [{ id: promoConhecida }] = (await consultar<{ id: string }>(
+      emp.nomeBanco,
+      "insert into promocoes (nome, tipo, parametros) values ('Promo B14E', 'desconto_pct_item', '{}') returning id",
+    )) as [{ id: string }];
+    const loteDesconhecido = uuidv7();
+    const promoDesconhecida = uuidv7();
+    const comPromocao = (promocao: string) => ({
+      promocao_id: promocao,
+      desconto_promocao: '1.00',
+      valor_liquido: '9.00',
+    });
+    const v = venda(p, [
+      {
+        produto: prod,
+        quantidade: '2.000',
+        extra: {
+          ...comPromocao(promoDesconhecida.toUpperCase()),
+          lote_id: loteDesconhecido,
+          lote: 'L-DO-CAIXA',
+          validade_lote: '2027-02-28',
+        },
+      },
+      {
+        produto: prod,
+        quantidade: '2.000',
+        extra: { ...comPromocao(promoConhecida), lote_id: loteConhecido, lote: 'L-CONHECIDO' },
+      },
+    ]);
+    const ev = evento(p, 'venda.finalizada', v);
+    const [r] = await pushOk(p, [ev]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    expect((r!.resultado!.alertas as string[]).sort()).toEqual([
+      'LOTE_DESCONHECIDO',
+      'PROMOCAO_DESCONHECIDA',
+    ]);
+    const itens = await consultar<{
+      lote_id: string | null;
+      lote: string;
+      promocao_id: string;
+      desconto: string;
+    }>(
+      emp.nomeBanco,
+      `select lote_id, lote, promocao_id, desconto_promocao::text as desconto
+         from itens_venda where venda_id = $1 order by sequencia`,
+      [v.vendas.id],
+    );
+    expect(itens).toEqual([
+      { lote_id: null, lote: 'L-DO-CAIXA', promocao_id: promoDesconhecida, desconto: '1.00' },
+      { lote_id: loteConhecido, lote: 'L-CONHECIDO', promocao_id: promoConhecida, desconto: '1.00' },
+    ]);
+    expect(await saldo(prod)).toBe(16);
+    const [lote] = await alertasAbertos('LOTE_DESCONHECIDO', `lote_desconhecido:${loteDesconhecido}`);
+    expect(lote!.dados).toMatchObject({ lote_id: loteDesconhecido, itens_venda: [idItem(v, 0)] });
+    const [promo] = await alertasAbertos(
+      'PROMOCAO_DESCONHECIDA',
+      `promocao_desconhecida:${promoDesconhecida}`,
+    );
+    expect(promo!.dados).toMatchObject({ promocao_id: promoDesconhecida, venda_id: v.vendas.id });
+    expect(await alertasAbertos('PROMOCAO_DESCONHECIDA', `promocao_desconhecida:${promoConhecida}`)).toEqual(
+      [],
+    );
+    // O reenvio confere com a mesma regra (o lote nulo, a promoção crua): igual, sem divergência nem alerta novo.
+    const [de] = await pushOk(p, [evento(p, 'venda.finalizada', v)]);
+    expect(de, JSON.stringify(de)).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
+  });
+
+  it('forma B do venda.cancelada com lote_id e promocao_id que a nuvem não conhece: grava com o lote nulo (o texto fica) e a promoção crua, abre os dois alertas; reenvio ja_existia sem alerta novo', async () => {
+    const prod = await criarProduto({ nome: 'CERV LOTE PROMO B14F' });
+    const loteDesconhecido = uuidv7();
+    const promoDesconhecida = uuidv7();
+    const v = venda(p, [
+      {
+        produto: prod,
+        quantidade: '1.000',
+        extra: {
+          promocao_id: promoDesconhecida,
+          desconto_promocao: '1.00',
+          valor_liquido: '4.00',
+          lote_id: loteDesconhecido.toUpperCase(),
+          lote: 'L-CANCELADA',
+          validade_lote: '2027-03-31',
+        },
+      },
+    ]);
+    const b = {
+      ...v,
+      vendas: {
+        ...v.vendas,
+        status: 'cancelada',
+        finalizada_em: null,
+        cancelada_em: agora(),
+        cancelada_por_id: operador,
+        motivo_cancelamento: 'Cliente desistiu antes de pagar',
+        cancelamento_origem: 'pdv',
+      },
+      pagamentos_venda: [],
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.cancelada', b)]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado', resultado: { em_andamento: true } });
+    expect((r!.resultado!.alertas as string[]).sort()).toEqual([
+      'LOTE_DESCONHECIDO',
+      'PROMOCAO_DESCONHECIDA',
+    ]);
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        'select lote_id, lote, promocao_id from itens_venda where venda_id = $1',
+        [v.vendas.id],
+      ),
+    ).toEqual([{ lote_id: null, lote: 'L-CANCELADA', promocao_id: promoDesconhecida }]);
+    // Sem estoque (SYNC 9.9 B): o alerta do lote não fala da baixa.
+    expect(await movimentosDaVenda(v.vendas.id)).toEqual([]);
+    const [lote] = await alertasAbertos('LOTE_DESCONHECIDO', `lote_desconhecido:${loteDesconhecido}`);
+    expect(lote!.dados).toMatchObject({
+      lote_id: loteDesconhecido,
+      venda_id: v.vendas.id,
+      itens_venda: [idItem(v, 0)],
+    });
+    const [{ mensagem }] = (await consultar<{ mensagem: string }>(
+      emp.nomeBanco,
+      'select mensagem from alertas where id = $1',
+      [lote!.id],
+    )) as [{ mensagem: string }];
+    expect(mensagem).toContain('cancelou em andamento');
+    expect(mensagem).not.toContain('baixa');
+    const [promo] = await alertasAbertos(
+      'PROMOCAO_DESCONHECIDA',
+      `promocao_desconhecida:${promoDesconhecida}`,
+    );
+    expect(promo!.dados).toMatchObject({ promocao_id: promoDesconhecida, venda_id: v.vendas.id });
+    // O reenvio confere com a mesma regra e não alerta de novo.
+    const [de] = await pushOk(p, [evento(p, 'venda.cancelada', b)]);
+    expect(de, JSON.stringify(de)).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
+    expect(de!.resultado).not.toHaveProperty('alertas');
+  });
+
+  it('v2: o complemento com o id de um item da venda é recusado (PAYLOAD_INVALIDO), sem estoque', async () => {
+    const k = await porcaoComMolhos('B14D');
+    const v = venda(p, [{ produto: k.porcao, quantidade: '1.000', preco: '30.0000' }]);
+    const molho = { ...complemento(v, 0, k.opCheddar, 'Cheddar', '1.000'), id: idItem(v, 0) };
+    const [r] = await pushOk(p, [eventoV2({ ...v, itens_venda_complementos: [molho] })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'rejeitado', erro: { codigo: 'PAYLOAD_INVALIDO' } });
+    expect(await movimentosDaVenda(v.vendas.id)).toEqual([]);
+    expect(await saldo(k.cheddar)).toBe(100);
+  });
+});
+
+describe('preço digitado, alterado e acréscimo no total do caixa (F3-B16; PDV 10.4, 10.5, 12.2)', () => {
+  it('v1 com o preço alterado (manual, tabela mantida), a liberação alterar_preco e o acréscimo rateado: aplica sem alerta e grava como veio', async () => {
+    const p = await novoPonto();
+    const gelo = await criarProduto({ nome: 'GELO F3B16', precoVenda: '12,90' });
+    const generico = await criarProduto({
+      nome: 'DIVERSOS F3B16',
+      precoVenda: '1',
+      generico: true,
+      controlaEstoque: false,
+    });
+    await entrada([[gelo, '10', '5']]);
+    const v = venda(
+      p,
+      [
+        {
+          produto: gelo,
+          quantidade: '1.000',
+          preco: '10.0000',
+          extra: {
+            preco_tabela: '12.9000',
+            origem_preco: 'manual',
+            acrescimo_rateado: '0.67',
+            valor_liquido: '10.67',
+            autorizado_por_id: operador,
+          },
+        },
+        {
+          produto: generico,
+          quantidade: '1.000',
+          preco: '5.0000',
+          extra: {
+            descricao: 'BOIA INFLÁVEL',
+            origem_preco: 'manual',
+            acrescimo_rateado: '0.33',
+            valor_liquido: '5.33',
+          },
+        },
+      ],
+      { extra: { acrescimo_total: '1.00' } },
+    );
+    const lib = {
+      acao: 'alterar_preco',
+      item_venda_id: idItem(v, 0),
+      valor_pct: '22.4806',
+      autorizado_por_id: operador,
+      motivo: 'Embalagem amassada',
+      ocorrido_em: agora(),
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', { ...v, liberacoes: [lib] })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select descricao, origem_preco, preco_tabela::text, preco_unitario::text, acrescimo_rateado::text, valor_liquido::text
+           from itens_venda where venda_id = $1 order by sequencia`,
+        [v.vendas.id],
+      ),
+    ).toEqual([
+      {
+        descricao: 'ITEM DE TESTE',
+        origem_preco: 'manual',
+        preco_tabela: '12.9000',
+        preco_unitario: '10.0000',
+        acrescimo_rateado: '0.67',
+        valor_liquido: '10.67',
+      },
+      {
+        descricao: 'BOIA INFLÁVEL',
+        origem_preco: 'manual',
+        preco_tabela: '5.0000',
+        preco_unitario: '5.0000',
+        acrescimo_rateado: '0.33',
+        valor_liquido: '5.33',
+      },
+    ]);
+    const [cab] = await consultar<{ acrescimo_total: string; total: string }>(
+      emp.nomeBanco,
+      'select acrescimo_total::text, total::text from vendas where id = $1',
+      [v.vendas.id],
+    );
+    expect(cab).toEqual({ acrescimo_total: '1.00', total: '16.00' });
+    const [auditoria] = await consultar<{ depois: { liberacoes: Array<{ acao: string }> } }>(
+      emp.nomeBanco,
+      "select depois from auditoria where entidade = 'vendas' and acao = 'criar' and registro_id = $1",
+      [v.vendas.id],
+    );
+    expect(auditoria!.depois.liberacoes.map((l) => l.acao)).toEqual(['alterar_preco']);
+    expect(await saldo(gelo)).toBe(9);
+  });
+});
+
+describe('tipo de preço F8 do caixa (F3-B17; PDV 11.2)', () => {
+  it('v1 com tipo_preco atacado, as linhas no atacado sem o mínimo e a liberação tipo_preco: aplica sem alerta e grava como veio', async () => {
+    const p = await novoPonto();
+    const lata = await criarProduto({ nome: 'LATA F3B17', precoVenda: '3,49' });
+    await entrada([[lata, '10', '2']]);
+    const v = venda(
+      p,
+      [
+        {
+          produto: lata,
+          quantidade: '3.000',
+          preco: '3.1900',
+          // Como o caixa da R3 manda a linha do F8: o preço veio do tipo da venda, sem a quantidade de referência.
+          extra: { preco_tabela: '3.1900', origem_preco: 'atacado', quantidade_referencia_preco: null },
+        },
+      ],
+      { extra: { tipo_preco: 'atacado' } },
+    );
+    const lib = {
+      acao: 'tipo_preco',
+      item_venda_id: null,
+      valor_pct: null,
+      autorizado_por_id: operador,
+      motivo: 'Bar do bairro',
+      ocorrido_em: agora(),
+    };
+    const [r] = await pushOk(p, [evento(p, 'venda.finalizada', { ...v, liberacoes: [lib] })]);
+    expect(r, JSON.stringify(r)).toMatchObject({ status: 'aplicado' });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+    const [cab] = await consultar<{ tipo_preco: string; total: string }>(
+      emp.nomeBanco,
+      'select tipo_preco, total::text from vendas where id = $1',
+      [v.vendas.id],
+    );
+    expect(cab).toEqual({ tipo_preco: 'atacado', total: '9.57' });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        'select origem_preco, preco_unitario::text, quantidade_referencia_preco::text from itens_venda where venda_id = $1',
+        [v.vendas.id],
+      ),
+    ).toEqual([{ origem_preco: 'atacado', preco_unitario: '3.1900', quantidade_referencia_preco: null }]);
+    const [auditoria] = await consultar<{ depois: { liberacoes: Array<{ acao: string }> } }>(
+      emp.nomeBanco,
+      "select depois from auditoria where entidade = 'vendas' and acao = 'criar' and registro_id = $1",
+      [v.vendas.id],
+    );
+    expect(auditoria!.depois.liberacoes.map((l) => l.acao)).toEqual(['tipo_preco']);
+    expect(await saldo(lata)).toBe(7);
+  });
+});
+
+describe('preço gelada e parcelado do caixa (F3-B18; PDV 11.2, 11.4)', () => {
+  it('a fixture do caixa venda.finalizada.gelada_parcelado: o gelado dentro do preço e o parcelado passam no conferirSomasVenda e gravam como vieram', async () => {
+    const q = await novoPonto();
+    const lata = await criarProduto({ nome: 'LATA GELADA F3B18', precoVenda: '3,49' });
+    const agua = await criarProduto({ nome: 'AGUA F3B18', precoVenda: '2,50' });
+    await entrada([
+      [lata, '10', '2'],
+      [agua, '10', '1'],
+    ]);
+    const credito =
+      (
+        await consultar<{ id: string }>(
+          emp.nomeBanco,
+          "select id from formas_pagamento where tipo_forma = 'cartao_credito' and excluido_em is null order by ordem limit 1",
+        )
+      )[0]?.id ?? dinheiro;
+    const vendaId = uuidv7();
+    // Ids da fixture que o PDV gera (ContratosEventosTests) → os deste ambiente; as linhas ficam com os ids dela.
+    const ids: Record<string, string> = {
+      '01a187d3-7081-7293-84a5-1a2b3c4d5e67': vendaId,
+      '01a18752-3782-7bda-ad3c-2d6d1a3d1fa7': loja,
+      '01a18752-c8a9-7970-9641-9f828b9d2434': q.caixa,
+      '01a18751-a521-7238-b924-56de3eb13b90': q.terminal,
+      '01a18755-98a1-7472-96da-1dac72ff5d2a': q.sessao,
+      '01a18754-76cb-7b74-b2e7-06298fadc1a6': operador,
+      '01a1875f-c261-7aef-afc8-9849b3aa7efe': credito,
+      '01a187d0-1a2b-7c3d-8e4f-5a6b7c8d9e01': lata,
+      '01a187d0-2b3c-7d4e-9f50-6b7c8d9e0f12': agua,
+    };
+    const desvio = Date.now() - Date.parse('2026-10-29T17:31:02.114Z');
+    const texto = readFileSync(new URL('venda.finalizada.gelada_parcelado.payload.json', FIXTURES), 'utf8')
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => ids[id] ?? id)
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, (t) =>
+        new Date(Date.parse(t) + desvio).toISOString(),
+      );
+    const payload = JSON.parse(texto) as { vendas: Payload };
+    payload.vendas.numero_caixa = q.numero;
+    const ev = evento(q, 'venda.finalizada', payload);
+    const [r] = await pushOk(q, [ev]);
+    expect(r, JSON.stringify(r)).toMatchObject({
+      status: 'aplicado',
+      resultado: { venda_id: vendaId, movimentos: 3 },
+    });
+    expect((r as { resultado?: { alertas?: unknown } }).resultado?.alertas).toBeUndefined();
+
+    const [cab] = await consultar<{ tipo_preco: string; total: string; subtotal_bruto: string }>(
+      emp.nomeBanco,
+      'select tipo_preco, total::text, subtotal_bruto::text from vendas where id = $1',
+      [vendaId],
+    );
+    expect(cab).toEqual({ tipo_preco: 'parcelado', total: '15.57', subtotal_bruto: '15.57' });
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        `select origem_preco, preco_tabela::text, preco_unitario::text, valor_bruto::text
+           from itens_venda where venda_id = $1 order by sequencia`,
+        [vendaId],
+      ),
+    ).toEqual([
+      // A lata gelada: o parcelado 3,69 + a gelada 1,00 dentro do preço (a nuvem não guarda a marca).
+      { origem_preco: 'parcelado', preco_tabela: '4.6900', preco_unitario: '4.6900', valor_bruto: '9.38' },
+      { origem_preco: 'parcelado', preco_tabela: '3.6900', preco_unitario: '3.6900', valor_bruto: '3.69' },
+      { origem_preco: 'varejo', preco_tabela: '2.5000', preco_unitario: '2.5000', valor_bruto: '2.50' },
+    ]);
+    expect(
+      await consultar(
+        emp.nomeBanco,
+        'select parcelas, valor::text from pagamentos_venda where venda_id = $1',
+        [vendaId],
+      ),
+    ).toEqual([{ parcelas: 3, valor: '15.57' }]);
+    expect([await saldo(lata), await saldo(agua)]).toEqual([7, 9]);
+
+    // O caixa gerou o evento de novo (outro `evento_id`): mesmo conteúdo, `ja_existia`, sem movimento novo.
+    const [deNovo] = await pushOk(q, [evento(q, 'venda.finalizada', payload)]);
+    expect(deNovo).toMatchObject({ status: 'aplicado', resultado: { ja_existia: true } });
+    expect([await saldo(lata), await saldo(agua)]).toEqual([7, 9]);
   });
 });
 

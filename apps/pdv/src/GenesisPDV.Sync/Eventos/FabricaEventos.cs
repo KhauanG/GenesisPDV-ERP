@@ -17,7 +17,22 @@ public static class FabricaEventos
 {
     public const int VersaoSchemaVenda = 1;
 
-    public static EventoParaOutbox VendaFinalizada(Venda venda, Guid eventoId)
+    /// <summary>
+    /// <c>venda.finalizada</c> v2 (onda da R3, SYNC 17.5; F3-B14 na nuvem, F3-B15 no caixa): a v1 com a
+    /// <c>componentes_estoque</c> na linha do complemento. É também o recurso que libera o diálogo dos complementos
+    /// (<c>RecursoDisponivel("venda.finalizada", 2)</c>).
+    /// </summary>
+    public const int VersaoVendaFinalizadaComplementos = 2;
+
+    /// <summary>As versões do <c>venda.finalizada</c> que o caixa sabe montar (a escolha é a maior comum anunciada, F3-B4).</summary>
+    public static readonly IReadOnlyCollection<int> VersoesVendaFinalizada = [VersaoSchemaVenda, VersaoVendaFinalizadaComplementos];
+
+    /// <param name="versao">
+    /// A versão a gravar (<c>GravadorOutbox.VersaoParaGravar</c> com <see cref="VersoesVendaFinalizada"/>). A v1 leva os
+    /// complementos sem a <c>componentes_estoque</c> (a nuvem os grava sem baixa nem custo, como antes): é o caso da venda
+    /// montada com o recurso e finalizada depois de um handshake que não anuncia mais a v2.
+    /// </param>
+    public static EventoParaOutbox VendaFinalizada(Venda venda, Guid eventoId, int versao = VersaoSchemaVenda)
     {
         ArgumentNullException.ThrowIfNull(venda);
         if (venda.Status != StatusVenda.Finalizada || venda.FinalizadaEm is null)
@@ -25,7 +40,12 @@ public static class FabricaEventos
             throw new InvalidOperationException("venda.finalizada exige venda finalizada.");
         }
 
-        return Montar("venda.finalizada", venda, eventoId, venda.FinalizadaEm.Value, venda.OperadorId);
+        if (!VersoesVendaFinalizada.Contains(versao))
+        {
+            throw new ArgumentOutOfRangeException(nameof(versao), versao, "Versão do venda.finalizada que o caixa não monta.");
+        }
+
+        return Montar("venda.finalizada", venda, eventoId, venda.FinalizadaEm.Value, venda.OperadorId, versao);
     }
 
     /// <summary>
@@ -121,11 +141,12 @@ public static class FabricaEventos
     /// Envelope da venda (SYNC 7.3, 8.5): quem executou (o operador; no cancelamento, quem cancelou), a sessão no contexto
     /// e a dependência dela (a venda da sessão retida espera o <c>caixa.aberto</c>).
     /// </summary>
-    private static EventoParaOutbox Montar(string tipo, Venda venda, Guid eventoId, DateTimeOffset ocorridoEm, Guid usuarioId)
+    private static EventoParaOutbox Montar(
+        string tipo, Venda venda, Guid eventoId, DateTimeOffset ocorridoEm, Guid usuarioId, int versao = VersaoSchemaVenda)
     {
-        var payload = PayloadVenda(venda);
+        var payload = PayloadVenda(venda, versao);
         var jcs = Jcs.Serializar(payload);
-        return new EventoParaOutbox(eventoId, tipo, VersaoSchemaVenda, "venda", venda.Id, ocorridoEm, jcs, Jcs.Sha256Hex(jcs))
+        return new EventoParaOutbox(eventoId, tipo, versao, "venda", venda.Id, ocorridoEm, jcs, Jcs.Sha256Hex(jcs))
         {
             UsuarioId = usuarioId,
             SessaoCaixaId = venda.SessaoCaixaId,
@@ -133,7 +154,11 @@ public static class FabricaEventos
         };
     }
 
-    public static JsonObject PayloadVenda(Venda v)
+    /// <param name="versao">
+    /// 1: o documento da v1 (também o do <c>venda.cancelada</c> forma B); 2: com a <c>componentes_estoque</c> em cada
+    /// linha de <c>itens_venda_complementos</c> (só payload; SYNC 9.7).
+    /// </param>
+    public static JsonObject PayloadVenda(Venda v, int versao = VersaoSchemaVenda)
     {
         var itens = new JsonArray();
         foreach (var i in v.Itens)
@@ -308,7 +333,7 @@ public static class FabricaEventos
                 ["evento_finalizacao_id"] = F.Uuid(v.EventoFinalizacaoId),
             },
             ["itens_venda"] = itens,
-            ["itens_venda_complementos"] = new JsonArray(),
+            ["itens_venda_complementos"] = Complementos(v, versao),
             ["pagamentos_venda"] = pagamentos,
             ["parcelas_venda"] = new JsonArray(),
             ["transacoes_tef"] = new JsonArray(),
@@ -345,11 +370,47 @@ public static class FabricaEventos
         return lista;
     }
 
-    /// <summary><c>componentes_estoque</c> do item (sincronizacao.md 9.7): a ficha técnica do produzido (D17 do dono).</summary>
-    private static JsonArray ComponentesEstoque(Venda v, ItemVenda i)
+    /// <summary>
+    /// <c>itens_venda_complementos</c> (MD 3.11.3; F3-B15): os complementos de cada item, também os do item cancelado (o
+    /// documento leva a linha cancelada e a nuvem não baixa nada dela). Na v2, a <c>componentes_estoque</c> da linha
+    /// (<see cref="Venda.ComponentesEstoque(ItemVenda, ComplementoItem)"/>); na v1, sem a chave.
+    /// </summary>
+    private static JsonArray Complementos(Venda v, int versao)
     {
         var lista = new JsonArray();
-        foreach (var c in v.ComponentesEstoque(i))
+        foreach (var i in v.Itens.OrderBy(i => i.Sequencia))
+        {
+            foreach (var c in i.Complementos)
+            {
+                var linha = new JsonObject
+                {
+                    ["id"] = F.Uuid(c.Id),
+                    ["item_venda_id"] = F.Uuid(i.Id),
+                    ["complemento_id"] = F.Uuid(c.ComplementoId),
+                    ["grupo_nome"] = c.GrupoNome,
+                    ["descricao"] = c.Descricao,
+                    ["quantidade"] = F.Quantidade(c.Quantidade),
+                    ["preco_adicional"] = F.Preco(c.PrecoAdicional),
+                };
+                if (versao >= VersaoVendaFinalizadaComplementos)
+                {
+                    linha["componentes_estoque"] = Lista(v.ComponentesEstoque(i, c));
+                }
+
+                lista.Add(linha);
+            }
+        }
+
+        return lista;
+    }
+
+    /// <summary><c>componentes_estoque</c> do item (sincronizacao.md 9.7): a ficha técnica do produzido (D17 do dono).</summary>
+    private static JsonArray ComponentesEstoque(Venda v, ItemVenda i) => Lista(v.ComponentesEstoque(i));
+
+    private static JsonArray Lista(IReadOnlyList<Core.Produtos.ComponenteBaixa> componentes)
+    {
+        var lista = new JsonArray();
+        foreach (var c in componentes)
         {
             lista.Add(new JsonObject
             {

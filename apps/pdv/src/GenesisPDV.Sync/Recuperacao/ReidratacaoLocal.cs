@@ -44,7 +44,7 @@ public sealed record ReidratacaoPendente(long Desde, bool Regressao, DateTimeOff
 /// <item><b>Uma transação por página</b> (50 eventos): o evento que o caixa já tem fica com a sequência da nuvem e a
 /// situação dela (<c>aplicado</c> → <c>confirmado</c>; <c>erro</c>/<c>retido</c>/<c>descartado</c> → <c>rejeitado</c>,
 /// como no push); o que não tem é gravado em <c>eventos_saida</c> com o mesmo id, a mesma sequência e o payload, e os
-/// fatos do payload são recriados nas tabelas de movimento (<see cref="Tabelas"/>: venda com itens, pagamentos,
+/// fatos do payload são recriados nas tabelas de movimento (<see cref="Tabelas"/>: venda com itens e os complementos deles (F3-B15), pagamentos,
 /// parcelas, PIX e liberações; sessão, movimentos e fechamento do caixa; devolução de cascos). O placeholder de lacuna
 /// (T7) e o evento sem payload (anulado) só ocupam a sequência. A sequência local acompanha a <c>ultima_recebida</c> da
 /// página.</item>
@@ -63,7 +63,7 @@ public sealed class ReidratacaoLocal(IClienteSync cliente, IDbContextFactory<Pdv
     /// <summary>Tabelas de movimento que a reidratação grava, na ordem das chaves estrangeiras.</summary>
     public static readonly IReadOnlyList<string> Tabelas =
     [
-        "sessoes_caixa", "vendas", "itens_venda", "pagamentos_venda", "parcelas_venda", "cobrancas_pix",
+        "sessoes_caixa", "vendas", "itens_venda", "itens_venda_complementos", "pagamentos_venda", "parcelas_venda", "cobrancas_pix",
         "fechamentos_caixa", "fechamentos_caixa_formas", "movimentos_caixa", "movimentos_vasilhame",
     ];
 
@@ -355,6 +355,9 @@ public sealed class ReidratacaoLocal(IClienteSync cliente, IDbContextFactory<Pdv
             await db.CobrancasPix.Where(c => c.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ParcelasVenda.Where(p => db.PagamentosVenda.Any(g => g.Id == p.PagamentoVendaId && g.VendaId == id)).ExecuteDeleteAsync(ct);
             await db.PagamentosVenda.Where(p => p.VendaId == id).ExecuteDeleteAsync(ct);
+            await db.ItensVendaComplementos.Where(c => db.ItensVenda.Any(i => i.Id == c.ItemVendaId && i.VendaId == id)).ExecuteDeleteAsync(ct);
+            // A marca local do gelado (F3-B18) não está no documento: as linhas novas dos itens voltam sem ela.
+            await db.ItensVendaGelados.Where(g => g.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ItensVenda.Where(i => i.VendaId == id).ExecuteDeleteAsync(ct);
             await db.LiberacoesVenda.Where(l => l.VendaId == id).ExecuteDeleteAsync(ct);
             await db.ProdutosVendaSnapshot.Where(s => s.VendaId == id).ExecuteDeleteAsync(ct);
